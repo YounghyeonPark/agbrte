@@ -58,6 +58,19 @@ const builds = [
   },
 ];
 
+// The agent host is a third entry point: a utilityProcess loaded by main (§8).
+// ESM like main, and `electron` stays external — a utilityProcess has a real
+// `process.parentPort` from Electron's own runtime.
+builds.push({
+  ...shared,
+  entryPoints: [resolve(root, 'src/host/entry.ts')],
+  outfile: resolve(root, 'dist/main/agentHost.js'),
+  format: 'esm',
+  banner: {
+    js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",
+  },
+});
+
 // The shell smoke check is a separate Electron entry, built only when asked for.
 if (process.argv.includes('--smoke')) {
   builds.push({

@@ -14,6 +14,11 @@ import { describe, expect, it } from 'vitest';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { ClaudeAgentSdkRuntime } from '@main/runtime/runtimes/claudeAgentSdk.js';
 import { LoomHarnessRuntime } from '@main/runtime/runtimes/loomHarness.js';
+import { RuntimeRegistry } from '@main/runtime/registry.js';
+import { AgentHostServer } from '../src/host/server.js';
+import { HostBackedRuntime, HostClient } from '@main/host/hostRuntime.js';
+import { memoryChannelPair } from '@shared/host/memoryChannel.js';
+import type { HostCommand, HostMessage } from '@shared/host/protocol.js';
 import {
   newAgentId,
   type AgentRuntime,
@@ -30,6 +35,27 @@ import {
 import type { Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 const POLICY: ToolPolicy = { rules: [], defaultAction: 'ask' };
+
+/**
+ * Wrap a runtime so it is reached through the AgentHost protocol (§8).
+ *
+ * Real server, real client, real serialization — only the transport is
+ * in-process. The runtime id is rewritten to match what the spec will carry,
+ * since the host resolves the spec's `runtimeId` through its own registry.
+ */
+function hostBacked(inner: AgentRuntime): AgentRuntime {
+  const registry = new RuntimeRegistry();
+  const relabeled = new Proxy(inner, {
+    get: (target, prop, recv) => (prop === 'id' ? 'test' : Reflect.get(target, prop, recv)),
+  });
+  registry.register(relabeled as AgentRuntime, { label: 'hosted', requiresModel: false });
+
+  const pair = memoryChannelPair<HostCommand, HostMessage>();
+  new AgentHostServer(pair.host, registry);
+  const client = new HostClient({ channel: pair.main });
+
+  return new HostBackedRuntime(client, 'test', inner.version);
+}
 
 function spec(over: Partial<AgentSpec> = {}): AgentSpec {
   return {
@@ -251,6 +277,40 @@ const CANDIDATES: Candidate[] = [
       }),
     expectsResumeToken: null,
     specOverride: { model: { providerId: 'stub', modelId: 'stub-model' } },
+  },
+  {
+    /**
+     * The same echo adapter, reached through the AgentHost control protocol
+     * (§8) over an in-memory channel.
+     *
+     * This candidate tests the claim that moving loops out of the main process
+     * is "a relocation behind `AgentRuntime`". Everything the contract demands
+     * has to survive serialization and asynchronous delivery: events
+     * subscribable before the first `send()`, a stream consumable once, the gate
+     * consulted before a tool runs, a terminating stop reason. If the proxy is
+     * not a faithful `AgentRuntime`, it fails here rather than in the app.
+     */
+    name: 'agent-host (echo over the control protocol)',
+    make: () =>
+      hostBacked(
+        new EchoRuntime({
+          script: [
+            { kind: 'text', text: 'hello' },
+            { kind: 'usage', inputTokens: 12, outputTokens: 7, cost: 0.003 },
+            { kind: 'stop', stop: { kind: 'end_turn' } },
+          ],
+        }),
+      ),
+    makeGated: () =>
+      hostBacked(
+        new EchoRuntime({
+          script: [
+            { kind: 'tool', tool: 'read', args: { file_path: 'a.ts' } },
+            { kind: 'stop', stop: { kind: 'end_turn' } },
+          ],
+        }),
+      ),
+    expectsResumeToken: null,
   },
 ];
 

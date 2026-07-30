@@ -4,16 +4,11 @@
  * Owns the app lifecycle, one window, and the `SessionManager` that everything
  * else is a client of.
  *
- * ## Divergence from §8, recorded rather than smoothed over
- *
- * §8 places `AgentHost` in a local `utilityProcess`, one per workspace, so a
- * wedged tool subprocess or a runaway adapter cannot take the app down with it.
- * Phase 1 runs agent loops **in main**. The reason is sequencing, not
- * disagreement: the process split is only meaningful once the loop is proven,
- * and moving it later is a transport change behind `AgentRuntime` rather than a
- * redesign. What this costs today is real and should not be forgotten — a
- * crashing adapter takes the window with it, and a synchronous stall in a tool
- * freezes the UI. §16 carries the row.
+ * Agent loops run in a separate `utilityProcess` per §8 — main holds session
+ * state, the log, and the permission gate, and never runs an adapter. The
+ * registry it hands `SessionManager` contains façades over the host's control
+ * protocol, which is why the manager needs no knowledge that a process boundary
+ * exists at all.
  */
 
 import { app, BrowserWindow, shell } from 'electron';
@@ -21,16 +16,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { SessionManager } from './sessionManager.js';
 import { RuntimeRegistry } from './runtime/registry.js';
-import { LoomHarnessRuntime } from './runtime/runtimes/loomHarness.js';
-import { EchoRuntime } from './runtime/runtimes/echo.js';
-import {
-  OpenAiCompatibleProvider,
-  OPENAI_COMPATIBLE_PROVIDER_ID,
-} from './runtime/providers/openaiCompatible.js';
 import { openWorkspace } from './store/identity.js';
 import { registerIpc } from './ipc/register.js';
+import { HostSupervisor } from './host/supervisor.js';
+import { spawnAgentHost } from './host/utilityHost.js';
 import type { RuntimeInfo, WorkspaceInfo } from '@shared/ipc/contract.js';
-import type { ModelEndpoint } from '@shared/types/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -46,67 +36,70 @@ if (process.platform === 'win32') app.setAppUserModelId('dev.loom.app');
 
 let manager: SessionManager | null = null;
 let ipc: { dispose: () => void } | null = null;
-let registry: RuntimeRegistry | null = null;
+let supervisor: HostSupervisor | null = null;
 
 /**
- * The local OpenAI-compatible endpoint (§3.8).
+ * What the agent host offers, mirrored here because main advertises it to the
+ * renderer before any host has been spawned.
  *
- * `app-local` locality, `dataHandling.provider: 'local'`: nothing leaves the
- * machine, which is the honest classification for a server on loopback and the
- * reason this path needs no credentials at all. Overridable so a user pointing
- * at vLLM or LM Studio on another port does not need a rebuild.
+ * The host's `ready` handshake reports the ids it actually registered, and
+ * `loadWorkspace` reconciles the two: anything listed here but absent there is
+ * dropped rather than offered and then failing at `addAgent`.
  */
-function localEndpoint(): ModelEndpoint {
-  return {
-    endpointId: 'local-ollama',
-    providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
-    baseUrl: process.env['LOOM_MODEL_BASE_URL'] ?? 'http://127.0.0.1:11434/v1',
-    auth: { kind: 'none' },
-    locality: 'app-local',
-    dataHandling: { provider: 'local' },
-  };
-}
+const HOST_RUNTIMES = [
+  {
+    id: 'loom-harness',
+    label: 'Loom harness (local model)',
+    version: '0.0.1',
+    requiresModel: true,
+  },
+  { id: 'echo', label: 'Echo (no model)', version: '0.0.1', requiresModel: false },
+];
 
-function buildRegistry(): RuntimeRegistry {
-  const reg = new RuntimeRegistry();
-
-  // LoomHarness over a local model: the path that works on a fresh machine with
-  // no credentials configured, which is why it is the default offered.
-  reg.register(
-    new LoomHarnessRuntime({
-      provider: new OpenAiCompatibleProvider(),
-      endpoint: localEndpoint(),
-    }),
-    { label: 'Loom harness (local model)', requiresModel: true },
-  );
-
-  // Registered because a UI with no available runtime is untestable, and because
-  // it exercises the shell without a model server running at all.
-  reg.register(new EchoRuntime(), { label: 'Echo (no model)', requiresModel: false });
-
-  return reg;
-}
-
-function runtimeInfos(reg: RuntimeRegistry): RuntimeInfo[] {
-  return reg.list().map((d) => {
-    const runtime = reg.get(d.id);
-    return {
-      id: d.id,
-      version: runtime.version,
-      requiresModel: d.requiresModel,
-      ...(runtime.toolVersion !== undefined ? { toolVersion: runtime.toolVersion } : {}),
-    };
-  });
-}
+let advertised: RuntimeInfo[] = [];
 
 async function loadWorkspace(root: string): Promise<WorkspaceInfo> {
   const identity = await openWorkspace(root);
-  registry ??= buildRegistry();
+
+  // One host per workspace (§8). Replacing it on a workspace change matters:
+  // tools resolve paths against the host's own workspace root.
+  supervisor?.dispose();
+  supervisor = new HostSupervisor({
+    spawn: () => spawnAgentHost({ entry: join(HERE, 'agentHost.js'), workspaceRoot: root }),
+    runtimes: HOST_RUNTIMES,
+    onRestart: (attempt, reason) => {
+      // Logged rather than surfaced: an open turn already failed with a
+      // `transport` stop, which retries and rehydrates (§8).
+      process.stderr.write(`agent host restarted (attempt ${attempt}): ${reason ?? 'unknown'}\n`);
+    },
+  });
+
+  const registry = new RuntimeRegistry();
+  for (const entry of supervisor.runtimes()) {
+    registry.register(entry.runtime, { label: entry.label, requiresModel: entry.requiresModel });
+  }
+
   manager = new SessionManager({
     registry,
     workspaceRoot: root,
     instanceId: identity.instanceId,
   });
+
+  // Reconcile against what the host really has. A failure here means the host
+  // could not start at all, which must not stop the window from opening — the
+  // UI shows no runtimes and the transcript of any existing session still loads.
+  try {
+    const ids = new Set(await supervisor.advertised());
+    advertised = HOST_RUNTIMES.filter((r) => ids.has(r.id)).map((r) => ({
+      id: r.id,
+      version: r.version,
+      requiresModel: r.requiresModel,
+    }));
+  } catch (err) {
+    advertised = [];
+    process.stderr.write(`agent host unavailable: ${String(err)}\n`);
+  }
+
   return { root, lineageId: identity.lineageId, instanceId: identity.instanceId };
 }
 
@@ -151,29 +144,31 @@ async function createWindow(): Promise<void> {
   }
 }
 
-app.whenReady().then(async () => {
-  const workspace = await loadWorkspace(app.getPath('userData'));
-
+/**
+ * Point the IPC layer at the current manager.
+ *
+ * Re-registered wholesale on a workspace change rather than mutated, because a
+ * new workspace means a new manager, a new host, and a new instance identity
+ * (§5.2) — the push-channel subscriptions are bound to the manager they were
+ * created for, and leaving them attached would forward the old workspace's
+ * events into a window now showing a different one.
+ */
+async function wireIpc(workspace: WorkspaceInfo): Promise<void> {
+  ipc?.dispose();
   ipc = registerIpc({
     manager: manager!,
     workspace,
-    runtimes: () => runtimeInfos(registry!),
+    runtimes: () => advertised,
     onChooseWorkspace: async (root) => {
-      // A new workspace means a new manager: session ids, the log, and the
-      // instance identity are all per-workspace (§5.2). Reusing the old manager
-      // would attribute new sessions to the previous workspace's instance.
-      ipc?.dispose();
       const next = await loadWorkspace(root);
-      ipc = registerIpc({
-        manager: manager!,
-        workspace: next,
-        runtimes: () => runtimeInfos(registry!),
-        onChooseWorkspace: async () => next,
-      });
+      await wireIpc(next);
       return next;
     },
   });
+}
 
+app.whenReady().then(async () => {
+  await wireIpc(await loadWorkspace(app.getPath('userData')));
   await createWindow();
 
   app.on('activate', () => {
@@ -189,4 +184,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => ipc?.dispose());
+app.on('before-quit', () => {
+  ipc?.dispose();
+  // Kill the host explicitly. A utilityProcess is not guaranteed to die with its
+  // parent, and an orphaned host holding a model connection is invisible.
+  supervisor?.dispose();
+});
