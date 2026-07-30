@@ -20,7 +20,7 @@ export default defineConfig({
   build: {
     outDir: resolve(here, 'dist/renderer'),
     emptyOutDir: true,
-    target: 'chrome130', // Electron 33's Chromium; no point down-levelling
+    target: 'chrome150', // Electron 43's Chromium; no point down-levelling
     sourcemap: true,
   },
   plugins: [react(), tailwindcss()],

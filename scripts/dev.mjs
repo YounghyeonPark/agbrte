@@ -23,7 +23,7 @@ const alias = {
 const shared = {
   bundle: true,
   platform: 'node',
-  target: 'node20',
+  target: 'node24', // matches Electron 43's bundled Node; see scripts/build.mjs
   sourcemap: true,
   logLevel: 'warning',
   external: ['electron'],

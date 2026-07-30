@@ -29,7 +29,10 @@ const alias = {
 const shared = {
   bundle: true,
   platform: 'node',
-  target: 'node20', // Electron 33 bundles Node 20.18
+  // Electron 43 bundles Node 24.18. Kept in step with the installed Electron
+  // rather than pinned low: down-levelling costs output size and hides syntax
+  // the runtime supports, and a target *above* the runtime fails at load.
+  target: 'node24',
   sourcemap: true,
   logLevel: 'info',
   // Electron is provided by the runtime. Bundling it produces a build that
