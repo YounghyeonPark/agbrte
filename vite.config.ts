@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -22,7 +23,7 @@ export default defineConfig({
     target: 'chrome130', // Electron 33's Chromium; no point down-levelling
     sourcemap: true,
   },
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: { '@shared': resolve(here, 'src/shared') },
   },

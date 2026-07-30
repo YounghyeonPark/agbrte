@@ -168,7 +168,13 @@ async function wireIpc(workspace: WorkspaceInfo): Promise<void> {
 }
 
 app.whenReady().then(async () => {
-  await wireIpc(await loadWorkspace(app.getPath('userData')));
+  // `LOOM_WORKSPACE_ROOT` lets a test — or a developer — start against a known
+  // folder instead of the profile directory. The default is `userData` rather
+  // than cwd so a fresh install has somewhere valid to put `.devagents/` before
+  // anyone has chosen a real workspace.
+  const root = process.env['LOOM_WORKSPACE_ROOT'] ?? app.getPath('userData');
+
+  await wireIpc(await loadWorkspace(root));
   await createWindow();
 
   app.on('activate', () => {
