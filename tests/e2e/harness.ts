@@ -10,10 +10,20 @@ import { _electron as electron, type ElectronApplication, type Page } from '@pla
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 
 export const ROOT = resolve(import.meta.dirname, '../..');
-const ELECTRON = join(ROOT, 'node_modules/electron/dist/electron.exe');
+
+/**
+ * Path to the Electron binary, from the package rather than assembled by hand.
+ *
+ * The `electron` package's main export *is* the path string, but importing it
+ * normally gives the Electron API types instead, so this goes through `require`.
+ * Hardcoding `node_modules/electron/dist/electron.exe` worked and was wrong: it
+ * is Windows-only, and on macOS the binary lives inside `Electron.app`.
+ */
+const ELECTRON = createRequire(import.meta.url)('electron') as unknown as string;
 
 export interface LaunchedApp {
   app: ElectronApplication;
