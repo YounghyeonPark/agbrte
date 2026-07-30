@@ -86,16 +86,48 @@ export async function makeRepo(): Promise<string> {
   return dir;
 }
 
+const OLLAMA = 'http://127.0.0.1:11434';
+
 /** Whether a local OpenAI-compatible server has the model we need. */
 export async function modelAvailable(model: string): Promise<boolean> {
   try {
-    const response = await fetch('http://127.0.0.1:11434/api/tags', {
-      signal: AbortSignal.timeout(3000),
-    });
+    const response = await fetch(`${OLLAMA}/api/tags`, { signal: AbortSignal.timeout(3000) });
     if (!response.ok) return false;
     const body = (await response.json()) as { models?: Array<{ name?: string }> };
     return (body.models ?? []).some((m) => m.name === model);
   } catch {
     return false;
   }
+}
+
+/**
+ * Load the model into memory before the tests that depend on it.
+ *
+ * Without this, whichever live test ran first absorbed a cold start — Ollama
+ * reading ~4.7 GB from disk — and intermittently blew a 150 s timeout, while
+ * every later test finished in about four seconds. The tests were flaky in a way
+ * that had nothing to do with the app: the failure said "the file was never
+ * written" when the truth was "the model had not finished loading".
+ *
+ * `keep_alive` holds it resident for the rest of the run, past Ollama's default
+ * five-minute idle unload. One generated token is enough to force the load.
+ */
+export async function warmModel(model: string): Promise<void> {
+  const response = await fetch(`${OLLAMA}/api/generate`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      prompt: 'hi',
+      stream: false,
+      keep_alive: '15m',
+      options: { num_predict: 1 },
+    }),
+    // Generous: this is the one place a cold start is expected and acceptable.
+    signal: AbortSignal.timeout(600_000),
+  });
+  if (!response.ok) {
+    throw new Error(`could not warm ${model}: HTTP ${response.status}`);
+  }
+  await response.json();
 }

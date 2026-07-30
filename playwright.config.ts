@@ -14,9 +14,13 @@ import { defineConfig } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests/e2e',
-  // The live test waits on a 7B model generating a tool call on CPU.
+  // A live test waits on a 7B model generating a tool call.
   timeout: 180_000,
   expect: { timeout: 15_000 },
+  // The model is loaded once in a `beforeAll`, and a cold start can be minutes
+  // of disk read. Without headroom here the hook times out and reports every
+  // test in the group as failed, which hides that only the load was slow.
+  globalTimeout: 20 * 60_000,
   workers: 1,
   fullyParallel: false,
   reporter: [['list']],
