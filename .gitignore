@@ -18,3 +18,7 @@ sandbox/
 
 # Build output (esbuild → dist/main, vite → dist/renderer)
 dist/
+
+# Playwright run artifacts (traces, screenshots, last-run state)
+test-results/
+playwright-report/
