@@ -29,6 +29,8 @@ import { RuntimeRegistry } from '../main/runtime/registry.js';
 import { EchoRuntime } from '../main/runtime/runtimes/echo.js';
 import { openWorkspace } from '../main/store/identity.js';
 import { registerIpc } from '../main/ipc/register.js';
+import { HostSupervisor } from '../main/host/supervisor.js';
+import { spawnAgentHost } from '../main/host/utilityHost.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -208,6 +210,15 @@ async function main(): Promise<number> {
 
     ipc.dispose();
     win.destroy();
+
+    // 8. The agent host really is a separate process (§8).
+    //
+    //    Everything above ran the loop in-process. The in-memory channel tests
+    //    cover the protocol thoroughly, but they cannot catch a utilityProcess
+    //    that fails to boot — a bad entry path, an import that resolves in main
+    //    but not in a child, a missing `parentPort`. All of those present as a
+    //    host that never sends `ready`, which is indistinguishable from a hang.
+    await hostChecks(root);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -221,6 +232,74 @@ async function main(): Promise<number> {
   }
   report(`\n${checks.length - failed.length}/${checks.length} checks passed`);
   return failed.length === 0 ? 0 : 1;
+}
+
+/** Spawn a real agent host and run one turn through it. */
+async function hostChecks(root: string): Promise<void> {
+  const supervisor = new HostSupervisor({
+    spawn: () => spawnAgentHost({ entry: join(HERE, '../main/agentHost.js'), workspaceRoot: root }),
+    runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false }],
+  });
+
+  try {
+    const ready = await Promise.race([
+      supervisor.advertised(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('host never sent ready within 10s')), 10_000),
+      ),
+    ]);
+    record('agent host process starts and handshakes', ready.includes('echo'), ready);
+
+    const entry = supervisor.runtimes().find((r) => r.runtime.id === 'echo');
+    const runtime = entry?.runtime;
+    if (runtime === undefined) {
+      record('hosted echo runtime is registered', false, 'missing');
+      return;
+    }
+
+    const spec = {
+      agentId: 'agent_smoke' as never,
+      role: 'lead' as const,
+      runtimeId: 'echo',
+      auth: { kind: 'none' } as const,
+      toolPolicy: { rules: [], defaultAction: 'ask' as const },
+      limits: {},
+      workspacePath: root,
+    };
+
+    const caps = await runtime.capabilities(spec);
+    record('capabilities cross the process boundary', caps.contextWindow > 0, caps.contextWindow);
+
+    const handle = await runtime.start(spec, {
+      // The host's echo runs its default script, which makes no tool call, so
+      // there is nothing to assert about the gate here. Deliberately not
+      // asserted rather than asserted vacuously: the ask/answer round trip is
+      // covered properly in tests/agentHost.test.ts, and a check that cannot
+      // fail reads as coverage while providing none.
+      requestPermission: async () => ({ result: 'allow', scope: 'once' }),
+      reportProgress: () => undefined,
+      abortSignal: new AbortController().signal,
+    });
+
+    const seen: string[] = [];
+    const drained = (async () => {
+      for await (const event of handle.events) seen.push(event.type);
+    })();
+
+    await handle.send({ content: [{ type: 'text', text: 'hello from the smoke check' }] });
+    await Promise.race([
+      drained,
+      new Promise((r) => setTimeout(r, 5_000)), // a hung host must not hang the check
+    ]);
+
+    // The default echo script ends the turn, so a real event sequence having
+    // crossed two process boundaries is the proof that §8's split works.
+    record('a turn runs in the host and streams back', seen.includes('stopped'), seen);
+  } catch (err) {
+    record('agent host process starts and handshakes', false, String(err));
+  } finally {
+    supervisor.dispose();
+  }
 }
 
 /**
