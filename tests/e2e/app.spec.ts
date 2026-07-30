@@ -14,7 +14,7 @@
 import { expect, test } from '@playwright/test';
 import { readFile, rm, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { launch, makeRepo, modelAvailable } from './harness.js';
+import { launch, makeRepo, modelAvailable, warmModel } from './harness.js';
 import { addAgent, createSession, openSession, runtimeOptions, send } from './actions.js';
 
 const MODEL = 'qwen2.5:7b';
@@ -121,6 +121,18 @@ test.describe('the shell', () => {
  * one is absent. Both are slow: a 7B model takes tens of seconds per turn cold.
  */
 test.describe('a real model against a real repo', () => {
+  /**
+   * Load the model once, before any test needs it.
+   *
+   * A cold start is tens of seconds to minutes of disk read, and absorbing it
+   * inside a test made whichever ran first fail intermittently with "the file
+   * was never written" — a message about the app, describing a fact about the
+   * machine. Warming separately means a failure below is the app's fault.
+   */
+  test.beforeAll(async () => {
+    if (await modelAvailable(MODEL)) await warmModel(MODEL);
+  });
+
   test('writes a file, with no prompt because §13 allows it', async () => {
     test.skip(
       !(await modelAvailable(MODEL)),
