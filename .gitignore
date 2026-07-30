@@ -1,0 +1,17 @@
+node_modules/
+dist/
+out/
+release/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+.vite/
+.tsbuildinfo
+*.tsbuildinfo
+.env
+.env.local
+
+# Scratch workspace the CLI driver writes into during live runs. Contains a real
+# `.devagents` session store — derived state, never source.
+sandbox/
