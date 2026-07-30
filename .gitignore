@@ -15,3 +15,6 @@ Thumbs.db
 # Scratch workspace the CLI driver writes into during live runs. Contains a real
 # `.devagents` session store — derived state, never source.
 sandbox/
+
+# Build output (esbuild → dist/main, vite → dist/renderer)
+dist/

@@ -1202,6 +1202,14 @@ export interface LoomApi {
 
 **Event delivery.** Batches ≤50 ms or ≤64 events; the renderer acks by `seq`; main pauses forwarding above a watermark while continuing to persist. The renderer holds a **windowed projection** over the log, never an unbounded array — a week-long session must not become a 2 GB heap. Because the renderer subscribes to the **mirror**, remote and local sessions are indistinguishable to the UI and a flaky link degrades liveness without breaking the view.
 
+**A batch carries its `seq` range, and a paused forwarder says so.** `EventBatch` has `firstSeq`, `lastSeq`, and `paused`, because a renderer that infers contiguity from array length renders a plausible, wrong transcript the first time a pause drops events. `paused: true` means "there is a hole, refetch with `sessions.since`" — not "forwarding has stopped". Backpressure **drops rather than buffers**: buffering is how a slow renderer becomes main's memory leak, and the log already holds every event.
+
+Outstanding work is tracked as `forwardedSeq − ackedSeq`, one monotonic pair. Keeping a separate count of forwarded events alongside acked sequence numbers means holding two numbers in agreement, and they stop agreeing precisely when a pause drops events — the tally reports N outstanding while the renderer has already acked past them.
+
+**What is implemented as of Phase 1.** `LoomApi` above is the full surface; the shipped preload exposes the subset Phase 1 needs — `workspace`, `runtimes`, `sessions` (list/create/listOnDisk/resume/snapshot/addAgent/send/interrupt/since), `permissions`, and the three push channels. `targets`, `capture`, `speech`, model management, and the hierarchy calls are **absent rather than present and throwing**, which is deliberate: a renderer cannot feature-detect against a method that exists and rejects at runtime.
+
+`sessions.resume` and `sessions.listOnDisk` are not in the §7 listing above but are load-bearing for Phase 1 — without them a session that exists on disk cannot be reattached, and "the transcript survives an app restart" is untestable. Reattach re-runs admission rather than replaying the capabilities recorded in `agent.created`: that recording is provenance, and §3.2 puts capabilities on adapter + model + installed tool version, any of which can change while the app is closed.
+
 ---
 
 ## 8. Process model and scheduling
@@ -1215,6 +1223,8 @@ export interface LoomApi {
 | Indexer | local `utilityProcess` | 1 | SQLite indexing, search, scans |
 | `loom-agent-host` | remote | 1 per remote workspace | agent loops, tools, log writes, leases |
 | agent worker | with its host | 1 per running agent | one agent's loop, or one CLI subprocess |
+
+**Not yet true as of Phase 1: agent loops run in main.** The table above is the target, and the split is real work that has not happened. What it costs today, stated plainly: a crashing adapter takes the window down with it, and a synchronous stall inside a tool freezes the UI. The reason for the ordering is that the process boundary is only meaningful once the loop it isolates is proven, and moving it later is a change behind `AgentRuntime` rather than a redesign — the same seam that lets an adapter run on a remote host. §16 carries the row.
 
 Workers are separate processes because loops are long, CPU-bursty, and prone to hanging on a wedged subprocess. ~30–50 MB each, so concurrency is capped per host (default `min(8, cores − 2)`) with FIFO queueing above the cap. **Caps are per host** — eight local plus eight on the build box is sixteen running agents, which is the point of remote execution.
 
@@ -1492,6 +1502,8 @@ Each endpoint records provider, region, and retention posture (`dataHandling`, �
 **Phase 1 — Skeleton.** Electron shell, typed IPC, `AgentRuntime`, `claude-agent-sdk` adapter, `AgentHost` as a local `utilityProcess`, `.devagents/` layout, `events.jsonl` + checkpoints, single-session text-only view.
 *Done when:* a text-only session edits a real repo and the transcript survives an app restart.
 
+*Status.* Shell, typed IPC with batching and backpressure, `AgentRuntime` with three adapters, `.devagents/` layout, log + checkpoints, and the single-session view are in. Reattach-from-disk is implemented and tested (`tests/resumeSession.test.ts`), so the second half of the criterion holds under test; the first half — a real repo edited through the UI — needs a human at the keyboard, since no automated check here drives a model against a working tree. **`AgentHost` as a `utilityProcess` is not done**; loops run in main (§8, §16). Two §14 choices are also outstanding: Tailwind + Radix (the renderer is hand-written CSS) and Playwright (`npm run smoke` stands in).
+
 **Phase 2 — Persistence hardening (R3).** Lineage/instance identity, `ProjectResolver` with search + relocate UI, `PathCodec`, content-addressed attachments, `rehydrate()`, two-tier resume.
 *Done when:* you move a workspace to a new drive with the app closed, reopen, and an agent resumes mid-task with context intact — **verified with the native resume token deliberately invalidated**, so the durable path is what's under test.
 
@@ -1526,6 +1538,8 @@ Each endpoint records provider, region, and retention posture (`dataHandling`, �
 | **Coarse gating presented as real gating** | user believes a CLI agent is sandboxed when it isn't | `permissionFidelity` is a required capability, badged in the UI; `all-or-nothing` forced into worktree/container at creation |
 | **A §13 row that is not compiled into the shipped defaults** | network egress and `git push` reached only `defaultAction`, so one `Allow for this session` grant on a `bash` call took both from `ask` to allowed | **Closed.** Both defaults now carry explicit `ask` rules, and a test grants `bash` for the session then asserts `git push` and `curl` still ask. The residual risk moved rather than vanished: the `bash` rules are globs, defeated by indirection, so the sandbox remains the real egress boundary — see the row below |
 | **Pattern rules mistaken for an egress boundary** | someone adds `nc` to the egress list and believes outbound traffic is now gated, when any interpreter with a socket bypasses it | §13 states the bias explicitly (over-ask, never claim completeness) and names the sandbox as the control. The same caveat is written at the `EGRESS_COMMANDS` definition, next to the list someone would extend |
+| **Agent loops in the main process** | a crashing adapter takes the window with it, and a wedged tool freezes the UI — the exact failure §8's `utilityProcess` split exists to prevent | **Open in code as of Phase 1.** Recorded at the top of `src/main/main.ts` and in §8 rather than left for someone to discover from a hang. The move is behind `AgentRuntime`, so it is a relocation, not a redesign |
+| **A shell that boots but is wired to nothing** | `contextBridge` silently exposes nothing when a preload is built as ESM instead of CJS, and every button becomes a no-op with no error anywhere | `npm run smoke` drives the real preload through a real window: asserts the exposed key set, that no Node global leaked, an invoke round trip, a full turn arriving over the push channel, and that an error keeps its message. Eleven checks, exit code, no Playwright needed yet |
 | **A pattern list mistaken for the escalation boundary** | someone hardens the `sudo` regex and believes the job is done | §13 states the deny list is defense in depth; the architectural protection is running as the connecting user and never invoking `sudo`. A test asserts the `S=sudo; $S id` gap deliberately so the incompleteness cannot read as an oversight |
 | Schemas that work on frontier models break smaller ones | "any model" works for one model | canonical schemas + tested degrader; text-protocol codec with bounded repair; loss reports surfaced |
 | Capability self-reports are wrong | confusing mid-run failures | prefer init-event self-description; always probe `openai-compatible`; cache per endpoint+model; re-probe on model-list change |

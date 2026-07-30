@@ -1,0 +1,77 @@
+/**
+ * Preload (DESIGN.md §7).
+ *
+ * The entire privileged surface the renderer gets. `contextBridge` deep-clones
+ * across the boundary, so nothing here can hand the renderer a live reference
+ * into main — only data and these functions.
+ *
+ * Two properties worth stating because they are easy to lose in a later edit:
+ *
+ *  - **`ipcRenderer` is never exposed, directly or wrapped.** Exposing even a
+ *    constrained `invoke(channel, ...)` would let the renderer reach any channel
+ *    main registers, which defeats the point of enumerating them.
+ *
+ *  - **Every subscription returns an unsubscribe.** A React effect that cannot
+ *    remove its listener leaks one per remount, and the symptom is duplicated
+ *    events rather than a crash — which is much harder to notice.
+ *
+ * Built as CommonJS: a sandboxed preload is not an ES module.
+ */
+
+import { contextBridge, ipcRenderer } from 'electron';
+import {
+  CH,
+  PUSH,
+  type AddAgentRequest,
+  type CreateSessionRequest,
+  type EventBatch,
+  type LoomApi,
+  type SendRequest,
+} from '../shared/ipc/contract.js';
+import type { PermissionDecision, PermissionRequest, Session } from '../shared/types/index.js';
+
+/** Wire one push channel to a callback, returning its unsubscribe. */
+function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
+  const listener = (_e: unknown, payload: T): void => cb(payload);
+  ipcRenderer.on(channel, listener);
+  return () => {
+    ipcRenderer.removeListener(channel, listener);
+  };
+}
+
+const api: LoomApi = {
+  workspace: {
+    current: () => ipcRenderer.invoke(CH.workspaceCurrent),
+    choose: () => ipcRenderer.invoke(CH.workspaceChoose),
+  },
+  runtimes: {
+    list: () => ipcRenderer.invoke(CH.runtimesList),
+  },
+  sessions: {
+    list: () => ipcRenderer.invoke(CH.sessionsList),
+    create: (r: CreateSessionRequest) => ipcRenderer.invoke(CH.sessionsCreate, r),
+    listOnDisk: () => ipcRenderer.invoke(CH.sessionsListOnDisk),
+    resume: (sessionId: string) => ipcRenderer.invoke(CH.sessionsResume, sessionId),
+    snapshot: (sessionId: string, windowSize?: number) =>
+      ipcRenderer.invoke(CH.sessionsSnapshot, sessionId, windowSize),
+    addAgent: (r: AddAgentRequest) => ipcRenderer.invoke(CH.sessionsAddAgent, r),
+    send: (r: SendRequest) => ipcRenderer.invoke(CH.sessionsSend, r),
+    interrupt: (sessionId: string, agentId?: string) =>
+      ipcRenderer.invoke(CH.sessionsInterrupt, sessionId, agentId),
+    since: (sessionId: string, fromSeq: number) =>
+      ipcRenderer.invoke(CH.sessionsSince, sessionId, fromSeq),
+  },
+  permissions: {
+    pending: () => ipcRenderer.invoke(CH.permissionsPending),
+    respond: (requestId: string, decision: PermissionDecision) =>
+      ipcRenderer.invoke(CH.permissionsRespond, requestId, decision),
+  },
+  on: {
+    events: (cb: (b: EventBatch) => void) => subscribe(PUSH.events, cb),
+    session: (cb: (s: Session) => void) => subscribe(PUSH.session, cb),
+    permission: (cb: (r: PermissionRequest) => void) => subscribe(PUSH.permission, cb),
+  },
+  ack: (sessionId: string, seq: number) => ipcRenderer.send(CH.ack, sessionId, seq),
+};
+
+contextBridge.exposeInMainWorld('loom', api);

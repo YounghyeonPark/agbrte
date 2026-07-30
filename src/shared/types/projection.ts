@@ -58,6 +58,9 @@ export interface ProjectedAgent {
   model?: ModelRef;
   isolation: 'shared' | 'worktree';
   permissionFidelity: PermissionFidelity;
+  /** Carried so a reattached session rebuilds the spec it actually ran under. */
+  systemPrompt?: string;
+  limits?: { maxTurns?: number; maxToolCalls?: number; tokenCeiling?: number; wallClockMs?: number };
 }
 
 export interface SessionProjection {

@@ -124,9 +124,27 @@ export class SessionStore {
     return this.log.nextSeq;
   }
 
+  /**
+   * Notified after each durable append, for live forwarding to the UI (§7).
+   *
+   * A plain callback rather than an EventEmitter, and it fires *after* the
+   * write, both deliberately: an emitter invites listeners that outlive the
+   * store, and firing before the write would let the renderer display an event
+   * that a crash then loses — the log stays the record of what happened.
+   *
+   * Anything this throws is swallowed. A subscriber's bug must not fail a
+   * durable write.
+   */
+  onAppend: ((e: LoomEvent) => void) | null = null;
+
   async append(body: EventBody, meta: AppendMeta = {}): Promise<LoomEvent> {
     const event = await this.log.append(body, meta);
     this.sinceCheckpoint += 1;
+    try {
+      this.onAppend?.(event);
+    } catch {
+      // Forwarding is best-effort; the append already succeeded.
+    }
     return event;
   }
 
