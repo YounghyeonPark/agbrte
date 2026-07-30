@@ -26,7 +26,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",
-    "electron": "^33.4.11",
+    "electron": "^43.2.0",
     "esbuild": "^0.25.12",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.1",
@@ -36,9 +36,9 @@
   },
   "allowScripts": {
     "esbuild@0.21.5": true,
-    "electron@33.4.11": true,
     "esbuild@0.28.1": true,
-    "esbuild@0.25.12": true
+    "esbuild@0.25.12": true,
+    "electron@43.2.0": true
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.220",
