@@ -16,15 +16,19 @@
     "smoke": "node scripts/build.mjs --smoke && vite build && node scripts/smoke.mjs",
     "dev": "node scripts/dev.mjs",
     "start": "npm run build && node scripts/launch.mjs",
-    "loom": "tsx src/cli/run.ts"
+    "loom": "tsx src/cli/run.ts",
+    "e2e": "npm run build && playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.10.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "^33.4.11",
-    "esbuild": "^0.24.2",
+    "esbuild": "^0.25.12",
+    "tailwindcss": "^4.3.3",
     "tsx": "^4.23.1",
     "typescript": "^5.7.2",
     "vite": "^6.4.3",
@@ -33,12 +37,12 @@
   "allowScripts": {
     "esbuild@0.21.5": true,
     "electron@33.4.11": true,
-    "esbuild@0.24.2": true,
     "esbuild@0.28.1": true,
     "esbuild@0.25.12": true
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.220",
+    "@radix-ui/react-select": "^2.3.7",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "zustand": "^5.0.14"

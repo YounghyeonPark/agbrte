@@ -1503,6 +1503,10 @@ Each endpoint records provider, region, and retention posture (`dataHandling`, �
 | Packaging | electron-builder | signed installers, auto-update |
 | Tests | Vitest + Playwright (`_electron`) + Docker sshd fixture + **adapter conformance suite** | remote, CLI, and provider paths must run against real endpoints, not mocks |
 
+**Three test layers, and what each is for.** `npm test` is Vitest over the headless core — no Electron, no window, so it runs in a second and is the one that gets run constantly. `npm run smoke` boots a real Electron window, a real preload, and a real agent host process to assert the wiring exists at all; it catches the class of failure where the app opens and every button silently does nothing. `npm run e2e` is Playwright driving the built app as a user, and is the only layer that can verify §15's acceptance criteria. The Docker sshd fixture arrives with Phase 5.
+
+Live-model tests **skip loudly** when no local server is present rather than passing. A criterion whose test was skipped is not a criterion that holds, and a green run that proved nothing is worse than a red one.
+
 ---
 
 ## 15. Build order
@@ -1510,9 +1514,18 @@ Each endpoint records provider, region, and retention posture (`dataHandling`, �
 **Phase 1 — Skeleton.** Electron shell, typed IPC, `AgentRuntime`, `claude-agent-sdk` adapter, `AgentHost` as a local `utilityProcess`, `.devagents/` layout, `events.jsonl` + checkpoints, single-session text-only view.
 *Done when:* a text-only session edits a real repo and the transcript survives an app restart.
 
-*Status.* Everything in the scope line is implemented, including `AgentHost` as a local `utilityProcess` (§8). Reattach-from-disk is tested (`tests/resumeSession.test.ts`), so the "survives an app restart" half of the criterion holds under test. The other half — a real repo edited through the UI — **has not been verified**: no automated check here drives a model against a working tree, so it needs a human at the keyboard with a local model server running.
+*Status.* **Complete, both halves verified end to end.** `npm run e2e` drives the built app with Playwright's `_electron`: a session is created through the UI, an agent added, a turn sent, then the app is **closed and relaunched as a new process against the same folder** and the transcript is still there and still usable. The "edits a real repo" half runs a local `qwen2.5:7b` through the agent host against a `git init`-ed temp directory and asserts the file it wrote exists on disk.
 
-Two §14 choices remain outstanding and are visible in the code: Tailwind + Radix (the renderer is hand-written CSS) and Playwright (`npm run smoke` stands in with 14 checks over a real window and a real host process).
+Two findings from writing those tests, both of which corrected a wrong assumption rather than a bug:
+
+- **An in-workspace write raises no prompt, by design.** The first version of the test waited for a permission dialog before the write and timed out. §13's defaults make `write` inside the workspace `allow`, so requiring approval there would have meant the policy was *not* applied. The test now asserts the prompt's **absence** together with the logged `allow via policy` decision. The gate still runs and still records — which is what §13 requires, and is not the same as prompting.
+- **`bash` is the only tool in this suite that reaches a human**, since it has no allow rule and falls to `defaultAction: 'ask'`. That test denies rather than allows: refusal is the security-relevant direction, and a gate that only works when you say yes is not a gate.
+
+The live tests **skip loudly** without a local model rather than passing vacuously, and the model-dependent ones need blunt phrasing — a softer instruction made this model answer in prose instead of calling the tool at all, which is a property of a 7B model and worth knowing before treating a failure as a bug.
+
+§14's UI stack is now in: Tailwind v4 (configured in CSS, with the palette in `@theme` so `bg-panel` and `text-state-paused` are real utilities) and Radix for the runtime select, where a native `<select>` on Windows draws an OS popup that ignores the palette. Radix is used *only* there — the permission prompt stays inline, because it appears mid-run and a modal that steals focus is the wrong shape for that, so the focus-management Radix provides has nothing to protect.
+
+Tests select on `data-testid`, never a styling class. That rule was earned: converting to Tailwind removed the `.app` class the harness waited on, and a pure restyle reported itself as five failing tests.
 
 **Phase 2 — Persistence hardening (R3).** Lineage/instance identity, `ProjectResolver` with search + relocate UI, `PathCodec`, content-addressed attachments, `rehydrate()`, two-tier resume.
 *Done when:* you move a workspace to a new drive with the app closed, reopen, and an agent resumes mid-task with context intact — **verified with the native resume token deliberately invalidated**, so the durable path is what's under test.
