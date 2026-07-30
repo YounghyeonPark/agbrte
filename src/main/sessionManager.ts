@@ -13,6 +13,8 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   isPaused,
   newAgentId,
@@ -40,7 +42,8 @@ import {
   type AgentId,
   type SessionId,
 } from '@shared/types/index.js';
-import { SessionStore } from './store/sessionStore.js';
+import { SessionStore, type SessionMeta } from './store/sessionStore.js';
+import { workspaceLayout } from './store/layout.js';
 import { rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import type { Isolation, RoleRequirements, RuntimeRegistry } from './runtime/registry.js';
@@ -140,6 +143,11 @@ export class SessionManager extends EventEmitter {
       peerSessionIds: [],
     };
 
+    // Live forwarding for the UI (§7). Wired here rather than from the IPC
+    // layer so exactly one place knows which session a store belongs to, and
+    // the renderer never receives an event it cannot attribute.
+    store.onAppend = (event) => this.emit('event', sessionId, event);
+
     this.sessions.set(sessionId, {
       session,
       store,
@@ -227,6 +235,10 @@ export class SessionManager extends EventEmitter {
         permissionFidelity: admission.capabilities.permissionFidelity,
         capabilities: admission.capabilities,
         ...(spec.model !== undefined ? { model: spec.model } : {}),
+        // Persisted so `resumeSession` rebuilds this exact spec rather than a
+        // default-shaped lookalike.
+        ...(spec.systemPrompt !== undefined ? { systemPrompt: spec.systemPrompt } : {}),
+        ...(Object.keys(spec.limits).length > 0 ? { limits: spec.limits } : {}),
       },
       { agentId: spec.agentId, origin: this.originFor(spec) },
     );
@@ -572,6 +584,141 @@ export class SessionManager extends EventEmitter {
   /** Current derived state, folded from the log (§5.1). */
   async projection(sessionId: SessionId) {
     return (await this.live(sessionId).store.load()).projection;
+  }
+
+  /** Session ids present on disk, whether or not they are loaded (§5.1). */
+  async listOnDisk(): Promise<Array<{ sessionId: SessionId; title: string; goal: string }>> {
+    const dir = workspaceLayout(this.deps.workspaceRoot).sessionsDir;
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch {
+      return []; // no sessions yet is not an error
+    }
+
+    const found: Array<{ sessionId: SessionId; title: string; goal: string }> = [];
+    for (const name of names) {
+      try {
+        const meta = JSON.parse(
+          await readFile(join(dir, name, 'session.json'), 'utf8'),
+        ) as SessionMeta;
+        found.push({ sessionId: meta.sessionId, title: meta.title, goal: meta.goal });
+      } catch {
+        // A directory without readable metadata is not a session. Skipping it
+        // is right: this list drives a picker, and one bad entry must not hide
+        // every good one.
+      }
+    }
+    return found;
+  }
+
+  /**
+   * Reattach to a session that exists on disk — the restart path (§15 Phase 1).
+   *
+   * Everything comes from the log: state, agents, usage, checklist, artifacts.
+   * No handle is opened and no runtime is contacted until a turn is sent, so
+   * reopening the app is cheap no matter how many sessions exist, and a session
+   * whose provider is currently unreachable still loads and displays.
+   *
+   * Capabilities are **re-admitted rather than replayed** from `agent.created`.
+   * The recorded set is provenance — what it ran under last time — and §3.2 says
+   * capabilities belong to adapter + model + installed tool version, any of
+   * which can change while the app is closed. Trusting the recording would let
+   * an agent resume claiming a capability its upgraded runtime no longer has.
+   */
+  async resumeSession(sessionId: SessionId): Promise<Session> {
+    const existing = this.sessions.get(sessionId);
+    if (existing) return existing.session; // idempotent
+
+    const { store, truncatedBytes } = await SessionStore.open(this.deps.workspaceRoot, sessionId);
+    const meta = await store.readMeta();
+    const { projection } = await store.load();
+
+    store.onAppend = (event) => this.emit('event', sessionId, event);
+
+    const target: ExecutionTarget = { kind: 'local' };
+    const session: Session = {
+      sessionId,
+      instanceId: this.deps.instanceId,
+      target,
+      title: meta.title,
+      goal: meta.goal,
+      state: projection.state,
+      agents: [],
+      createdAt: meta.createdAt,
+      updatedAt: projection.lastActivityAt ?? meta.createdAt,
+      checklist: projection.checklist,
+      artifacts: projection.artifacts,
+      needsAttention: projection.needsAttention,
+      tree: { rootSessionId: sessionId, depth: 0, ancestry: [] },
+      children: projection.children,
+      peerSessionIds: [],
+    };
+
+    const live: LiveSession = {
+      session,
+      store,
+      policy: defaultPolicyForTarget(target.kind),
+      handles: new Map(),
+      specs: new Map(),
+      aborts: new Map(),
+    };
+    this.sessions.set(sessionId, live);
+
+    for (const projected of projection.agents) {
+      const spec: AgentSpec = {
+        agentId: projected.agentId,
+        role: projected.role as AgentRole,
+        runtimeId: projected.runtimeId,
+        auth: { kind: 'none' },
+        toolPolicy: clonePolicy(live.policy),
+        limits: projected.limits ?? {},
+        workspacePath: this.deps.workspaceRoot,
+        ...(projected.model !== undefined ? { model: projected.model } : {}),
+        ...(projected.systemPrompt !== undefined ? { systemPrompt: projected.systemPrompt } : {}),
+      };
+
+      const admission = await this.deps.registry.admit(spec, projected.isolation, {});
+      if (!admission.ok) {
+        // Refusing the whole session would make one uninstalled runtime hide an
+        // entire transcript. The agent is skipped, the session loads, and the
+        // reason is emitted so the UI can say which agent is unavailable.
+        this.emit('agent-unavailable', sessionId, projected.agentId, admission.failures);
+        continue;
+      }
+
+      live.specs.set(spec.agentId, spec);
+      const projectedUsage = projection.usage;
+      session.agents.push({
+        agentId: spec.agentId,
+        role: spec.role,
+        spec: stripWorkspacePath(spec),
+        resolvedCapabilities: admission.capabilities,
+        // Not `running`: nothing is running yet. A record restored as running
+        // would show a spinner for a turn that no longer exists.
+        status: 'idle',
+        isolation: projected.isolation,
+        // The native token is not persisted, so resume takes the durable path
+        // (§5.4) — which is the path that must work anyway.
+        resumeToken: null,
+        lastEventSeq: projection.lastSeq,
+        usage: {
+          inputTokens: projectedUsage.inputTokens,
+          outputTokens: projectedUsage.outputTokens,
+          cost: projectedUsage.cost,
+        },
+      });
+    }
+
+    if (truncatedBytes > 0) {
+      this.emit('log-truncated', sessionId, truncatedBytes);
+    }
+    if (projection.skippedLines > 0) {
+      this.emit('log-corrupt', sessionId, projection.skippedLines);
+    }
+
+    this.emit('session', session);
+    return session;
   }
 }
 

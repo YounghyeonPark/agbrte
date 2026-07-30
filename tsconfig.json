@@ -1,30 +1,19 @@
 {
+  "// note": "Node-side code: main process, preload, shared types, tests. No DOM lib on purpose.",
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
     "lib": ["ES2022"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-
-    "strict": true,
-    "exactOptionalPropertyTypes": true,
-    "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "verbatimModuleSyntax": true,
-    "isolatedModules": true,
-
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "noEmit": true,
-
-    "types": ["node"],
-    "baseUrl": ".",
-    "paths": {
-      "@shared/*": ["src/shared/*"],
-      "@main/*": ["src/main/*"]
-    }
+    "types": ["node"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+  "include": [
+    "src/main/**/*.ts",
+    "src/preload/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/cli/**/*.ts",
+    "src/smoke/**/*.ts",
+    "tests/**/*.ts",
+    "vitest.config.ts"
+  ]
 }

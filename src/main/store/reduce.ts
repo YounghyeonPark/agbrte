@@ -146,6 +146,8 @@ export function reduceEvents(
           isolation: ev.isolation,
           permissionFidelity: ev.permissionFidelity,
           ...(ev.model !== undefined ? { model: ev.model } : {}),
+          ...(ev.systemPrompt !== undefined ? { systemPrompt: ev.systemPrompt } : {}),
+          ...(ev.limits !== undefined ? { limits: ev.limits } : {}),
         });
         break;
 

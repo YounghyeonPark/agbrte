@@ -107,6 +107,14 @@ export type EventBody =
       isolation: 'shared' | 'worktree';
       permissionFidelity: PermissionFidelity;
       capabilities: RuntimeCapabilities;
+      /**
+       * Recorded because reattaching after a restart rebuilds the `AgentSpec`
+       * from this event. Without them an agent came back with no system prompt
+       * and default limits while its transcript looked intact — a silent
+       * behavior change, which is worse than a visible failure.
+       */
+      systemPrompt?: string;
+      limits?: { maxTurns?: number; maxToolCalls?: number; tokenCeiling?: number; wallClockMs?: number };
     }
   | {
       type: 'agent.started';

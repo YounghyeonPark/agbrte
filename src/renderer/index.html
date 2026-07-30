@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Loom</title>
+    <!--
+      The renderer displays model output, which is untrusted content. A CSP that
+      forbids inline script and any remote origin means a prompt-injected string
+      that reaches the DOM cannot become a network call or an executed script.
+      `unsafe-inline` for style is Vite's dev-server requirement; script-src is
+      not relaxed.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws://localhost:* http://localhost:*"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

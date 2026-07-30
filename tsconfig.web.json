@@ -1,0 +1,13 @@
+{
+  "// note": "Renderer only. Bundler resolution because Vite resolves the imports, and the DOM lib because this is the one place allowed to touch it.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "types": [],
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/shared/**/*.ts", "vite.config.ts"]
+}
