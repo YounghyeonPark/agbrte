@@ -25,6 +25,7 @@ import {
   type AddAgentRequest,
   type CreateSessionRequest,
   type EventBatch,
+  type HostInfo,
   type LoomApi,
   type SendRequest,
 } from '../shared/ipc/contract.js';
@@ -40,18 +41,18 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 }
 
 const api: LoomApi = {
-  workspace: {
-    current: () => ipcRenderer.invoke(CH.workspaceCurrent),
-    choose: () => ipcRenderer.invoke(CH.workspaceChoose),
-  },
-  runtimes: {
-    list: () => ipcRenderer.invoke(CH.runtimesList),
+  hosts: {
+    list: () => ipcRenderer.invoke(CH.hostsList),
+    add: () => ipcRenderer.invoke(CH.hostsAdd),
+    remove: (instanceId: string) => ipcRenderer.invoke(CH.hostsRemove, instanceId),
+    runtimes: (instanceId: string) => ipcRenderer.invoke(CH.hostsRuntimes, instanceId),
   },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),
     create: (r: CreateSessionRequest) => ipcRenderer.invoke(CH.sessionsCreate, r),
     listOnDisk: () => ipcRenderer.invoke(CH.sessionsListOnDisk),
-    resume: (sessionId: string) => ipcRenderer.invoke(CH.sessionsResume, sessionId),
+    resume: (instanceId: string, sessionId: string) =>
+      ipcRenderer.invoke(CH.sessionsResume, instanceId, sessionId),
     snapshot: (sessionId: string, windowSize?: number) =>
       ipcRenderer.invoke(CH.sessionsSnapshot, sessionId, windowSize),
     addAgent: (r: AddAgentRequest) => ipcRenderer.invoke(CH.sessionsAddAgent, r),
@@ -70,6 +71,7 @@ const api: LoomApi = {
     events: (cb: (b: EventBatch) => void) => subscribe(PUSH.events, cb),
     session: (cb: (s: Session) => void) => subscribe(PUSH.session, cb),
     permission: (cb: (r: PermissionRequest) => void) => subscribe(PUSH.permission, cb),
+    hosts: (cb: (h: HostInfo[]) => void) => subscribe(PUSH.hosts, cb),
   },
   ack: (sessionId: string, seq: number) => ipcRenderer.send(CH.ack, sessionId, seq),
 };

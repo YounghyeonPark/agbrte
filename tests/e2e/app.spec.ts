@@ -15,7 +15,15 @@ import { expect, test } from '@playwright/test';
 import { readFile, rm, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { launch, makeRepo, modelAvailable, warmModel } from './harness.js';
-import { addAgent, createSession, openSession, runtimeOptions, send } from './actions.js';
+import {
+  addAgent,
+  attachedHosts,
+  createSession,
+  hostGroup,
+  openSession,
+  runtimeOptions,
+  send,
+} from './actions.js';
 
 const MODEL = 'qwen2.5:7b';
 
@@ -35,11 +43,11 @@ test.describe('the shell', () => {
     const loom = await launch(repo);
 
     try {
-      // Proves main → preload → renderer all agreed on the workspace, which is
-      // the whole IPC path in one assertion.
-      await expect(loom.window.locator('[data-testid=workspace-path]')).toContainText(
-        repo.split(/[\\/]/).pop()!,
-      );
+      // Proves main → preload → renderer all agreed on the host, which is the
+      // whole IPC path in one assertion.
+      const group = hostGroup(loom.window);
+      await expect(group).toHaveAttribute('data-label', repo.split(/[\\/]/).pop()!);
+      await expect(group.locator('[data-testid=host-badge]')).toContainText('local');
 
       await createSession(loom.window, 'Shell check');
 
@@ -60,7 +68,7 @@ test.describe('the shell', () => {
     // ---- first run: create a session and take a turn
     const first = await launch(repo);
     try {
-      await createSession(first.window, 'Restart me', 'prove durability');
+      await createSession(first.window, 'Restart me');
       await addAgent(first.window, 'echo');
       await send(first.window, 'hello before the restart');
 
@@ -126,6 +134,92 @@ test.describe('the shell', () => {
   });
 });
 
+test.describe('several hosts at once', () => {
+  test('shows sessions from two hosts, grouped and independent', async () => {
+    const repoA = await makeRepo();
+    const repoB = await makeRepo();
+    const labelA = repoA.split(/[\\/]/).pop()!;
+    const labelB = repoB.split(/[\\/]/).pop()!;
+
+    const loom = await launch(repoA, repoB);
+    try {
+      // §8's caps are per host and §10 badges every card, so watching more than
+      // one place at once is the designed shape. Until the fleet landed, main
+      // disposed the previous host on every workspace change.
+      expect((await attachedHosts(loom.window)).sort()).toEqual([labelA, labelB].sort());
+
+      await createSession(loom.window, 'work on A', labelA);
+      await addAgent(loom.window, 'echo');
+      await send(loom.window, 'a message for A');
+      await expect(loom.window.locator('[data-testid=row-agent]')).toBeVisible();
+
+      await createSession(loom.window, 'work on B', labelB);
+      await addAgent(loom.window, 'echo');
+      await send(loom.window, 'a message for B');
+      await expect(loom.window.locator('[data-testid=row-agent]')).toBeVisible();
+
+      // Each session sits under its own host, so "where does this run" is
+      // answerable without opening it.
+      await expect(
+        hostGroup(loom.window, labelA).locator('[data-testid=session]'),
+      ).toHaveCount(1);
+      await expect(
+        hostGroup(loom.window, labelB).locator('[data-testid=session]'),
+      ).toHaveCount(1);
+      await expect(loom.window.locator('[data-testid=active-host]')).toContainText(labelB);
+
+      // The transcripts are genuinely separate: two hosts, two logs, one writer
+      // each (§5.1).
+      await openSession(loom.window, 'work on A', labelA);
+      await expect(loom.window.locator('[data-testid=row-user]')).toContainText('a message for A');
+      await expect(loom.window.locator('[data-testid=row-user]')).toHaveCount(1);
+
+      const logs = await Promise.all(
+        [repoA, repoB].map(async (repo) => {
+          const dir = join(repo, '.devagents', 'sessions');
+          const ids = await readdir(dir);
+          return readFile(join(dir, ids[0]!, 'events.jsonl'), 'utf8');
+        }),
+      );
+      expect(logs[0]).toContain('a message for A');
+      expect(logs[0]).not.toContain('a message for B');
+      expect(logs[1]).toContain('a message for B');
+      expect(logs[1]).not.toContain('a message for A');
+    } finally {
+      await loom.close();
+      await rm(repoA, { recursive: true, force: true });
+      await rm(repoB, { recursive: true, force: true });
+    }
+  });
+
+  test('detaching one host leaves the other running', async () => {
+    const repoA = await makeRepo();
+    const repoB = await makeRepo();
+    const labelA = repoA.split(/[\\/]/).pop()!;
+    const labelB = repoB.split(/[\\/]/).pop()!;
+
+    const loom = await launch(repoA, repoB);
+    try {
+      await createSession(loom.window, 'stays', labelB);
+      await addAgent(loom.window, 'echo');
+
+      await hostGroup(loom.window, labelA).locator('[data-testid=remove-host]').click();
+
+      await expect(loom.window.locator('[data-testid=host]')).toHaveCount(1);
+      expect(await attachedHosts(loom.window)).toEqual([labelB]);
+
+      // Detach is "stop watching", not "delete", and it must not disturb the
+      // host next to it.
+      await send(loom.window, 'still working');
+      await expect(loom.window.locator('[data-testid=row-user]')).toContainText('still working');
+    } finally {
+      await loom.close();
+      await rm(repoA, { recursive: true, force: true });
+      await rm(repoB, { recursive: true, force: true });
+    }
+  });
+});
+
 /**
  * These need a local model that can call a tool, so they **skip loudly** when
  * one is absent. Both are slow: a 7B model takes tens of seconds per turn cold.
@@ -173,7 +267,7 @@ test.describe('a real model against a real repo', () => {
     const loom = await launch(repo);
 
     try {
-      await createSession(loom.window, 'Real edit', 'create a file');
+      await createSession(loom.window, 'Real edit');
       await addAgent(loom.window, 'loom-harness', MODEL);
       await send(
         loom.window,

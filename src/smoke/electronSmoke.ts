@@ -24,11 +24,13 @@ import { writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SessionManager } from '../main/sessionManager.js';
-import { RuntimeRegistry } from '../main/runtime/registry.js';
 import { EchoRuntime } from '../main/runtime/runtimes/echo.js';
-import { openWorkspace } from '../main/store/identity.js';
+import { RuntimeRegistry } from '../main/runtime/registry.js';
 import { registerIpc } from '../main/ipc/register.js';
+import { Fleet } from '../main/fleet.js';
+import { AgentHostServer } from '../host/server.js';
+import { memoryChannelPair } from '../shared/host/memoryChannel.js';
+import type { HostCommand, HostMessage } from '../shared/host/protocol.js';
 import { HostSupervisor } from '../main/host/supervisor.js';
 import { spawnAgentHost } from '../main/host/utilityHost.js';
 
@@ -81,36 +83,34 @@ async function main(): Promise<number> {
   const root = await mkdtemp(join(tmpdir(), 'loom-smoke-'));
 
   try {
-    const identity = await openWorkspace(root);
-    const registry = new RuntimeRegistry();
-    registry.register(
-      new EchoRuntime({
-        script: [
-          { kind: 'text', text: 'smoke reply' },
-          { kind: 'stop', stop: { kind: 'end_turn' } },
-        ],
-      }),
-      { label: 'Echo', requiresModel: false },
-    );
-
-    const manager = new SessionManager({
-      registry,
-      workspaceRoot: root,
-      instanceId: identity.instanceId,
+    // A fleet with one in-process host: the shell checks below are about the IPC
+    // surface, and spawning a real utilityProcess for them would only add the
+    // failure modes that `hostChecks` already covers explicitly.
+    const fleet = new Fleet({
+      runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false }],
+      spawn: () => {
+        const registry = new RuntimeRegistry();
+        registry.register(
+          new EchoRuntime({
+            script: [
+              { kind: 'text', text: 'smoke reply' },
+              { kind: 'stop', stop: { kind: 'end_turn' } },
+            ],
+          }),
+          { label: 'Echo', requiresModel: false },
+        );
+        const pair = memoryChannelPair<HostCommand, HostMessage>();
+        new AgentHostServer(pair.host, registry);
+        return { channel: pair.main };
+      },
     });
-
-    const workspace = {
-      root,
-      lineageId: identity.lineageId,
-      instanceId: identity.instanceId,
-    };
 
     const ipc = registerIpc({
-      manager,
-      workspace,
-      runtimes: () => [{ id: 'echo', version: '0.0.1', requiresModel: false }],
-      onChooseWorkspace: async () => workspace,
+      fleet,
+      runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false }],
     });
+
+    const host = await fleet.attach(root);
 
     const win = new BrowserWindow({
       show: false,
@@ -133,9 +133,7 @@ async function main(): Promise<number> {
     );
     record(
       'preload exposes the api',
-      ['ack', 'on', 'permissions', 'runtimes', 'sessions', 'workspace'].every((k) =>
-        surface.includes(k),
-      ),
+      ['ack', 'hosts', 'on', 'permissions', 'sessions'].every((k) => surface.includes(k)),
       surface,
     );
 
@@ -147,15 +145,25 @@ async function main(): Promise<number> {
     );
     record('no node globals in the renderer', leaked.length === 0, leaked);
 
-    // 3. An invoke round trip, with a real reply from main.
-    const got = await evaluate<{ root: string }>(win, 'window.loom.workspace.current()');
-    record('invoke returns main state', got.root === root, got.root);
+    // 3. An invoke round trip, with a real reply from main. Also the first check
+    //    that the fleet is aggregating: `hosts.list()` is a list, not a single
+    //    workspace, because several can be attached at once (§8).
+    const listed = await evaluate<Array<{ root: string; instanceId: string }>>(
+      win,
+      'window.loom.hosts.list()',
+    );
+    record('invoke returns main state', listed[0]?.root === root, listed);
+    record(
+      'the host carries the identity main attached',
+      listed[0]?.instanceId === host.instanceId,
+      listed[0]?.instanceId,
+    );
 
     // 4. Arguments survive serialization in both directions, and the session
     //    reaches the real SessionManager rather than a stub.
     const created = await evaluate<{ sessionId: string; title: string; state: string }>(
       win,
-      `window.loom.sessions.create({ title: 'Smoke', goal: 'prove the wiring' })`,
+      `window.loom.sessions.create({ instanceId: ${JSON.stringify(host.instanceId)}, title: 'Smoke', goal: 'prove the wiring' })`,
     );
     record('create passes arguments through', created.title === 'Smoke', created);
     record('new session starts in planning', created.state === 'planning', created.state);
@@ -204,7 +212,7 @@ async function main(): Promise<number> {
     //    Electron's opaque "Error invoking remote method".
     const failure = await evaluate<string>(
       win,
-      `window.loom.sessions.resume('session_does_not_exist').then(() => 'no error', (e) => e.message)`,
+      `window.loom.sessions.resume(${JSON.stringify(host.instanceId)}, 'session_does_not_exist').then(() => 'no error', (e) => e.message)`,
     );
     record('errors keep their message', failure !== 'no error' && failure.length > 0, failure);
 

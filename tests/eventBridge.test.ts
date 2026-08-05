@@ -11,6 +11,9 @@ import { EventBridge } from '@main/ipc/eventBridge.js';
 import type { EventBatch } from '@shared/ipc/contract.js';
 import type { LoomEvent } from '@shared/types/index.js';
 
+/** Every batch is attributed to a host (§8); only this test's identity matters. */
+const HOST = 'instance-a';
+
 /** A minimal event; only `seq` matters to the bridge. */
 function event(seq: number): LoomEvent {
   return {
@@ -61,8 +64,8 @@ function harness(opts: { maxEvents?: number; watermark?: number } = {}): Harness
 describe('batching', () => {
   it('holds events until the window elapses', () => {
     const h = harness();
-    h.bridge.push('s', event(1));
-    h.bridge.push('s', event(2));
+    h.bridge.push(HOST, 's', event(1));
+    h.bridge.push(HOST, 's', event(2));
 
     // Sending one IPC message per event is what makes a busy agent lag the UI.
     expect(h.sent).toHaveLength(0);
@@ -73,9 +76,9 @@ describe('batching', () => {
 
   it('flushes immediately at the event cap without waiting for the timer', () => {
     const h = harness({ maxEvents: 3 });
-    h.bridge.push('s', event(1));
-    h.bridge.push('s', event(2));
-    h.bridge.push('s', event(3));
+    h.bridge.push(HOST, 's', event(1));
+    h.bridge.push(HOST, 's', event(2));
+    h.bridge.push(HOST, 's', event(3));
 
     expect(h.sent).toHaveLength(1);
     expect(h.sent[0]?.events).toHaveLength(3);
@@ -83,8 +86,8 @@ describe('batching', () => {
 
   it('reports the seq range so the renderer can detect a gap', () => {
     const h = harness();
-    h.bridge.push('s', event(7));
-    h.bridge.push('s', event(8));
+    h.bridge.push(HOST, 's', event(7));
+    h.bridge.push(HOST, 's', event(8));
     h.tick();
 
     // Inferring contiguity from array length breaks the moment a pause drops
@@ -94,9 +97,9 @@ describe('batching', () => {
 
   it('keeps sessions independent', () => {
     const h = harness({ maxEvents: 2 });
-    h.bridge.push('a', event(1));
-    h.bridge.push('b', event(1));
-    h.bridge.push('b', event(2));
+    h.bridge.push(HOST, 'a', event(1));
+    h.bridge.push(HOST, 'b', event(1));
+    h.bridge.push(HOST, 'b', event(2));
 
     expect(h.sent).toHaveLength(1);
     expect(h.sent[0]?.sessionId).toBe('b');
@@ -110,8 +113,8 @@ describe('batching', () => {
 
   it('clears the pending timer when the cap flushes first', () => {
     const h = harness({ maxEvents: 2 });
-    h.bridge.push('s', event(1)); // arms the timer
-    h.bridge.push('s', event(2)); // cap reached, flushes
+    h.bridge.push(HOST, 's', event(1)); // arms the timer
+    h.bridge.push(HOST, 's', event(2)); // cap reached, flushes
     expect(h.pending()).toBe(0);
 
     // A stale timer would fire a second, empty flush and reset the window.
@@ -123,18 +126,18 @@ describe('batching', () => {
 describe('backpressure', () => {
   it('pauses once the renderer falls too far behind', () => {
     const h = harness({ maxEvents: 1, watermark: 3 });
-    for (const seq of [1, 2, 3]) h.bridge.push('s', event(seq));
+    for (const seq of [1, 2, 3]) h.bridge.push(HOST, 's', event(seq));
 
     expect(h.bridge.stateOf('s')?.paused).toBe(true);
   });
 
   it('drops rather than buffers while paused', () => {
     const h = harness({ maxEvents: 1, watermark: 2 });
-    for (const seq of [1, 2]) h.bridge.push('s', event(seq));
+    for (const seq of [1, 2]) h.bridge.push(HOST, 's', event(seq));
     expect(h.bridge.stateOf('s')?.paused).toBe(true);
 
     const before = h.sent.length;
-    for (const seq of [3, 4, 5, 6]) h.bridge.push('s', event(seq));
+    for (const seq of [3, 4, 5, 6]) h.bridge.push(HOST, 's', event(seq));
 
     // Buffering under backpressure turns a slow renderer into main's memory
     // leak. The log already holds these; the renderer refetches them.
@@ -144,8 +147,8 @@ describe('backpressure', () => {
 
   it('resumes on an ack and flags the gap it created', () => {
     const h = harness({ maxEvents: 1, watermark: 2 });
-    for (const seq of [1, 2]) h.bridge.push('s', event(seq));
-    h.bridge.push('s', event(3)); // dropped
+    for (const seq of [1, 2]) h.bridge.push(HOST, 's', event(seq));
+    h.bridge.push(HOST, 's', event(3)); // dropped
 
     h.bridge.ack('s', 2);
 
@@ -158,7 +161,7 @@ describe('backpressure', () => {
 
   it('does not resume while the renderer is still behind', () => {
     const h = harness({ maxEvents: 1, watermark: 5 });
-    for (const seq of [1, 2, 3, 4, 5]) h.bridge.push('s', event(seq));
+    for (const seq of [1, 2, 3, 4, 5]) h.bridge.push(HOST, 's', event(seq));
     expect(h.bridge.stateOf('s')?.paused).toBe(true);
 
     h.bridge.ack('s', 1); // outstanding 5 - 1 = 4, still at the limit? no: 4 < 5
@@ -167,7 +170,7 @@ describe('backpressure', () => {
 
   it('ignores a stale ack rather than moving the mark backwards', () => {
     const h = harness({ maxEvents: 1, watermark: 100 });
-    for (const seq of [1, 2, 3]) h.bridge.push('s', event(seq));
+    for (const seq of [1, 2, 3]) h.bridge.push(HOST, 's', event(seq));
 
     h.bridge.ack('s', 3);
     expect(h.bridge.stateOf('s')?.outstanding).toBe(0);
@@ -180,8 +183,8 @@ describe('backpressure', () => {
 
   it('tracks outstanding by seq, so a gap cannot skew it', () => {
     const h = harness({ maxEvents: 1, watermark: 2 });
-    for (const seq of [1, 2]) h.bridge.push('s', event(seq));
-    for (const seq of [3, 4, 5]) h.bridge.push('s', event(seq)); // dropped
+    for (const seq of [1, 2]) h.bridge.push(HOST, 's', event(seq));
+    for (const seq of [3, 4, 5]) h.bridge.push(HOST, 's', event(seq)); // dropped
 
     // Counting forwarded events instead would report 2 outstanding while the
     // renderer has already acked past them — the two numbers stop agreeing
@@ -199,7 +202,7 @@ describe('backpressure', () => {
 describe('lifecycle', () => {
   it('drops queued state on release', () => {
     const h = harness();
-    h.bridge.push('s', event(1));
+    h.bridge.push(HOST, 's', event(1));
     h.bridge.release('s');
 
     expect(h.bridge.stateOf('s')).toBeNull();
@@ -210,8 +213,8 @@ describe('lifecycle', () => {
 
   it('flushes every session on flushAll', () => {
     const h = harness();
-    h.bridge.push('a', event(1));
-    h.bridge.push('b', event(1));
+    h.bridge.push(HOST, 'a', event(1));
+    h.bridge.push(HOST, 'b', event(1));
     h.bridge.flushAll();
 
     expect(h.sent.map((b) => b.sessionId).sort()).toEqual(['a', 'b']);
@@ -219,8 +222,8 @@ describe('lifecycle', () => {
 
   it('releaseAll clears everything', () => {
     const h = harness();
-    h.bridge.push('a', event(1));
-    h.bridge.push('b', event(1));
+    h.bridge.push(HOST, 'a', event(1));
+    h.bridge.push(HOST, 'b', event(1));
     h.bridge.releaseAll();
 
     expect(h.bridge.stateOf('a')).toBeNull();

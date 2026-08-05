@@ -20,6 +20,7 @@ class MemoryChannel<Out, In> implements HostChannel<Out, In> {
   private closeHandler: ((reason?: string) => void) | null = null;
   private readonly backlog: In[] = [];
   private closed = false;
+  private closeReason: string | undefined;
 
   peer!: MemoryChannel<In, Out>;
 
@@ -46,11 +47,17 @@ class MemoryChannel<Out, In> implements HostChannel<Out, In> {
 
   onClose(handler: (reason?: string) => void): void {
     this.closeHandler = handler;
+    // Already gone: notify immediately rather than never. Same late-subscriber
+    // problem the message backlog solves — a peer can die before the client
+    // finishes constructing, and dropping that left the client waiting forever
+    // for a handshake that was never coming.
+    if (this.closed) handler(this.closeReason);
   }
 
   close(reason?: string): void {
     if (this.closed) return;
     this.closed = true;
+    this.closeReason = reason;
     this.closeHandler?.(reason);
     // The peer learns about it too, which is what lets a test simulate a host
     // crash and assert that in-flight requests fail rather than hang.

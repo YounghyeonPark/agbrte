@@ -12,12 +12,18 @@
  *
  * ## Scope
  *
- * This is the **Phase 1 subset** of §7's `LoomApi`, not the whole thing. §7
- * specifies `targets`, `capture`, `speech`, hierarchy, and model management;
- * Phase 1 needs one local text session that survives a restart, so those
- * namespaces are deliberately absent rather than present and throwing. An API
- * that exists and fails is worse than one that isn't there — the renderer can't
- * feature-detect against a method that rejects at runtime.
+ * This is a **subset** of §7's `LoomApi`, not the whole thing. `capture`,
+ * `speech`, hierarchy, and model management are deliberately absent rather than
+ * present and throwing: an API that exists and fails is worse than one that
+ * isn't there, because the renderer cannot feature-detect against a method that
+ * rejects at runtime.
+ *
+ * `hosts` is the first piece of §7's `targets` namespace to land. Everything here
+ * is **host-scoped** rather than assuming one workspace: several hosts can be
+ * attached at once, `sessions.list()` spans all of them, and every session and
+ * every event batch carries the host it came from. §8's caps are per host and
+ * §10's cards carry a target badge, so the aggregate view is the designed one —
+ * the previous single-workspace shape was the limitation.
  */
 
 import type {
@@ -32,12 +38,26 @@ import type {
 
 // ------------------------------------------------------------------- payloads
 
-export interface WorkspaceInfo {
+/**
+ * One attached host: a workspace, its agent host, and its sessions (§8, §10).
+ *
+ * `instanceId` is the key the renderer routes by, because §5.2 makes it the
+ * identity of one checkout on one machine — which is exactly one host.
+ */
+export interface HostInfo {
   root: string;
   /** Tracked, follows a clone (§5.2). */
   lineageId: string;
-  /** Gitignored, per checkout (§5.2). */
+  /** Gitignored, per checkout (§5.2). The fleet's primary key. */
   instanceId: string;
+  /** `local`, `ssh`, … — §10's target badge comes from this. */
+  targetKind: string;
+  /** A short label for the badge: the host name, or the folder for local. */
+  label: string;
+  /** Runtime ids this host actually offers. Empty when it could not start. */
+  available: string[];
+  /** Why nothing can run here. Sessions still load and read. */
+  unavailableReason?: string;
 }
 
 export interface RuntimeInfo {
@@ -49,6 +69,8 @@ export interface RuntimeInfo {
 }
 
 export interface CreateSessionRequest {
+  /** Which attached host to create it on. */
+  instanceId: string;
   title: string;
   goal: string;
 }
@@ -77,6 +99,8 @@ export interface SendRequest {
  * renderer must be able to tell that it did and refetch.
  */
 export interface EventBatch {
+  /** The host that produced these. */
+  instanceId: string;
   sessionId: string;
   events: LoomEvent[];
   firstSeq: number;
@@ -98,21 +122,25 @@ export interface SessionSnapshot {
 // ----------------------------------------------------------------- the surface
 
 export interface LoomApi {
-  workspace: {
-    current(): Promise<WorkspaceInfo>;
-    /** Native folder picker; returns null if the user cancels. */
-    choose(): Promise<WorkspaceInfo | null>;
-  };
-  runtimes: {
-    list(): Promise<RuntimeInfo[]>;
+  hosts: {
+    /** Every attached host. Several may be attached at once (§8). */
+    list(): Promise<HostInfo[]>;
+    /** Native folder picker, then attach. Null if the user cancels. */
+    add(): Promise<HostInfo | null>;
+    /** Stop watching a host. The workspace on disk is untouched. */
+    remove(instanceId: string): Promise<void>;
+    /** Runtimes offered by one host — they need not be the same everywhere. */
+    runtimes(instanceId: string): Promise<RuntimeInfo[]>;
   };
   sessions: {
     list(): Promise<Session[]>;
     create(r: CreateSessionRequest): Promise<Session>;
-    /** Sessions found on disk under the current workspace but not yet loaded. */
-    listOnDisk(): Promise<Array<{ sessionId: string; title: string; goal: string }>>;
+    /** Sessions on disk across every attached host, not yet loaded. */
+    listOnDisk(): Promise<
+      Array<{ instanceId: string; sessionId: string; title: string; goal: string }>
+    >;
     /** Load a session from its log — the restart path Phase 1 is judged on. */
-    resume(sessionId: string): Promise<Session>;
+    resume(instanceId: string, sessionId: string): Promise<Session>;
     snapshot(sessionId: string, windowSize?: number): Promise<SessionSnapshot>;
     addAgent(r: AddAgentRequest): Promise<AgentRecord>;
     /** Resolves when the turn completes, which may be minutes. */
@@ -131,6 +159,8 @@ export interface LoomApi {
     /** A session record changed — state, agents, usage. */
     session(cb: (s: Session) => void): () => void;
     permission(cb: (r: PermissionRequest) => void): () => void;
+    /** A host was attached, detached, or changed availability. */
+    hosts(cb: (hosts: HostInfo[]) => void): () => void;
   };
   /** Ack the highest `seq` rendered, so main can resume a paused forwarder. */
   ack(sessionId: string, seq: number): void;
@@ -143,9 +173,10 @@ export interface LoomApi {
  * devtools console is at least legible in a log.
  */
 export const CH = {
-  workspaceCurrent: 'loom:workspace.current',
-  workspaceChoose: 'loom:workspace.choose',
-  runtimesList: 'loom:runtimes.list',
+  hostsList: 'loom:hosts.list',
+  hostsAdd: 'loom:hosts.add',
+  hostsRemove: 'loom:hosts.remove',
+  hostsRuntimes: 'loom:hosts.runtimes',
   sessionsList: 'loom:sessions.list',
   sessionsCreate: 'loom:sessions.create',
   sessionsListOnDisk: 'loom:sessions.listOnDisk',
@@ -165,6 +196,7 @@ export const PUSH = {
   events: 'loom:push.events',
   session: 'loom:push.session',
   permission: 'loom:push.permission',
+  hosts: 'loom:push.hosts',
 } as const;
 
 /** §7's batch limits, shared so main and any test agree on one number. */

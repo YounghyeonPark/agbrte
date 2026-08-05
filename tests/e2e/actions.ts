@@ -9,11 +9,25 @@
 
 import { expect, type Page } from '@playwright/test';
 
-export async function createSession(page: Page, title: string, goal?: string): Promise<void> {
-  await page.fill('[data-testid=new-title]', title);
-  if (goal !== undefined) await page.fill('[data-testid=new-goal]', goal);
-  await page.click('[data-testid=new-submit]');
+/**
+ * Create a session on a host, addressed by its badge label.
+ *
+ * Sessions belong to a host now, so there is no global "new session" — the
+ * button lives in that host's group.
+ */
+export async function createSession(page: Page, title: string, host?: string): Promise<void> {
+  const group = hostGroup(page, host);
+  await group.locator('[data-testid=new-session]').click();
+  await group.locator('[data-testid=new-title]').fill(title);
+  await group.locator('[data-testid=new-submit]').click();
   await expect(page.locator('[data-testid=picker]')).toBeVisible();
+}
+
+/** A host's sidebar group. Defaults to the only one when there is just one. */
+export function hostGroup(page: Page, label?: string) {
+  return label === undefined
+    ? page.locator('[data-testid=host]').first()
+    : page.locator(`[data-testid=host][data-label="${label}"]`);
 }
 
 /**
@@ -40,8 +54,16 @@ export async function send(page: Page, text: string): Promise<void> {
   await page.click('[data-testid=composer-send]');
 }
 
-export async function openSession(page: Page, title: string): Promise<void> {
-  await page.click(`[data-testid=session][data-title="${title}"]`);
+export async function openSession(page: Page, title: string, host?: string): Promise<void> {
+  const scope = host === undefined ? page : hostGroup(page, host);
+  await scope.locator(`[data-testid=session][data-title="${title}"]`).click();
+}
+
+/** Badge labels of every attached host, in sidebar order. */
+export async function attachedHosts(page: Page): Promise<string[]> {
+  return page
+    .locator('[data-testid=host]')
+    .evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-label') ?? ''));
 }
 
 /** The runtime ids the agent host advertised, read from the open select. */

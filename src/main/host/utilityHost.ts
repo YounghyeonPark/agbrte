@@ -28,6 +28,7 @@ class UtilityChannel implements MainSideChannel {
   private closeHandler: ((reason?: string) => void) | null = null;
   private readonly backlog: HostMessage[] = [];
   private dead = false;
+  private exitReason: string | undefined;
 
   constructor(private readonly child: UtilityProcess) {
     child.on('message', (message: HostMessage) => {
@@ -42,7 +43,8 @@ class UtilityChannel implements MainSideChannel {
 
     child.on('exit', (code) => {
       this.dead = true;
-      this.closeHandler?.(`agent host exited with code ${code}`);
+      this.exitReason = `agent host exited with code ${code}`;
+      this.closeHandler?.(this.exitReason);
     });
   }
 
@@ -58,6 +60,10 @@ class UtilityChannel implements MainSideChannel {
 
   onClose(handler: (reason?: string) => void): void {
     this.closeHandler = handler;
+    // A child can exit before the client finishes constructing — a missing
+    // binary exits immediately. Without this the exit is dropped and the client
+    // waits forever for a handshake that will never arrive.
+    if (this.dead) handler(this.exitReason);
   }
 
   close(): void {

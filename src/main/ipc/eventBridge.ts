@@ -38,6 +38,7 @@ export interface EventBridgeOptions {
 }
 
 interface Channel {
+  instanceId: string;
   queue: LoomEvent[];
   timer: unknown;
   /** Highest seq handed to the renderer. */
@@ -65,8 +66,11 @@ export class EventBridge {
     this.clearTimer = opts.clearTimer ?? ((h) => clearTimeout(h as NodeJS.Timeout));
   }
 
-  push(sessionId: string, event: LoomEvent): void {
+  push(instanceId: string, sessionId: string, event: LoomEvent): void {
     const ch = this.channelFor(sessionId);
+    // Recorded per channel so a flush knows which host to attribute, including a
+    // gap-only flush that carries no events to read it from.
+    ch.instanceId = instanceId;
 
     if (ch.paused) {
       // Withheld, not buffered. Buffering under backpressure is how a slow
@@ -129,6 +133,7 @@ export class EventBridge {
     if (this.outstanding(ch) >= this.watermark) ch.paused = true;
 
     this.opts.send({
+      instanceId: ch.instanceId,
       sessionId,
       events,
       firstSeq: events[0]?.seq ?? -1,
@@ -169,6 +174,7 @@ export class EventBridge {
     let ch = this.channels.get(sessionId);
     if (!ch) {
       ch = {
+        instanceId: '',
         queue: [],
         timer: null,
         forwardedSeq: 0,

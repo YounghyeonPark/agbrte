@@ -15,9 +15,9 @@
 import { create } from 'zustand';
 import type {
   EventBatch,
+  HostInfo,
   RuntimeInfo,
   SessionSnapshot,
-  WorkspaceInfo,
 } from '../shared/ipc/contract.js';
 import type { LoomEvent, PermissionRequest, Session } from '../shared/types/index.js';
 
@@ -25,10 +25,12 @@ import type { LoomEvent, PermissionRequest, Session } from '../shared/types/inde
 const WINDOW = 400;
 
 export interface LoomState {
-  workspace: WorkspaceInfo | null;
-  runtimes: RuntimeInfo[];
+  /** Every attached host. Several at once is the normal case (§8). */
+  hosts: HostInfo[];
+  /** Runtimes per host, keyed by instanceId — hosts need not agree. */
+  runtimesByHost: Record<string, RuntimeInfo[]>;
   sessions: Session[];
-  onDisk: Array<{ sessionId: string; title: string; goal: string }>;
+  onDisk: Array<{ instanceId: string; sessionId: string; title: string; goal: string }>;
   activeId: string | null;
   active: Session | null;
   events: LoomEvent[];
@@ -39,8 +41,10 @@ export interface LoomState {
   error: string | null;
 
   boot(): Promise<void>;
-  createSession(title: string, goal: string): Promise<void>;
-  openSession(sessionId: string): Promise<void>;
+  addHost(): Promise<void>;
+  removeHost(instanceId: string): Promise<void>;
+  createSession(instanceId: string, title: string, goal: string): Promise<void>;
+  openSession(sessionId: string, instanceId?: string): Promise<void>;
   addAgent(runtimeId: string, modelId: string | null): Promise<void>;
   send(text: string): Promise<void>;
   interrupt(): Promise<void>;
@@ -48,6 +52,7 @@ export interface LoomState {
   applyBatch(batch: EventBatch): void;
   applySession(session: Session): void;
   applyPermission(request: PermissionRequest): void;
+  applyHosts(hosts: HostInfo[]): void;
   dismissError(): void;
 }
 
@@ -78,8 +83,8 @@ function applySnapshot(set: SetState, snapshot: SessionSnapshot): void {
 }
 
 export const useLoom = create<LoomState>((set, get) => ({
-  workspace: null,
-  runtimes: [],
+  hosts: [],
+  runtimesByHost: {},
   sessions: [],
   onDisk: [],
   activeId: null,
@@ -92,30 +97,58 @@ export const useLoom = create<LoomState>((set, get) => ({
 
   async boot() {
     await guard(set, async () => {
-      const [workspace, runtimes, sessions, onDisk, pending] = await Promise.all([
-        loom().workspace.current(),
-        loom().runtimes.list(),
+      const [hosts, sessions, onDisk, pending] = await Promise.all([
+        loom().hosts.list(),
         loom().sessions.list(),
         loom().sessions.listOnDisk(),
         loom().permissions.pending(),
       ]);
-      set({ workspace, runtimes, sessions, onDisk, pending });
+      set({ hosts, sessions, onDisk, pending });
+      await get().applyHosts(hosts);
     });
   },
 
-  async createSession(title, goal) {
-    const session = await guard(set, () => loom().sessions.create({ title, goal }));
-    if (!session) return;
-    set({ sessions: [...get().sessions, session] });
-    await get().openSession(session.sessionId);
+  async addHost() {
+    const host = await guard(set, () => loom().hosts.add());
+    // Null means the picker was cancelled, which is not a failure.
+    if (host === undefined || host === null) return;
+    await get().boot();
   },
 
-  async openSession(sessionId) {
+  async removeHost(instanceId) {
+    await guard(set, async () => {
+      await loom().hosts.remove(instanceId);
+      // Anything open on that host is gone with it; drop the selection rather
+      // than leave a pane pointing at a session nothing can answer for.
+      const active = get().active;
+      if (active !== null && active.instanceId === instanceId) {
+        set({ active: null, activeId: null, events: [] });
+      }
+      await get().boot();
+    });
+  },
+
+  async createSession(instanceId, title, goal) {
+    const session = await guard(set, () =>
+      loom().sessions.create({ instanceId, title, goal }),
+    );
+    if (!session) return;
+    set({ sessions: [...get().sessions, session] });
+    await get().openSession(session.sessionId, instanceId);
+  },
+
+  async openSession(sessionId, instanceId) {
     await guard(set, async () => {
       const loaded = get().sessions.some((s) => s.sessionId === sessionId);
       // A session listed from disk is not loaded yet. Resuming is what rebuilds
-      // it from the log — the restart path (§15 Phase 1).
-      if (!loaded) await loom().sessions.resume(sessionId);
+      // it from the log — the restart path (§15 Phase 1) — and it has to be
+      // resumed on the host that owns it.
+      if (!loaded) {
+        const owner =
+          instanceId ?? get().onDisk.find((s) => s.sessionId === sessionId)?.instanceId;
+        if (owner === undefined) throw new Error('no host is known to own that session');
+        await loom().sessions.resume(owner, sessionId);
+      }
       applySnapshot(set, await loom().sessions.snapshot(sessionId));
       set({ sessions: await loom().sessions.list() });
     });
@@ -209,6 +242,15 @@ export const useLoom = create<LoomState>((set, get) => ({
 
   applyPermission(request) {
     set({ pending: [...get().pending, request] });
+  },
+
+  applyHosts(hosts) {
+    set({ hosts });
+    // Runtimes are per host and fetched lazily: a host that has not finished
+    // handshaking reports none, and asking again after it does is cheap.
+    void Promise.all(
+      hosts.map(async (h) => [h.instanceId, await loom().hosts.runtimes(h.instanceId)] as const),
+    ).then((pairs) => set({ runtimesByHost: Object.fromEntries(pairs) }));
   },
 
   dismissError() {

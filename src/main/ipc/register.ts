@@ -1,9 +1,9 @@
 /**
  * IPC handler registration (DESIGN.md §7).
  *
- * The bridge between the Electron shell and the headless `SessionManager`. All
- * policy, persistence, and orchestration decisions live in the manager; this
- * file only translates.
+ * The bridge between the Electron shell and the headless core. All policy,
+ * persistence, and orchestration decisions live in `SessionManager`; routing
+ * between hosts lives in `Fleet`; this file only translates.
  *
  * Two rules it enforces:
  *
@@ -15,7 +15,11 @@
  * 2. **Nothing here trusts its arguments.** A renderer is not a security
  *    boundary against itself, but a compromised or buggy one must not be able to
  *    make main throw in a way that takes down the window. Ids arrive as strings
- *    and are used as opaque keys — the manager rejects unknown ones.
+ *    and are used as opaque keys — the fleet rejects unknown ones.
+ *
+ * Registered once for the life of the app rather than per workspace: with a
+ * fleet, attaching a host is no longer a reason to rebuild the IPC surface, and
+ * the push subscriptions follow the fleet rather than any one manager.
  */
 
 import { BrowserWindow, dialog, ipcMain } from 'electron';
@@ -26,28 +30,28 @@ import {
   type AddAgentRequest,
   type CreateSessionRequest,
   type EventBatch,
+  type HostInfo,
   type RuntimeInfo,
   type SendRequest,
   type SessionSnapshot,
-  type WorkspaceInfo,
 } from '@shared/ipc/contract.js';
 import type {
   AgentId,
+  InstanceId,
   LoomEvent,
   PermissionDecision,
   PermissionRequest,
   Session,
   SessionId,
 } from '@shared/types/index.js';
-import { SessionManager } from '../sessionManager.js';
+import { basename } from 'node:path';
+import type { AttachedHost, Fleet, FleetRuntime } from '../fleet.js';
 import { EventBridge } from './eventBridge.js';
 
 export interface IpcDeps {
-  manager: SessionManager;
-  workspace: WorkspaceInfo;
-  /** Called when the user picks a different workspace; the app reloads it. */
-  onChooseWorkspace: (root: string) => Promise<WorkspaceInfo>;
-  runtimes: () => RuntimeInfo[];
+  fleet: Fleet;
+  /** Runtime metadata, for describing what a host offers. */
+  runtimes: FleetRuntime[];
 }
 
 /**
@@ -68,9 +72,33 @@ function describe(err: unknown): Error {
   return new Error(String(err));
 }
 
+/**
+ * A short label for §10's target badge.
+ *
+ * For a remote target the machine is the useful identifier; for a local one it
+ * is the folder, since "local" repeated across four cards says nothing.
+ */
+function labelFor(host: AttachedHost): string {
+  const target = host.target as { kind: string; host?: string; distro?: string };
+  return target.host ?? target.distro ?? basename(host.workspaceRoot);
+}
+
+function toInfo(host: AttachedHost): HostInfo {
+  return {
+    root: host.workspaceRoot,
+    lineageId: host.lineageId,
+    instanceId: host.instanceId,
+    targetKind: host.target.kind,
+    label: labelFor(host),
+    available: host.available,
+    ...(host.unavailableReason !== undefined
+      ? { unavailableReason: host.unavailableReason }
+      : {}),
+  };
+}
+
 export function registerIpc(deps: IpcDeps): { dispose: () => void } {
-  let workspace = deps.workspace;
-  const { manager } = deps;
+  const { fleet } = deps;
 
   // ------------------------------------------------------------- push channels
 
@@ -84,13 +112,19 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
     send: (batch: EventBatch) => broadcast(PUSH.events, batch),
   });
 
-  const onEvent = (sessionId: string, event: LoomEvent): void => bridge.push(sessionId, event);
-  const onSession = (session: Session): void => broadcast(PUSH.session, session);
-  const onPermission = (request: PermissionRequest): void => broadcast(PUSH.permission, request);
+  const onEvent = (instanceId: string, sessionId: string, event: LoomEvent): void =>
+    bridge.push(instanceId, sessionId, event);
+  const onSession = (_instanceId: string, session: Session): void =>
+    broadcast(PUSH.session, session);
+  const onPermission = (_instanceId: string, request: PermissionRequest): void =>
+    broadcast(PUSH.permission, request);
+  const onHosts = (): void => broadcast(PUSH.hosts, fleet.hosts().map(toInfo));
 
-  manager.on('event', onEvent);
-  manager.on('session', onSession);
-  manager.on('permission', onPermission);
+  fleet.on('event', onEvent);
+  fleet.on('session', onSession);
+  fleet.on('permission', onPermission);
+  fleet.on('host', onHosts);
+  fleet.on('detached', onHosts);
 
   // ----------------------------------------------------------------- handlers
 
@@ -107,43 +141,53 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
     });
   };
 
-  handle(CH.workspaceCurrent, () => workspace);
+  handle(CH.hostsList, () => fleet.hosts().map(toInfo));
 
-  handle(CH.workspaceChoose, async () => {
+  handle(CH.hostsAdd, async () => {
     const win = windows()[0];
     const result = await dialog.showOpenDialog(win ?? new BrowserWindow({ show: false }), {
-      title: 'Choose a workspace folder',
+      title: 'Attach a workspace',
       properties: ['openDirectory', 'createDirectory'],
     });
     const root = result.filePaths[0];
     if (result.canceled || root === undefined) return null;
 
-    workspace = await deps.onChooseWorkspace(root);
-    return workspace;
+    // Attaching does not replace anything: several hosts stay attached (§8).
+    return toInfo(await fleet.attach(root));
   });
 
-  handle(CH.runtimesList, () => deps.runtimes());
+  handle(CH.hostsRemove, (instanceId: string) => fleet.detach(instanceId as InstanceId));
 
-  handle(CH.sessionsList, () => manager.list());
-
-  handle(CH.sessionsCreate, (r: CreateSessionRequest) =>
-    manager.createSession({ title: r.title, goal: r.goal }),
+  handle(CH.hostsRuntimes, (instanceId: string): RuntimeInfo[] =>
+    fleet.runtimesOn(instanceId as InstanceId).map((r) => ({
+      id: r.id,
+      version: r.version,
+      requiresModel: r.requiresModel,
+    })),
   );
 
-  handle(CH.sessionsListOnDisk, () => manager.listOnDisk());
+  handle(CH.sessionsList, () => fleet.list());
 
-  handle(CH.sessionsResume, (sessionId: string) => manager.resumeSession(sessionId as SessionId));
+  handle(CH.sessionsCreate, (r: CreateSessionRequest) =>
+    fleet.createSession(r.instanceId as InstanceId, { title: r.title, goal: r.goal }),
+  );
+
+  handle(CH.sessionsListOnDisk, () => fleet.listOnDisk());
+
+  handle(CH.sessionsResume, (instanceId: string, sessionId: string) =>
+    fleet.resumeSession(instanceId as InstanceId, sessionId as SessionId),
+  );
 
   handle(CH.sessionsSnapshot, async (sessionId: string, windowSize?: number) => {
     const id = sessionId as SessionId;
-    const projection = await manager.projection(id);
+    const projection = await fleet.projection(id);
     const size = windowSize ?? DEFAULT_WINDOW;
-    const all = await manager.events(id);
+    const all = await fleet.events(id);
     // A window over the tail, never the whole log (§7). A week-long session
     // must not become a renderer-side heap problem.
     const recent = all.slice(-size);
     const snapshot: SessionSnapshot = {
-      session: manager.get(id),
+      session: fleet.get(id),
       projection,
       recent,
       windowFromSeq: recent[0]?.seq ?? 0,
@@ -152,7 +196,7 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
   });
 
   handle(CH.sessionsAddAgent, (r: AddAgentRequest) =>
-    manager.addAgent(r.sessionId as SessionId, {
+    fleet.addAgent(r.sessionId as SessionId, {
       role: r.role,
       runtimeId: r.runtimeId,
       ...(r.systemPrompt !== undefined ? { systemPrompt: r.systemPrompt } : {}),
@@ -162,23 +206,23 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
   );
 
   handle(CH.sessionsSend, (r: SendRequest) =>
-    manager.send(r.sessionId as SessionId, r.agentId as AgentId, {
+    fleet.send(r.sessionId as SessionId, r.agentId as AgentId, {
       content: [{ type: 'text', text: r.text }],
     }),
   );
 
   handle(CH.sessionsInterrupt, (sessionId: string, agentId?: string) =>
-    manager.interrupt(sessionId as SessionId, agentId as AgentId | undefined),
+    fleet.interrupt(sessionId as SessionId, agentId as AgentId | undefined),
   );
 
   handle(CH.sessionsSince, (sessionId: string, fromSeq: number) =>
-    manager.events(sessionId as SessionId, fromSeq),
+    fleet.events(sessionId as SessionId, fromSeq),
   );
 
-  handle(CH.permissionsPending, () => manager.pendingPermissions());
+  handle(CH.permissionsPending, () => fleet.pendingPermissions().map((p) => p.request));
 
   handle(CH.permissionsRespond, (requestId: string, decision: PermissionDecision) =>
-    manager.respondPermission(requestId, decision),
+    fleet.respondPermission(requestId, decision),
   );
 
   // `send`, not `handle`: an ack has no reply, and making the renderer await one
@@ -187,9 +231,11 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
 
   return {
     dispose: () => {
-      manager.off('event', onEvent);
-      manager.off('session', onSession);
-      manager.off('permission', onPermission);
+      fleet.off('event', onEvent);
+      fleet.off('session', onSession);
+      fleet.off('permission', onPermission);
+      fleet.off('host', onHosts);
+      fleet.off('detached', onHosts);
       bridge.releaseAll();
       for (const channel of Object.values(CH)) ipcMain.removeHandler(channel);
       ipcMain.removeAllListeners(CH.ack);

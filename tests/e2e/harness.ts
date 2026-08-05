@@ -11,7 +11,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 
 export const ROOT = resolve(import.meta.dirname, '../..');
 
@@ -28,7 +28,9 @@ const ELECTRON = createRequire(import.meta.url)('electron') as unknown as string
 export interface LaunchedApp {
   app: ElectronApplication;
   window: Page;
-  /** The workspace the app opened — a real directory on disk. */
+  /** The workspaces the app attached, in order. */
+  workspaces: string[];
+  /** The first, for the common single-host case. */
   workspace: string;
   close(): Promise<void>;
 }
@@ -40,7 +42,8 @@ export interface LaunchedApp {
  * and `LOOM_WORKSPACE_ROOT` pins the workspace instead of letting main fall back
  * to that profile directory.
  */
-export async function launch(workspace: string): Promise<LaunchedApp> {
+export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
+  if (workspaces.length === 0) throw new Error('launch needs at least one workspace');
   const userDataDir = await mkdtemp(join(tmpdir(), 'loom-e2e-profile-'));
 
   const env: Record<string, string> = {};
@@ -50,7 +53,9 @@ export async function launch(workspace: string): Promise<LaunchedApp> {
   // Inherited from any Electron-based parent terminal; it would silently run
   // main as plain Node with no window at all. See scripts/launch.mjs.
   delete env['ELECTRON_RUN_AS_NODE'];
-  env['LOOM_WORKSPACE_ROOT'] = workspace;
+  // Several roots, delimiter-separated, so the app attaches several hosts at
+  // once — which is how the multi-host view gets exercised (§8).
+  env['LOOM_WORKSPACE_ROOT'] = workspaces.join(delimiter);
 
   const app = await electron.launch({
     executablePath: ELECTRON,
@@ -67,7 +72,8 @@ export async function launch(workspace: string): Promise<LaunchedApp> {
   return {
     app,
     window,
-    workspace,
+    workspaces,
+    workspace: workspaces[0]!,
     close: async () => {
       await app.close();
       await rm(userDataDir, { recursive: true, force: true });

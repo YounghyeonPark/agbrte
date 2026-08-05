@@ -80,6 +80,20 @@ export interface PendingPermission extends PermissionRequest {
   askedAt: string;
 }
 
+/**
+ * Display order for sessions (§10): needsAttention first, then most recent.
+ *
+ * With many sessions the scarce resource is your attention, so blocked work must
+ * be impossible to miss. Exported because a fleet spanning several hosts has to
+ * re-sort the merged list — concatenating per-host sorted lists does not preserve
+ * this order, and two copies of the comparator would drift.
+ */
+export function byAttentionThenRecency(a: Session, b: Session): number {
+  const attention = Number(Boolean(b.needsAttention)) - Number(Boolean(a.needsAttention));
+  if (attention !== 0) return attention;
+  return b.updatedAt.localeCompare(a.updatedAt);
+}
+
 /** Grants apply to the asking agent, so its siblings are never widened. */
 function clonePolicy(policy: ToolPolicy): ToolPolicy {
   return { defaultAction: policy.defaultAction, rules: policy.rules.map((r) => ({ ...r })) };
@@ -169,15 +183,7 @@ export class SessionManager extends EventEmitter {
   }
 
   list(): Session[] {
-    // needsAttention first — with many sessions the scarce resource is your
-    // attention, so blocked work must be impossible to miss (§10).
-    return [...this.sessions.values()]
-      .map((l) => l.session)
-      .sort((a, b) => {
-        const attention = Number(Boolean(b.needsAttention)) - Number(Boolean(a.needsAttention));
-        if (attention !== 0) return attention;
-        return b.updatedAt.localeCompare(a.updatedAt);
-      });
+    return [...this.sessions.values()].map((l) => l.session).sort(byAttentionThenRecency);
   }
 
   /**

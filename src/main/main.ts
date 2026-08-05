@@ -1,26 +1,26 @@
 /**
  * Electron main process (DESIGN.md §7, §8).
  *
- * Owns the app lifecycle, one window, and the `SessionManager` that everything
- * else is a client of.
+ * Owns the app lifecycle, one window, and the `Fleet` that everything else is a
+ * client of.
  *
- * Agent loops run in a separate `utilityProcess` per §8 — main holds session
- * state, the log, and the permission gate, and never runs an adapter. The
- * registry it hands `SessionManager` contains façades over the host's control
- * protocol, which is why the manager needs no knowledge that a process boundary
+ * Agent loops run in separate `utilityProcess`es per §8 — main holds session
+ * state, the logs, and the permission gate, and never runs an adapter. The
+ * registry each `SessionManager` receives contains façades over its host's
+ * control protocol, which is why no manager needs to know a process boundary
  * exists at all.
+ *
+ * Several hosts stay attached at once. §8's concurrency caps are per host and
+ * §10's cards carry a target badge, so watching more than one place is the
+ * designed behaviour; the single-workspace shape this replaced was a limitation.
  */
 
 import { app, BrowserWindow, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import { SessionManager } from './sessionManager.js';
-import { RuntimeRegistry } from './runtime/registry.js';
-import { openWorkspace } from './store/identity.js';
+import { delimiter, dirname, join } from 'node:path';
 import { registerIpc } from './ipc/register.js';
-import { HostSupervisor } from './host/supervisor.js';
+import { Fleet, type FleetRuntime } from './fleet.js';
 import { spawnAgentHost } from './host/utilityHost.js';
-import type { RuntimeInfo, WorkspaceInfo } from '@shared/ipc/contract.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -34,19 +34,19 @@ const DEV_URL = process.env['LOOM_DEV_SERVER'];
  */
 if (process.platform === 'win32') app.setAppUserModelId('dev.loom.app');
 
-let manager: SessionManager | null = null;
+let fleet: Fleet | null = null;
 let ipc: { dispose: () => void } | null = null;
-let supervisor: HostSupervisor | null = null;
 
 /**
- * What the agent host offers, mirrored here because main advertises it to the
- * renderer before any host has been spawned.
+ * What an agent host is expected to offer, mirrored here because the renderer
+ * asks before any host has finished starting.
  *
- * The host's `ready` handshake reports the ids it actually registered, and
- * `loadWorkspace` reconciles the two: anything listed here but absent there is
- * dropped rather than offered and then failing at `addAgent`.
+ * Each host's `ready` handshake reports the ids it actually registered, and
+ * `Fleet.attach` reconciles the two per host: anything listed here but absent
+ * there is dropped rather than offered and then failing at `addAgent`. Hosts
+ * need not agree — a machine without a model server offers fewer.
  */
-const HOST_RUNTIMES = [
+const HOST_RUNTIMES: FleetRuntime[] = [
   {
     id: 'loom-harness',
     label: 'Loom harness (local model)',
@@ -56,51 +56,20 @@ const HOST_RUNTIMES = [
   { id: 'echo', label: 'Echo (no model)', version: '0.0.1', requiresModel: false },
 ];
 
-let advertised: RuntimeInfo[] = [];
-
-async function loadWorkspace(root: string): Promise<WorkspaceInfo> {
-  const identity = await openWorkspace(root);
-
-  // One host per workspace (§8). Replacing it on a workspace change matters:
-  // tools resolve paths against the host's own workspace root.
-  supervisor?.dispose();
-  supervisor = new HostSupervisor({
-    spawn: () => spawnAgentHost({ entry: join(HERE, 'agentHost.js'), workspaceRoot: root }),
+/**
+ * One fleet for the app's lifetime, holding as many hosts as are attached (§8).
+ *
+ * Previously main held a single manager and disposed the previous agent host on
+ * every workspace change, so the app could watch exactly one place. The caps in
+ * §8 are per host and §10's cards carry a target badge — the aggregate view is
+ * the designed one, and the single-workspace shape was the limitation.
+ */
+function buildFleet(): Fleet {
+  return new Fleet({
     runtimes: HOST_RUNTIMES,
-    onRestart: (attempt, reason) => {
-      // Logged rather than surfaced: an open turn already failed with a
-      // `transport` stop, which retries and rehydrates (§8).
-      process.stderr.write(`agent host restarted (attempt ${attempt}): ${reason ?? 'unknown'}\n`);
-    },
+    spawn: ({ workspaceRoot }) =>
+      spawnAgentHost({ entry: join(HERE, 'agentHost.js'), workspaceRoot }),
   });
-
-  const registry = new RuntimeRegistry();
-  for (const entry of supervisor.runtimes()) {
-    registry.register(entry.runtime, { label: entry.label, requiresModel: entry.requiresModel });
-  }
-
-  manager = new SessionManager({
-    registry,
-    workspaceRoot: root,
-    instanceId: identity.instanceId,
-  });
-
-  // Reconcile against what the host really has. A failure here means the host
-  // could not start at all, which must not stop the window from opening — the
-  // UI shows no runtimes and the transcript of any existing session still loads.
-  try {
-    const ids = new Set(await supervisor.advertised());
-    advertised = HOST_RUNTIMES.filter((r) => ids.has(r.id)).map((r) => ({
-      id: r.id,
-      version: r.version,
-      requiresModel: r.requiresModel,
-    }));
-  } catch (err) {
-    advertised = [];
-    process.stderr.write(`agent host unavailable: ${String(err)}\n`);
-  }
-
-  return { root, lineageId: identity.lineageId, instanceId: identity.instanceId };
 }
 
 async function createWindow(): Promise<void> {
@@ -144,37 +113,31 @@ async function createWindow(): Promise<void> {
   }
 }
 
-/**
- * Point the IPC layer at the current manager.
- *
- * Re-registered wholesale on a workspace change rather than mutated, because a
- * new workspace means a new manager, a new host, and a new instance identity
- * (§5.2) — the push-channel subscriptions are bound to the manager they were
- * created for, and leaving them attached would forward the old workspace's
- * events into a window now showing a different one.
- */
-async function wireIpc(workspace: WorkspaceInfo): Promise<void> {
-  ipc?.dispose();
-  ipc = registerIpc({
-    manager: manager!,
-    workspace,
-    runtimes: () => advertised,
-    onChooseWorkspace: async (root) => {
-      const next = await loadWorkspace(root);
-      await wireIpc(next);
-      return next;
-    },
-  });
-}
-
 app.whenReady().then(async () => {
-  // `LOOM_WORKSPACE_ROOT` lets a test — or a developer — start against a known
-  // folder instead of the profile directory. The default is `userData` rather
-  // than cwd so a fresh install has somewhere valid to put `.devagents/` before
-  // anyone has chosen a real workspace.
-  const root = process.env['LOOM_WORKSPACE_ROOT'] ?? app.getPath('userData');
+  fleet = buildFleet();
 
-  await wireIpc(await loadWorkspace(root));
+  // `LOOM_WORKSPACE_ROOT` lets a test — or a developer — start attached to a
+  // known folder. Several may be given, separated by the platform's path
+  // delimiter, which is how the e2e suite attaches two hosts at once.
+  const configured = process.env['LOOM_WORKSPACE_ROOT'];
+  const roots =
+    configured === undefined || configured === ''
+      ? [app.getPath('userData')]
+      : configured.split(delimiter).filter((r) => r !== '');
+
+  // Registered before attaching, so the window can render a host that failed to
+  // come up rather than waiting on it.
+  ipc = registerIpc({ fleet, runtimes: HOST_RUNTIMES });
+
+  for (const root of roots) {
+    try {
+      await fleet.attach(root);
+    } catch (err) {
+      process.stderr.write(`could not attach ${root}: ${String(err)}
+`);
+    }
+  }
+
   await createWindow();
 
   app.on('activate', () => {
@@ -192,7 +155,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   ipc?.dispose();
-  // Kill the host explicitly. A utilityProcess is not guaranteed to die with its
-  // parent, and an orphaned host holding a model connection is invisible.
-  supervisor?.dispose();
+  // Kill every host explicitly. A utilityProcess is not guaranteed to die with
+  // its parent, and an orphaned host holding a model connection is invisible.
+  void fleet?.detachAll();
 });

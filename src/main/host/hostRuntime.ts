@@ -143,11 +143,17 @@ export class HostClient {
 
   readonly ready: Promise<string[]>;
   private announceReady!: (ids: string[]) => void;
+  private failReady!: (err: Error) => void;
 
   constructor(private readonly opts: HostClientOptions) {
-    this.ready = new Promise((resolve) => {
+    this.ready = new Promise((resolve, reject) => {
       this.announceReady = resolve;
+      this.failReady = reject;
     });
+    // Marks the rejection handled so a caller that never awaits `ready` does not
+    // trigger an unhandled rejection. Callers awaiting it still see the error —
+    // `.catch()` returns a new promise and leaves this one's state alone.
+    this.ready.catch(() => undefined);
 
     opts.channel.onMessage((message) => this.receive(message));
     opts.channel.onClose((reason) => this.handleClose(reason));
@@ -248,6 +254,12 @@ export class HostClient {
    */
   private handleClose(reason?: string): void {
     this.closed = reason ?? 'agent host exited';
+
+    // `ready` is not a pending request, so failing only those left it unsettled
+    // forever when a host died *before* handshaking — and `advertised()` returns
+    // it, so attaching a workspace whose host cannot start hung indefinitely
+    // rather than reporting the host unavailable.
+    this.failReady(new Error(this.closed));
 
     for (const [, pending] of this.pending) pending.reject(new Error(this.closed));
     this.pending.clear();
