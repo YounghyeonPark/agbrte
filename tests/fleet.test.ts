@@ -321,7 +321,7 @@ describe('permissions across hosts', () => {
     // that must not see a failure.
     await expect(
       fleet.respondPermission('gone', { result: 'allow', scope: 'once' }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe('unknown');
     expect(stale).toBe('gone');
   });
 });

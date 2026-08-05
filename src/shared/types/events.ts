@@ -66,6 +66,41 @@ export type EventBody =
    * appending, so a transcript could show hundreds of tool calls and no record
    * that the gate was ever consulted.
    */
+  /**
+   * A request that reached a human, recorded *before* anyone answers it.
+   *
+   * Logged only when the gate's outcome is `ask`: a policy-settled call goes
+   * straight to `permission.decided`, and duplicating it here would double the
+   * log for every auto-allowed tool use.
+   *
+   * Durable because the in-memory version could not survive the thing it needed
+   * to. A pending request was a `resolve` closure in a `Map`, so it could not be
+   * queried from another client and died with its process — and under a central
+   * agent host that keeps running while clients come and go, changing device
+   * mid-prompt left the agent blocked on a promise nobody could resolve. With
+   * the request in the log, the pending set is *derived*: requested, minus
+   * decided, minus withdrawn.
+   */
+  | {
+      type: 'permission.requested';
+      requestId: string;
+      tool: string;
+      args: unknown;
+      toolUseId?: string;
+    }
+  /**
+   * A request that can no longer be answered, because the agent that asked is
+   * gone — the turn ended, the host restarted, the app was closed.
+   *
+   * Recorded rather than left dangling so a reloaded session shows no prompt for
+   * work nothing is waiting on. Offering one would be worse than showing none:
+   * answering it would do nothing, silently.
+   */
+  | {
+      type: 'permission.withdrawn';
+      requestId: string;
+      reason: string;
+    }
   | {
       type: 'permission.decided';
       requestId: string;
@@ -140,6 +175,8 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'agent.tool_use',
   'agent.tool_result',
   'agent.stopped',
+  'permission.requested',
+  'permission.withdrawn',
   'permission.decided',
   'usage',
   'content.downgraded',

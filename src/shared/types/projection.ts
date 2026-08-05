@@ -75,6 +75,22 @@ export interface SessionProjection {
   children: ChildRef[];
   usage: UsageTotals;
   needsAttention: null | { reason: AttentionReason; since: string };
+  /**
+   * Requests awaiting an answer, folded from the log: requested, minus decided,
+   * minus withdrawn.
+   *
+   * Derived rather than stored so it cannot disagree with the transcript, and so
+   * any client can read it — the previous in-memory set was reachable only from
+   * the process that created it.
+   */
+  pendingPermissions: Array<{
+    requestId: string;
+    agentId: AgentId;
+    tool: string;
+    args: unknown;
+    toolUseId?: string;
+    askedAt: string;
+  }>;
   stats: ProjectionStats;
   /** Non-zero means the log had unparseable lines — real corruption (§5.1). */
   skippedLines: number;
@@ -95,6 +111,7 @@ export function emptyProjection(sessionId: SessionId): SessionProjection {
     children: [],
     usage: { inputTokens: 0, outputTokens: 0, cost: 0 },
     needsAttention: null,
+    pendingPermissions: [],
     stats: {
       turns: 0,
       toolCalls: 0,

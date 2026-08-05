@@ -151,7 +151,19 @@ export interface LoomApi {
   };
   permissions: {
     pending(): Promise<PermissionRequest[]>;
-    respond(requestId: string, decision: PermissionDecision): Promise<void>;
+    /**
+     * Answer a request. First answer wins.
+     *
+     * The outcome matters to the UI: with several clients attached, two devices
+     * can show the same prompt and both be clicked. `already-answered` means
+     * someone else got there first — withdraw the prompt, do not show an error.
+     * `unknown` means it is gone entirely, usually withdrawn because the agent
+     * stopped.
+     */
+    respond(
+      requestId: string,
+      decision: PermissionDecision,
+    ): Promise<'answered' | 'already-answered' | 'unknown'>;
   };
   /** Push channels. Each returns an unsubscribe function. */
   on: {

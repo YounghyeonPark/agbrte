@@ -119,6 +119,14 @@ export interface SessionManagerDeps {
 export class SessionManager extends EventEmitter {
   private readonly sessions = new Map<SessionId, LiveSession>();
   private readonly pending = new Map<string, PendingPermission>();
+  /**
+   * Request ids already answered in this process.
+   *
+   * Kept so a second client answering the same prompt gets `already-answered`
+   * rather than `unknown` — the difference between "someone else got there
+   * first" and "that prompt was never real", which the UI should not conflate.
+   */
+  private readonly answered = new Set<string>();
   private readonly now: () => Date;
 
   constructor(private readonly deps: SessionManagerDeps) {
@@ -383,10 +391,30 @@ export class SessionManager extends EventEmitter {
    * Resolve a pending request. The denial reason is fed back to the agent so it
    * can adapt rather than retrying blindly (§13).
    */
-  async respondPermission(requestId: string, decision: PermissionDecision): Promise<void> {
+  /**
+   * Answer a pending request. **First answer wins.**
+   *
+   * With several clients attached to one host, two devices can show the same
+   * prompt and both be clicked. Throwing on the second would surface an error on
+   * a device that did nothing wrong, so a late answer returns
+   * `already-answered` and the caller withdraws its prompt instead.
+   *
+   * `unknown` covers a request this process never had — answered before a
+   * restart, or withdrawn. Also not an error: a client that raced a withdrawal
+   * should not see a failure for a prompt that simply no longer exists.
+   */
+  async respondPermission(
+    requestId: string,
+    decision: PermissionDecision,
+  ): Promise<'answered' | 'already-answered' | 'unknown'> {
     const entry = this.pending.get(requestId);
-    if (!entry) throw new Error(`no pending permission request ${requestId}`);
+    if (!entry) {
+      // Distinguishable so a UI can say "someone else answered this" rather than
+      // "that prompt was never real".
+      return this.answered.has(requestId) ? 'already-answered' : 'unknown';
+    }
     this.pending.delete(requestId);
+    this.answered.add(requestId);
 
     const live = this.live(entry.sessionId);
     const spec = live.specs.get(entry.agentId);
@@ -399,6 +427,28 @@ export class SessionManager extends EventEmitter {
     // Per session: another session's open prompt must not keep this one parked,
     // and this one's must not be cleared by a sibling being answered.
     if (!this.hasPendingFor(entry.sessionId)) await this.setState(live, 'working');
+    return 'answered';
+  }
+
+  /**
+   * Withdraw every request this session still shows as pending.
+   *
+   * Called when a session is loaded from disk: the promises those requests were
+   * waiting on died with the process that made them, so the agent is not
+   * waiting any more. Leaving them in the folded pending set would offer a
+   * prompt that does nothing when answered, which is worse than offering none.
+   */
+  private async withdrawStale(live: LiveSession, outstanding: ReadonlyArray<{ requestId: string; agentId: AgentId }>): Promise<void> {
+    for (const request of outstanding) {
+      await live.store.append(
+        {
+          type: 'permission.withdrawn',
+          requestId: request.requestId,
+          reason: 'the agent that asked is no longer running',
+        },
+        { agentId: request.agentId },
+      );
+    }
   }
 
   private contextFor(live: LiveSession, spec: AgentSpec): RuntimeContext {
@@ -480,6 +530,21 @@ export class SessionManager extends EventEmitter {
       // Overwriting would drop the first promise and wedge that turn forever.
       throw new Error(`duplicate permission request id ${request.requestId}`);
     }
+
+    // Durable *before* the prompt exists. The waiting promise lives in this
+    // process, but the record of what is being asked does not — that is what
+    // lets any attached client see the request and answer it, and what lets a
+    // reloaded session know a request was outstanding at all (§7, §16).
+    await live.store.append(
+      {
+        type: 'permission.requested',
+        requestId: request.requestId,
+        tool: request.tool,
+        args: request.args,
+        ...(request.toolUseId !== undefined ? { toolUseId: request.toolUseId } : {}),
+      },
+      { agentId: request.agentId, origin: this.originFor(spec) },
+    );
 
     await this.setState(live, 'awaiting_permission');
 
@@ -714,6 +779,20 @@ export class SessionManager extends EventEmitter {
           cost: projectedUsage.cost,
         },
       });
+    }
+
+    // Any request the log still shows as pending was waiting on a promise in a
+    // process that is gone. Withdraw them so the reloaded session offers no
+    // prompt that would do nothing when answered.
+    if (projection.pendingPermissions.length > 0) {
+      await this.withdrawStale(live, projection.pendingPermissions);
+      // And move it out of `awaiting_permission`. Withdrawing the requests but
+      // leaving the state would produce a session that reports `needs_permission`
+      // with no prompt to answer — stranded in exactly the way this is meant to
+      // prevent, just more quietly. `awaiting_input` is the honest successor: a
+      // person decides what happens next, which is the same disposition
+      // `end_turn` gets (§3.9).
+      await this.setState(live, 'awaiting_input', 'permission request withdrawn on reload');
     }
 
     if (truncatedBytes > 0) {

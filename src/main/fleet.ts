@@ -351,15 +351,26 @@ export class Fleet extends EventEmitter {
     );
   }
 
-  async respondPermission(requestId: string, decision: PermissionDecision): Promise<void> {
+  /**
+   * Answer a request without knowing which host minted it.
+   *
+   * Each host is asked in turn and the first non-`unknown` answer wins. There is
+   * deliberately no requestId→host index: an index can disagree with the
+   * managers, and a stale entry here would strand an agent — the exact failure
+   * this path exists to remove.
+   */
+  async respondPermission(
+    requestId: string,
+    decision: PermissionDecision,
+  ): Promise<'answered' | 'already-answered' | 'unknown'> {
     for (const entry of this.entries.values()) {
-      if (!entry.manager.pendingPermissions().some((p) => p.requestId === requestId)) continue;
-      await entry.manager.respondPermission(requestId, decision);
-      return;
+      const outcome = await entry.manager.respondPermission(requestId, decision);
+      if (outcome !== 'unknown') return outcome;
     }
     // Not an error worth throwing: the ask may have been withdrawn because the
     // agent stopped, and a UI that raced that should not see a failure.
     this.emit('permission-stale', requestId);
+    return 'unknown';
   }
 
   private require(instanceId: InstanceId): Entry {

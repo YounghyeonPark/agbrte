@@ -234,3 +234,119 @@ describe('listOnDisk', () => {
     expect(found[0]?.sessionId).toBe(good.sessionId as SessionId);
   });
 });
+
+/**
+ * Permission requests must outlive the process that asked (DESIGN.md §7, §16).
+ *
+ * The in-memory version could not survive the thing it needed to: a pending
+ * request was a `resolve` closure in a `Map`, unreachable from another client and
+ * dead with its process. Under a host that keeps running while clients come and
+ * go, that left an agent blocked on a promise nobody could resolve.
+ */
+describe('durable permission requests', () => {
+  const asksBash: EchoStep[] = [
+    { kind: 'tool', tool: 'bash', args: { command: 'ls' } },
+    { kind: 'stop', stop: { kind: 'end_turn' } },
+  ];
+
+  it('records the request in the log before anyone answers', async () => {
+    const sm = manager(asksBash);
+    const created = await sm.createSession({ title: 's', goal: 'g' });
+    const agent = await sm.addAgent(created.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    const asked = new Promise<string>((resolve) => {
+      sm.on('permission', (r: { requestId: string }) => resolve(r.requestId));
+    });
+    const turn = sm.send(created.sessionId, agent.agentId, TEXT('go'));
+    const requestId = await asked;
+
+    // Durable while still unanswered — that is the whole point.
+    const events = await sm.events(created.sessionId);
+    expect(events.some((e) => e.type === 'permission.requested')).toBe(true);
+
+    const projection = await sm.projection(created.sessionId);
+    expect(projection.pendingPermissions.map((p) => p.requestId)).toEqual([requestId]);
+    expect(projection.pendingPermissions[0]?.tool).toBe('bash');
+
+    await sm.respondPermission(requestId, { result: 'deny', reason: 'no' });
+    await turn;
+
+    // Answering removes it from the folded set, so pending is exactly
+    // requested-minus-decided rather than a second source of truth.
+    expect((await sm.projection(created.sessionId)).pendingPermissions).toEqual([]);
+  });
+
+  it('does not log a request for a call policy settles without asking', async () => {
+    const sm = manager([
+      // `read` inside the workspace is `allow` under §13's defaults.
+      { kind: 'tool', tool: 'read', args: { file_path: 'a.ts' } },
+      { kind: 'stop', stop: { kind: 'end_turn' } },
+    ]);
+    const created = await sm.createSession({ title: 's', goal: 'g' });
+    const agent = await sm.addAgent(created.sessionId, { role: 'worker', runtimeId: 'echo' });
+    await sm.send(created.sessionId, agent.agentId, TEXT('go'));
+
+    const events = await sm.events(created.sessionId);
+    // Logging every auto-allowed call here would double the log for no gain; the
+    // decision is already recorded, which is what §13 requires.
+    expect(events.some((e) => e.type === 'permission.requested')).toBe(false);
+    expect(events.some((e) => e.type === 'permission.decided')).toBe(true);
+  });
+
+  it('withdraws a request left outstanding by a dead process', async () => {
+    const first = manager(asksBash);
+    const created = await first.createSession({ title: 's', goal: 'g' });
+    const agent = await first.addAgent(created.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    const asked = new Promise<string>((resolve) => {
+      first.on('permission', (r: { requestId: string }) => resolve(r.requestId));
+    });
+    void first.send(created.sessionId, agent.agentId, TEXT('go'));
+    const requestId = await asked;
+
+    // The app dies with the prompt still on screen. `first` is unreachable now.
+    const second = manager(asksBash);
+    const resumed = await second.resumeSession(created.sessionId);
+
+    // Offering it would be worse than offering nothing: the promise it was
+    // waiting on is gone, so answering would silently do nothing.
+    expect((await second.projection(created.sessionId)).pendingPermissions).toEqual([]);
+    const events = await second.events(created.sessionId);
+    expect(events.some((e) => e.type === 'permission.withdrawn')).toBe(true);
+
+    // And the session is not left claiming it needs an answer.
+    expect(resumed.state).not.toBe('awaiting_permission');
+    await expect(
+      second.respondPermission(requestId, { result: 'allow', scope: 'once' }),
+    ).resolves.toBe('unknown');
+  });
+
+  it('lets the first answer win and tells the second what happened', async () => {
+    const sm = manager(asksBash);
+    const created = await sm.createSession({ title: 's', goal: 'g' });
+    const agent = await sm.addAgent(created.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    const asked = new Promise<string>((resolve) => {
+      sm.on('permission', (r: { requestId: string }) => resolve(r.requestId));
+    });
+    const turn = sm.send(created.sessionId, agent.agentId, TEXT('go'));
+    const requestId = await asked;
+
+    // Two devices showing the same prompt, both clicked.
+    const first = await sm.respondPermission(requestId, { result: 'deny', reason: 'no' });
+    const second = await sm.respondPermission(requestId, { result: 'allow', scope: 'once' });
+    await turn;
+
+    expect(first).toBe('answered');
+    // Not `unknown`: the UI should say "answered on another device", not imply the
+    // prompt was never real.
+    expect(second).toBe('already-answered');
+
+    // And the second answer changed nothing — one decision in the log.
+    const decided = (await sm.events(created.sessionId)).filter(
+      (e) => e.type === 'permission.decided',
+    );
+    expect(decided).toHaveLength(1);
+    expect(decided[0]).toMatchObject({ decision: { result: 'deny' } });
+  });
+});

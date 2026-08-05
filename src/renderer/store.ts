@@ -197,11 +197,17 @@ export const useLoom = create<LoomState>((set, get) => ({
 
   async respond(requestId, allow) {
     await guard(set, async () => {
-      await loom().permissions.respond(
+      const outcome = await loom().permissions.respond(
         requestId,
         allow ? { result: 'allow', scope: 'once' } : { result: 'deny', reason: 'denied by user' },
       );
+      // The prompt goes either way. Another device answering first, or the agent
+      // stopping and the request being withdrawn, are both reasons to stop
+      // showing it — and neither is an error this client should see.
       set({ pending: get().pending.filter((p) => p.requestId !== requestId) });
+      if (outcome === 'already-answered') {
+        set({ error: 'Answered on another device.' });
+      }
     });
   },
 

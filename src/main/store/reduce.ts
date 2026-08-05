@@ -79,9 +79,29 @@ export function reduceEvents(
         if (!ev.ok) p.stats.toolErrors += 1;
         break;
 
+      case 'permission.requested':
+        // The pending set is folded, not stored, so it cannot disagree with the
+        // transcript and any client can read it.
+        p.pendingPermissions.push({
+          requestId: ev.requestId,
+          agentId: ev.agentId ?? ('unknown' as never),
+          tool: ev.tool,
+          args: ev.args,
+          askedAt: ev.at,
+          ...(ev.toolUseId !== undefined ? { toolUseId: ev.toolUseId } : {}),
+        });
+        break;
+
+      case 'permission.withdrawn':
+        p.pendingPermissions = p.pendingPermissions.filter((r) => r.requestId !== ev.requestId);
+        break;
+
       case 'permission.decided':
         p.stats.permissionPrompts += 1;
         if (ev.decision.result === 'deny') p.stats.permissionDenials += 1;
+        // Answered, so no longer pending. Harmless for a policy-settled call,
+        // which was never in the set.
+        p.pendingPermissions = p.pendingPermissions.filter((r) => r.requestId !== ev.requestId);
         break;
 
       case 'usage':

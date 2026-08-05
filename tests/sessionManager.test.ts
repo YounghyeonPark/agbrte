@@ -372,11 +372,15 @@ describe('SessionManager — the permission gate', () => {
     expect(sm.pendingPermissions()).toHaveLength(0);
   });
 
-  it('rejects a response to an unknown request', async () => {
+  it('reports an unknown request rather than throwing', async () => {
     const sm = manager();
-    await expect(
-      sm.respondPermission('nope', { result: 'allow', scope: 'once' }),
-    ).rejects.toThrow(/no pending permission/);
+    // Deliberately not an error. With several clients attached, one can answer a
+    // prompt another already answered, or one that was withdrawn when the agent
+    // stopped — neither client did anything wrong, and throwing would surface an
+    // error on the innocent one.
+    await expect(sm.respondPermission('nope', { result: 'allow', scope: 'once' })).resolves.toBe(
+      'unknown',
+    );
   });
 });
 
