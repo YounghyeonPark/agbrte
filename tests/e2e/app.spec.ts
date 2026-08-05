@@ -19,6 +19,16 @@ import { addAgent, createSession, openSession, runtimeOptions, send } from './ac
 
 const MODEL = 'qwen2.5:7b';
 
+/**
+ * How long to wait for the model to produce its tool call.
+ *
+ * The model is already resident by the time these run, and a successful call
+ * arrives in about four seconds. Sixty is generous rather than tight — and
+ * keeping it short matters because the failure mode is a retry, so a 150s
+ * timeout only made every coin-flip loss two and a half minutes long.
+ */
+const LIVE_TIMEOUT = 60_000;
+
 test.describe('the shell', () => {
   test('opens on the chosen workspace with runtimes available', async () => {
     const repo = await makeRepo();
@@ -122,6 +132,26 @@ test.describe('the shell', () => {
  */
 test.describe('a real model against a real repo', () => {
   /**
+   * Retries here, and nowhere else in this suite.
+   *
+   * Measured over repeated full runs, roughly one in three of these fails by
+   * timing out while the model answers in prose instead of calling the tool it
+   * was told to call. That is sampling in a 7B model, not a defect in the app:
+   * the same test passes three times out of three in isolation, and the two
+   * tests fail interchangeably.
+   *
+   * The config-level `retries: 0` stays, with the same reasoning as before —
+   * retrying a deterministic test masks exactly the flakiness worth knowing
+   * about. That argument does not extend to a non-deterministic *dependency*.
+   * Scoping retries to this block keeps the shell tests honest while stopping a
+   * coin flip from failing the suite.
+   *
+   * If these start failing on every attempt, that is a real signal: it means the
+   * failure is no longer a sampling artefact.
+   */
+  test.describe.configure({ retries: 2 });
+
+  /**
    * Load the model once, before any test needs it.
    *
    * A cold start is tens of seconds to minutes of disk read, and absorbing it
@@ -156,14 +186,24 @@ test.describe('a real model against a real repo', () => {
       await expect(async () => {
         const contents = await readFile(join(repo, 'hello.txt'), 'utf8');
         expect(contents.toLowerCase()).toContain('hello');
-      }).toPass({ timeout: 150_000 });
+      }).toPass({ timeout: LIVE_TIMEOUT });
 
-      // Deliberately asserting the *absence* of a prompt. A write inside the
-      // workspace is `allow` under §13's defaults, so requiring approval here
-      // would mean the policy had not been applied. The gate still ran and still
-      // logged, which is what §13 actually requires.
-      await expect(loom.window.locator('[data-testid=prompt]')).toHaveCount(0);
-      const decision = loom.window.locator('[data-testid=row-decision]').first();
+      // A write inside the workspace is `allow` under §13's defaults, so the
+      // gate must have run, recorded, and asked nobody.
+      //
+      // Asserted on the decision row *for `write`* rather than on the first
+      // decision row, and via `policy` rather than the absence of any prompt.
+      // Both of those were coupling to something the model controls: which tool
+      // it calls first, and whether it calls extra tools at all. A run where it
+      // also reached for `bash` would fail a global no-prompt assertion for a
+      // reason that says nothing about the write.
+      //
+      // `via: 'policy'` is also the *stronger* claim — it proves no human was
+      // consulted for this call, which a prompt count can only imply.
+      const decision = loom.window
+        .locator('[data-testid=row-decision]')
+        .filter({ hasText: 'write' })
+        .first();
       await expect(decision).toContainText('allow');
       await expect(decision).toContainText('policy');
     } finally {
@@ -194,7 +234,7 @@ test.describe('a real model against a real repo', () => {
       );
 
       const prompt = loom.window.locator('[data-testid=prompt]');
-      await expect(prompt).toBeVisible({ timeout: 150_000 });
+      await expect(prompt).toBeVisible({ timeout: LIVE_TIMEOUT });
       await expect(loom.window.locator('[data-testid=prompt-tool]')).toContainText('bash');
 
       // Denying rather than allowing: it has no side effects, and refusal is the
