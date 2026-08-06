@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "description": "An agent workbench: durable, host-owned agent sessions you attach to from anywhere.",
   "license": "Apache-2.0",
-  "author": "Younghyeon Park",
+  "author": "Younghyeon Park <ypark.dev@gmail.com>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/YounghyeonPark/gilmok.git"
