@@ -241,3 +241,19 @@ Gilmok stores everything in `.devagents/` inside the workspace, which means
 OneDrive). The log is append-only with byte-offset resume, and sync clients
 rewrite files and create conflict copies. Use a git remote for backup instead;
 the repository history is the durable copy.
+
+## Licence
+
+Apache License 2.0 — see [LICENSE](LICENSE). Chosen over MIT for two things it
+adds: an explicit patent grant, and a trademark clause, so the code can be forked
+freely while the name stays with the project.
+
+**One dependency is not open source.** `@anthropic-ai/claude-agent-sdk` is
+published under Anthropic's own terms and covers the optional `claude-agent-sdk`
+runtime adapter. It is a *build* dependency, not a runtime one — nothing this
+project distributes contains it. `dist/install-gilmok.sh` carries only the CLI,
+the session host, and the agent host, and `npm run package` refuses to build the
+installer if any Anthropic code appears in them, so the exclusion cannot lapse by
+accident. Anyone wanting that adapter installs the SDK themselves and accepts
+Anthropic's terms directly. Everything else in the tree is MIT, ISC, BSD, 0BSD or
+public domain. See [NOTICE](NOTICE).

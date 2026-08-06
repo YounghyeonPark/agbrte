@@ -1,0 +1,25 @@
+Gilmok
+Copyright 2026 Younghyeon Park
+
+This product includes software developed as part of the Gilmok project
+(https://github.com/YounghyeonPark/gilmok), licensed under the Apache License,
+Version 2.0.
+
+--------------------------------------------------------------------------------
+
+A note on one dependency, because it is not open source.
+
+`@anthropic-ai/claude-agent-sdk` is published under Anthropic's own terms
+("© Anthropic PBC. All rights reserved", see
+https://code.claude.com/docs/en/legal-and-compliance) and is **not** covered by
+this project's licence. It is a build-time dependency of the optional
+`claude-agent-sdk` runtime adapter.
+
+It is deliberately absent from everything this project distributes. The bundles
+carried by `dist/install-gilmok.sh` — the CLI, the session host, and the agent
+host — contain no Anthropic code, and a test enforces that so it cannot start
+shipping by accident. Anyone wanting that adapter installs the SDK themselves and
+accepts Anthropic's terms directly, which is the only arrangement this project's
+licence could honestly describe.
+
+Everything else in the dependency tree is MIT, ISC, BSD, 0BSD, or public domain.

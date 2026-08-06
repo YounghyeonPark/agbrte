@@ -46,6 +46,31 @@ for (const [name, from] of Object.entries(PAYLOAD)) {
   files[name] = readFileSync(path, 'utf8');
 }
 
+// ---------------------------------------------------------------- licence gate
+// This script produces the thing that gets *distributed*, so it is where a
+// licence violation would actually happen — not at build, not at install.
+//
+// `@anthropic-ai/claude-agent-sdk` is "© Anthropic PBC. All rights reserved". It
+// reaches no bundle today, but only because the adapter that imports it is not
+// registered in any headless entry point. Wire that adapter into the agent host
+// and this installer silently starts redistributing proprietary code, which no
+// licence of ours can authorise. An accident that holds is not a guarantee.
+//
+// Refusing here rather than warning: a warning in build output is read once.
+const PROPRIETARY = ['@anthropic-ai/', 'claude-agent-sdk', 'Anthropic PBC'];
+for (const [name, contents] of Object.entries(files)) {
+  const found = PROPRIETARY.find((marker) => contents.includes(marker));
+  if (found !== undefined) {
+    throw new Error(
+      `refusing to package: ${name} contains "${found}".
+` +
+        `That dependency is not open source (see NOTICE), so it must not be redistributed.
+` +
+        `Keep the claude-agent-sdk adapter out of the headless entry points, or load it dynamically.`,
+    );
+  }
+}
+
 const payload = gzipSync(Buffer.from(JSON.stringify(files)), { level: 9 }).toString('base64');
 
 const template = readFileSync(resolve(root, 'scripts/installer.template.sh'), 'utf8');
