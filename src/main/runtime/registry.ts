@@ -18,7 +18,7 @@ import type {
 export interface RuntimeDescriptor {
   id: string;
   label: string;
-  /** `true` for LoomHarness, which needs a ModelProvider to drive (§3.7). */
+  /** `true` for GilmokHarness, which needs a ModelProvider to drive (§3.7). */
   requiresModel: boolean;
 }
 

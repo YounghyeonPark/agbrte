@@ -39,7 +39,7 @@ import {
 import type {
   AgentId,
   InstanceId,
-  LoomEvent,
+  GilmokEvent,
   PermissionDecision,
   PermissionRequest,
   Session,
@@ -121,7 +121,7 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
     send: (batch: EventBatch) => broadcast(PUSH.events, batch),
   });
 
-  const onEvent = (instanceId: string, sessionId: string, event: LoomEvent): void =>
+  const onEvent = (instanceId: string, sessionId: string, event: GilmokEvent): void =>
     bridge.push(instanceId, sessionId, event);
   const onSession = (_instanceId: string, session: Session): void =>
     broadcast(PUSH.session, session);

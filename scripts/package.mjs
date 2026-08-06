@@ -1,7 +1,7 @@
 /**
  * Build a single self-contained installer.
  *
- * `dist/install-loom.sh` carries the three bundles that *are* Loom on a machine
+ * `dist/install-gilmok.sh` carries the three bundles that *are* Gilmok on a machine
  * with no display — the CLI, the session host, and the agent host — so installing
  * needs no git, no npm, no registry, no checkout and no build on the target. One
  * file goes over, one command runs it.
@@ -26,8 +26,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** What a headless machine needs, and nothing else. The app's own files stay out. */
 const PAYLOAD = {
-  'cli/loom.js': 'dist/cli/loom.js',
-  'main/loomHost.js': 'dist/main/loomHost.js',
+  'cli/gilmok.js': 'dist/cli/gilmok.js',
+  'main/gilmokHost.js': 'dist/main/gilmokHost.js',
   'main/agentHost.js': 'dist/main/agentHost.js',
 };
 
@@ -55,12 +55,12 @@ const version = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).
 // quotes are safe without escaping because base64's alphabet cannot contain one.
 const script = template.replace(
   '\nset -eu\n',
-  `\nset -eu\n\nLOOM_PACKAGED_VERSION=${version}\nPAYLOAD='${payload}'\n`,
+  `\nset -eu\n\nGILMOK_PACKAGED_VERSION=${version}\nPAYLOAD='${payload}'\n`,
 );
 if (script === template) throw new Error('could not find the anchor to insert the payload after');
 
 mkdirSync(resolve(root, 'dist'), { recursive: true });
-const out = resolve(root, 'dist/install-loom.sh');
+const out = resolve(root, 'dist/install-gilmok.sh');
 // LF regardless of platform. Authored on Windows, run on a server: a CRLF here
 // makes `sh` report `set: Illegal option -`, which names neither the file's
 // problem nor the line with it.
@@ -69,9 +69,9 @@ chmodSync(out, 0o755);
 
 const kb = (n) => `${Math.round(n / 1024)} KB`;
 process.stdout.write(
-  `\n  dist/install-loom.sh  ${kb(script.length)}  (${Object.keys(files).length} bundles, ${kb(
+  `\n  dist/install-gilmok.sh  ${kb(script.length)}  (${Object.keys(files).length} bundles, ${kb(
     Object.values(files).reduce((n, f) => n + f.length, 0),
   )} uncompressed)\n\n` +
-    `  scp dist/install-loom.sh <server>:\n` +
-    `  ssh <server> 'sh install-loom.sh'\n\n`,
+    `  scp dist/install-gilmok.sh <server>:\n` +
+    `  ssh <server> 'sh install-gilmok.sh'\n\n`,
 );

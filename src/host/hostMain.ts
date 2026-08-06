@@ -37,7 +37,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** Runtimes the forked agent host is expected to register. */
 const RUNTIMES = [
-  { id: 'loom-harness', label: 'Loom harness (local model)', version: '0.0.1', requiresModel: true },
+  { id: 'gilmok-harness', label: 'Gilmok harness (local model)', version: '0.0.1', requiresModel: true },
   { id: 'echo', label: 'Echo (no model)', version: '0.0.1', requiresModel: false },
 ];
 
@@ -118,7 +118,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
           // has nowhere to write, and an inherited stdio would keep a handle on
           // the terminal the app was launched from.
           stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-          env: { ...process.env, LOOM_WORKSPACE_ROOT: workspaceRoot },
+          env: { ...process.env, GILMOK_WORKSPACE_ROOT: workspaceRoot },
         }),
       ),
     }),
@@ -207,20 +207,20 @@ const invokedDirectly =
   process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 
 if (invokedDirectly) {
-  const workspaceRoot = process.argv[2] ?? process.env['LOOM_WORKSPACE_ROOT'];
+  const workspaceRoot = process.argv[2] ?? process.env['GILMOK_WORKSPACE_ROOT'];
   if (workspaceRoot === undefined) {
-    process.stderr.write('usage: loom-host <workspace-root>\n');
+    process.stderr.write('usage: gilmok-host <workspace-root>\n');
     process.exit(2);
   }
 
-  const lingerEnv = Number(process.env['LOOM_HOST_LINGER_MS']);
+  const lingerEnv = Number(process.env['GILMOK_HOST_LINGER_MS']);
 
   startSessionHost({
     workspaceRoot,
     ...(Number.isFinite(lingerEnv) ? { lingerMs: lingerEnv } : {}),
   })
     .then((host) => {
-      process.stderr.write(`loom-host listening on ${host.socket}\n`);
+      process.stderr.write(`gilmok-host listening on ${host.socket}\n`);
       const shutdown = (): void => {
         void host.stop().then(() => process.exit(0));
       };
@@ -228,12 +228,12 @@ if (invokedDirectly) {
       process.on('SIGTERM', shutdown);
     })
     .catch((err: unknown) => {
-      process.stderr.write(`loom-host failed to start: ${String(err)}\n`);
+      process.stderr.write(`gilmok-host failed to start: ${String(err)}\n`);
       process.exit(1);
     });
 
   // A failing adapter must not take down the process that owns the log.
   process.on('unhandledRejection', (reason) => {
-    process.stderr.write(`loom-host unhandled rejection: ${String(reason)}\n`);
+    process.stderr.write(`gilmok-host unhandled rejection: ${String(reason)}\n`);
   });
 }

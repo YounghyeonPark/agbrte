@@ -28,7 +28,7 @@ import { useEffect, useMemo, useState, type JSX } from 'react';
 import { AttachHost } from './AttachHost.js';
 import { StartGuide } from './StartGuide.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
-import { useLoom } from './store.js';
+import { useGilmok } from './store.js';
 import { Composer, EventRow, PermissionPrompt, Transcript, summarize } from './Transcript.js';
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
 import type { Session, SessionState } from '../shared/types/index.js';
@@ -58,7 +58,7 @@ export function stateTone(state: SessionState): string {
 export const LABEL = 'text-[10px] uppercase tracking-wider';
 
 export function App(): JSX.Element {
-  const store = useLoom();
+  const store = useGilmok();
   const [attaching, setAttaching] = useState<false | 'local' | 'remote'>(false);
   // Toggled open even with a session showing, because a guide you can only
   // reach from an empty window is unreachable exactly when it is wanted.
@@ -69,10 +69,10 @@ export function App(): JSX.Element {
   useEffect(() => {
     void store.boot();
 
-    const offEvents = window.loom.on.events((b) => useLoom.getState().applyBatch(b));
-    const offSession = window.loom.on.session((s) => useLoom.getState().applySession(s));
-    const offPermission = window.loom.on.permission((r) => useLoom.getState().applyPermission(r));
-    const offHosts = window.loom.on.hosts((h) => useLoom.getState().applyHosts(h));
+    const offEvents = window.gilmok.on.events((b) => useGilmok.getState().applyBatch(b));
+    const offSession = window.gilmok.on.session((s) => useGilmok.getState().applySession(s));
+    const offPermission = window.gilmok.on.permission((r) => useGilmok.getState().applyPermission(r));
+    const offHosts = window.gilmok.on.hosts((h) => useGilmok.getState().applyHosts(h));
 
     // Without these the listeners accumulate on every remount and events render
     // twice — a duplication bug, not a crash, which is why it is easy to miss.
@@ -90,12 +90,12 @@ export function App(): JSX.Element {
     <div data-testid="app" className="grid h-full grid-cols-[300px_1fr]">
       <aside className="bg-panel border-line flex min-h-0 flex-col border-r">
         <header className="border-line flex items-center justify-between border-b p-3.5">
-          <h1 className="text-base tracking-wide">Loom</h1>
+          <h1 className="text-base tracking-wide">Gilmok</h1>
           <div className="flex gap-1.5">
             <button
               className="btn px-2"
               data-testid="show-guide"
-              title="How Loom is used"
+              title="How Gilmok is used"
               aria-pressed={guide}
               onClick={() => setGuide((open) => !open)}
             >
@@ -212,7 +212,7 @@ function HostGroup({
   unloaded: Array<{ sessionId: string; title: string }>;
   activeId: string | null;
 }): JSX.Element {
-  const store = useLoom();
+  const store = useGilmok();
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState('');
 
@@ -401,7 +401,7 @@ function AgentPicker({
             />
           </label>
 
-          {/* Only when the runtime is LoomHarness. A wrapped harness brings its
+          {/* Only when the runtime is GilmokHarness. A wrapped harness brings its
               own model, and offering a field it ignores invites a silent no-op. */}
           {selected?.requiresModel === true && (
             <label className="text-muted grid gap-1 text-xs">

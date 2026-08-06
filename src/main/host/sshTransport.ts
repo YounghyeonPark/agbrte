@@ -27,7 +27,7 @@
  * ## Bootstrap without root
  *
  * Nothing is installed system-wide and nothing needs `sudo`. A private Node
- * runtime is unpacked under `~/.loom/` and the host bundle beside it. That
+ * runtime is unpacked under `~/.gilmok/` and the host bundle beside it. That
  * matters for a machine you were lent rather than given: attaching a host must
  * not mean changing it.
  */
@@ -37,23 +37,23 @@ import { createServer, type Server } from 'node:net';
 import { readFile } from 'node:fs/promises';
 
 /**
- * How Loom is laid out in a remote home directory.
+ * How Gilmok is laid out in a remote home directory.
  *
  * Built from the absolute `$HOME` the probe reports rather than from `~`,
  * because the two do not survive quoting together: a path must be quoted to be
  * safe in `sh -c`, and quoting is exactly what stops the shell expanding `~`.
- * A literal `~/.loom/...` reaches the remote as a directory name containing a
+ * A literal `~/.gilmok/...` reaches the remote as a directory name containing a
  * tilde, and the failure — "No such file or directory" — points at the wrong
  * thing entirely.
  */
 export function remoteRoot(home: string): string {
-  return `${home}/.loom`;
+  return `${home}/.gilmok`;
 }
 export function remoteNodeDir(home: string): string {
   return `${remoteRoot(home)}/node`;
 }
 export function remoteBundle(home: string): string {
-  return `${remoteRoot(home)}/loomHost.js`;
+  return `${remoteRoot(home)}/gilmokHost.js`;
 }
 /**
  * The agent host, deployed beside the session host.
@@ -146,7 +146,7 @@ export function diagnoseSshFailure(alias: string, detail: string): SshDiagnosis 
       // check into a formality.
       fix:
         'Connect once from a terminal, check the fingerprint it shows against the ' +
-        'machine itself, and accept it. Loom will not accept a key on your behalf.',
+        'machine itself, and accept it. Gilmok will not accept a key on your behalf.',
       command: `ssh ${alias}`,
     };
   }
@@ -155,7 +155,7 @@ export function diagnoseSshFailure(alias: string, detail: string): SshDiagnosis 
     return {
       kind: 'auth-refused',
       summary: 'The machine refused the credentials this computer offered.',
-      // Loom cannot prompt for a password: it runs ssh with BatchMode so that a
+      // Gilmok cannot prompt for a password: it runs ssh with BatchMode so that a
       // prompt fails fast instead of hanging on a stdin nobody is attached to.
       fix:
         'Install your public key on it, then try again. If you have no key yet, ' +
@@ -213,7 +213,7 @@ export interface RemoteProbe {
   /** `uname -m`, so the right Node build is fetched. */
   arch: string;
   platform: string;
-  /** A usable `node`, whether the system's or one Loom unpacked earlier. */
+  /** A usable `node`, whether the system's or one Gilmok unpacked earlier. */
   nodePath: string | null;
   /** True when the host bundle is already in place at the expected version. */
   bundleVersion: string | null;
@@ -234,12 +234,12 @@ export async function probeRemote(runner: SshRunner, alias: string): Promise<Rem
     'echo "home=$HOME"',
     'echo "arch=$(uname -m)"',
     'echo "platform=$(uname -s)"',
-    // A Loom-managed Node is preferred over the system one: it is the version
+    // A Gilmok-managed Node is preferred over the system one: it is the version
     // this host was tested with, and a system upgrade cannot move it underneath.
-    `if [ -x "$HOME/.loom/node/bin/node" ]; then echo "node=$HOME/.loom/node/bin/node"; ` +
+    `if [ -x "$HOME/.gilmok/node/bin/node" ]; then echo "node=$HOME/.gilmok/node/bin/node"; ` +
       'elif command -v node >/dev/null 2>&1; then echo "node=$(command -v node)"; ' +
       'else echo "node="; fi',
-    `if [ -f "$HOME/.loom/loomHost.js" ]; then echo "bundle=$(sed -n 's/^\\/\\/ loom-bundle: //p' "$HOME/.loom/loomHost.js" | head -1)"; else echo "bundle="; fi`,
+    `if [ -f "$HOME/.gilmok/gilmokHost.js" ]; then echo "bundle=$(sed -n 's/^\\/\\/ gilmok-bundle: //p' "$HOME/.gilmok/gilmokHost.js" | head -1)"; else echo "bundle="; fi`,
   ].join('; ');
 
   const result = await runner.exec(alias, script);
@@ -282,7 +282,7 @@ export function nodeTarballUrl(platform: string, arch: string, version = REMOTE_
 }
 
 /**
- * Put a private Node under `~/.loom/node`, without touching the system.
+ * Put a private Node under `~/.gilmok/node`, without touching the system.
  *
  * `--strip-components=1` so the version disappears from the path: the caller
  * should not have to know which build is unpacked, and an upgrade replaces the
@@ -332,7 +332,7 @@ export async function uploadHostBundle(
   ]);
   // The stamp is a comment on the first line, which is why the probe can read
   // the deployed version with `sed` instead of running the bundle.
-  const stamped = Buffer.concat([Buffer.from(`// loom-bundle: ${version}\n`), hostBytes]);
+  const stamped = Buffer.concat([Buffer.from(`// gilmok-bundle: ${version}\n`), hostBytes]);
 
   await runner.exec(alias, `mkdir -p ${shellQuote(remoteRoot(home))}`);
   await runner.upload(alias, remoteAgentBundle(home), agentBytes);
@@ -367,7 +367,7 @@ export async function startRemoteHost(
   workspaceRoot: string,
   opts: { lingerMs?: number; readyTimeoutMs?: number } = {},
 ): Promise<RemoteHostRecord> {
-  const linger = opts.lingerMs === undefined ? '' : `LOOM_HOST_LINGER_MS=${opts.lingerMs} `;
+  const linger = opts.lingerMs === undefined ? '' : `GILMOK_HOST_LINGER_MS=${opts.lingerMs} `;
   const log = shellQuote(`${remoteRoot(home)}/host.log`);
   const record = shellQuote(`${workspaceRoot}/.devagents/host.json`);
   const attempts = Math.max(1, Math.ceil((opts.readyTimeoutMs ?? 30_000) / 500));

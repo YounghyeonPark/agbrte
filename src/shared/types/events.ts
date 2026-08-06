@@ -182,7 +182,7 @@ export type EventBody =
     }
   | { type: 'agent.compacted'; beforeTokens: number; afterTokens: number };
 
-export type LoomEvent = EventEnvelope & EventBody;
+export type GilmokEvent = EventEnvelope & EventBody;
 
 /** Event types this build understands. Unknown types are skipped, not fatal. */
 export function isKnownEventType(type: string): boolean {

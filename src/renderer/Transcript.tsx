@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react';
-import type { LoomEvent } from '../shared/types/index.js';
+import type { GilmokEvent } from '../shared/types/index.js';
 
 const META_ROW = 'text-muted flex items-baseline gap-2 text-xs';
 const CODE = 'text-accent rounded bg-[#202029] px-1.5 py-px font-mono text-[11px]';
@@ -17,8 +17,8 @@ export function Transcript({
   events,
   renderRow,
 }: {
-  events: LoomEvent[];
-  renderRow: (event: LoomEvent) => ReactNode;
+  events: GilmokEvent[];
+  renderRow: (event: GilmokEvent) => ReactNode;
 }): JSX.Element {
   const endRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
@@ -44,7 +44,7 @@ export function Transcript({
   );
 }
 
-export function EventRow({ event }: { event: LoomEvent }): JSX.Element | null {
+export function EventRow({ event }: { event: GilmokEvent }): JSX.Element | null {
   switch (event.type) {
     case 'user.turn':
       return (

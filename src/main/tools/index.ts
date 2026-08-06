@@ -1,7 +1,7 @@
 /**
  * The canonical tool suite (DESIGN.md §3.7).
  *
- * `LoomHarness` supplies these to any model provider, because a raw endpoint has
+ * `GilmokHarness` supplies these to any model provider, because a raw endpoint has
  * no tools of its own. One canonical schema set, degraded per target (§3.5).
  *
  * ## Two defenses, deliberately
@@ -327,7 +327,7 @@ export const bashTool: ToolDefinition = {
   },
 };
 
-/** The suite LoomHarness offers by default. */
+/** The suite GilmokHarness offers by default. */
 export const DEFAULT_TOOLS: ToolDefinition[] = [
   readTool,
   writeTool,

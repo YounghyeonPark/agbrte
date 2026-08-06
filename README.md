@@ -1,4 +1,4 @@
-# Loom
+# Gilmok
 
 An agent-based development workbench. Multiple sessions, multiple agents per
 session, any model behind a pluggable adapter, running on your machine or on a
@@ -32,17 +32,17 @@ type. Pick the `echo` runtime to exercise everything without a model at all.
 
 `Attach host… → Remote`, then a name and a path. The name is an alias from your
 `~/.ssh/config` if you have one, or `user@hostname`, which needs no config at
-all — Loom shells out to `ssh`, so your keys, ports, jump hosts and
+all — Gilmok shells out to `ssh`, so your keys, ports, jump hosts and
 `ProxyCommand`s already apply, and any NAT-traversal tool that makes `ssh <name>`
 work makes this work too.
 
-The first attach to a machine installs a private Node under `~/.loom` and copies
+The first attach to a machine installs a private Node under `~/.gilmok` and copies
 two ~100 KB bundles there. Nothing system-wide, no sudo. Later attaches reuse
 them.
 
 If ssh has never connected to that machine, it will fail in one of a few
 specific ways — an unconfirmed host key, refused credentials, a name that does
-not resolve — and Loom names which one and the command that settles it. It will
+not resolve — and Gilmok names which one and the command that settles it. It will
 not accept a host key for you: that check only means something if a human
 compares the fingerprint against something other than the connection presenting
 it.
@@ -74,7 +74,7 @@ enforcement is the owner's, never the client's. To pin a machine to watching,
 put this in the workspace's `.devagents/access.json`:
 
 ```json
-{ "rules": [{ "client": "loom-app@laptop-*", "role": "read-only" }] }
+{ "rules": [{ "client": "gilmok-app@laptop-*", "role": "read-only" }] }
 ```
 
 A rule is a ceiling: it never grants more than a client asked for. This is a
@@ -92,18 +92,18 @@ run that".
 
 ### 7. From a terminal, with no GUI anywhere
 
-`loom` is a client of the same host the window uses, so a session started at a
+`gilmok` is a client of the same host the window uses, so a session started at a
 terminal is the same session the app opens — not a second, lesser mode.
 
 ```bash
-loom                      # drive the workspace here, interactively
-loom /srv/api             # or one elsewhere on this machine
-loom ls                   # one session per line, greppable
-loom run . "add a test for the parser"
-loom stop                 # asks; refuses while work is in flight
+gilmok                      # drive the workspace here, interactively
+gilmok /srv/api             # or one elsewhere on this machine
+gilmok ls                   # one session per line, greppable
+gilmok run . "add a test for the parser"
+gilmok stop                 # asks; refuses while work is in flight
 ```
 
-`loom run` is the scriptable half: no prompts, output on stdout, and the result
+`gilmok run` is the scriptable half: no prompts, output on stdout, and the result
 in the exit code — **0** done, **1** failed in a way rerunning will not fix
 (misconfigured, no auth, a limit you set, something needed permission), **2**
 stopped short in a way a later rerun might get past (model unreachable, rate
@@ -111,7 +111,7 @@ limited, quota exhausted). A retry loop wants those apart. A permission request 
 there is nobody to ask, and waiting would be a job that never ends. The denial
 reaches the agent as a reason it can adapt to.
 
-`loom attach` is line-based on purpose — no full-screen interface, no cursor
+`gilmok attach` is line-based on purpose — no full-screen interface, no cursor
 addressing. It is meant for an ssh session on a machine with no display, likely
 in tmux, possibly with a `TERM` nobody has tested. Ctrl-C interrupts the turn;
 Ctrl-D leaves and the run keeps going.
@@ -120,22 +120,22 @@ If the model lives somewhere other than Ollama on that machine, point the host a
 it — the host inherits the environment it is spawned with:
 
 ```bash
-LOOM_MODEL_BASE_URL=http://gpu-box:11434/v1 loom run . "..."
+GILMOK_MODEL_BASE_URL=http://gpu-box:11434/v1 gilmok run . "..."
 ```
 
 A host that is *already* running keeps the environment it started with, so
-`loom stop` first if you are changing it.
+`gilmok stop` first if you are changing it.
 
 Installing on a server is one file and one command. Build it here, send it there:
 
 ```bash
-npm run package                        # → dist/install-loom.sh, ~100 KB
-scp dist/install-loom.sh server:
-ssh server 'sh install-loom.sh'
+npm run package                        # → dist/install-gilmok.sh, ~100 KB
+scp dist/install-gilmok.sh server:
+ssh server 'sh install-gilmok.sh'
 ```
 
 **Nothing needs to be on that machine** — no git, no npm, no registry, no
-checkout, no build. The installer carries the three bundles that are Loom on a
+checkout, no build. The installer carries the three bundles that are Gilmok on a
 headless machine (~280 KB), and downloads a private Node 22 only if the machine
 has none. It works piped, too, if you have somewhere to host it:
 `curl -fsSL <url> | sh`.
@@ -143,8 +143,8 @@ has none. It works piped, too, if you have somewhere to host it:
 Requirements on the target: a POSIX shell, plus curl-or-wget and tar-with-xz only
 when it has no Node 22+.
 
-Nothing is written outside `$HOME`: the runtime and the app land in `~/.loom`, the
-binary in `~/.loom/bin/loom`, and `rm -rf ~/.loom` removes all of it. No sudo, no
+Nothing is written outside `$HOME`: the runtime and the app land in `~/.gilmok`, the
+binary in `~/.gilmok/bin/gilmok`, and `rm -rf ~/.gilmok` removes all of it. No sudo, no
 package manager, no service. On a machine that already has the source and Node,
 `npm i -g .` does the same job.
 
@@ -169,7 +169,7 @@ npm start                     # build, then launch
 npm run cli -- --help         # the terminal client, from a checkout
 ```
 
-`npm run loom:direct` is a different thing and is not the CLI: it builds its own
+`npm run gilmok:direct` is a different thing and is not the CLI: it builds its own
 `SessionManager` in-process to exercise adapters with no host in the way, which
 makes it useful for adapter work and wrong for anything else — two of them on one
 workspace would both own the log.
@@ -236,7 +236,7 @@ down the run.
 
 ## A note on the workspace
 
-Loom stores everything in `.devagents/` inside the workspace, which means
+Gilmok stores everything in `.devagents/` inside the workspace, which means
 **do not put a workspace inside a sync-managed folder** (Google Drive, Dropbox,
 OneDrive). The log is append-only with byte-offset resume, and sync clients
 rewrite files and create conflict copies. Use a git remote for backup instead;

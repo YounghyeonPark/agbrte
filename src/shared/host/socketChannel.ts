@@ -12,7 +12,7 @@
  * No port to allocate, collide over, or accidentally expose. A Windows named
  * pipe and a unix domain socket are both reachable by path, which means host
  * discovery is a file (`.devagents/host.json`) rather than a registry, and access
- * is enforced by the OS rather than by anything Loom has to get right at runtime
+ * is enforced by the OS rather than by anything Gilmok has to get right at runtime
  * — see `listen`, which narrows the socket to its owner. A TCP listener
  * on localhost is reachable by every process on the machine, including a browser
  * a model persuaded someone to open.
@@ -240,7 +240,7 @@ export function hostSocketPath(instanceId: string): string {
   if (process.platform === 'win32') {
     // The instance id is already unique per checkout, so it needs no hashing —
     // and keeping it readable makes a stuck pipe diagnosable with `handle.exe`.
-    return `\\\\.\\pipe\\loom-${instanceId}`;
+    return `\\\\.\\pipe\\gilmok-${instanceId}`;
   }
-  return `${process.env['TMPDIR'] ?? '/tmp'}/loom-${instanceId}.sock`;
+  return `${process.env['TMPDIR'] ?? '/tmp'}/gilmok-${instanceId}.sock`;
 }

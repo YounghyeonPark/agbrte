@@ -1,5 +1,5 @@
 /**
- * Loom at a terminal (DESIGN.md §6.4, §8, §10).
+ * Gilmok at a terminal (DESIGN.md §6.4, §8, §10).
  *
  * ## This is a client, not a second implementation
  *
@@ -9,7 +9,7 @@
  * and a window are two clients of one owner, and if that were not already true
  * this file would be a fork of the product rather than a view onto it.
  *
- * That is why `loom attach` and the app can be open on the same workspace at the
+ * That is why `gilmok attach` and the app can be open on the same workspace at the
  * same time and see one session rather than two copies. It is also why a turn
  * sent from a terminal is answerable from the window, and why closing either one
  * stops nothing.
@@ -17,7 +17,7 @@
  * `src/cli/run.ts` is the exception and deliberately so: it builds its own
  * `SessionManager` in-process to exercise adapters without a host in the way.
  * That makes it the wrong tool for ordinary use — two of them on one workspace
- * would both own the log — which is why it is `npm run loom:direct` and not a
+ * would both own the log — which is why it is `npm run gilmok:direct` and not a
  * subcommand here.
  *
  * ## No TUI
@@ -39,18 +39,18 @@ import { attach } from './attach.js';
 import { once } from './once.js';
 import { c } from './format.js';
 
-declare const __LOOM_VERSION__: string | undefined;
+declare const __GILMOK_VERSION__: string | undefined;
 /** Injected by the build; falls back when run straight from source via tsx. */
-const LOOM_VERSION = typeof __LOOM_VERSION__ === 'string' ? __LOOM_VERSION__ : 'dev';
+const GILMOK_VERSION = typeof __GILMOK_VERSION__ === 'string' ? __GILMOK_VERSION__ : 'dev';
 
-const USAGE = `loom — an agent workbench, at a terminal
+const USAGE = `gilmok — an agent workbench, at a terminal
 
-  loom [attach] [path]        open the workspace and drive it interactively
-  loom run [path] "<prompt>"  one turn, no prompts, an exit code
-  loom ls [path]              list sessions, one per line
-  loom serve [path]           run the host in the foreground (no client)
-  loom stop [path]            ask the host to exit; refuses while work is running
-  loom --version
+  gilmok [attach] [path]        open the workspace and drive it interactively
+  gilmok run [path] "<prompt>"  one turn, no prompts, an exit code
+  gilmok ls [path]              list sessions, one per line
+  gilmok serve [path]           run the host in the foreground (no client)
+  gilmok stop [path]            ask the host to exit; refuses while work is running
+  gilmok --version
 
 Path defaults to the current directory. A host is started if none is running,
 and is left running when you leave — that is the point of it.
@@ -62,9 +62,9 @@ Options for run:
   --session <id>              continue an existing session
   --verbose                   every event to stderr, not just the agent's text
 
-  loom /srv/api                       attach to a workspace elsewhere
-  loom ls | grep working              sessions currently mid-turn
-  loom run . "summarise the README"   scriptable; 0 done, 1 failed, 2 stopped short
+  gilmok /srv/api                       attach to a workspace elsewhere
+  gilmok ls | grep working              sessions currently mid-turn
+  gilmok run . "summarise the README"   scriptable; 0 done, 1 failed, 2 stopped short
 `;
 
 /**
@@ -72,20 +72,20 @@ Options for run:
  *
  * Two layouts exist and both are legitimate. `npm i -g` installs the package
  * tree, so the host is a sibling directory away. The app's own remote bootstrap
- * drops both bundles flat into `~/.loom`, because it copies two files and has no
+ * drops both bundles flat into `~/.gilmok`, because it copies two files and has no
  * package to lay out. Rather than declare one of them wrong, look for both.
  *
- * `LOOM_HOST_ENTRY` wins over either, for a deployment that resembles neither.
+ * `GILMOK_HOST_ENTRY` wins over either, for a deployment that resembles neither.
  */
 function findHostEntry(): string {
   const here = dirname(fileURLToPath(import.meta.url));
-  const override = process.env['LOOM_HOST_ENTRY'];
+  const override = process.env['GILMOK_HOST_ENTRY'];
   if (override !== undefined) return resolve(override);
 
   const candidates = [
-    resolve(here, '../main/loomHost.js'), // npm package / dist tree
-    resolve(here, 'loomHost.js'), // flat beside us
-    resolve(here, '../loomHost.js'), // one up, as the remote bootstrap lays it out
+    resolve(here, '../main/gilmokHost.js'), // npm package / dist tree
+    resolve(here, 'gilmokHost.js'), // flat beside us
+    resolve(here, '../gilmokHost.js'), // one up, as the remote bootstrap lays it out
   ];
   const found = candidates.find((p) => existsSync(p));
   if (found !== undefined) return found;
@@ -94,7 +94,7 @@ function findHostEntry(): string {
   // and the actual fault is a path.
   throw new Error(
     ['cannot find the session host bundle. Looked in:', ...candidates.map((p) => `  ${p}`),
-      'Set LOOM_HOST_ENTRY to point at loomHost.js.'].join('\n'),
+      'Set GILMOK_HOST_ENTRY to point at gilmokHost.js.'].join('\n'),
   );
 }
 
@@ -113,7 +113,7 @@ async function open(path: string): Promise<HostConnection> {
     // ELECTRON_RUN_AS_NODE on a child that is plain Node.
     hostEntry: findHostEntry(),
     execPath: process.execPath,
-    client: `loom-cli@${process.env['HOSTNAME'] ?? process.env['COMPUTERNAME'] ?? 'terminal'}`,
+    client: `gilmok-cli@${process.env['HOSTNAME'] ?? process.env['COMPUTERNAME'] ?? 'terminal'}`,
   });
   await connection.ready;
   return connection;
@@ -129,7 +129,7 @@ async function main(): Promise<number> {
     // Baked in at build time: the installed CLI has no package.json beside it
     // to read, and resolving one at runtime finds the *workspace's* if the user
     // happens to be standing in a Node project.
-    process.stdout.write(`${LOOM_VERSION}\n`);
+    process.stdout.write(`${GILMOK_VERSION}\n`);
     return 0;
   }
 
@@ -138,12 +138,12 @@ async function main(): Promise<number> {
   if (command === 'serve') {
     // Deferred so the common paths do not pay to load the whole host.
     const { startSessionHost } = await import('../host/hostMain.js');
-    // `lingerMs: 0` disables idle exit: a foreground `loom serve` is someone
+    // `lingerMs: 0` disables idle exit: a foreground `gilmok serve` is someone
     // deliberately keeping a host up, and exiting under them because nothing
     // attached for a while would be the opposite of what they asked for.
     const host = await startSessionHost({ workspaceRoot: path, lingerMs: 0 });
-    process.stdout.write(`${c.dim(`loom host  ${path}`)}\n${c.dim(`socket     ${host.socket}`)}\n`);
-    process.stdout.write(c.dim('Ctrl-C to stop. Sessions stop with it — use `loom attach` to leave one running.\n'));
+    process.stdout.write(`${c.dim(`gilmok host  ${path}`)}\n${c.dim(`socket     ${host.socket}`)}\n`);
+    process.stdout.write(c.dim('Ctrl-C to stop. Sessions stop with it — use `gilmok attach` to leave one running.\n'));
     await new Promise<void>((done) => {
       const stop = (): void => {
         void host.stop().then(done);
@@ -197,7 +197,7 @@ async function main(): Promise<number> {
       case 'run': {
         const prompt = rest.join(' ').trim();
         if (prompt === '') {
-          process.stderr.write('loom run needs a prompt\n');
+          process.stderr.write('gilmok run needs a prompt\n');
           return 1;
         }
         return await once(connection, {

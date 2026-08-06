@@ -20,12 +20,12 @@ import type {
   SessionSnapshot,
   SshHostInfo,
 } from '../shared/ipc/contract.js';
-import type { LoomEvent, PermissionRequest, Session } from '../shared/types/index.js';
+import type { GilmokEvent, PermissionRequest, Session } from '../shared/types/index.js';
 
 /** Events retained in memory. Chosen to comfortably exceed a screenful. */
 const WINDOW = 400;
 
-export interface LoomState {
+export interface GilmokState {
   /** Every attached host. Several at once is the normal case (§8). */
   hosts: HostInfo[];
   /** Runtimes per host, keyed by instanceId — hosts need not agree. */
@@ -34,7 +34,7 @@ export interface LoomState {
   onDisk: Array<{ instanceId: string; sessionId: string; title: string; goal: string }>;
   activeId: string | null;
   active: Session | null;
-  events: LoomEvent[];
+  events: GilmokEvent[];
   /** Set when a gap was detected and a refetch is in flight. */
   refetching: boolean;
   pending: PermissionRequest[];
@@ -64,7 +64,7 @@ export interface LoomState {
   dismissError(): void;
 }
 
-const loom = () => window.loom;
+const gilmok = () => window.gilmok;
 
 /** Anything thrown by an IPC call becomes visible rather than swallowed. */
 async function guard<T>(set: SetState, fn: () => Promise<T>): Promise<T | undefined> {
@@ -79,7 +79,7 @@ async function guard<T>(set: SetState, fn: () => Promise<T>): Promise<T | undefi
   }
 }
 
-type SetState = (partial: Partial<LoomState>) => void;
+type SetState = (partial: Partial<GilmokState>) => void;
 
 function applySnapshot(set: SetState, snapshot: SessionSnapshot): void {
   set({
@@ -91,7 +91,7 @@ function applySnapshot(set: SetState, snapshot: SessionSnapshot): void {
   });
 }
 
-export const useLoom = create<LoomState>((set, get) => ({
+export const useGilmok = create<GilmokState>((set, get) => ({
   hosts: [],
   sshHosts: [],
   runtimesByHost: {},
@@ -109,10 +109,10 @@ export const useLoom = create<LoomState>((set, get) => ({
   async boot() {
     await guard(set, async () => {
       const [hosts, sessions, onDisk, pending] = await Promise.all([
-        loom().hosts.list(),
-        loom().sessions.list(),
-        loom().sessions.listOnDisk(),
-        loom().permissions.pending(),
+        gilmok().hosts.list(),
+        gilmok().sessions.list(),
+        gilmok().sessions.listOnDisk(),
+        gilmok().permissions.pending(),
       ]);
       set({ hosts, sessions, onDisk, pending });
       await get().applyHosts(hosts);
@@ -120,7 +120,7 @@ export const useLoom = create<LoomState>((set, get) => ({
   },
 
   async addHost() {
-    const host = await guard(set, () => loom().hosts.add());
+    const host = await guard(set, () => gilmok().hosts.add());
     // Null means the picker was cancelled, which is not a failure.
     if (host === undefined || host === null) return;
     await get().boot();
@@ -130,14 +130,14 @@ export const useLoom = create<LoomState>((set, get) => ({
     // Failing to read a config is not a reason to block the panel — the user can
     // still type an alias that `ssh` knows about from somewhere else.
     try {
-      set({ sshHosts: await loom().hosts.sshHosts() });
+      set({ sshHosts: await gilmok().hosts.sshHosts() });
     } catch {
       set({ sshHosts: [] });
     }
   },
 
   async addRemoteHost(alias, workspaceRoot) {
-    const host = await guard(set, () => loom().hosts.addRemote(alias, workspaceRoot));
+    const host = await guard(set, () => gilmok().hosts.addRemote(alias, workspaceRoot));
     if (host === undefined) return false;
     await get().boot();
     return true;
@@ -145,7 +145,7 @@ export const useLoom = create<LoomState>((set, get) => ({
 
   async removeHost(instanceId) {
     await guard(set, async () => {
-      await loom().hosts.remove(instanceId);
+      await gilmok().hosts.remove(instanceId);
       // Anything open on that host is gone with it; drop the selection rather
       // than leave a pane pointing at a session nothing can answer for.
       const active = get().active;
@@ -158,7 +158,7 @@ export const useLoom = create<LoomState>((set, get) => ({
 
   async createSession(instanceId, title, goal) {
     const session = await guard(set, () =>
-      loom().sessions.create({ instanceId, title, goal }),
+      gilmok().sessions.create({ instanceId, title, goal }),
     );
     if (!session) return;
     set({ sessions: [...get().sessions, session] });
@@ -175,10 +175,10 @@ export const useLoom = create<LoomState>((set, get) => ({
         const owner =
           instanceId ?? get().onDisk.find((s) => s.sessionId === sessionId)?.instanceId;
         if (owner === undefined) throw new Error('no host is known to own that session');
-        await loom().sessions.resume(owner, sessionId);
+        await gilmok().sessions.resume(owner, sessionId);
       }
-      applySnapshot(set, await loom().sessions.snapshot(sessionId));
-      set({ sessions: await loom().sessions.list() });
+      applySnapshot(set, await gilmok().sessions.snapshot(sessionId));
+      set({ sessions: await gilmok().sessions.list() });
     });
   },
 
@@ -186,7 +186,7 @@ export const useLoom = create<LoomState>((set, get) => ({
     const sessionId = get().activeId;
     if (sessionId === null) return;
     await guard(set, async () => {
-      await loom().sessions.addAgent({
+      await gilmok().sessions.addAgent({
         sessionId,
         role: 'lead',
         runtimeId,
@@ -194,7 +194,7 @@ export const useLoom = create<LoomState>((set, get) => ({
           ? { model: { providerId: 'openai-compatible', modelId } }
           : {}),
       });
-      applySnapshot(set, await loom().sessions.snapshot(sessionId));
+      applySnapshot(set, await gilmok().sessions.snapshot(sessionId));
     });
   },
 
@@ -208,24 +208,24 @@ export const useLoom = create<LoomState>((set, get) => ({
     // unreadable. Failures still surface.
     try {
       set({ error: null });
-      await loom().sessions.send({ sessionId: activeId, agentId, text });
+      await gilmok().sessions.send({ sessionId: activeId, agentId, text });
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) });
     } finally {
-      applySnapshot(set, await loom().sessions.snapshot(activeId));
-      set({ sessions: await loom().sessions.list() });
+      applySnapshot(set, await gilmok().sessions.snapshot(activeId));
+      set({ sessions: await gilmok().sessions.list() });
     }
   },
 
   async interrupt() {
     const sessionId = get().activeId;
     if (sessionId === null) return;
-    await guard(set, () => loom().sessions.interrupt(sessionId));
+    await guard(set, () => gilmok().sessions.interrupt(sessionId));
   },
 
   async respond(requestId, allow) {
     await guard(set, async () => {
-      const outcome = await loom().permissions.respond(
+      const outcome = await gilmok().permissions.respond(
         requestId,
         allow ? { result: 'allow', scope: 'once' } : { result: 'deny', reason: 'denied by user' },
       );
@@ -249,7 +249,7 @@ export const useLoom = create<LoomState>((set, get) => ({
       // refetch from where our window starts.
       set({ refetching: true });
       const from = events.at(-1)?.seq ?? 0;
-      void loom()
+      void gilmok()
         .sessions.since(batch.sessionId, from)
         .then((missed) => {
           const merged = [...events, ...missed, ...batch.events];
@@ -264,7 +264,7 @@ export const useLoom = create<LoomState>((set, get) => ({
 
     // Ack the highest seq we now hold, which is what lets main resume
     // forwarding if it had paused.
-    if (batch.lastSeq >= 0) loom().ack(batch.sessionId, batch.lastSeq);
+    if (batch.lastSeq >= 0) gilmok().ack(batch.sessionId, batch.lastSeq);
   },
 
   applySession(session) {
@@ -283,7 +283,7 @@ export const useLoom = create<LoomState>((set, get) => ({
     // Runtimes are per host and fetched lazily: a host that has not finished
     // handshaking reports none, and asking again after it does is cheap.
     void Promise.all(
-      hosts.map(async (h) => [h.instanceId, await loom().hosts.runtimes(h.instanceId)] as const),
+      hosts.map(async (h) => [h.instanceId, await gilmok().hosts.runtimes(h.instanceId)] as const),
     ).then((pairs) => set({ runtimesByHost: Object.fromEntries(pairs) }));
   },
 
@@ -299,9 +299,9 @@ export const useLoom = create<LoomState>((set, get) => ({
  * *after* our last seq risks missing one if the window boundary moved — so
  * overlap is expected and must not render twice.
  */
-function dedupe(events: LoomEvent[]): LoomEvent[] {
+function dedupe(events: GilmokEvent[]): GilmokEvent[] {
   const seen = new Set<number>();
-  const out: LoomEvent[] = [];
+  const out: GilmokEvent[] = [];
   for (const event of events) {
     if (seen.has(event.seq)) continue;
     seen.add(event.seq);

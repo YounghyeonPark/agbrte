@@ -26,7 +26,7 @@ import {
   type CreateSessionRequest,
   type EventBatch,
   type HostInfo,
-  type LoomApi,
+  type GilmokApi,
   type SendRequest,
 } from '../shared/ipc/contract.js';
 import type { PermissionDecision, PermissionRequest, Session } from '../shared/types/index.js';
@@ -40,7 +40,7 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
   };
 }
 
-const api: LoomApi = {
+const api: GilmokApi = {
   hosts: {
     list: () => ipcRenderer.invoke(CH.hostsList),
     add: () => ipcRenderer.invoke(CH.hostsAdd),
@@ -79,4 +79,4 @@ const api: LoomApi = {
   ack: (sessionId: string, seq: number) => ipcRenderer.send(CH.ack, sessionId, seq),
 };
 
-contextBridge.exposeInMainWorld('loom', api);
+contextBridge.exposeInMainWorld('gilmok', api);

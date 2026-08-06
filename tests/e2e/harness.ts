@@ -39,12 +39,12 @@ export interface LaunchedApp {
  * Launch the built app against a given workspace.
  *
  * `userDataDir` is per-launch so tests never touch the developer's real profile,
- * and `LOOM_WORKSPACE_ROOT` pins the workspace instead of letting main fall back
+ * and `GILMOK_WORKSPACE_ROOT` pins the workspace instead of letting main fall back
  * to that profile directory.
  */
 export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
   if (workspaces.length === 0) throw new Error('launch needs at least one workspace');
-  const userDataDir = await mkdtemp(join(tmpdir(), 'loom-e2e-profile-'));
+  const userDataDir = await mkdtemp(join(tmpdir(), 'gilmok-e2e-profile-'));
 
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -55,12 +55,12 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
   delete env['ELECTRON_RUN_AS_NODE'];
   // Several roots, delimiter-separated, so the app attaches several hosts at
   // once — which is how the multi-host view gets exercised (§8).
-  env['LOOM_WORKSPACE_ROOT'] = workspaces.join(delimiter);
+  env['GILMOK_WORKSPACE_ROOT'] = workspaces.join(delimiter);
   // Hosts are detached now, so they outlive the app a test just closed. A short
   // linger stops a suite run from leaving one process per temp workspace behind
   // — the production default is minutes, which is right for a person and wrong
   // for a test that makes a dozen throwaway workspaces.
-  env['LOOM_HOST_LINGER_MS'] = '3000';
+  env['GILMOK_HOST_LINGER_MS'] = '3000';
 
   const app = await electron.launch({
     executablePath: ELECTRON,
@@ -88,12 +88,12 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
 
 /** A temp directory that is a real git repository. */
 export async function makeRepo(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'loom-e2e-repo-'));
+  const dir = await mkdtemp(join(tmpdir(), 'gilmok-e2e-repo-'));
   // A real repo, because "edits a real repo" is the acceptance criterion and a
   // bare temp folder would not prove the workspace machinery works on one.
   execFileSync('git', ['init', '-q'], { cwd: dir });
-  execFileSync('git', ['config', 'user.email', 'e2e@loom.test'], { cwd: dir });
-  execFileSync('git', ['config', 'user.name', 'loom e2e'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 'e2e@gilmok.test'], { cwd: dir });
+  execFileSync('git', ['config', 'user.name', 'gilmok e2e'], { cwd: dir });
   return dir;
 }
 

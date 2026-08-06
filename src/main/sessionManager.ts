@@ -31,7 +31,7 @@ import {
   type EventOrigin,
   type ExecutionTarget,
   type InstanceId,
-  type LoomEvent,
+  type GilmokEvent,
   type PermissionDecision,
   type PermissionRequest,
   type RuntimeContext,
@@ -758,7 +758,7 @@ export class SessionManager extends EventEmitter {
   }
 
   /** Tail the durable log for a session — the renderer's subscription source. */
-  async events(sessionId: SessionId, fromSeq = 0): Promise<LoomEvent[]> {
+  async events(sessionId: SessionId, fromSeq = 0): Promise<GilmokEvent[]> {
     return this.live(sessionId).store.readEvents(fromSeq);
   }
 

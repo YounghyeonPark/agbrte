@@ -29,7 +29,7 @@ Never resolve a contradiction by weakening the doc's claim so that whatever was 
 
 The doc explains reasoning, not just conclusions. When you add a decision, include the constraint that forced it. Prefer tables for anything with more than three dimensions. Keep code blocks as interface sketches, not implementations — they illustrate a contract and go stale if they try to be real code.
 
-Be honest about degradation and gaps. The doc's value comes largely from passages like "cost not visible to Loom" and the hosted-target feature matrix — places where it states plainly what does *not* work. Preserve that tone. If you find yourself writing marketing, stop.
+Be honest about degradation and gaps. The doc's value comes largely from passages like "cost not visible to Gilmok" and the hosted-target feature matrix — places where it states plainly what does *not* work. Preserve that tone. If you find yourself writing marketing, stop.
 
 Keep it navigable. The reading guide at the top and the numbered sections are load-bearing at this size; if a section grows past roughly a screen and a half of prose without a table or subsection, it needs structure.
 

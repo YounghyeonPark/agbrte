@@ -1,13 +1,13 @@
 #!/bin/sh
-# Loom, in one file.
+# Gilmok, in one file.
 #
 # The whole product for a machine with no display is three bundled JavaScript
 # files totalling ~280 KB, so this script carries them rather than fetching them.
 # That is the difference between an installer and a set of instructions: nothing
 # here needs git, npm, a package registry, a checkout, or a build on the target.
 #
-#   scp install-loom.sh server:
-#   ssh server 'sh install-loom.sh'
+#   scp install-gilmok.sh server:
+#   ssh server 'sh install-gilmok.sh'
 #
 # It also survives being piped — `curl … | sh` — which is why the payload lives in
 # a variable rather than after a `__PAYLOAD__` marker read back from "$0". A piped
@@ -17,7 +17,7 @@
 # Node 22+ — curl or wget plus tar with xz to unpack one. Nothing else, and
 # nothing outside $HOME is written.
 #
-# Undo the entire thing with: rm -rf ~/.loom
+# Undo the entire thing with: rm -rf ~/.gilmok
 #
 # POSIX sh, not bash: a minimal container or a BSD box may have no bash, and the
 # shell an installer needs is the one that is definitely there.
@@ -25,9 +25,9 @@
 set -eu
 
 NODE_VERSION=v22.11.0
-LOOM_HOME="${LOOM_HOME:-$HOME/.loom}"
-BIN_DIR="$LOOM_HOME/bin"
-APP_DIR="$LOOM_HOME/app"
+GILMOK_HOME="${GILMOK_HOME:-$HOME/.gilmok}"
+BIN_DIR="$GILMOK_HOME/bin"
+APP_DIR="$GILMOK_HOME/app"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -57,14 +57,14 @@ install_node() {
   command -v xz >/dev/null 2>&1 || die 'xz is needed to unpack Node (try: apt install xz-utils)'
 
   url="https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-$os-$cpu.tar.xz"
-  say "installing a private Node ($NODE_VERSION $os-$cpu) under $LOOM_HOME/node"
-  mkdir -p "$LOOM_HOME/node"
+  say "installing a private Node ($NODE_VERSION $os-$cpu) under $GILMOK_HOME/node"
+  mkdir -p "$GILMOK_HOME/node"
   # --strip-components because the tarball has a versioned top directory, and
   # baking that name into every later path means a version bump breaks them all.
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" | tar -xJ -C "$LOOM_HOME/node" --strip-components=1
+    curl -fsSL "$url" | tar -xJ -C "$GILMOK_HOME/node" --strip-components=1
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO- "$url" | tar -xJ -C "$LOOM_HOME/node" --strip-components=1
+    wget -qO- "$url" | tar -xJ -C "$GILMOK_HOME/node" --strip-components=1
   else
     die 'neither curl nor wget is available, and Node must be downloaded'
   fi
@@ -73,12 +73,12 @@ install_node() {
 if node_ok; then
   NODE=$(command -v node)
   say "using $NODE ($(node -v))"
-elif [ -x "$LOOM_HOME/node/bin/node" ]; then
-  NODE="$LOOM_HOME/node/bin/node"
+elif [ -x "$GILMOK_HOME/node/bin/node" ]; then
+  NODE="$GILMOK_HOME/node/bin/node"
   say "using the private Node already at $NODE"
 else
   install_node
-  NODE="$LOOM_HOME/node/bin/node"
+  NODE="$GILMOK_HOME/node/bin/node"
 fi
 
 # ---------------------------------------------------------------- unpack it
@@ -111,20 +111,20 @@ process.stdin.on("end", () => {
 });
 ' "$APP_DIR"
 
-cat > "$BIN_DIR/loom" <<EOF
+cat > "$BIN_DIR/gilmok" <<EOF
 #!/bin/sh
-# Written by Loom's installer. Pins the runtime so a later PATH change, or a
+# Written by Gilmok's installer. Pins the runtime so a later PATH change, or a
 # different Node becoming first, cannot alter which one runs the CLI.
-exec "$NODE" "$APP_DIR/cli/loom.js" "\$@"
+exec "$NODE" "$APP_DIR/cli/gilmok.js" "\$@"
 EOF
-chmod +x "$BIN_DIR/loom"
+chmod +x "$BIN_DIR/gilmok"
 
 # Proves the thing works before claiming it does, and catches a truncated
 # download or a half-written payload here rather than at first use.
-"$BIN_DIR/loom" --version >/dev/null || die 'installed, but the binary does not run'
+"$BIN_DIR/gilmok" --version >/dev/null || die 'installed, but the binary does not run'
 
 say ''
-say "installed: $BIN_DIR/loom  ($("$BIN_DIR/loom" --version))"
+say "installed: $BIN_DIR/gilmok  ($("$BIN_DIR/gilmok" --version))"
 case ":$PATH:" in
   *":$BIN_DIR:"*) say 'already on your PATH' ;;
   *)
@@ -140,13 +140,13 @@ esac
 say ''
 say 'then, in any directory you want an agent to work in:'
 say ''
-say '  loom run . --runtime echo "installed"    checks the wiring, needs no model'
-say '  loom run . "summarise this repo"         one turn; 0 done, 1 failed, 2 try later'
-say '  loom .                                   drive a session interactively'
-say '  loom ls                                  what is running here'
-say '  loom --help'
+say '  gilmok run . --runtime echo "installed"    checks the wiring, needs no model'
+say '  gilmok run . "summarise this repo"         one turn; 0 done, 1 failed, 2 try later'
+say '  gilmok .                                   drive a session interactively'
+say '  gilmok ls                                  what is running here'
+say '  gilmok --help'
 say ''
 say 'a model other than Ollama on this machine:'
-say '  LOOM_MODEL_BASE_URL=http://gpu-box:11434/v1 loom run . "..."'
+say '  GILMOK_MODEL_BASE_URL=http://gpu-box:11434/v1 gilmok run . "..."'
 say ''
-say "remove everything with:  rm -rf $LOOM_HOME"
+say "remove everything with:  rm -rf $GILMOK_HOME"

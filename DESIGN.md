@@ -1,6 +1,6 @@
-# Loom — Agent-Based Development Workbench
+# Gilmok — Agent-Based Development Workbench
 
-**Working codename:** Loom (sessions are threads; a session weaves several agents together). Rename freely.
+**Working codename:** Gilmok (sessions are threads; a session weaves several agents together). Rename freely.
 
 **Status:** Architecture design, v0.5 — session hierarchy and scope-driven splitting. Greenfield.
 
@@ -30,7 +30,7 @@ A desktop app for running software development work through AI agents. The unit 
 - **Shell:** Electron desktop app (Node main + React/TS renderer).
 - **Runtime layer:** pluggable, **two adapter branches** — external *harnesses* and raw *model providers* driven by a built-in harness (§3). Claude Agent SDK is the reference harness adapter, not a privileged one.
 - **Execution target:** pluggable transport layer. Local first, SSH second, then WSL / container / k8s, with hosted agent services as a reduced-capability fourth locality (§6.9).
-- **Auth:** three modes — API key through our gateway, the user's own installed CLI session, or none for local models (§3.11). **Loom never stores, proxies, or replays a vendor session token.**
+- **Auth:** three modes — API key through our gateway, the user's own installed CLI session, or none for local models (§3.11). **Gilmok never stores, proxies, or replays a vendor session token.**
 - **Memory/history location:** **inside the workspace** (`<workspace>/.devagents/`), with a local follower mirror for remote workspaces. One documented exception: hosted targets, where the app-side store becomes primary (§6.9).
 - **Multimodal, day one:** images/screenshots in, annotated screenshots, voice in (STT), voice out (TTS).
 
@@ -40,11 +40,11 @@ The usual way to get this wrong is to conflate *what drives the loop*, *which mo
 
 | Axis | Interface | Question | Examples |
 |---|---|---|---|
-| Harness | `AgentRuntime` (§3.2) | who runs the loop, owns tools and context | Claude Agent SDK, an installed agent CLI, a hosted agent service, **Loom's own harness** |
+| Harness | `AgentRuntime` (§3.2) | who runs the loop, owns tools and context | Claude Agent SDK, an installed agent CLI, a hosted agent service, **Gilmok's own harness** |
 | Model | `ModelProvider` (§3.6) | who answers one request | Anthropic Messages, OpenAI, Gemini, Bedrock/Vertex/Foundry, Ollama/vLLM/llama.cpp |
 | Location | `Transport` (§6.2) | where it executes and how we reach it | local, ssh, wsl, container, k8s, hosted |
 
-The model axis applies only when the harness is Loom's own — an external harness brings its own model plumbing. No adapter on any axis knows about the other two; `AgentHost` (§6.4) is the only component that composes them.
+The model axis applies only when the harness is Gilmok's own — an external harness brings its own model plumbing. No adapter on any axis knows about the other two; `AgentHost` (§6.4) is the only component that composes them.
 
 ### One flagged concern, and how it's mitigated
 
@@ -84,9 +84,9 @@ graph TB
   end
 
   subgraph REMOTE["Remote machine (ssh / wsl / container / k8s)"]
-    RH["loom-agent-host — detached daemon"]
+    RH["gilmok-agent-host — detached daemon"]
     RA1["worker — SDK harness"]
-    RA2["worker — LoomHarness"]
+    RA2["worker — GilmokHarness"]
     RA3["worker — installed CLI subprocess"]
     RWS["remote workspace/.devagents — source of truth"]
     OLLAMA["local model server on this box (optional)"]
@@ -118,7 +118,7 @@ graph TB
 1. **Agent loops never run on the Electron main process.** Main orchestrates; a blocked main freezes every window.
 2. **For remote targets the loop runs *on the remote*** (§6.3 — a requirement, not a preference).
 3. **Model credentials never leave your machine by default** (§6.5). Two deliberate exceptions: a model server on the agent's own box, and the user's own CLI session.
-4. **Loom never holds a vendor session token.** Where the user's own CLI owns the credential, we invoke the tool and stay out of the auth path entirely (§3.11).
+4. **Gilmok never holds a vendor session token.** Where the user's own CLI owns the credential, we invoke the tool and stay out of the auth path entirely (§3.11).
 
 ---
 
@@ -135,7 +135,7 @@ graph TB
 | 2 | **Coding harness, self-hosted** — loop + file/shell/search tools + context mgmt + permissions + subagents + sessions | it does | you | yes |
 | 3 | **Hosted agent service** — loop *and* sandbox on the provider's infra | provider | provider | yes, in their sandbox |
 
-Tier 0 is the **provider branch**. Tiers 2 and 3 are the **harness branch**. Tier 1 is essentially what `LoomHarness` is, except we also supply the tools.
+Tier 0 is the **provider branch**. Tiers 2 and 3 are the **harness branch**. Tier 1 is essentially what `GilmokHarness` is, except we also supply the tools.
 
 ```
 AgentRuntime  (what the session sees — §3.2)
@@ -145,14 +145,14 @@ AgentRuntime  (what the session sees — §3.2)
 │   ├── agent-cli-stdio         (Tier 2, the user's installed CLI — §3.12)
 │   └── hosted-agent-http       (Tier 3, REST + event stream — §6.9)
 │
-└── LoomHarness — our own loop, tools, gating, context management (§3.7)
+└── GilmokHarness — our own loop, tools, gating, context management (§3.7)
     └── driven by any ModelProvider (§3.6)
         ├── anthropic-messages · openai-responses · google-gemini
         ├── openai-compatible   (Ollama, vLLM, LM Studio, OpenRouter, …)
         └── bedrock · vertex · foundry
 ```
 
-Both branches present `AgentRuntime`, so **§4–§12 are provider-blind**. Building `LoomHarness` is real scope and it is what makes R8 true — a raw endpoint has no loop to wrap. It also pays back: for provider-backed agents *we* own the tool suite, the permission gate, compaction, and telemetry.
+Both branches present `AgentRuntime`, so **§4–§12 are provider-blind**. Building `GilmokHarness` is real scope and it is what makes R8 true — a raw endpoint has no loop to wrap. It also pays back: for provider-backed agents *we* own the tool suite, the permission gate, compaction, and telemetry.
 
 ### 3.2 The outward interface
 
@@ -161,7 +161,7 @@ export interface AgentSpec {
   agentId: string;
   role: AgentRole;                          // 'lead' | 'worker' | 'reviewer' | 'custom'
   runtimeId: string;                        // which harness
-  model?: ModelRef;                         // required iff harness is LoomHarness
+  model?: ModelRef;                         // required iff harness is GilmokHarness
   auth: AuthMode;                           // §3.11
   reasoning?: ReasoningRequest;             // normalized, §3.4
   systemPrompt?: string;
@@ -361,13 +361,13 @@ The two types stay separate on purpose. `NormalizedTurn` is **persisted** and ve
 
 **Divergence, recorded rather than smoothed over:** the signature above says `invoke(...): ProviderStream`. The implementation returns `Promise<ProviderResult>` — non-streaming — and `streaming: false` is reported honestly by both shipped providers. Nothing in the current UI consumes partial output, so streaming was deferred rather than faked; the interface name is aspirational and this note exists so no one reads it as implemented.
 
-**Never use a foreign tokenizer for pre-flight counting.** A 20%-wrong estimate produces context overflow deep into a long run — the worst time to find out. Providers with a counting endpoint get exact numbers; others get a conservative estimate with the margin recorded, and `LoomHarness` compacts on *measured* usage from the prior turn rather than trusting the estimate.
+**Never use a foreign tokenizer for pre-flight counting.** A 20%-wrong estimate produces context overflow deep into a long run — the worst time to find out. Providers with a counting endpoint get exact numbers; others get a conservative estimate with the margin recorded, and `GilmokHarness` compacts on *measured* usage from the prior turn rather than trusting the estimate.
 
 **The scope of that ban is pre-flight request sizing**, and stating the boundary matters because a second kind of counting exists. Deciding *how much history to carry into a seed* (§5.4) is not sizing a request against a provider's limit: it selects how much of our own log to include, and its two failure modes are asymmetric — over-estimating carries less history than it could, which the next turn recovers; under-estimating overflows the window, which it cannot. So the seed builder uses a deliberately pessimistic character heuristic and that is **not** a violation of this rule. Anything that decides whether a request will fit still needs a provider-native count or a recorded margin.
 
-### 3.7 `LoomHarness` — our own loop
+### 3.7 `GilmokHarness` — our own loop
 
-For every `ModelProvider`, `LoomHarness` supplies what a harness would have:
+For every `ModelProvider`, `GilmokHarness` supplies what a harness would have:
 
 - **Tool suite** — `read`, `write`, `edit`, `glob`, `grep`, `bash`, `web_fetch`, plus `plan`/`update_task` (§10) and `remember` (§5.5). One canonical schema set, degraded per §3.5. These are the same tools `AgentHost` implements for lease enforcement, so there is one implementation, not two.
 - **Permission gate** — every call passes `ctx.requestPermission` *before* execution. `permissionFidelity: 'callback'`, the strongest tier (§3.10).
@@ -413,7 +413,7 @@ export type StopReason =
   | { kind: 'invalid_tool_args'; detail: string }
   | { kind: 'rate_limited'; retryAfterMs?: number }
   | { kind: 'quota_exhausted'; scope: 'session' | 'window' | 'daily' | 'weekly'; resetsAt?: string }
-  /** A ceiling *Loom itself* set was reached. Nothing is broken; nothing resets. */
+  /** A ceiling *Gilmok itself* set was reached. Nothing is broken; nothing resets. */
   | { kind: 'limit_reached'; limit: 'turns' | 'cost' | 'wallclock'; detail?: string }
   /** A permanent configuration fault. Retrying cannot help. */
   | { kind: 'misconfigured'; detail: string }
@@ -430,7 +430,7 @@ export type StopReason =
 | `quota_exhausted` | the provider, per-window | yes, at `resetsAt` | park with a scheduled wake | `awaiting_quota` |
 | `limit_reached` | **us**, from `AgentSpec.limits` or `SessionBudget` | **never** | park for a human decision | `awaiting_input` |
 
-`limit_reached` exists because the third row was previously mapped onto the second, and the consequence was specific rather than cosmetic: `awaiting_quota`'s contract is "resume at `resetsAt`", and a ceiling Loom set has no window to reset, so an agent that merely ran out of turns **parked forever** with no reset time and no prompt. Raising the ceiling, re-scoping the task, splitting it (§4.3), or closing the session out are all human decisions, which is exactly what `awaiting_input` means. It notifies as `budget_exhausted` (§11) — the trigger already existed; only the stop reason was missing.
+`limit_reached` exists because the third row was previously mapped onto the second, and the consequence was specific rather than cosmetic: `awaiting_quota`'s contract is "resume at `resetsAt`", and a ceiling Gilmok set has no window to reset, so an agent that merely ran out of turns **parked forever** with no reset time and no prompt. Raising the ceiling, re-scoping the task, splitting it (§4.3), or closing the session out are all human decisions, which is exactly what `awaiting_input` means. It notifies as `budget_exhausted` (§11) — the trigger already existed; only the stop reason was missing.
 
 **`misconfigured` is the fourth "cannot continue", and it is the one that must *not* pause.** An unknown model id and a malformed request are permanent: no wait, no retry, and no human decision at the *session* level will fix them — someone has to change the configuration. These were originally mapped to `invalid_tool_args`, whose disposition is `retry`, so a typo'd model id burned the entire attempt budget re-sending an identical doomed request before surfacing anything. It is the only stop reason whose disposition is `fail` while nothing about the *work* failed, which is why it carries a mandatory `detail`: the message is the fix.
 
@@ -463,11 +463,11 @@ export type PermissionFidelity =
 
 | Fidelity | Who has it | Gating behavior | Constraint we impose |
 |---|---|---|---|
-| `callback` | `LoomHarness`, Agent SDK library | true per-call ask/allow/deny | none |
+| `callback` | `GilmokHarness`, Agent SDK library | true per-call ask/allow/deny | none |
 | `precomputed-allowlist` | installed CLIs in headless mode (§3.12) | policy compiled to rules up front; `ask` becomes deny, then **deny → ask user → grant → resume** | none, but fidelity is badged in the UI |
 | `all-or-nothing` | runtimes offering only a bypass flag | none | **may only run with `isolation: 'worktree'` or a container — never `shared`.** Refused at creation otherwise. |
 
-That last row is a hard rule, enforced at agent creation rather than discovered at runtime: if we cannot gate the calls, we constrain what the process can reach. **Fidelity is displayed per agent** — a `LoomHarness` agent and a wrapped-CLI agent do not enforce identical policy, and the UI must never imply they do.
+That last row is a hard rule, enforced at agent creation rather than discovered at runtime: if we cannot gate the calls, we constrain what the process can reach. **Fidelity is displayed per agent** — a `GilmokHarness` agent and a wrapped-CLI agent do not enforce identical policy, and the UI must never imply they do.
 
 **Known narrowing: "or a container" is not expressible yet.** `Isolation` is `'shared' | 'worktree'` in code, because no container transport exists to enforce a third value (§6.1 lists the target kinds; §9 has the enforcement table). The rule therefore admits an `all-or-nothing` runtime under `worktree` only. That fails *closed* — the refusal is stricter than the design allows, never looser — so it is a coverage gap, not a hole, and deliberately left until a container target can actually be enforced. Adding `'container'` to the type before then would let the UI badge an agent as contained by something nobody implemented, which §13 treats as worse than having no containment at all.
 
@@ -488,7 +488,7 @@ export type AuthMode =
 
 **Three non-negotiable rules:**
 
-1. **Loom never stores, proxies, or replays a vendor session token.** Where the user's CLI owns the credential, we invoke the tool and stay out of the auth path. This is both the security boundary and the licensing boundary, and there is no version of holding those credentials worth building.
+1. **Gilmok never stores, proxies, or replays a vendor session token.** Where the user's CLI owns the credential, we invoke the tool and stay out of the auth path. This is both the security boundary and the licensing boundary, and there is no version of holding those credentials worth building.
 2. **We never bundle a vendor CLI.** Detect the installed binary, report its version, link to the vendor's install docs. Shipping the tool and having users log in through it is a materially different thing from running software they installed themselves.
 3. **`vendor-cli-session` puts credentials wherever the loop runs.** For a remote session that means on the remote — the opposite of §6.5's default, unavoidable because there is no key to tunnel. **Surface it; never let it be inferred.**
 
@@ -559,7 +559,7 @@ export interface CliAgentManifest {
 | Uses the user's CLI login | ✘ | ✔ |
 | Picks up user's project instructions / skills | ✘ (pass explicitly) | ✔ |
 
-Since Loom promises reproducible transcripts, **deterministic plus explicit config flags is the default**, with "use my local setup" an opt-in mode carrying the caveat.
+Since Gilmok promises reproducible transcripts, **deterministic plus explicit config flags is the default**, with "use my local setup" an opt-in mode carrying the caveat.
 
 **For the SDK branch, deterministic mode is not merely the default — it is the only mode**, and the reason is a gate bypass rather than reproducibility. The library consults `canUseTool` *last* and skips it for anything approved earlier, so an allow rule arriving from a settings file is the same bypass as `allowedTools`, just sourced from disk. The adapter therefore pins `settingSources: []`, and its `permissionFidelity: 'callback'` claim is conditional on that. This narrows §17's open question about non-deterministic mode to the CLI branch, where fidelity is `precomputed-allowlist` and the sandbox is the boundary anyway.
 
@@ -666,7 +666,7 @@ export type SessionState =
 
 **Decided, no longer open:** a single session will not span two targets. This was carried as an open question through the hierarchy design and the answer never changed, because the three properties above are each *derived* from one-target-per-session rather than merely convenient alongside it — a two-target session needs relative paths resolved against two roots, a lease table no single host can enforce, and two writers on one log. Hierarchy removed the motivation: `ChildRef` carries its own `instanceId` and `target`, so cross-machine and cross-repo work is expressible without touching any of the three.
 
-The five `awaiting_*` states are deliberately parallel. Each means *paused, holding all state, will resume* — never failed. Which pause a stop reason produces is a table in §3.9, and one row of it is easy to get wrong: a ceiling **Loom** set (`limit_reached`) lands in `awaiting_input`, not `awaiting_quota`, because no window will reset and only a person can decide to raise the ceiling, re-scope, split, or close the session out.
+The five `awaiting_*` states are deliberately parallel. Each means *paused, holding all state, will resume* — never failed. Which pause a stop reason produces is a table in §3.9, and one row of it is easy to get wrong: a ceiling **Gilmok** set (`limit_reached`) lands in `awaiting_input`, not `awaiting_quota`, because no window will reset and only a person can decide to raise the ceiling, re-scope, split, or close the session out.
 
 Not constrained: agents may use **different harnesses, providers, models, and auth modes**. Only location is fixed.
 
@@ -916,7 +916,7 @@ Bounded, cancellable, off the main thread, never blocking first paint. On remote
 
 ### 5.4 Context survival — the actual mechanism
 
-**(a) Runtime session state is not portable.** Harness session ids can expire, be version-bound, path-tied, or machine-tied; `LoomHarness` has none. Therefore:
+**(a) Runtime session state is not portable.** Harness session ids can expire, be version-bound, path-tied, or machine-tied; `GilmokHarness` has none. Therefore:
 
 > `resumeToken` is a **cache**. `events.jsonl` is **truth**.
 
@@ -1053,10 +1053,10 @@ A turn commonly makes 50–200 tool calls. At 60 ms round trip, B adds **3–12 
 
 ### 6.4 The agent host
 
-One binary, two deployments — the same program in a local `utilityProcess` or as a remote daemon, so the local path continuously exercises the remote code path. It embeds the harness adapters, `LoomHarness`, the tool suite, and the provider adapters.
+One binary, two deployments — the same program in a local `utilityProcess` or as a remote daemon, so the local path continuously exercises the remote code path. It embeds the harness adapters, `GilmokHarness`, the tool suite, and the provider adapters.
 
 - **Distribution:** self-contained single-file binary per `(os, arch)`, version- and checksum-stamped. No Node, npm, or Python needed on the remote.
-- **Deployment:** uploaded once to `~/.loom/bin/<version>/`, checksum-verified before first exec, `0700`. Resumable, reused thereafter.
+- **Deployment:** uploaded once to `~/.gilmok/bin/<version>/`, checksum-verified before first exec, `0700`. Resumable, reused thereafter.
 - **Scope:** one host per remote **workspace**. Owns that workspace's `.devagents/`, lease table, and agent workers.
 - **Control surface:** unix socket at `run/host.sock` (0700) via `openChannel`; loopback TCP + bearer token where unix sockets are unavailable.
 - **Detachment:** `setsid` + double-fork, stdio to `run/host.log`. Where systemd user services exist, a generated user unit plus `loginctl enable-linger` — **without lingering, systemd terminates user units at logout and your overnight run dies when the SSH session ends.** The most commonly botched detail in remote-agent tooling.
@@ -1124,7 +1124,7 @@ async function mirror(conn: Connection, m: MirrorState) {
 
 A hosted agent service (Tier 3) runs both the loop and the sandbox on the provider's infrastructure, reachable only by API. That breaks two assumptions, so it gets an explicit, reduced-capability locality rather than being forced into a shape it doesn't fit.
 
-**It does not use `Transport` at all.** There is no `exec`, no `putFile`, no port forwarding, no unix socket, and no `loom-agent-host` to deploy. A hosted target is driven by the `hosted-agent-http` adapter directly from main.
+**It does not use `Transport` at all.** There is no `exec`, no `putFile`, no port forwarding, no unix socket, and no `gilmok-agent-host` to deploy. A hosted target is driven by the `hosted-agent-http` adapter directly from main.
 
 **Persistence inverts.** We don't own the workspace filesystem — the sandbox is ephemeral and someone else's — so `.devagents/` cannot live there. For hosted targets **the app-side store is primary, not a mirror**: `instanceId` is minted app-side, the event log is written locally from the service's event stream, and workspace content reaches the service by *its* mechanism (typically mounting a git repository), not by us writing files.
 
@@ -1148,7 +1148,7 @@ Everything else survives untouched: `AgentRuntime`, the session model, the dashb
 `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`. A narrow typed surface — no raw `ipcRenderer`, no channel strings in the renderer.
 
 ```ts
-export interface LoomApi {
+export interface GilmokApi {
   targets: {
     listProfiles(): Promise<ConnectionProfile[]>;
     saveProfile(p: ConnectionProfileInput): Promise<ConnectionProfile>;
@@ -1216,7 +1216,7 @@ export interface LoomApi {
 
 Outstanding work is tracked as `forwardedSeq − ackedSeq`, one monotonic pair. Keeping a separate count of forwarded events alongside acked sequence numbers means holding two numbers in agreement, and they stop agreeing precisely when a pause drops events — the tally reports N outstanding while the renderer has already acked past them.
 
-**What is implemented as of Phase 1.** `LoomApi` above is the full surface; the shipped preload exposes the subset Phase 1 needs — `workspace`, `runtimes`, `sessions` (list/create/listOnDisk/resume/snapshot/addAgent/send/interrupt/since), `permissions`, and the three push channels. `targets`, `capture`, `speech`, model management, and the hierarchy calls are **absent rather than present and throwing**, which is deliberate: a renderer cannot feature-detect against a method that exists and rejects at runtime.
+**What is implemented as of Phase 1.** `GilmokApi` above is the full surface; the shipped preload exposes the subset Phase 1 needs — `workspace`, `runtimes`, `sessions` (list/create/listOnDisk/resume/snapshot/addAgent/send/interrupt/since), `permissions`, and the three push channels. `targets`, `capture`, `speech`, model management, and the hierarchy calls are **absent rather than present and throwing**, which is deliberate: a renderer cannot feature-detect against a method that exists and rejects at runtime.
 
 **Several clients, one session (Phase 5).** With the log authoritative on a central agent server, a second device is not a synchronisation problem — it is another windowed projection over the same log, which needs no new protocol and no client-to-client state. Three things do not fall out for free, and each is a decision rather than an implementation detail.
 
@@ -1239,14 +1239,14 @@ Outstanding work is tracked as `forwardedSeq − ackedSeq`, one monotonic pair. 
 | `AgentHost` (local) | local `utilityProcess` | 1 per local workspace | agent loops + tools for local sessions |
 | `TransportManager` | local `utilityProcess` | 1 | connections, tails, forwards, uploads |
 | Indexer | local `utilityProcess` | 1 | SQLite indexing, search, scans |
-| `loom-agent-host` | remote | 1 per remote workspace | agent loops, tools, log writes, leases |
+| `gilmok-agent-host` | remote | 1 per remote workspace | agent loops, tools, log writes, leases |
 | agent worker | with its host | 1 per running agent | one agent's loop, or one CLI subprocess |
 
-**Installing on a server is one file.** `npm run package` emits a shell script carrying the three bundles that constitute Loom on a machine with no display — the CLI, the session host, the agent host, ~280 KB — so the target needs no git, npm, registry, checkout or build. This is possible only because those bundles are genuinely standalone, which was established by running them against a bare Node on a real server rather than inferred from the bundler's settings. A private Node 22 is fetched only when the machine has none, and everything lands under `~/.loom`, undone by `rm -rf`. The payload sits in a shell variable rather than after a `__PAYLOAD__` marker, because a marker must be read back from `"$0"` and a script arriving through `curl | sh` has none.
+**Installing on a server is one file.** `npm run package` emits a shell script carrying the three bundles that constitute Gilmok on a machine with no display — the CLI, the session host, the agent host, ~280 KB — so the target needs no git, npm, registry, checkout or build. This is possible only because those bundles are genuinely standalone, which was established by running them against a bare Node on a real server rather than inferred from the bundler's settings. A private Node 22 is fetched only when the machine has none, and everything lands under `~/.gilmok`, undone by `rm -rf`. The payload sits in a shell variable rather than after a `__PAYLOAD__` marker, because a marker must be read back from `"$0"` and a script arriving through `curl | sh` has none.
 
-**The terminal client is a client, not a second product.** `loom` talks to the same session host the window talks to, over the same socket, through the same `HostConnection` — nothing about sessions, the log, the gate, or the queue is reimplemented for it. That is what makes a session started at a terminal the same session the app opens, and it is only true because §8 already put session ownership in the host rather than in the app. `src/cli/run.ts` remains the deliberate exception: it builds its own `SessionManager` to exercise adapters with no host in the way, which is why it is not a subcommand.
+**The terminal client is a client, not a second product.** `gilmok` talks to the same session host the window talks to, over the same socket, through the same `HostConnection` — nothing about sessions, the log, the gate, or the queue is reimplemented for it. That is what makes a session started at a terminal the same session the app opens, and it is only true because §8 already put session ownership in the host rather than in the app. `src/cli/run.ts` remains the deliberate exception: it builds its own `SessionManager` to exercise adapters with no host in the way, which is why it is not a subcommand.
 
-**Non-interactive is a different contract, not a degraded one.** `loom run` denies a permission request rather than waiting for it, because in cron there is nobody to ask and waiting is a job that never ends rather than a job that fails. The exit code carries the result — 0 done, 1 failed or denied, 2 stopped short — with 2 separated so a retry loop does not retry a hit limit forever. `loom attach` is line-based with no full-screen interface: the machine it runs on has no display, likely has tmux, and possibly has a `TERM` nobody has tested.
+**Non-interactive is a different contract, not a degraded one.** `gilmok run` denies a permission request rather than waiting for it, because in cron there is nobody to ask and waiting is a job that never ends rather than a job that fails. The exit code carries the result — 0 done, 1 failed or denied, 2 stopped short — with 2 separated so a retry loop does not retry a hit limit forever. `gilmok attach` is line-based with no full-screen interface: the machine it runs on has no display, likely has tmux, and possibly has a `TERM` nobody has tested.
 
 **The log records who, not just what.** Every event carries an optional `actor` — a stable id, the source that established it, and a changeable display label kept separate so a rename does not split one person into two. Absence is meaningful and means *no person acted*: agent output, state transitions, and a withdrawal on restart carry none. It never means "a human we could not identify", because a client whose identity cannot be established is capped at read-only and so cannot produce an event needing an actor. A turn's actor is captured when it is *queued*, not when it runs — a queued turn can start long after its sender disconnected.
 
@@ -1256,7 +1256,7 @@ Outstanding work is tracked as `forwardedSeq − ackedSeq`, one monotonic pair. 
 
 **There is no ssh setup step.** `ssh user@host` works with no configuration at all, so the machine field accepts that as readily as an alias and says so — treating a config as a prerequisite would invent one. What exists instead is four ways a *first* connection fails, each needing a different action, and each diagnosed where it happens rather than passed through as raw stderr: no ssh client, an unconfirmed host key, refused credentials, a name that does not resolve, a machine that never answered. "Host key verification failed" and "Permission denied (publickey)" are the same sentence to someone who has not met them before, and both read as "this app is broken".
 
-**An unconfirmed host key is not offered as a button.** Loom reports it and points at `ssh <alias>` in a terminal. Trust-on-first-use only means anything if a human checks the fingerprint against something other than the connection presenting it; accepting it on their behalf would turn a real check into a formality. Refused credentials get `ssh-copy-id` instead, because Loom runs `ssh` with `BatchMode` — a password prompt would otherwise hang on a stdin nobody is attached to.
+**An unconfirmed host key is not offered as a button.** Gilmok reports it and points at `ssh <alias>` in a terminal. Trust-on-first-use only means anything if a human checks the fingerprint against something other than the connection presenting it; accepting it on their behalf would turn a real check into a formality. Refused credentials get `ssh-copy-id` instead, because Gilmok runs `ssh` with `BatchMode` — a password prompt would otherwise hang on a stdin nobody is attached to.
 
 **Attaching a remote is picking a name.** The app lists the aliases from `~/.ssh/config` and asks only where the workspace is; the alias goes to `ssh` unchanged, so their own config decides the rest. A first attach installs a private Node and deploys the host, which takes seconds, so progress is reported rather than hidden behind a spinner — and the panel says up front that nothing goes system-wide.
 
@@ -1266,7 +1266,7 @@ Outstanding work is tracked as `forwardedSeq − ackedSeq`, one monotonic pair. 
 
 The shape: the remote host listens on a **unix socket** in its own home, and the app reaches it with `ssh -L 127.0.0.1:<port>:<remote socket>`. A unix socket rather than a remote TCP port because a TCP listener is reachable by every user on that machine (§17 Q9). The local end being TCP on loopback is a concession to Windows, where forwarding to a local unix socket is not portable.
 
-Bootstrap touches nothing system-wide: a private Node under `~/.loom/`, the two bundles beside it, no `sudo`. Attaching a machine you were lent must not mean changing it.
+Bootstrap touches nothing system-wide: a private Node under `~/.gilmok/`, the two bundles beside it, no `sudo`. Attaching a machine you were lent must not mean changing it.
 
 **Four things were only learnable against a real server**, and each is now a test:
 
@@ -1277,12 +1277,12 @@ Bootstrap touches nothing system-wide: a private Node under `~/.loom/`, the two 
 
 Measured against a live host: first attach 3.1 s including deploying both bundles, reattach 1.2 s. The host and its forked agent host both outlive the client, and a second client reattaches, reads the earlier transcript, and commands it again.
 
-**Sessions belong to a host process, not to the app.** A `loom-host` runs per workspace, owns its `SessionManager` — and therefore its event log, its permission gate, and its turn queues — and outlives whatever started it. The app connects to it and holds no session state at all.
+**Sessions belong to a host process, not to the app.** A `gilmok-host` runs per workspace, owns its `SessionManager` — and therefore its event log, its permission gate, and its turn queues — and outlives whatever started it. The app connects to it and holds no session state at all.
 
 That last part is what the whole arrangement is for. Detaching a process is not enough on its own: if the app still owned the log, a running agent's events would have nowhere to go the moment it quit, so the work would continue and the transcript would not — worse than stopping. §8's table already assigned "log writes" to the host; this makes the local case match it.
 
 ```
-  app(s)  ──socket──▶  loom-host  ──fork──▶  agent host
+  app(s)  ──socket──▶  gilmok-host  ──fork──▶  agent host
   render, command      sessions,             agent loops,
   no session state     log, gate             tools
 ```
@@ -1370,7 +1370,7 @@ Non-git workspaces fall back to `shared` with leases (and therefore cannot host 
 | Burn | tokens and cost vs ceiling | thin bar — or an honest `cost unknown` |
 | Output | artifacts + files touched + diff size | `3 files, +180/−42` |
 
-Agents must declare a plan before implementation work; a session with no checklist shows `no plan declared` rather than a fake bar. Where a model's tool support is weak, `LoomHarness` prompts for the plan explicitly and parses it via the `ToolCallCodec`, so progress reporting doesn't silently degrade to nothing on smaller models.
+Agents must declare a plan before implementation work; a session with no checklist shows `no plan declared` rather than a fake bar. Where a model's tool support is weak, `GilmokHarness` prompts for the plan explicitly and parses it via the `ToolCallCodec`, so progress reporting doesn't silently degrade to nothing on smaller models.
 
 **Cost has three fidelity levels**, driven by `costReporting`:
 
@@ -1378,7 +1378,7 @@ Agents must declare a plan before implementation work; a session with no checkli
 |---|---|---|
 | `per-request` | gateway usage, or a CLI's per-invocation cost field | exact figure and burn bar |
 | `telemetry` | OpenTelemetry metrics exported by the runtime | near-real-time figure, marked approximate |
-| `none` | nothing observable (opaque windowed allowance) | **`cost not visible to Loom`** + quota-window position, plus turn/tool-call/wall-clock caps |
+| `none` | nothing observable (opaque windowed allowance) | **`cost not visible to Gilmok`** + quota-window position, plus turn/tool-call/wall-clock caps |
 
 The third row must say so rather than showing zero. A subscription-backed agent has a real cost that we cannot see; displaying `$0.00` would be a lie, and displaying nothing would look like a bug.
 
@@ -1524,7 +1524,7 @@ Resolution: workspace → runtime → endpoint → profile → user. Endpoint an
 
 Every prompt offers `Allow once` / `Allow for this session` / `Always allow this pattern` / `Deny with reason`, and the reason is fed back so the agent adapts instead of retrying blindly. **A pattern grant must carry the pattern**: "always allow this pattern" that records `{tool, action: 'allow'}` with no `match` widens one approved call into the whole tool, and a grant applies to the agent that asked, never to its siblings — a session-wide grant would widen an agent that may be on a coarse-gated runtime. Every decision is logged with full tool arguments **and the agent, runtime, and model that requested it** — including the ones policy settles without prompting, or a transcript can show hundreds of tool calls and no evidence the gate was ever consulted. "Which agent tried that" is answerable after a restart because admission is itself an event (§5.1).
 
-**The `sudo` row is defense in depth, not the boundary — and the difference is not a quibble.** String inspection of a shell command cannot be complete: `S=sudo; $S id` defeats any pattern, and so do `eval`, base64, a wrapper script, and indirections nobody has thought of yet. The check catches the obvious case loudly and refuses to be granted by any scope, which is worth having; there is a test asserting the `$S` gap deliberately, so nobody later mistakes the incompleteness for an oversight. **The actual protection is architectural and already stated in this section:** the host runs as the connecting user, never root, and Loom never invokes `sudo` itself. Any design that leans on the pattern list as the thing standing between an agent and root is wrong about what a pattern list can do.
+**The `sudo` row is defense in depth, not the boundary — and the difference is not a quibble.** String inspection of a shell command cannot be complete: `S=sudo; $S id` defeats any pattern, and so do `eval`, base64, a wrapper script, and indirections nobody has thought of yet. The check catches the obvious case loudly and refuses to be granted by any scope, which is worth having; there is a test asserting the `$S` gap deliberately, so nobody later mistakes the incompleteness for an oversight. **The actual protection is architectural and already stated in this section:** the host runs as the connecting user, never root, and Gilmok never invokes `sudo` itself. Any design that leans on the pattern list as the thing standing between an agent and root is wrong about what a pattern list can do.
 
 **Also load-bearing: the model never chooses which argument is inspected.** Each tool has one designated argument (`bash` → `command`, `write` → `file_path`, `web_fetch` → `url`, …), registered under vendor-native names as well as canonical ones because adapters pass tool names through verbatim. There is no positional fallback — "the first string-valued argument" is JSON insertion order, which the model controls, and it let an `allow` rule scoped to a URL pattern be satisfied by a model-authored `prompt` field while `url` pointed somewhere else. For a tool absent from that table, a `deny` or `ask` rule may match *any* string argument (that only tightens the gate) while an `allow` rule with a `match` never applies (we cannot say which argument to trust).
 
@@ -1540,7 +1540,7 @@ Policy is enforced in the tool implementation, before execution — not by promp
 
 ### Credentials
 
-- **Loom never stores, proxies, or replays a vendor session token** (§3.11). We invoke the user's tool; we stay out of the auth path.
+- **Gilmok never stores, proxies, or replays a vendor session token** (§3.11). We invoke the user's tool; we stay out of the auth path.
 - **We never bundle a vendor CLI** — detect, report version, link to the vendor's installer.
 - **Secrets never live in the workspace store.** Keys and tokens go to the OS keychain via `safeStorage`; the store holds references only. A `.devagents/` accidentally committed, or sitting on a shared server, must not be a credential leak.
 - **`vendor-cli-session` means credentials live wherever the loop runs** — on the remote, for a remote session. Surfaced explicitly, never inferred.
@@ -1553,7 +1553,7 @@ Each endpoint records provider, region, and retention posture (`dataHandling`, �
 
 - **Host key verification is mandatory.** `known_hosts` honored; first contact is TOFU with the fingerprint shown and explicit confirmation. Auto-accept does not exist, not even behind a flag.
 - **No password auth by default.** **SSH agent forwarding off by default** — it lets a compromised remote use your keys against every host you can reach. Opt-in per profile with the risk stated.
-- **The remote is a trust boundary.** The host runs as the connecting user, never root; the app never invokes `sudo`. `.devagents/` and `~/.loom/` are `0700`. On a shared host, warn if the workspace or home directory is group/world-readable — a readable `.devagents/` is a readable transcript.
+- **The remote is a trust boundary.** The host runs as the connecting user, never root; the app never invokes `sudo`. `.devagents/` and `~/.gilmok/` are `0700`. On a shared host, warn if the workspace or home directory is group/world-readable — a readable `.devagents/` is a readable transcript.
 - **The uploaded host binary is checksum-verified before exec**, and its directory must not be writable by other users, or remote code execution is one hostile co-tenant away.
 
 ---
@@ -1611,7 +1611,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 
 Building Phases 2, 3, and 4 against a local-only assumption invites rework, because each of them touches state that a server-authoritative topology relocates: relocation resolution becomes a question about the server's filesystem, quota scheduling spans clients, and the dashboard reads a mirror rather than a local log. Second, **device independence is a headline requirement and Phase 5 is where it lives** — the log already being the source of truth means a second device is a new windowed projection rather than a sync protocol, but only once the log is authoritative somewhere central. Third, computer use and multimodal both get materially safer afterwards: an agent driving a virtual display on an expendable server is a bounded blast radius, which is the only honest answer to `click(x, y)` being outside what §13 can gate.
 
-**This does not contradict Phase 3's "deliberately early" argument**, which is worth being precise about because it reads like it should. That argument is that an abstraction validated against one implementation is not validated, and it has already been satisfied: four runtimes run the contract suite — `echo`, the Claude SDK adapter, `LoomHarness` over a raw provider, and the same adapter reached through the agent-host protocol. What remains in Phase 3 is *breadth* — a second real provider, the installed-CLI adapters, the conformance matrix in the UI — not validation. Breadth can follow the substrate; validation could not.
+**This does not contradict Phase 3's "deliberately early" argument**, which is worth being precise about because it reads like it should. That argument is that an abstraction validated against one implementation is not validated, and it has already been satisfied: four runtimes run the contract suite — `echo`, the Claude SDK adapter, `GilmokHarness` over a raw provider, and the same adapter reached through the agent-host protocol. What remains in Phase 3 is *breadth* — a second real provider, the installed-CLI adapters, the conformance matrix in the UI — not validation. Breadth can follow the substrate; validation could not.
 
 **Not in any phase: computer use / GUI control.** §12 is capture as *input* — you show the agent something, or the host screenshots a URL the agent serves. Nothing actuates a mouse or keyboard, and that is a scope decision rather than an omission. Three things must land before it is even expressible: tool results must carry content blocks instead of a `string` (a screenshot cannot be returned today), the tool model needs a notion of a provider-defined built-in tool that we do not author a schema for, and a frame must carry its coordinate space so downscaling cannot silently misplace every click. All three are in §16.
 
@@ -1634,15 +1634,15 @@ Tests select on `data-testid`, never a styling class. That rule was earned: conv
 **Phase 2 — Persistence hardening (R3).** Lineage/instance identity, `ProjectResolver` with search + relocate UI, `PathCodec`, content-addressed attachments, `rehydrate()`, two-tier resume.
 *Done when:* you move a workspace to a new drive with the app closed, reopen, and an agent resumes mid-task with context intact — **verified with the native resume token deliberately invalidated**, so the durable path is what's under test.
 
-**Phase 3 — Three-shape proof (R8, R9).** `LoomHarness` with the canonical tool suite and permission gate; `ModelProvider` interface; capability model with self-description and probing; schema degrader; normalized `StopReason` incl. `quota_exhausted`; `AuthMode`; `permissionFidelity` with the isolation constraint and deny-ask-resume flow; `agent-cli-stdio` with manifests for two CLIs; **two providers deliberately far apart** — one frontier API, one local `openai-compatible` server. Conformance suite v1 with the support matrix in the UI.
-*Done when:* the same session goal completes four ways — SDK library, `LoomHarness` + frontier API, `LoomHarness` + local model, and the user's installed CLI under its own auth — and a **running** agent is switched between them mid-session via rehydration, with the transcript explaining each handoff. Second criterion: a coarse-gated CLI agent hits a denied tool, the user grants the rule, and it resumes without losing the turn.
+**Phase 3 — Three-shape proof (R8, R9).** `GilmokHarness` with the canonical tool suite and permission gate; `ModelProvider` interface; capability model with self-description and probing; schema degrader; normalized `StopReason` incl. `quota_exhausted`; `AuthMode`; `permissionFidelity` with the isolation constraint and deny-ask-resume flow; `agent-cli-stdio` with manifests for two CLIs; **two providers deliberately far apart** — one frontier API, one local `openai-compatible` server. Conformance suite v1 with the support matrix in the UI.
+*Done when:* the same session goal completes four ways — SDK library, `GilmokHarness` + frontier API, `GilmokHarness` + local model, and the user's installed CLI under its own auth — and a **running** agent is switched between them mid-session via rehydration, with the transcript explaining each handoff. Second criterion: a coarse-gated CLI agent hits a denied tool, the user grants the rule, and it resumes without losing the turn.
 
 *Deliberately early.* An abstraction validated against one implementation is not validated. Proving three shapes before the dashboard, remoting, and multi-agent are layered on top is what stops the interface ossifying into a wrapper around whichever adapter came first — the exact failure R8 exists to prevent. The schema-degradation, text-protocol, and permission-fidelity problems are all much cheaper to discover here.
 
 **Phase 4 — Multi-session + dashboard (R1, R4, R5).** SessionManager for N sessions, parking, `QuotaScheduler`, dashboard grid, progress signals with three cost fidelities, checklist tool, stall detection, coalesced notifications, inbox, Needs-you rail.
 *Done when:* ten concurrent sessions across three workspaces, three models, and two auth modes are legible at a glance; you're notified exactly once per completed session; and a quota-exhausted agent parks and resumes on its own at reset.
 
-**Phase 5 — Remote execution and device independence (R7).** `Transport`/`Connection`, `ssh2` + `openssh-cli`, `loom-agent-host` with detached supervision and lingering, control protocol, **ModelGateway with multi-provider routing** and pause/resume, `target-local` endpoints, remote CLI detection, mirror with resumable tails, outbox, preview forwarding, host-key TOFU UI, remote policy defaults. Then the multi-client work this topology makes mandatory: **durable permission requests** answerable from any attached client, **client capability descriptors**, and notification coalescing across clients rather than only across sessions (§7).
+**Phase 5 — Remote execution and device independence (R7).** `Transport`/`Connection`, `ssh2` + `openssh-cli`, `gilmok-agent-host` with detached supervision and lingering, control protocol, **ModelGateway with multi-provider routing** and pause/resume, `target-local` endpoints, remote CLI detection, mirror with resumable tails, outbox, preview forwarding, host-key TOFU UI, remote policy defaults. Then the multi-client work this topology makes mandatory: **durable permission requests** answerable from any attached client, **client capability descriptors**, and notification coalescing across clients rather than only across sessions (§7).
 
 *Done when:* you start a remote session, **close your laptop lid mid-run, reopen eight hours later, and find it completed** with a full transcript mirrored and a result notification waiting. Second: pull the network cable mid-turn with zero event loss or duplication. Third: an agent on a GPU box using that box's own model server keeps running with your laptop shut.
 
@@ -1717,9 +1717,9 @@ Tests select on `data-testid`, never a styling class. That rule was earned: conv
 
 ## 17. Open questions
 
-1. **How much harness should `LoomHarness` be?** Thin loop, or grow subagents, its own context-editing strategies, and progressive instruction loading? Start thin and let conformance gaps drive growth — revisit after Phase 3.
+1. **How much harness should `GilmokHarness` be?** Thin loop, or grow subagents, its own context-editing strategies, and progressive instruction loading? Start thin and let conformance gaps drive growth — revisit after Phase 3.
 2. **Automatic model routing.** With cost and capability data the app *could* pick a model per role, or per turn (cheap for mechanical edits, escalate on failure). Attractive, but it makes behavior non-reproducible and cost unpredictable. Leaning: suggest, never auto-switch, until there's usage data.
-3. **Should quota state be shared across machines?** A `quotaGroup` for a subscription is really global to the user, but Loom only sees what it schedules — usage from the vendor's own app or another device is invisible. Optimistic scheduling plus reactive parking is the pragmatic answer; a vendor usage API would be better where one exists.
+3. **Should quota state be shared across machines?** A `quotaGroup` for a subscription is really global to the user, but Gilmok only sees what it schedules — usage from the vendor's own app or another device is invisible. Optimistic scheduling plus reactive parking is the pragmatic answer; a vendor usage API would be better where one exists.
 4. **Cross-machine and cross-repo work** is now child sessions with their own target or workspace (§4.3), which resolved the old "linked siblings" workaround without weakening path encoding, lease authority, or single-writer. What remains open is whether a *single* session should ever span two targets — still no, on the same reasoning, and hierarchy removes most of the motivation.
 5. **Should a child ever run in a different workspace than its parent's repo?** The schema allows it and the cross-repo case needs it, but a tree spanning four `.devagents/` directories is hard to reason about and any one of them can be unreachable. Possibly cap cross-workspace children at depth 1.
 6. **Can a child spawn its own children, and should the parent know?** `maxDepth` 3 permits it. Whether a grandparent should see the whole subtree or only its direct children is a UI question with a real cost: full visibility scales badly, direct-only hides stalls. Leaning full visibility with collapse-by-default, revisited once trees exist.
@@ -1739,4 +1739,4 @@ Tests select on `data-testid`, never a styling class. That rule was earned: conv
     The queue is **per agent**, not per session: §4.2 has agents in one session running in parallel, so a session-wide queue would serialize work meant to be concurrent. With one agent the two are identical, so this costs nothing today and is correct later.
 
     Deliberately **not durable across an owner crash**. A queued turn has not happened, so writing it to the log would put something in the transcript that never ran; and a separate durable queue buys little when depth is normally zero or one and a crash already costs the running turn. A queued turn *does* survive the client that sent it — that is the point of the owner holding it.
-15. **Migrating a live session between targets** (laptop → build box mid-task). The context half is no longer speculative: `rehydrate()` is implemented and runs on every turn for any runtime without native resume, so the mechanism is exercised continuously rather than only on the migration path. What stays open is workspace *content* — whether the app syncs it or requires a clean git state and lets git do it. Still leaning the latter, now for a sharper reason: syncing content would make Loom responsible for a merge, and §6.6's single-writer invariant is the one place the design has no conflict resolution at all.
+15. **Migrating a live session between targets** (laptop → build box mid-task). The context half is no longer speculative: `rehydrate()` is implemented and runs on every turn for any runtime without native resume, so the mechanism is exercised continuously rather than only on the migration path. What stays open is workspace *content* — whether the app syncs it or requires a clean git state and lets git do it. Still leaning the latter, now for a sharper reason: syncing content would make Gilmok responsible for a merge, and §6.6's single-writer invariant is the one place the design has no conflict resolution at all.

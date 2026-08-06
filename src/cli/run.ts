@@ -1,20 +1,20 @@
 /**
- * A headless driver for Loom's core, so the machinery can be exercised before
+ * A headless driver for Gilmok's core, so the machinery can be exercised before
  * the Electron shell exists.
  *
  * This is not the product — it is the smallest thing that runs a real session
  * against a real workspace with a real model, prints the events, and answers
  * permission prompts at the terminal.
  *
- *   npm run loom -- --workspace ./sandbox --goal "add a README" "Write a README.md"
- *   npm run loom -- --inspect <sessionId> --workspace ./sandbox
+ *   npm run gilmok -- --workspace ./sandbox --goal "add a README" "Write a README.md"
+ *   npm run gilmok -- --inspect <sessionId> --workspace ./sandbox
  */
 
 import { createInterface } from 'node:readline/promises';
 import { resolve } from 'node:path';
 import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
-import { LoomHarnessRuntime, LOOM_HARNESS_RUNTIME_ID } from '@main/runtime/runtimes/loomHarness.js';
+import { GilmokHarnessRuntime, GILMOK_HARNESS_RUNTIME_ID } from '@main/runtime/runtimes/gilmokHarness.js';
 import {
   OpenAiCompatibleProvider,
   OPENAI_COMPATIBLE_PROVIDER_ID,
@@ -79,8 +79,8 @@ async function main(): Promise<void> {
   if (args.inspect) return inspect(args);
 
   if (!args.prompt) {
-    console.error('Usage: npm run loom -- --workspace <dir> --goal "<goal>" "<prompt>"');
-    console.error('       npm run loom -- --workspace <dir> --inspect <sessionId>');
+    console.error('Usage: npm run gilmok -- --workspace <dir> --goal "<goal>" "<prompt>"');
+    console.error('       npm run gilmok -- --workspace <dir> --inspect <sessionId>');
     process.exitCode = 1;
     return;
   }
@@ -101,8 +101,8 @@ async function main(): Promise<void> {
 
   const provider = new OpenAiCompatibleProvider();
   const registry = new RuntimeRegistry();
-  registry.register(new LoomHarnessRuntime({ provider, endpoint }), {
-    label: `LoomHarness → ${args.model}`,
+  registry.register(new GilmokHarnessRuntime({ provider, endpoint }), {
+    label: `GilmokHarness → ${args.model}`,
     requiresModel: true,
   });
 
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
   try {
     agent = await sm.addAgent(session.sessionId, {
       role: 'worker',
-      runtimeId: LOOM_HARNESS_RUNTIME_ID,
+      runtimeId: GILMOK_HARNESS_RUNTIME_ID,
       model: { providerId: OPENAI_COMPATIBLE_PROVIDER_ID, modelId: args.model },
     });
   } catch (err) {
@@ -195,12 +195,12 @@ async function main(): Promise<void> {
   console.log(`  tools       ${projection.stats.toolCalls} calls, ${projection.stats.toolErrors} errors`);
   console.log(`  decisions   ${projection.stats.permissionPrompts} logged, ${projection.stats.permissionDenials} denied`);
   console.log(`  tokens      ${projection.usage.inputTokens} in / ${projection.usage.outputTokens} out`);
-  console.log(`  cost        ${projection.usage.cost === 'unknown' ? 'not visible to Loom' : `$${projection.usage.cost}`}`);
+  console.log(`  cost        ${projection.usage.cost === 'unknown' ? 'not visible to Gilmok' : `$${projection.usage.cost}`}`);
   if (progress.total > 0) console.log(`  checklist   ${progress.done}/${progress.total}`);
   console.log(
     c.dim(`\n  transcript  ${args.workspace}/.devagents/sessions/${session.sessionId}/events.jsonl`),
   );
-  console.log(c.dim(`  replay      npm run loom -- --workspace ${args.workspace} --inspect ${session.sessionId}`));
+  console.log(c.dim(`  replay      npm run gilmok -- --workspace ${args.workspace} --inspect ${session.sessionId}`));
 
   rl.close();
 }

@@ -5,14 +5,14 @@ import {
   newEventId,
   newSessionId,
   type EventBody,
-  type LoomEvent,
+  type GilmokEvent,
   type SessionId,
 } from '@shared/types/index.js';
 
 const SID: SessionId = newSessionId();
 
 /** Build a log with sequential seq and predictable timestamps. */
-function log(...bodies: EventBody[]): LoomEvent[] {
+function log(...bodies: EventBody[]): GilmokEvent[] {
   return bodies.map(
     (body, i) =>
       ({
@@ -20,7 +20,7 @@ function log(...bodies: EventBody[]): LoomEvent[] {
         seq: i + 1,
         at: new Date(Date.UTC(2026, 6, 29, 12, 0, i)).toISOString(),
         ...body,
-      }) as LoomEvent,
+      }) as GilmokEvent,
   );
 }
 

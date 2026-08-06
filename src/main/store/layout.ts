@@ -17,7 +17,7 @@ export const SCHEMA_VERSION = 4;
  * `run/`, and `instance.json` are excluded. A nested gitignore does this
  * without touching the user's root .gitignore (§1).
  */
-export const NESTED_GITIGNORE = `# Written by Loom. Delete this file to exclude .devagents/ entirely.
+export const NESTED_GITIGNORE = `# Written by Gilmok. Delete this file to exclude .devagents/ entirely.
 sessions/
 index/
 run/

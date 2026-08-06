@@ -14,7 +14,7 @@ import {
 import type { ToolPolicy } from '@shared/types/index.js';
 
 const ASK_ALL: ToolPolicy = { rules: [], defaultAction: 'ask' };
-const WS = resolve('/tmp/loom-ws');
+const WS = resolve('/tmp/gilmok-ws');
 const CTX = { workspaceRoot: WS };
 const inside = (p: string) => resolve(WS, p);
 

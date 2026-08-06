@@ -25,7 +25,7 @@ import type {
   AccessRole,
   AgentId,
   AgentRecord,
-  LoomEvent,
+  GilmokEvent,
   PermissionDecision,
   PermissionRequest,
   Session,
@@ -65,7 +65,7 @@ export interface HostConnectionOptions {
 /**
  * Events, re-emitted from the host:
  *
- *   'event'      (sessionId, LoomEvent)
+ *   'event'      (sessionId, GilmokEvent)
  *   'session'    (Session)
  *   'permission' (PermissionRequest)
  *   'queue'      (sessionId, agentId, depth)
@@ -101,7 +101,7 @@ export class HostConnection extends EventEmitter {
       t: 'hello',
       id: this.mintId(),
       role: opts.role ?? 'read-write',
-      client: opts.client ?? 'loom-app',
+      client: opts.client ?? 'gilmok-app',
     });
   }
 
@@ -234,7 +234,7 @@ export class HostConnection extends EventEmitter {
     });
   }
 
-  events(sessionId: SessionId, fromSeq = 0): Promise<LoomEvent[]> {
+  events(sessionId: SessionId, fromSeq = 0): Promise<GilmokEvent[]> {
     return this.call({ t: 'session.events', sessionId, fromSeq });
   }
 

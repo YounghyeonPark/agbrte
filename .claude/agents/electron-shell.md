@@ -1,6 +1,6 @@
 ---
 name: electron-shell
-description: Owns Loom's Electron process boundaries, typed IPC surface, event delivery and backpressure, renderer memory discipline, utilityProcess supervision, and platform-specific capture/notification behavior. Use when working in main, preload, or renderer wiring, when adding an IPC method, when the UI lags or leaks, or when capture/notifications misbehave on a platform.
+description: Owns Gilmok's Electron process boundaries, typed IPC surface, event delivery and backpressure, renderer memory discipline, utilityProcess supervision, and platform-specific capture/notification behavior. Use when working in main, preload, or renderer wiring, when adding an IPC method, when the UI lags or leaks, or when capture/notifications misbehave on a platform.
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
 

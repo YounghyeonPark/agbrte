@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolve, sep } from 'node:path';
 import { PathCodec } from '@main/store/pathCodec.js';
 
-const ROOT = resolve('/tmp/loom-ws');
+const ROOT = resolve('/tmp/gilmok-ws');
 
 describe('PathCodec', () => {
   const codec = new PathCodec(ROOT);
@@ -38,8 +38,8 @@ describe('PathCodec', () => {
 
   it('resolves the same relative path against a moved root — the point of the exercise', () => {
     const encoded = codec.encode(resolve(ROOT, 'src/index.ts'));
-    const moved = codec.rebase(resolve('/mnt/other/loom-ws'));
-    expect(moved.decode(encoded)).toBe(resolve('/mnt/other/loom-ws/src/index.ts'));
+    const moved = codec.rebase(resolve('/mnt/other/gilmok-ws'));
+    expect(moved.decode(encoded)).toBe(resolve('/mnt/other/gilmok-ws/src/index.ts'));
   });
 
   it('normalizes traversal that stays inside the workspace', () => {

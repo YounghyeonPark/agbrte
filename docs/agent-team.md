@@ -1,4 +1,4 @@
-# Loom's sub-agent team
+# Gilmok's sub-agent team
 
 Eight project agents live in [`.claude/agents/`](../.claude/agents/). Each owns one part of the system and encodes that part's invariants from [DESIGN.md](../DESIGN.md), so the rules survive being forgotten between sessions.
 
@@ -9,7 +9,7 @@ Eight project agents live in [`.claude/agents/`](../.claude/agents/). Each owns 
 | **adapter-smith** | adapters, schema degrader, `ToolCallCodec`, CLI manifests, conformance suite | yes | adding or fixing an adapter; a model mis-calls tools; a vendor protocol changed |
 | **durability-warden** | event log, checkpoints, `PathCodec`, attachments, identity, `rehydrate()`, mirror | yes | store/mirror/resume work; new event type; schema bump; resume misbehaves |
 | **electron-shell** | process boundaries, typed IPC, backpressure, renderer memory, platform quirks | yes | main/preload/renderer wiring; new IPC method; UI lag or leak; capture or notification bugs |
-| **remote-ops** | transports, `loom-agent-host`, detachment, tunneling, tails, forwarding | yes | any remote work; a detached run dies; reconnect loses or duplicates events |
+| **remote-ops** | transports, `gilmok-agent-host`, detachment, tunneling, tails, forwarding | yes | any remote work; a detached run dies; reconnect loses or duplicates events |
 | **security-auditor** | §13 commitments — credentials, gate honesty, redaction, trust boundaries | no — reports | before merging auth, credential, permission, capture, gateway, transport, or file-mode changes |
 | **spec-keeper** | DESIGN.md truthfulness, decisions, matrices, risks, open questions | yes (docs) | after a phase milestone; doc and code disagree; an open question resolves |
 

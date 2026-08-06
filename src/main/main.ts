@@ -5,7 +5,7 @@
  * client of.
  *
  * **Main owns no session state.** Sessions, their logs, and the permission gate
- * belong to a `loom-host` process per workspace; this process connects to them.
+ * belong to a `gilmok-host` process per workspace; this process connects to them.
  * That is what makes closing the app a non-event for a running session, and what
  * makes a second device another connection rather than a second copy.
  *
@@ -25,14 +25,14 @@ import { connectRemoteHost } from './host/connectRemote.js';
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** Vite's dev server, when `npm run dev` started one. */
-const DEV_URL = process.env['LOOM_DEV_SERVER'];
+const DEV_URL = process.env['GILMOK_DEV_SERVER'];
 
 /**
  * Windows taskbar grouping and notification identity (§11). Without it,
  * notifications are attributed to `electron.exe` and every dev build shares one
  * taskbar slot.
  */
-if (process.platform === 'win32') app.setAppUserModelId('dev.loom.app');
+if (process.platform === 'win32') app.setAppUserModelId('dev.gilmok.app');
 
 let fleet: Fleet | null = null;
 let ipc: { dispose: () => void } | null = null;
@@ -48,8 +48,8 @@ let ipc: { dispose: () => void } | null = null;
  */
 const HOST_RUNTIMES: FleetRuntime[] = [
   {
-    id: 'loom-harness',
-    label: 'Loom harness (local model)',
+    id: 'gilmok-harness',
+    label: 'Gilmok harness (local model)',
     version: '0.0.1',
     requiresModel: true,
   },
@@ -76,7 +76,7 @@ function buildFleet(): Fleet {
           alias,
           workspaceRoot,
           bundles: {
-            host: join(HERE, 'loomHost.js'),
+            host: join(HERE, 'gilmokHost.js'),
             agent: join(HERE, 'agentHost.js'),
           },
           // The app's own version, so a rebuilt app redeploys and an unchanged
@@ -87,7 +87,7 @@ function buildFleet(): Fleet {
         });
         return connection;
       }
-      return connectOrSpawnHost({ workspaceRoot, hostEntry: join(HERE, 'loomHost.js') });
+      return connectOrSpawnHost({ workspaceRoot, hostEntry: join(HERE, 'gilmokHost.js') });
     },
   });
 }
@@ -100,7 +100,7 @@ async function createWindow(): Promise<void> {
     minHeight: 480,
     show: false,
     backgroundColor: '#16161a',
-    title: 'Loom',
+    title: 'Gilmok',
     webPreferences: {
       // §7. All three, and none of them are negotiable: the renderer displays
       // model output, which is untrusted content reaching a privileged process.
@@ -136,10 +136,10 @@ async function createWindow(): Promise<void> {
 app.whenReady().then(async () => {
   fleet = buildFleet();
 
-  // `LOOM_WORKSPACE_ROOT` lets a test — or a developer — start attached to a
+  // `GILMOK_WORKSPACE_ROOT` lets a test — or a developer — start attached to a
   // known folder. Several may be given, separated by the platform's path
   // delimiter, which is how the e2e suite attaches two hosts at once.
-  const configured = process.env['LOOM_WORKSPACE_ROOT'];
+  const configured = process.env['GILMOK_WORKSPACE_ROOT'];
   const roots =
     configured === undefined || configured === ''
       ? [app.getPath('userData')]
@@ -166,7 +166,7 @@ app.whenReady().then(async () => {
 });
 
 // Closing the window ends the app on Windows and Linux. This is temporary and
-// wrong for Loom's purpose: §8's parking model exists so long runs continue
+// wrong for Gilmok's purpose: §8's parking model exists so long runs continue
 // while you are not watching, which needs a tray presence to return to. Until
 // that exists, quitting on close is at least honest about what is running.
 app.on('window-all-closed', () => {

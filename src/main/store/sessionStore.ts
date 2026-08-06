@@ -19,7 +19,7 @@ import {
   emptyProjection,
   type EventBody,
   type InstanceId,
-  type LoomEvent,
+  type GilmokEvent,
   type SessionId,
   type SessionProjection,
   type Actor,
@@ -139,9 +139,9 @@ export class SessionStore {
    * Anything this throws is swallowed. A subscriber's bug must not fail a
    * durable write.
    */
-  onAppend: ((e: LoomEvent) => void) | null = null;
+  onAppend: ((e: GilmokEvent) => void) | null = null;
 
-  async append(body: EventBody, meta: AppendMeta = {}): Promise<LoomEvent> {
+  async append(body: EventBody, meta: AppendMeta = {}): Promise<GilmokEvent> {
     const event = await this.log.append(body, meta);
     this.sinceCheckpoint += 1;
     try {
@@ -195,7 +195,7 @@ export class SessionStore {
    * rather than holding the whole log, which is what keeps a week-long session
    * from becoming a multi-gigabyte renderer heap (§7).
    */
-  async readEvents(fromSeq = 0): Promise<LoomEvent[]> {
+  async readEvents(fromSeq = 0): Promise<GilmokEvent[]> {
     const { events } = await this.log.readAll();
     return fromSeq === 0 ? events : events.filter((e) => e.seq > fromSeq);
   }

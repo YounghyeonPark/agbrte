@@ -24,7 +24,7 @@ let root: string;
 let instanceId: InstanceId;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'loom-queue-'));
+  root = await mkdtemp(join(tmpdir(), 'gilmok-queue-'));
   instanceId = (await openWorkspace(root)).instanceId;
 });
 

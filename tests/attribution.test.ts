@@ -28,14 +28,14 @@ import { openWorkspace } from '@main/store/identity.js';
 import { workspaceLayout } from '@main/store/layout.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
-import type { AccessRole, Actor, InstanceId, LoomEvent } from '@shared/types/index.js';
+import type { AccessRole, Actor, InstanceId, GilmokEvent } from '@shared/types/index.js';
 
 let root: string;
 let instanceId: InstanceId;
 let lineageId: string;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'loom-actor-'));
+  root = await mkdtemp(join(tmpdir(), 'gilmok-actor-'));
   const identity = await openWorkspace(root);
   instanceId = identity.instanceId;
   lineageId = identity.lineageId;
@@ -94,7 +94,7 @@ function rig(script: EchoStep[] = QUIET) {
   };
 }
 
-function actorsOf(events: LoomEvent[], type: string): Array<Actor | undefined> {
+function actorsOf(events: GilmokEvent[], type: string): Array<Actor | undefined> {
   return events.filter((e) => e.type === type).map((e) => e.actor);
 }
 
@@ -233,17 +233,17 @@ describe('the access policy', () => {
 
   it('is absent by default and grants what was asked', async () => {
     expect(await loadAccessPolicy(root)).toBeNull();
-    expect(decideRole(null, 'read-write', 'loom-app@desk')).toBe('read-write');
+    expect(decideRole(null, 'read-write', 'gilmok-app@desk')).toBe('read-write');
   });
 
   it('pins a client family to read-only', async () => {
-    await write({ rules: [{ client: 'loom-app@phone-*', role: 'read-only' }] });
+    await write({ rules: [{ client: 'gilmok-app@phone-*', role: 'read-only' }] });
     const policy = await loadAccessPolicy(root);
 
     // The accident this exists for: a live run on a phone is one keystroke from
     // being driven by it.
-    expect(decideRole(policy, 'read-write', 'loom-app@phone-14')).toBe('read-only');
-    expect(decideRole(policy, 'read-write', 'loom-app@desk')).toBe('read-write');
+    expect(decideRole(policy, 'read-write', 'gilmok-app@phone-14')).toBe('read-only');
+    expect(decideRole(policy, 'read-write', 'gilmok-app@desk')).toBe('read-write');
   });
 
   it('never grants more than was asked for', async () => {
@@ -256,14 +256,14 @@ describe('the access policy', () => {
   it('lets a specific rule precede a broad one', async () => {
     await write({
       rules: [
-        { client: 'loom-app@desk', role: 'read-write' },
+        { client: 'gilmok-app@desk', role: 'read-write' },
         { client: '*', role: 'read-only' },
       ],
     });
     const policy = await loadAccessPolicy(root);
     // First match wins, so ordering replaces a priority field.
-    expect(decideRole(policy, 'read-write', 'loom-app@desk')).toBe('read-write');
-    expect(decideRole(policy, 'read-write', 'loom-app@laptop')).toBe('read-only');
+    expect(decideRole(policy, 'read-write', 'gilmok-app@desk')).toBe('read-write');
+    expect(decideRole(policy, 'read-write', 'gilmok-app@laptop')).toBe('read-only');
   });
 
   it('refuses a malformed policy rather than falling back to unrestricted', async () => {

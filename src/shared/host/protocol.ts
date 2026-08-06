@@ -16,7 +16,7 @@
  *
  * ## The same shape as the remote host
  *
- * A local `utilityProcess` and a remote `loom-agent-host` differ only in the
+ * A local `utilityProcess` and a remote `gilmok-agent-host` differ only in the
  * channel underneath. Defining this over an abstract `HostChannel` rather than
  * Electron's `MessagePort` is what lets Phase 5 reuse it over SSH — and, more
  * immediately, what lets the whole thing be tested in-process with a pair of

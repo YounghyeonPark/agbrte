@@ -94,12 +94,12 @@ export function spawnAgentHost(opts: {
   modelBaseUrl?: string;
 }): SpawnedHost {
   const child = utilityProcess.fork(opts.entry, [], {
-    serviceName: 'loom-agent-host',
+    serviceName: 'gilmok-agent-host',
     stdio: 'inherit',
     env: {
       ...process.env,
-      LOOM_WORKSPACE_ROOT: opts.workspaceRoot,
-      ...(opts.modelBaseUrl !== undefined ? { LOOM_MODEL_BASE_URL: opts.modelBaseUrl } : {}),
+      GILMOK_WORKSPACE_ROOT: opts.workspaceRoot,
+      ...(opts.modelBaseUrl !== undefined ? { GILMOK_MODEL_BASE_URL: opts.modelBaseUrl } : {}),
     },
   });
 

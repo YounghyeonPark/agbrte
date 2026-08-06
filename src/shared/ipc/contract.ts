@@ -7,12 +7,12 @@
  *
  * Channel strings live **here and nowhere else**. The renderer never sees
  * `ipcRenderer`, never names a channel, and cannot reach a channel that isn't
- * on `LoomApi` — §7's `contextIsolation: true`, `nodeIntegration: false`,
+ * on `GilmokApi` — §7's `contextIsolation: true`, `nodeIntegration: false`,
  * `sandbox: true` are only as good as the surface exposed through them.
  *
  * ## Scope
  *
- * This is a **subset** of §7's `LoomApi`, not the whole thing. `capture`,
+ * This is a **subset** of §7's `GilmokApi`, not the whole thing. `capture`,
  * `speech`, hierarchy, and model management are deliberately absent rather than
  * present and throwing: an API that exists and fails is worse than one that
  * isn't there, because the renderer cannot feature-detect against a method that
@@ -29,7 +29,7 @@
 import type {
   AgentRecord,
   AgentRole,
-  LoomEvent,
+  GilmokEvent,
   PermissionDecision,
   PermissionRequest,
   Session,
@@ -72,7 +72,7 @@ export interface RuntimeInfo {
   id: string;
   version: string;
   toolVersion?: string;
-  /** Whether this runtime needs a `model`, i.e. whether it is LoomHarness. */
+  /** Whether this runtime needs a `model`, i.e. whether it is GilmokHarness. */
   requiresModel: boolean;
 }
 
@@ -110,7 +110,7 @@ export interface EventBatch {
   /** The host that produced these. */
   instanceId: string;
   sessionId: string;
-  events: LoomEvent[];
+  events: GilmokEvent[];
   firstSeq: number;
   lastSeq: number;
   /** True when main is withholding events because the renderer is behind. */
@@ -122,7 +122,7 @@ export interface SessionSnapshot {
   session: Session;
   projection: SessionProjection;
   /** A bounded window of the tail, never the whole transcript (§7). */
-  recent: LoomEvent[];
+  recent: GilmokEvent[];
   /** `seq` the window starts at, so the renderer knows what it is missing. */
   windowFromSeq: number;
   /**
@@ -137,7 +137,7 @@ export interface SessionSnapshot {
 
 // ----------------------------------------------------------------- the surface
 
-export interface LoomApi {
+export interface GilmokApi {
   hosts: {
     /** Every attached host. Several may be attached at once (§8). */
     list(): Promise<HostInfo[]>;
@@ -173,7 +173,7 @@ export interface LoomApi {
     send(r: SendRequest): Promise<void>;
     interrupt(sessionId: string, agentId?: string): Promise<void>;
     /** Events since `fromSeq`, for filling a gap the renderer detected. */
-    since(sessionId: string, fromSeq: number): Promise<LoomEvent[]>;
+    since(sessionId: string, fromSeq: number): Promise<GilmokEvent[]>;
   };
   permissions: {
     pending(): Promise<PermissionRequest[]>;
@@ -211,32 +211,32 @@ export interface LoomApi {
  * devtools console is at least legible in a log.
  */
 export const CH = {
-  hostsList: 'loom:hosts.list',
-  hostsAdd: 'loom:hosts.add',
-  hostsRemove: 'loom:hosts.remove',
-  hostsRuntimes: 'loom:hosts.runtimes',
-  hostsSsh: 'loom:hosts.ssh',
-  hostsAddRemote: 'loom:hosts.addRemote',
-  sessionsList: 'loom:sessions.list',
-  sessionsCreate: 'loom:sessions.create',
-  sessionsListOnDisk: 'loom:sessions.listOnDisk',
-  sessionsResume: 'loom:sessions.resume',
-  sessionsSnapshot: 'loom:sessions.snapshot',
-  sessionsAddAgent: 'loom:sessions.addAgent',
-  sessionsSend: 'loom:sessions.send',
-  sessionsInterrupt: 'loom:sessions.interrupt',
-  sessionsSince: 'loom:sessions.since',
-  permissionsPending: 'loom:permissions.pending',
-  permissionsRespond: 'loom:permissions.respond',
-  ack: 'loom:ack',
+  hostsList: 'gilmok:hosts.list',
+  hostsAdd: 'gilmok:hosts.add',
+  hostsRemove: 'gilmok:hosts.remove',
+  hostsRuntimes: 'gilmok:hosts.runtimes',
+  hostsSsh: 'gilmok:hosts.ssh',
+  hostsAddRemote: 'gilmok:hosts.addRemote',
+  sessionsList: 'gilmok:sessions.list',
+  sessionsCreate: 'gilmok:sessions.create',
+  sessionsListOnDisk: 'gilmok:sessions.listOnDisk',
+  sessionsResume: 'gilmok:sessions.resume',
+  sessionsSnapshot: 'gilmok:sessions.snapshot',
+  sessionsAddAgent: 'gilmok:sessions.addAgent',
+  sessionsSend: 'gilmok:sessions.send',
+  sessionsInterrupt: 'gilmok:sessions.interrupt',
+  sessionsSince: 'gilmok:sessions.since',
+  permissionsPending: 'gilmok:permissions.pending',
+  permissionsRespond: 'gilmok:permissions.respond',
+  ack: 'gilmok:ack',
 } as const;
 
 /** Push channels, main → renderer. */
 export const PUSH = {
-  events: 'loom:push.events',
-  session: 'loom:push.session',
-  permission: 'loom:push.permission',
-  hosts: 'loom:push.hosts',
+  events: 'gilmok:push.events',
+  session: 'gilmok:push.session',
+  permission: 'gilmok:push.permission',
+  hosts: 'gilmok:push.hosts',
 } as const;
 
 /** §7's batch limits, shared so main and any test agree on one number. */

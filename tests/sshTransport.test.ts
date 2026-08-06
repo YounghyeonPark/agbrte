@@ -160,9 +160,9 @@ describe('deploying', () => {
     // first surfaced as "could not resolve capabilities: agent host exited with
     // code 1" — a message about the wrong layer entirely.
     expect(runner.uploads).toEqual([
-      '/home/ci/.loom/agentHost.js',
+      '/home/ci/.gilmok/agentHost.js',
       // Last, because the probe reads its stamp as "both are deployed".
-      '/home/ci/.loom/loomHost.js',
+      '/home/ci/.gilmok/gilmokHost.js',
     ]);
   });
 });
@@ -233,7 +233,7 @@ describe('starting the host', () => {
   it('passes the linger through so a host does not sit forever', async () => {
     const runner = fakeRunner([{ match: /nohup/, stdout: record }]);
     await startRemoteHost(runner, 'box', '/home/ci', '/n/bin/node', '/w', { lingerMs: 1234 });
-    expect(runner.commands[0]).toContain('LOOM_HOST_LINGER_MS=1234');
+    expect(runner.commands[0]).toContain('GILMOK_HOST_LINGER_MS=1234');
   });
 });
 
@@ -262,7 +262,7 @@ describe('diagnosing a failed connection', () => {
     const d = diagnoseSshFailure('build-01', 'ci@10.0.0.5: Permission denied (publickey).');
 
     expect(d.kind).toBe('auth-refused');
-    // Loom cannot prompt for a password — it runs ssh with BatchMode so a prompt
+    // Gilmok cannot prompt for a password — it runs ssh with BatchMode so a prompt
     // fails fast rather than hanging on a stdin nobody is attached to.
     expect(d.command).toBe('ssh-copy-id build-01');
   });

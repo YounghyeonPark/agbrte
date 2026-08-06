@@ -8,7 +8,7 @@ import { workspaceLayout } from '@main/store/layout.js';
 let dir: string;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'loom-ws-'));
+  dir = await mkdtemp(join(tmpdir(), 'gilmok-ws-'));
 });
 
 afterEach(async () => {
@@ -56,7 +56,7 @@ describe('openWorkspace', () => {
     // Original workspace with committed memory but, as git would leave it, no
     // instance.json — that file is gitignored (§5.2).
     const origin = await openWorkspace(dir, { displayName: 'acme-api' });
-    const clone = await mkdtemp(join(tmpdir(), 'loom-clone-'));
+    const clone = await mkdtemp(join(tmpdir(), 'gilmok-clone-'));
     try {
       await cp(join(dir, '.devagents'), join(clone, '.devagents'), { recursive: true });
       await rm(join(clone, '.devagents', 'instance.json'));
@@ -82,7 +82,7 @@ describe('openWorkspace', () => {
     project.schemaVersion = 9999;
     await writeFile(layout.projectFile, JSON.stringify(project));
 
-    await expect(openWorkspace(dir)).rejects.toThrow(/newer Loom/);
+    await expect(openWorkspace(dir)).rejects.toThrow(/newer Gilmok/);
   });
 
   it('does not overwrite an existing memory index', async () => {

@@ -1,5 +1,5 @@
 {
-  "name": "loom",
+  "name": "gilmok",
   "version": "0.0.1",
   "private": true,
   "description": "Agent-based development workbench",
@@ -17,8 +17,8 @@
     "dev": "node scripts/dev.mjs",
     "start": "npm run build && node scripts/launch.mjs",
     "e2e": "npm run build && playwright test",
-    "loom:direct": "tsx src/cli/run.ts",
-    "cli": "node scripts/build.mjs && node dist/cli/loom.js",
+    "gilmok:direct": "tsx src/cli/run.ts",
+    "cli": "node scripts/build.mjs && node dist/cli/gilmok.js",
     "package": "node scripts/package.mjs"
   },
   "devDependencies": {
@@ -50,7 +50,7 @@
     "zustand": "^5.0.14"
   },
   "bin": {
-    "loom": "dist/cli/loom.js"
+    "gilmok": "dist/cli/gilmok.js"
   },
   "files": [
     "dist/cli",

@@ -1,5 +1,5 @@
 /**
- * `LoomHarness` (DESIGN.md §3.7) — our own agent loop.
+ * `GilmokHarness` (DESIGN.md §3.7) — our own agent loop.
  *
  * The second branch of the runtime layer. A `ModelProvider` answers one request;
  * everything a harness would supply, we supply here:
@@ -37,9 +37,9 @@ import {
 } from '@shared/types/index.js';
 import { DEFAULT_TOOLS, toolByName, type ToolDefinition } from '../../tools/index.js';
 
-export const LOOM_HARNESS_RUNTIME_ID = 'loom-harness';
+export const GILMOK_HARNESS_RUNTIME_ID = 'gilmok-harness';
 
-export interface LoomHarnessOptions {
+export interface GilmokHarnessOptions {
   provider: ModelProvider;
   endpoint: ModelEndpoint;
   tools?: ToolDefinition[];
@@ -51,18 +51,18 @@ const DEFAULT_MAX_ITERATIONS = 12;
 /** Identical call repeated this many times means the loop is stuck, not working. */
 const NO_PROGRESS_LIMIT = 3;
 
-export class LoomHarnessRuntime implements AgentRuntime {
-  readonly id = LOOM_HARNESS_RUNTIME_ID;
+export class GilmokHarnessRuntime implements AgentRuntime {
+  readonly id = GILMOK_HARNESS_RUNTIME_ID;
   readonly version = '0.0.1';
 
-  constructor(private readonly opts: LoomHarnessOptions) {}
+  constructor(private readonly opts: GilmokHarnessOptions) {}
 
   get toolVersion(): string {
     return `${this.opts.provider.id}@${this.opts.provider.version}`;
   }
 
   async capabilities(spec: AgentSpec): Promise<RuntimeCapabilities> {
-    if (!spec.model) throw new Error('LoomHarness requires spec.model');
+    if (!spec.model) throw new Error('GilmokHarness requires spec.model');
     // Delegated to the provider, which probes rather than self-reports (§3.3).
     const caps = await this.opts.provider.probe(this.opts.endpoint, spec.model.modelId);
     // The gate is ours regardless of what the model can do.
@@ -71,7 +71,7 @@ export class LoomHarnessRuntime implements AgentRuntime {
 
   async start(spec: AgentSpec, ctx: RuntimeContext): Promise<AgentHandle> {
     const caps = await this.capabilities(spec);
-    return new LoomHarnessHandle(spec, ctx, caps, this.opts);
+    return new GilmokHarnessHandle(spec, ctx, caps, this.opts);
   }
 
   /** No provider-side session exists, so resume is always a rehydrated start. */
@@ -80,7 +80,7 @@ export class LoomHarnessRuntime implements AgentRuntime {
   }
 }
 
-class LoomHarnessHandle implements AgentHandle {
+class GilmokHarnessHandle implements AgentHandle {
   private readonly queue: RuntimeEvent[] = [];
   private readonly messages: ProviderMessage[] = [];
   private readonly tools: ToolDefinition[];
@@ -92,7 +92,7 @@ class LoomHarnessHandle implements AgentHandle {
     private readonly spec: AgentSpec,
     private readonly ctx: RuntimeContext,
     private readonly caps: RuntimeCapabilities,
-    private readonly opts: LoomHarnessOptions,
+    private readonly opts: GilmokHarnessOptions,
   ) {
     this.tools = opts.tools ?? DEFAULT_TOOLS;
     // A rehydrated seed is conversation, not tool mechanics — it replays as
@@ -253,7 +253,7 @@ class LoomHarnessHandle implements AgentHandle {
 
   get events(): AsyncIterable<RuntimeEvent> {
     this.stream ??= {
-      [Symbol.asyncIterator]: async function* (this: LoomHarnessHandle) {
+      [Symbol.asyncIterator]: async function* (this: GilmokHarnessHandle) {
         while (true) {
           while (this.queue.length > 0) yield this.queue.shift() as RuntimeEvent;
           if (this.closed) return;

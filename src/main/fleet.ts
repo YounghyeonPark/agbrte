@@ -35,7 +35,7 @@ import type {
   HostLocation,
   InstanceId,
   LineageId,
-  LoomEvent,
+  GilmokEvent,
   PermissionDecision,
   PermissionRequest,
   Session,
@@ -96,7 +96,7 @@ export class AttachRefused extends Error {
 /**
  * Events, re-emitted from the owning host:
  *
- *   'event'      (instanceId, sessionId, LoomEvent)
+ *   'event'      (instanceId, sessionId, GilmokEvent)
  *   'session'    (instanceId, Session)
  *   'permission' (instanceId, PermissionRequest)
  *   'queue'      (instanceId, sessionId, agentId, depth)
@@ -154,7 +154,7 @@ export class Fleet extends EventEmitter {
       return snapshot(existing);
     }
 
-    const onEvent = (sessionId: string, event: LoomEvent): void => {
+    const onEvent = (sessionId: string, event: GilmokEvent): void => {
       this.owners.set(sessionId as SessionId, identity.instanceId);
       this.emit('event', identity.instanceId, sessionId, event);
     };
@@ -334,7 +334,7 @@ export class Fleet extends EventEmitter {
     return this.ownerOf(sessionId).connection.interrupt(sessionId, agentId);
   }
 
-  async events(sessionId: SessionId, fromSeq = 0): Promise<LoomEvent[]> {
+  async events(sessionId: SessionId, fromSeq = 0): Promise<GilmokEvent[]> {
     return this.ownerOf(sessionId).connection.events(sessionId, fromSeq);
   }
 

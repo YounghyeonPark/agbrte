@@ -91,7 +91,7 @@ export async function connectOrSpawnHost(opts: ConnectOptions): Promise<HostConn
 }
 
 function spawnDetached(workspaceRoot: string, opts: ConnectOptions): void {
-  const entry = opts.hostEntry ?? resolve(HERE, '../loomHost.js');
+  const entry = opts.hostEntry ?? resolve(HERE, '../gilmokHost.js');
 
   // Checked before spawning because the child is `stdio: 'ignore'` — it has to
   // be, to outlive us — so a missing entry produces no output anywhere and
@@ -108,7 +108,7 @@ function spawnDetached(workspaceRoot: string, opts: ConnectOptions): void {
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
   }
-  env['LOOM_WORKSPACE_ROOT'] = workspaceRoot;
+  env['GILMOK_WORKSPACE_ROOT'] = workspaceRoot;
 
   // `process.execPath` inside Electron is the Electron binary, which runs a
   // plain script only with this set. Outside Electron — a test, a CLI — the

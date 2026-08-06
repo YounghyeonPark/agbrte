@@ -21,7 +21,7 @@
 import type { HostMessage, HostCommand, HostSideChannel } from '@shared/host/protocol.js';
 import { AgentHostServer } from './server.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
-import { LoomHarnessRuntime } from '@main/runtime/runtimes/loomHarness.js';
+import { GilmokHarnessRuntime } from '@main/runtime/runtimes/gilmokHarness.js';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import {
   OpenAiCompatibleProvider,
@@ -110,7 +110,7 @@ function localEndpoint(): ModelEndpoint {
   return {
     endpointId: 'local-ollama',
     providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
-    baseUrl: process.env['LOOM_MODEL_BASE_URL'] ?? 'http://127.0.0.1:11434/v1',
+    baseUrl: process.env['GILMOK_MODEL_BASE_URL'] ?? 'http://127.0.0.1:11434/v1',
     auth: { kind: 'none' },
     locality: 'app-local',
     dataHandling: { provider: 'local' },
@@ -128,11 +128,11 @@ export function buildHostRegistry(): RuntimeRegistry {
   const registry = new RuntimeRegistry();
 
   registry.register(
-    new LoomHarnessRuntime({
+    new GilmokHarnessRuntime({
       provider: new OpenAiCompatibleProvider(),
       endpoint: localEndpoint(),
     }),
-    { label: 'Loom harness (local model)', requiresModel: true },
+    { label: 'Gilmok harness (local model)', requiresModel: true },
   );
 
   registry.register(new EchoRuntime(), { label: 'Echo (no model)', requiresModel: false });

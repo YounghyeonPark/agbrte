@@ -63,7 +63,7 @@ if (url === undefined) throw new Error('vite did not report a local URL');
 console.log(`renderer on ${url}`);
 
 // 3. Electron, told where the dev server is.
-const child = launchElectron({ LOOM_DEV_SERVER: url });
+const child = launchElectron({ GILMOK_DEV_SERVER: url });
 
 const shutdown = async () => {
   await server.close();

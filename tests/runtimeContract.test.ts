@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { ClaudeAgentSdkRuntime } from '@main/runtime/runtimes/claudeAgentSdk.js';
-import { LoomHarnessRuntime } from '@main/runtime/runtimes/loomHarness.js';
+import { GilmokHarnessRuntime } from '@main/runtime/runtimes/gilmokHarness.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { AgentHostServer } from '../src/host/server.js';
 import { HostBackedRuntime, HostClient } from '@main/host/hostRuntime.js';
@@ -153,7 +153,7 @@ const resultSuccess = (): SDKMessage =>
 
 // -------------------------------------------------------------- the contract
 
-// ------------------------------------------- provider stub, for LoomHarness
+// ------------------------------------------- provider stub, for GilmokHarness
 
 const STUB_CAPS: RuntimeCapabilities = {
   nativeResume: false,
@@ -216,7 +216,7 @@ interface Candidate {
   /** A runtime that performs one gated tool call before finishing. */
   makeGated: () => AgentRuntime;
   expectsResumeToken: string | null;
-  /** LoomHarness needs a model on the spec; wrapped harnesses must not have one. */
+  /** GilmokHarness needs a model on the spec; wrapped harnesses must not have one. */
   specOverride?: Partial<AgentSpec>;
 }
 
@@ -258,14 +258,14 @@ const CANDIDATES: Candidate[] = [
   {
     // The provider branch: our own loop over a raw endpoint (§3.7). Included
     // here because a contract validated against one branch is not validated.
-    name: 'loom-harness',
+    name: 'gilmok-harness',
     make: () =>
-      new LoomHarnessRuntime({
+      new GilmokHarnessRuntime({
         provider: stubProvider([{ content: [{ type: 'text', text: 'hello' }] }]),
         endpoint: STUB_ENDPOINT,
       }),
     makeGated: () =>
-      new LoomHarnessRuntime({
+      new GilmokHarnessRuntime({
         provider: stubProvider([
           {
             toolCalls: [{ id: 'c1', name: 'read', args: { file_path: 'a.ts' } }],

@@ -1,6 +1,6 @@
 ---
 name: session-orchestrator
-description: Owns Loom's session lifecycle and orchestration — state machines, the session tree, briefs and result contracts, hierarchical budgets, the QuotaScheduler, parking, progress roll-up, and needsAttention bubbling. Use for SessionManager work, anything touching session or agent state transitions, split/spawn/reparent logic, budget or quota scheduling, or when a session ends up in a wrong or stuck state.
+description: Owns Gilmok's session lifecycle and orchestration — state machines, the session tree, briefs and result contracts, hierarchical budgets, the QuotaScheduler, parking, progress roll-up, and needsAttention bubbling. Use for SessionManager work, anything touching session or agent state transitions, split/spawn/reparent logic, budget or quota scheduling, or when a session ends up in a wrong or stuck state.
 tools: Read, Write, Edit, Grep, Glob, Bash
 ---
 
@@ -40,7 +40,7 @@ Conflating any two is a real bug. A tree can be within every machine and credent
 
 ## Progress reporting
 
-Five signals, each verifiable from the log (§10): state, checklist, activity, burn, output. **Never invent a completion percentage.** Where a model's tool support is weak, prompt for the plan explicitly and parse it rather than letting progress silently degrade to nothing. Cost has three fidelity levels and the lowest one displays `cost not visible to Loom` — never `$0.00`, which would be a lie, and never blank, which looks like a bug.
+Five signals, each verifiable from the log (§10): state, checklist, activity, burn, output. **Never invent a completion percentage.** Where a model's tool support is weak, prompt for the plan explicitly and parse it rather than letting progress silently degrade to nothing. Cost has three fidelity levels and the lowest one displays `cost not visible to Gilmok` — never `$0.00`, which would be a lie, and never blank, which looks like a bug.
 
 Stall detection has three distinct states — disconnected, agent stuck, host dead. Collapsing them makes remote sessions miserable to debug.
 

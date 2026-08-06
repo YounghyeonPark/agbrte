@@ -38,7 +38,7 @@ let roots: string[] = [];
 let fleets: Fleet[] = [];
 
 async function makeRoot(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'loom-fleet-'));
+  const dir = await mkdtemp(join(tmpdir(), 'gilmok-fleet-'));
   roots.push(dir);
   return dir;
 }

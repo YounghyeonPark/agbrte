@@ -2,7 +2,7 @@
  * The AgentHost server (DESIGN.md §8, §6.4).
  *
  * Runs inside the host process — a local `utilityProcess` today, a
- * `loom-agent-host` binary over SSH in Phase 5. It owns the runtime registry,
+ * `gilmok-agent-host` binary over SSH in Phase 5. It owns the runtime registry,
  * the adapters, and the agent loops. It owns no session state, no policy, and
  * no log: those stay with whoever asked, which is what keeps one append-only
  * writer per session (§5.1) and one place where every permission decision is

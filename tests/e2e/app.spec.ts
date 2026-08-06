@@ -40,24 +40,24 @@ const LIVE_TIMEOUT = 60_000;
 test.describe('the shell', () => {
   test('opens on the chosen workspace with runtimes available', async () => {
     const repo = await makeRepo();
-    const loom = await launch(repo);
+    const gilmok = await launch(repo);
 
     try {
       // Proves main → preload → renderer all agreed on the host, which is the
       // whole IPC path in one assertion.
-      const group = hostGroup(loom.window);
+      const group = hostGroup(gilmok.window);
       await expect(group).toHaveAttribute('data-label', repo.split(/[\\/]/).pop()!);
       await expect(group.locator('[data-testid=host-badge]')).toContainText('local');
 
-      await createSession(loom.window, 'Shell check');
+      await createSession(gilmok.window, 'Shell check');
 
       // Both ids come from the agent host's `ready` handshake, so a host that
       // failed to start shows up here as an empty list.
-      expect(await runtimeOptions(loom.window)).toEqual(
-        expect.arrayContaining(['echo', 'loom-harness']),
+      expect(await runtimeOptions(gilmok.window)).toEqual(
+        expect.arrayContaining(['echo', 'gilmok-harness']),
       );
     } finally {
-      await loom.close();
+      await gilmok.close();
       await rm(repo, { recursive: true, force: true });
     }
   });
@@ -105,13 +105,13 @@ test.describe('the shell', () => {
 
   test('the log on disk is what the UI is reading', async () => {
     const repo = await makeRepo();
-    const loom = await launch(repo);
+    const gilmok = await launch(repo);
 
     try {
-      await createSession(loom.window, 'On disk');
-      await addAgent(loom.window, 'echo');
-      await send(loom.window, 'write something down');
-      await expect(loom.window.locator('[data-testid=row-agent]')).toBeVisible();
+      await createSession(gilmok.window, 'On disk');
+      await addAgent(gilmok.window, 'echo');
+      await send(gilmok.window, 'write something down');
+      await expect(gilmok.window.locator('[data-testid=row-agent]')).toBeVisible();
 
       const sessionsDir = join(repo, '.devagents', 'sessions');
       const ids = await readdir(sessionsDir);
@@ -128,7 +128,7 @@ test.describe('the shell', () => {
       expect(types).toContain('user.turn');
       expect(types).toContain('agent.text');
     } finally {
-      await loom.close();
+      await gilmok.close();
       await rm(repo, { recursive: true, force: true });
     }
   });
@@ -141,38 +141,38 @@ test.describe('several hosts at once', () => {
     const labelA = repoA.split(/[\\/]/).pop()!;
     const labelB = repoB.split(/[\\/]/).pop()!;
 
-    const loom = await launch(repoA, repoB);
+    const gilmok = await launch(repoA, repoB);
     try {
       // §8's caps are per host and §10 badges every card, so watching more than
       // one place at once is the designed shape. Until the fleet landed, main
       // disposed the previous host on every workspace change.
-      expect((await attachedHosts(loom.window)).sort()).toEqual([labelA, labelB].sort());
+      expect((await attachedHosts(gilmok.window)).sort()).toEqual([labelA, labelB].sort());
 
-      await createSession(loom.window, 'work on A', labelA);
-      await addAgent(loom.window, 'echo');
-      await send(loom.window, 'a message for A');
-      await expect(loom.window.locator('[data-testid=row-agent]')).toBeVisible();
+      await createSession(gilmok.window, 'work on A', labelA);
+      await addAgent(gilmok.window, 'echo');
+      await send(gilmok.window, 'a message for A');
+      await expect(gilmok.window.locator('[data-testid=row-agent]')).toBeVisible();
 
-      await createSession(loom.window, 'work on B', labelB);
-      await addAgent(loom.window, 'echo');
-      await send(loom.window, 'a message for B');
-      await expect(loom.window.locator('[data-testid=row-agent]')).toBeVisible();
+      await createSession(gilmok.window, 'work on B', labelB);
+      await addAgent(gilmok.window, 'echo');
+      await send(gilmok.window, 'a message for B');
+      await expect(gilmok.window.locator('[data-testid=row-agent]')).toBeVisible();
 
       // Each session sits under its own host, so "where does this run" is
       // answerable without opening it.
       await expect(
-        hostGroup(loom.window, labelA).locator('[data-testid=session]'),
+        hostGroup(gilmok.window, labelA).locator('[data-testid=session]'),
       ).toHaveCount(1);
       await expect(
-        hostGroup(loom.window, labelB).locator('[data-testid=session]'),
+        hostGroup(gilmok.window, labelB).locator('[data-testid=session]'),
       ).toHaveCount(1);
-      await expect(loom.window.locator('[data-testid=active-host]')).toContainText(labelB);
+      await expect(gilmok.window.locator('[data-testid=active-host]')).toContainText(labelB);
 
       // The transcripts are genuinely separate: two hosts, two logs, one writer
       // each (§5.1).
-      await openSession(loom.window, 'work on A', labelA);
-      await expect(loom.window.locator('[data-testid=row-user]')).toContainText('a message for A');
-      await expect(loom.window.locator('[data-testid=row-user]')).toHaveCount(1);
+      await openSession(gilmok.window, 'work on A', labelA);
+      await expect(gilmok.window.locator('[data-testid=row-user]')).toContainText('a message for A');
+      await expect(gilmok.window.locator('[data-testid=row-user]')).toHaveCount(1);
 
       const logs = await Promise.all(
         [repoA, repoB].map(async (repo) => {
@@ -186,7 +186,7 @@ test.describe('several hosts at once', () => {
       expect(logs[1]).toContain('a message for B');
       expect(logs[1]).not.toContain('a message for A');
     } finally {
-      await loom.close();
+      await gilmok.close();
       await rm(repoA, { recursive: true, force: true });
       await rm(repoB, { recursive: true, force: true });
     }
@@ -198,22 +198,22 @@ test.describe('several hosts at once', () => {
     const labelA = repoA.split(/[\\/]/).pop()!;
     const labelB = repoB.split(/[\\/]/).pop()!;
 
-    const loom = await launch(repoA, repoB);
+    const gilmok = await launch(repoA, repoB);
     try {
-      await createSession(loom.window, 'stays', labelB);
-      await addAgent(loom.window, 'echo');
+      await createSession(gilmok.window, 'stays', labelB);
+      await addAgent(gilmok.window, 'echo');
 
-      await hostGroup(loom.window, labelA).locator('[data-testid=remove-host]').click();
+      await hostGroup(gilmok.window, labelA).locator('[data-testid=remove-host]').click();
 
-      await expect(loom.window.locator('[data-testid=host]')).toHaveCount(1);
-      expect(await attachedHosts(loom.window)).toEqual([labelB]);
+      await expect(gilmok.window.locator('[data-testid=host]')).toHaveCount(1);
+      expect(await attachedHosts(gilmok.window)).toEqual([labelB]);
 
       // Detach is "stop watching", not "delete", and it must not disturb the
       // host next to it.
-      await send(loom.window, 'still working');
-      await expect(loom.window.locator('[data-testid=row-user]')).toContainText('still working');
+      await send(gilmok.window, 'still working');
+      await expect(gilmok.window.locator('[data-testid=row-user]')).toContainText('still working');
     } finally {
-      await loom.close();
+      await gilmok.close();
       await rm(repoA, { recursive: true, force: true });
       await rm(repoB, { recursive: true, force: true });
     }
@@ -264,14 +264,14 @@ test.describe('a real model against a real repo', () => {
     );
 
     const repo = await makeRepo();
-    const loom = await launch(repo);
+    const gilmok = await launch(repo);
 
     try {
-      await createSession(loom.window, 'Real edit');
-      await addAgent(loom.window, 'loom-harness', MODEL);
+      await createSession(gilmok.window, 'Real edit');
+      await addAgent(gilmok.window, 'gilmok-harness', MODEL);
       await send(
-        loom.window,
-        'Use the write tool to create a file named hello.txt containing exactly: hello from loom. ' +
+        gilmok.window,
+        'Use the write tool to create a file named hello.txt containing exactly: hello from gilmok. ' +
           'Do it now with a single write call, then stop.',
       );
 
@@ -294,14 +294,14 @@ test.describe('a real model against a real repo', () => {
       //
       // `via: 'policy'` is also the *stronger* claim — it proves no human was
       // consulted for this call, which a prompt count can only imply.
-      const decision = loom.window
+      const decision = gilmok.window
         .locator('[data-testid=row-decision]')
         .filter({ hasText: 'write' })
         .first();
       await expect(decision).toContainText('allow');
       await expect(decision).toContainText('policy');
     } finally {
-      await loom.close();
+      await gilmok.close();
       await rm(repo, { recursive: true, force: true });
     }
   });
@@ -313,37 +313,37 @@ test.describe('a real model against a real repo', () => {
     );
 
     const repo = await makeRepo();
-    const loom = await launch(repo);
+    const gilmok = await launch(repo);
 
     try {
-      await createSession(loom.window, 'Gate check');
-      await addAgent(loom.window, 'loom-harness', MODEL);
+      await createSession(gilmok.window, 'Gate check');
+      await addAgent(gilmok.window, 'gilmok-harness', MODEL);
 
       // `bash` has no allow rule, so it falls through to `defaultAction: 'ask'` —
       // the one tool here that reaches a human. The instruction is blunt because
       // softer phrasing made this model answer in prose instead of calling it.
       await send(
-        loom.window,
+        gilmok.window,
         "List the files in the current directory. You must use the bash tool with command 'ls -la'.",
       );
 
-      const prompt = loom.window.locator('[data-testid=prompt]');
+      const prompt = gilmok.window.locator('[data-testid=prompt]');
       await expect(prompt).toBeVisible({ timeout: LIVE_TIMEOUT });
-      await expect(loom.window.locator('[data-testid=prompt-tool]')).toContainText('bash');
+      await expect(gilmok.window.locator('[data-testid=prompt-tool]')).toContainText('bash');
 
       // Denying rather than allowing: it has no side effects, and refusal is the
       // security-relevant direction. A gate that only works when you say yes is
       // not a gate.
-      await loom.window.click('[data-testid=prompt-deny]');
+      await gilmok.window.click('[data-testid=prompt-deny]');
 
-      await expect(loom.window.locator('[data-testid=row-decision]').first()).toContainText('deny');
+      await expect(gilmok.window.locator('[data-testid=row-decision]').first()).toContainText('deny');
       // The denial reaches the model as a failed tool result rather than killing
       // the turn, so the agent can respond to it (§13's deny-ask-resume flow).
-      await expect(loom.window.locator('[data-testid=row-result-failed]').first()).toBeVisible({
+      await expect(gilmok.window.locator('[data-testid=row-result-failed]').first()).toBeVisible({
         timeout: 60_000,
       });
     } finally {
-      await loom.close();
+      await gilmok.close();
       await rm(repo, { recursive: true, force: true });
     }
   });
@@ -359,10 +359,10 @@ test.describe('a real model against a real repo', () => {
 test.describe('the start guide', () => {
   test('explains the app before a session is open, and stays reachable after', async () => {
     const repo = await makeRepo();
-    const loom = await launch(repo);
+    const gilmok = await launch(repo);
 
     try {
-      const guide = loom.window.locator('[data-testid=start-guide]');
+      const guide = gilmok.window.locator('[data-testid=start-guide]');
 
       // A host is already attached at launch, so this is the "attached, nothing
       // open" state — the one a returning user sees.
@@ -375,21 +375,21 @@ test.describe('the start guide', () => {
       // phone must not be advertised here until it works.
       await expect(guide).not.toContainText(/phone/i);
 
-      await createSession(loom.window, 'Guide check');
+      await createSession(gilmok.window, 'Guide check');
       await expect(guide).toBeHidden();
 
       // Reachable with a session open: there is no way to deselect one, so
       // without this the guide is gone for good after the first minute.
-      await loom.window.click('[data-testid=show-guide]');
+      await gilmok.window.click('[data-testid=show-guide]');
       await expect(guide).toBeVisible();
 
       // The remote route opens the attach panel already on remote, rather than
       // dropping the user on the local tab to find it again.
-      await loom.window.click('[data-testid=guide-attach-remote]');
-      await expect(loom.window.locator('[data-testid=attach-panel]')).toBeVisible();
-      await expect(loom.window.locator('[data-testid=attach-alias]')).toBeVisible();
+      await gilmok.window.click('[data-testid=guide-attach-remote]');
+      await expect(gilmok.window.locator('[data-testid=attach-panel]')).toBeVisible();
+      await expect(gilmok.window.locator('[data-testid=attach-alias]')).toBeVisible();
     } finally {
-      await loom.close();
+      await gilmok.close();
     }
   });
 });

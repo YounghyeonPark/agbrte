@@ -16,7 +16,7 @@ import { readSshHosts } from '@main/host/sshConfig.js';
 let dir: string;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'loom-sshcfg-'));
+  dir = await mkdtemp(join(tmpdir(), 'gilmok-sshcfg-'));
 });
 
 afterEach(async () => {

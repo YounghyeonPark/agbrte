@@ -35,7 +35,7 @@ let instanceId: InstanceId;
 let lineageId: string;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'loom-cli-'));
+  root = await mkdtemp(join(tmpdir(), 'gilmok-cli-'));
   const identity = await openWorkspace(root);
   instanceId = identity.instanceId;
   lineageId = identity.lineageId;
@@ -73,14 +73,14 @@ function rig(script: EchoStep[] = QUIET): { connect(): HostConnection; manager: 
     connect() {
       const pair = memoryChannelPair<SessionCommand, SessionMessage>();
       server.accept(pair.host);
-      return new HostConnection({ channel: pair.main, client: 'loom-cli@box' });
+      return new HostConnection({ channel: pair.main, client: 'gilmok-cli@box' });
     },
   };
 }
 
 describe('parsing a command line', () => {
   it('treats a bare path as attach', () => {
-    // `loom /srv/api` is the common case; requiring `attach` would make it long.
+    // `gilmok /srv/api` is the common case; requiring `attach` would make it long.
     const parsed = parse(['/srv/api']);
     expect(parsed.command).toBe('attach');
     expect(parsed.path).toContain('api');

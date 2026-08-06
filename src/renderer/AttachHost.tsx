@@ -19,7 +19,7 @@
  */
 
 import { useEffect, useState, type JSX } from 'react';
-import { useLoom } from './store.js';
+import { useGilmok } from './store.js';
 
 export function AttachHost({
   onDone,
@@ -29,7 +29,7 @@ export function AttachHost({
   /** Set when the start guide opened this for one particular way in. */
   initialMode?: 'local' | 'remote';
 }): JSX.Element {
-  const store = useLoom();
+  const store = useGilmok();
   const { sshHosts, busy } = store;
   const [mode, setMode] = useState<'local' | 'remote'>(initialMode);
   const [alias, setAlias] = useState('');
@@ -94,12 +94,12 @@ export function AttachHost({
                 <input
                   className="field"
                   data-testid="attach-alias"
-                  list="loom-ssh-hosts"
+                  list="gilmok-ssh-hosts"
                   placeholder="alias, or user@hostname"
                   value={alias}
                   onChange={(e) => setAlias(e.target.value)}
                 />
-                <datalist id="loom-ssh-hosts">
+                <datalist id="gilmok-ssh-hosts">
                   {sshHosts.map((h) => (
                     <option key={h.alias} value={h.alias}>
                       {h.user !== undefined ? `${h.user}@${h.hostName ?? h.alias}` : ''}
@@ -140,7 +140,7 @@ export function AttachHost({
           <small className="text-muted text-[11px]">
             {/* Said up front because it is true and slow, and a silent wait reads
                 as a hang. */}
-            First time on a machine installs a private Node under <code>~/.loom</code> — nothing
+            First time on a machine installs a private Node under <code>~/.gilmok</code> — nothing
             system-wide, no sudo.
           </small>
         </>

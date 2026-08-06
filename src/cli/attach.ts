@@ -27,7 +27,7 @@
 
 import { createInterface, type Interface } from 'node:readline';
 import type { HostConnection } from '@main/host/hostConnection.js';
-import type { AgentId, LoomEvent, PermissionRequest, Session, SessionId } from '@shared/types/index.js';
+import type { AgentId, GilmokEvent, PermissionRequest, Session, SessionId } from '@shared/types/index.js';
 import { c, preview } from './format.js';
 
 export interface AttachOptions {
@@ -87,7 +87,7 @@ export async function attach(connection: HostConnection, opts: AttachOptions): P
   let lastSeq = -1;
   const onEvent = (id: unknown, event: unknown): void => {
     if (id !== session.sessionId) return;
-    const e = event as LoomEvent;
+    const e = event as GilmokEvent;
     // Guarded because the catch-up read below and the live push can overlap;
     // without it, attaching mid-turn prints the tail of the transcript twice.
     if (e.seq <= lastSeq) return;
@@ -154,7 +154,7 @@ export async function attach(connection: HostConnection, opts: AttachOptions): P
 }
 
 /** One line of transcript, or null for events a person reading along does not need. */
-function render(event: LoomEvent): string | null {
+function render(event: GilmokEvent): string | null {
   switch (event.type) {
     case 'agent.text':
       return event.text;
@@ -178,13 +178,13 @@ function render(event: LoomEvent): string | null {
   }
 }
 
-function previewTurn(event: Extract<LoomEvent, { type: 'user.turn' }>): string {
+function previewTurn(event: Extract<GilmokEvent, { type: 'user.turn' }>): string {
   const text = event.content.map((b) => (b.type === 'text' ? b.text : `[${b.type}]`)).join(' ');
   return `${preview(text, 80)}${actorSuffix(event)}`;
 }
 
 /** Who did it, when that is someone other than the only person here. */
-function actorSuffix(event: LoomEvent): string {
+function actorSuffix(event: GilmokEvent): string {
   return event.actor?.label === undefined ? '' : c.dim(` · ${event.actor.label}`);
 }
 
@@ -220,7 +220,7 @@ async function answer(
 /**
  * A one-off question, without disturbing the main prompt.
  *
- * Resolves empty at EOF rather than rejecting. `loom < answers.txt` and a
+ * Resolves empty at EOF rather than rejecting. `gilmok < answers.txt` and a
  * closed pipe both end the stream mid-question, and readline's own error for
  * that is "readline was closed" — a sentence about our internals presented as
  * the user's problem. Empty means "took the default", which is what pressing
@@ -311,7 +311,7 @@ async function ensureAgent(
   // Asked only when the runtime needs one. A wrapped harness brings its own
   // model, and a field it ignores invites a silent no-op.
   const model =
-    runtimeId === 'loom-harness' ? await ask(rl, '  model [qwen2.5:7b]: ') || 'qwen2.5:7b' : null;
+    runtimeId === 'gilmok-harness' ? await ask(rl, '  model [qwen2.5:7b]: ') || 'qwen2.5:7b' : null;
 
   const agent = await connection.addAgent(session.sessionId, {
     role: 'worker',

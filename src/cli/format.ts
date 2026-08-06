@@ -2,7 +2,7 @@
  * Terminal output, shared by the CLI's commands.
  *
  * Colour is **off unless stdout is a TTY**, which matters more here than usual:
- * `loom ls | grep working` and `loom ls > sessions.txt` are the reason a list
+ * `gilmok ls | grep working` and `gilmok ls > sessions.txt` are the reason a list
  * command exists at all, and escape codes baked into that output turn a plain
  * grep into one that needs a regex nobody wants to write. `NO_COLOR` is honoured
  * for the same reason it exists.

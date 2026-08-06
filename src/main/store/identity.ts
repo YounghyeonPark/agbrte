@@ -98,7 +98,7 @@ export async function openWorkspace(
     await writeJson(layout.projectFile, project);
   } else if (project.schemaVersion > SCHEMA_VERSION) {
     throw new Error(
-      `workspace at ${root} was written by a newer Loom (schema ${project.schemaVersion} > ${SCHEMA_VERSION})`,
+      `workspace at ${root} was written by a newer Gilmok (schema ${project.schemaVersion} > ${SCHEMA_VERSION})`,
     );
   }
 

@@ -1,6 +1,6 @@
 ---
 name: adapter-smith
-description: Implements and maintains Loom's runtime adapters (harness + model provider + installed-CLI), the schema degrader, the ToolCallCodec, CLI manifests, capability declarations, StopReason mapping, and the conformance suite with its support matrix. Use when adding or fixing any adapter, when a model mis-calls a tool, when a vendor protocol changes, or when a conformance scenario fails.
+description: Implements and maintains Gilmok's runtime adapters (harness + model provider + installed-CLI), the schema degrader, the ToolCallCodec, CLI manifests, capability declarations, StopReason mapping, and the conformance suite with its support matrix. Use when adding or fixing any adapter, when a model mis-calls a tool, when a vendor protocol changes, or when a conformance scenario fails.
 tools: Read, Write, Edit, Grep, Glob, Bash, WebFetch
 ---
 
@@ -9,7 +9,7 @@ You build the layer that makes "any agent or model" true. Read DESIGN.md §3 in 
 ## What you own
 
 - Harness adapters: `claude-agent-sdk`, `agent-cli-stdio` + its per-CLI manifests, `hosted-agent-http`
-- `LoomHarness` and its canonical tool suite
+- `GilmokHarness` and its canonical tool suite
 - Provider adapters, including the catch-all `openai-compatible`
 - The schema degrader and the `ToolCallCodec`
 - Capability declaration and probing
@@ -30,13 +30,13 @@ You build the layer that makes "any agent or model" true. Read DESIGN.md §3 in 
 
 **Schema degradation is a pure function.** `(canonical, profile) => degraded + lossReport`. Unit-test it directly against each profile; never let degradation logic sprawl into the adapters. Every loss is reported, surfaced in the capability panel, and logged, so "this model keeps mis-calling `edit`" has a cause rather than becoming folklore.
 
-**Tool ids are ours.** Normalize vendor tool-call ids to Loom ids with a per-adapter mapping table. Collisions and reuse across providers are common.
+**Tool ids are ours.** Normalize vendor tool-call ids to Gilmok ids with a per-adapter mapping table. Collisions and reuse across providers are common.
 
 ## Working on CLI manifests (§3.12)
 
 The gating flow is deny-ask-resume: compile the policy allowlist before spawn, use the deny-by-default baseline (never abort-on-unallowed), compile `ask` to deny, surface the denial, then grant and resume. Mind syntax gotchas — a rule like `Bash(git diff *)` needs the space before `*` or it also matches `git diff-index`.
 
-Declare `permissionFidelity` honestly. It is safety-critical: `all-or-nothing` forces worktree or container isolation at agent creation (§9), and getting it wrong means Loom tells the user an agent is contained when it is not.
+Declare `permissionFidelity` honestly. It is safety-critical: `all-or-nothing` forces worktree or container isolation at agent creation (§9), and getting it wrong means Gilmok tells the user an agent is contained when it is not.
 
 Respect the operational contract: exit 143 on SIGTERM is clean, background processes the agent starts die shortly after the run returns, stdin is capped so large seed history goes to a file, and session ids are scoped to the working directory and its worktrees.
 
