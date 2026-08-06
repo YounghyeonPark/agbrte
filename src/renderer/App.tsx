@@ -26,6 +26,7 @@
 // React 19 no longer declares a global `JSX` namespace; it is exported instead.
 import { useEffect, useMemo, useState, type JSX } from 'react';
 import { AttachHost } from './AttachHost.js';
+import { StartGuide } from './StartGuide.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import { useLoom } from './store.js';
 import { Composer, EventRow, PermissionPrompt, Transcript, summarize } from './Transcript.js';
@@ -58,7 +59,10 @@ export const LABEL = 'text-[10px] uppercase tracking-wider';
 
 export function App(): JSX.Element {
   const store = useLoom();
-  const [attaching, setAttaching] = useState(false);
+  const [attaching, setAttaching] = useState<false | 'local' | 'remote'>(false);
+  // Toggled open even with a session showing, because a guide you can only
+  // reach from an empty window is unreachable exactly when it is wanted.
+  const [guide, setGuide] = useState(false);
   const { hosts, runtimesByHost, sessions, onDisk, active, events, pending, queued, error, busy } =
     store;
 
@@ -87,22 +91,37 @@ export function App(): JSX.Element {
       <aside className="bg-panel border-line flex min-h-0 flex-col border-r">
         <header className="border-line flex items-center justify-between border-b p-3.5">
           <h1 className="text-base tracking-wide">Loom</h1>
-          <button
-            className="btn"
-            data-testid="add-host"
-            onClick={() => setAttaching((open) => !open)}
-          >
-            {attaching ? 'Cancel' : 'Attach host…'}
-          </button>
+          <div className="flex gap-1.5">
+            <button
+              className="btn px-2"
+              data-testid="show-guide"
+              title="How Loom is used"
+              aria-pressed={guide}
+              onClick={() => setGuide((open) => !open)}
+            >
+              ?
+            </button>
+            <button
+              className="btn"
+              data-testid="add-host"
+              onClick={() => setAttaching((open) => (open === false ? 'local' : false))}
+            >
+              {attaching !== false ? 'Cancel' : 'Attach host…'}
+            </button>
+          </div>
         </header>
 
-        {attaching && <AttachHost onDone={() => setAttaching(false)} />}
+        {attaching !== false && (
+          <AttachHost
+            key={attaching}
+            initialMode={attaching}
+            onDone={() => setAttaching(false)}
+          />
+        )}
 
         <nav className="grid min-h-0 content-start gap-4 overflow-y-auto p-2">
           {hosts.length === 0 && (
-            <p className="text-muted p-2 text-xs">
-              No hosts attached. Attach a workspace to begin.
-            </p>
+            <p className="text-muted p-2 text-xs">No hosts attached yet.</p>
           )}
           {hosts.map((host) => (
             <HostGroup
@@ -134,10 +153,18 @@ export function App(): JSX.Element {
           </div>
         )}
 
-        {active === null ? (
-          <p className="text-muted m-auto max-w-md p-6">
-            Create a session on a host, or open one from disk.
-          </p>
+        {active === null || guide ? (
+          <StartGuide
+            hasHosts={hosts.length > 0}
+            onAttachLocal={() => {
+              setGuide(false);
+              setAttaching('local');
+            }}
+            onAttachRemote={() => {
+              setGuide(false);
+              setAttaching('remote');
+            }}
+          />
         ) : (
           <>
             <SessionHeader

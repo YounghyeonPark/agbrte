@@ -348,3 +348,48 @@ test.describe('a real model against a real repo', () => {
     }
   });
 });
+
+/**
+ * The empty window (§10).
+ *
+ * Worth an e2e test rather than a unit one because the thing being checked is
+ * that it *appears* — a guide rendered only under a condition nobody hits is the
+ * same as no guide, and that is a wiring fact, not a component fact.
+ */
+test.describe('the start guide', () => {
+  test('explains the app before a session is open, and stays reachable after', async () => {
+    const repo = await makeRepo();
+    const loom = await launch(repo);
+
+    try {
+      const guide = loom.window.locator('[data-testid=start-guide]');
+
+      // A host is already attached at launch, so this is the "attached, nothing
+      // open" state — the one a returning user sees.
+      await expect(guide).toBeVisible();
+      await expect(guide).toHaveAttribute('data-compact', 'true');
+      await expect(guide).toContainText('Sessions run on a host');
+
+      // The promise that is not yet kept. §17 Q13 is open, there is no web
+      // client, and an empty state is the last place anyone re-reads — so a
+      // phone must not be advertised here until it works.
+      await expect(guide).not.toContainText(/phone/i);
+
+      await createSession(loom.window, 'Guide check');
+      await expect(guide).toBeHidden();
+
+      // Reachable with a session open: there is no way to deselect one, so
+      // without this the guide is gone for good after the first minute.
+      await loom.window.click('[data-testid=show-guide]');
+      await expect(guide).toBeVisible();
+
+      // The remote route opens the attach panel already on remote, rather than
+      // dropping the user on the local tab to find it again.
+      await loom.window.click('[data-testid=guide-attach-remote]');
+      await expect(loom.window.locator('[data-testid=attach-panel]')).toBeVisible();
+      await expect(loom.window.locator('[data-testid=attach-alias]')).toBeVisible();
+    } finally {
+      await loom.close();
+    }
+  });
+});

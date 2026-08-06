@@ -21,10 +21,17 @@
 import { useEffect, useState, type JSX } from 'react';
 import { useLoom } from './store.js';
 
-export function AttachHost({ onDone }: { onDone: () => void }): JSX.Element {
+export function AttachHost({
+  onDone,
+  initialMode = 'local',
+}: {
+  onDone: () => void;
+  /** Set when the start guide opened this for one particular way in. */
+  initialMode?: 'local' | 'remote';
+}): JSX.Element {
   const store = useLoom();
   const { sshHosts, busy } = store;
-  const [mode, setMode] = useState<'local' | 'remote'>('local');
+  const [mode, setMode] = useState<'local' | 'remote'>(initialMode);
   const [alias, setAlias] = useState('');
   const [path, setPath] = useState('');
 
