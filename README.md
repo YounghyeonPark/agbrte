@@ -126,17 +126,27 @@ LOOM_MODEL_BASE_URL=http://gpu-box:11434/v1 loom run . "..."
 A host that is *already* running keeps the environment it started with, so
 `loom stop` first if you are changing it.
 
-Installing on a server, from a terminal:
+Installing on a server is one file and one command. Build it here, send it there:
 
 ```bash
-git clone <repo> && cd loom
-./scripts/install.sh      # brings its own Node 22 if the machine has none
+npm run package                        # → dist/install-loom.sh, ~100 KB
+scp dist/install-loom.sh server:
+ssh server 'sh install-loom.sh'
 ```
 
-Nothing goes outside `$HOME`: a private runtime and the app land in `~/.loom`,
-the binary in `~/.loom/bin/loom`, and `rm -rf ~/.loom` removes all of it. No
-sudo, no package manager, no service. With Node 22+ already present, `npm i -g .`
-does the same job.
+**Nothing needs to be on that machine** — no git, no npm, no registry, no
+checkout, no build. The installer carries the three bundles that are Loom on a
+headless machine (~280 KB), and downloads a private Node 22 only if the machine
+has none. It works piped, too, if you have somewhere to host it:
+`curl -fsSL <url> | sh`.
+
+Requirements on the target: a POSIX shell, plus curl-or-wget and tar-with-xz only
+when it has no Node 22+.
+
+Nothing is written outside `$HOME`: the runtime and the app land in `~/.loom`, the
+binary in `~/.loom/bin/loom`, and `rm -rf ~/.loom` removes all of it. No sudo, no
+package manager, no service. On a machine that already has the source and Node,
+`npm i -g .` does the same job.
 
 ### 8. Resume anything
 

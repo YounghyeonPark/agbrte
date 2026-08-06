@@ -18,7 +18,8 @@
     "start": "npm run build && node scripts/launch.mjs",
     "e2e": "npm run build && playwright test",
     "loom:direct": "tsx src/cli/run.ts",
-    "cli": "node scripts/build.mjs && node dist/cli/loom.js"
+    "cli": "node scripts/build.mjs && node dist/cli/loom.js",
+    "package": "node scripts/package.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0",
