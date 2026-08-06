@@ -56,6 +56,11 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
   // Several roots, delimiter-separated, so the app attaches several hosts at
   // once — which is how the multi-host view gets exercised (§8).
   env['LOOM_WORKSPACE_ROOT'] = workspaces.join(delimiter);
+  // Hosts are detached now, so they outlive the app a test just closed. A short
+  // linger stops a suite run from leaving one process per temp workspace behind
+  // — the production default is minutes, which is right for a person and wrong
+  // for a test that makes a dozen throwaway workspaces.
+  env['LOOM_HOST_LINGER_MS'] = '3000';
 
   const app = await electron.launch({
     executablePath: ELECTRON,

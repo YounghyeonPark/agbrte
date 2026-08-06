@@ -4,11 +4,10 @@
  * Owns the app lifecycle, one window, and the `Fleet` that everything else is a
  * client of.
  *
- * Agent loops run in separate `utilityProcess`es per §8 — main holds session
- * state, the logs, and the permission gate, and never runs an adapter. The
- * registry each `SessionManager` receives contains façades over its host's
- * control protocol, which is why no manager needs to know a process boundary
- * exists at all.
+ * **Main owns no session state.** Sessions, their logs, and the permission gate
+ * belong to a `loom-host` process per workspace; this process connects to them.
+ * That is what makes closing the app a non-event for a running session, and what
+ * makes a second device another connection rather than a second copy.
  *
  * Several hosts stay attached at once. §8's concurrency caps are per host and
  * §10's cards carry a target badge, so watching more than one place is the
@@ -20,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { delimiter, dirname, join } from 'node:path';
 import { registerIpc } from './ipc/register.js';
 import { Fleet, type FleetRuntime } from './fleet.js';
-import { spawnAgentHost } from './host/utilityHost.js';
+import { connectOrSpawnHost } from './host/connectOrSpawn.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -59,16 +58,15 @@ const HOST_RUNTIMES: FleetRuntime[] = [
 /**
  * One fleet for the app's lifetime, holding as many hosts as are attached (§8).
  *
- * Previously main held a single manager and disposed the previous agent host on
- * every workspace change, so the app could watch exactly one place. The caps in
- * §8 are per host and §10's cards carry a target badge — the aggregate view is
- * the designed one, and the single-workspace shape was the limitation.
+ * The app no longer *runs* sessions — it connects to the processes that do. A
+ * host it starts is detached and outlives this window, which is the whole point:
+ * closing the app is not a reason to stop work.
  */
 function buildFleet(): Fleet {
   return new Fleet({
     runtimes: HOST_RUNTIMES,
-    spawn: ({ workspaceRoot }) =>
-      spawnAgentHost({ entry: join(HERE, 'agentHost.js'), workspaceRoot }),
+    connect: (workspaceRoot) =>
+      connectOrSpawnHost({ workspaceRoot, hostEntry: join(HERE, 'loomHost.js') }),
   });
 }
 
@@ -155,7 +153,9 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   ipc?.dispose();
-  // Kill every host explicitly. A utilityProcess is not guaranteed to die with
-  // its parent, and an orphaned host holding a model connection is invisible.
+  // Disconnect, do **not** stop. A host outliving the app is the feature, not a
+  // leak: a session started here keeps running, and the next app to open — on
+  // this machine or another device — reattaches to it. Hosts exit on their own
+  // after an idle spell (§8's parking), which is what stops them accumulating.
   void fleet?.detachAll();
 });

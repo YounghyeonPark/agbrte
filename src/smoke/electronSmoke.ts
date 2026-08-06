@@ -28,9 +28,12 @@ import { EchoRuntime } from '../main/runtime/runtimes/echo.js';
 import { RuntimeRegistry } from '../main/runtime/registry.js';
 import { registerIpc } from '../main/ipc/register.js';
 import { Fleet } from '../main/fleet.js';
-import { AgentHostServer } from '../host/server.js';
+import { SessionManager } from '../main/sessionManager.js';
+import { SessionHostServer } from '../host/sessionServer.js';
+import { HostConnection } from '../main/host/hostConnection.js';
+import { openWorkspace } from '../main/store/identity.js';
 import { memoryChannelPair } from '../shared/host/memoryChannel.js';
-import type { HostCommand, HostMessage } from '../shared/host/protocol.js';
+import type { SessionCommand, SessionMessage } from '../shared/host/sessionProtocol.js';
 import { HostSupervisor } from '../main/host/supervisor.js';
 import { spawnAgentHost } from '../main/host/utilityHost.js';
 
@@ -83,25 +86,37 @@ async function main(): Promise<number> {
   const root = await mkdtemp(join(tmpdir(), 'loom-smoke-'));
 
   try {
-    // A fleet with one in-process host: the shell checks below are about the IPC
-    // surface, and spawning a real utilityProcess for them would only add the
-    // failure modes that `hostChecks` already covers explicitly.
+    // An in-process session host over a memory channel: these checks are about
+    // the IPC surface, and spawning a detached process for them would only add
+    // the failure modes `hostChecks` covers explicitly.
+    const registry = new RuntimeRegistry();
+    registry.register(
+      new EchoRuntime({
+        script: [
+          { kind: 'text', text: 'smoke reply' },
+          { kind: 'stop', stop: { kind: 'end_turn' } },
+        ],
+      }),
+      { label: 'Echo', requiresModel: false },
+    );
+    const identity = await openWorkspace(root);
+    const manager = new SessionManager({ registry, workspaceRoot: root, instanceId: identity.instanceId });
+    const sessionHost = new SessionHostServer({
+      manager,
+      identity: {
+        instanceId: identity.instanceId,
+        lineageId: identity.lineageId,
+        workspaceRoot: root,
+        runtimes: ['echo'],
+      },
+    });
+
     const fleet = new Fleet({
       runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false }],
-      spawn: () => {
-        const registry = new RuntimeRegistry();
-        registry.register(
-          new EchoRuntime({
-            script: [
-              { kind: 'text', text: 'smoke reply' },
-              { kind: 'stop', stop: { kind: 'end_turn' } },
-            ],
-          }),
-          { label: 'Echo', requiresModel: false },
-        );
-        const pair = memoryChannelPair<HostCommand, HostMessage>();
-        new AgentHostServer(pair.host, registry);
-        return { channel: pair.main };
+      connect: async () => {
+        const pair = memoryChannelPair<SessionCommand, SessionMessage>();
+        sessionHost.accept(pair.host);
+        return new HostConnection({ channel: pair.main });
       },
     });
 

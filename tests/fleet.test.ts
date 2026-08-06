@@ -1,30 +1,38 @@
 /**
  * The fleet — one app, several hosts (DESIGN.md §8, §10).
  *
- * Each host here is a real workspace with a real `SessionManager` and a real
- * agent-host server, reached over an in-memory channel. That matters: the
- * questions worth asking are whether two hosts stay genuinely independent and
- * whether a call lands on the right one, and a mocked manager cannot answer
- * either.
+ * Each host here is a real `SessionHostServer` over its own workspace, reached
+ * through a real `HostConnection`. That matters: the questions worth asking are
+ * whether two hosts stay genuinely independent and whether a call lands on the
+ * right one, and neither is answerable against a mock.
+ *
+ * The fleet owns no session state now, so most of what is tested is routing and
+ * aggregation — which is all it is supposed to do.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Fleet, type FleetRuntime } from '@main/fleet.js';
-import { AgentHostServer } from '../src/host/server.js';
+import { AttachRefused, Fleet, type FleetRuntime } from '@main/fleet.js';
+import { SessionHostServer } from '../src/host/sessionServer.js';
+import { HostConnection } from '@main/host/hostConnection.js';
+import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
+import { openWorkspace } from '@main/store/identity.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
-import type { HostCommand, HostMessage } from '@shared/host/protocol.js';
+import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { InstanceId, SessionId } from '@shared/types/index.js';
 
 const RUNTIMES: FleetRuntime[] = [
   { id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false },
 ];
 
-const TEXT = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
+const DONE: EchoStep[] = [
+  { kind: 'text', text: 'ok' },
+  { kind: 'stop', stop: { kind: 'end_turn' } },
+];
 
 let roots: string[] = [];
 let fleets: Fleet[] = [];
@@ -35,35 +43,62 @@ async function makeRoot(): Promise<string> {
   return dir;
 }
 
+interface HostOptions {
+  script?: EchoStep[];
+  /** Simulates the forked agent host failing to start. */
+  agentHostBroken?: boolean;
+}
+
 /**
- * A fleet whose hosts are real `AgentHostServer`s over in-memory channels.
+ * A fleet whose hosts are real session hosts, one per workspace.
  *
- * `spawn` is called per workspace *and* again on restart, so the registry is
- * built fresh each time — reusing one would let a stopped handle leak between
- * host generations.
+ * Cached by root so re-attaching the same path meets the *same* host, which is
+ * what a real second connection would find.
  */
-function makeFleet(script?: EchoStep[]): Fleet {
+function makeFleet(opts: HostOptions = {}): Fleet {
+  const hosts = new Map<string, SessionHostServer>();
+
   const fleet = new Fleet({
     runtimes: RUNTIMES,
-    spawn: () => {
-      const registry = new RuntimeRegistry();
-      registry.register(new EchoRuntime(script ? { script } : {}), {
-        label: 'Echo',
-        requiresModel: false,
-      });
-      const pair = memoryChannelPair<HostCommand, HostMessage>();
-      new AgentHostServer(pair.host, registry);
-      return { channel: pair.main };
+    connect: async (workspaceRoot) => {
+      let server = hosts.get(workspaceRoot);
+      if (server === undefined) {
+        const identity = await openWorkspace(workspaceRoot);
+        const registry = new RuntimeRegistry();
+        registry.register(new EchoRuntime({ script: opts.script ?? DONE }), {
+          label: 'Echo',
+          requiresModel: false,
+        });
+        server = new SessionHostServer({
+          manager: new SessionManager({
+            registry,
+            workspaceRoot,
+            instanceId: identity.instanceId,
+          }),
+          identity: {
+            instanceId: identity.instanceId,
+            lineageId: identity.lineageId,
+            workspaceRoot,
+            runtimes: opts.agentHostBroken === true ? [] : ['echo'],
+            ...(opts.agentHostBroken === true
+              ? { unavailableReason: 'agent host failed to start' }
+              : {}),
+          },
+        });
+        hosts.set(workspaceRoot, server);
+      }
+
+      const pair = memoryChannelPair<SessionCommand, SessionMessage>();
+      server.accept(pair.host);
+      return new HostConnection({ channel: pair.main });
     },
   });
+
   fleets.push(fleet);
   return fleet;
 }
 
-const DONE: EchoStep[] = [
-  { kind: 'text', text: 'ok' },
-  { kind: 'stop', stop: { kind: 'end_turn' } },
-];
+const TEXT = 'a message';
 
 beforeEach(() => {
   roots = [];
@@ -81,68 +116,52 @@ describe('attaching hosts', () => {
     const a = await fleet.attach(await makeRoot());
     const b = await fleet.attach(await makeRoot());
 
-    // The restriction this class exists to remove: main used to dispose the
-    // previous host whenever a new workspace was opened.
     expect(fleet.hosts()).toHaveLength(2);
     expect(a.instanceId).not.toBe(b.instanceId);
   });
 
-  it('gives each host its own identity and runtimes', async () => {
-    const fleet = makeFleet();
-    const host = await fleet.attach(await makeRoot());
+  it('reports the owning process and the granted role', async () => {
+    const host = await makeFleet().attach(await makeRoot());
 
+    // A client can say which process it is talking to, which matters when the
+    // host outlives the app that started it.
+    expect(host.pid).toBe(process.pid);
+    expect(host.role).toBe('read-write');
     expect(host.available).toEqual(['echo']);
-    expect(fleet.runtimesOn(host.instanceId).map((r) => r.id)).toEqual(['echo']);
-    expect(host.unavailableReason).toBeUndefined();
   });
 
-  it('is idempotent — attaching the same path twice does not start a second host', async () => {
+  it('is idempotent — attaching the same path twice keeps one connection', async () => {
     const fleet = makeFleet();
     const root = await makeRoot();
     const first = await fleet.attach(root);
     const second = await fleet.attach(root);
 
-    // Two hosts over one log would break §5.1's single writer.
+    // A second connection to the same owner buys nothing and doubles every push.
     expect(second.instanceId).toBe(first.instanceId);
     expect(fleet.hosts()).toHaveLength(1);
   });
 
-  it('records the target so §10 can badge the card', async () => {
-    const fleet = makeFleet();
-    const host = await fleet.attach(await makeRoot(), {
-      kind: 'ssh',
-      host: 'build-01',
-      user: 'ci',
-      root: '/srv/work',
-    } as never);
+  it('attaches read-only when the agent host failed but the session host is up', async () => {
+    const fleet = makeFleet({ agentHostBroken: true });
+    const host = await fleet.attach(await makeRoot());
 
-    expect(host.target.kind).toBe('ssh');
-
-    const session = await fleet.createSession(host.instanceId, { title: 's', goal: 'g' });
-    // Carried onto the session, so a reattach does not have to guess where it ran.
-    expect(session.target.kind).toBe('ssh');
+    // The session host owns the log, so transcripts still load and read. Only
+    // running anything is impossible, and the UI is told why.
+    expect(host.unavailableReason).toBeDefined();
+    expect(host.available).toEqual([]);
+    expect(await fleet.list()).toEqual([]);
   });
 
-  it('attaches a workspace whose host cannot start, read-only', async () => {
+  it('refuses to attach when no host answers at all', async () => {
     const fleet = new Fleet({
       runtimes: RUNTIMES,
-      spawn: () => {
-        const pair = memoryChannelPair<HostCommand, HostMessage>();
-        // Nothing serves the far end, then the link dies: a host that never
-        // handshakes, which is what a broken binary or a dead SSH link looks like.
-        pair.breakLink('host binary missing');
-        return { channel: pair.main };
-      },
+      connect: () => Promise.reject(new Error('nothing listening')),
     });
     fleets.push(fleet);
 
-    const host = await fleet.attach(await makeRoot());
-
-    // Refusing the attach would let one dead host hide every transcript in that
-    // workspace — the opposite of what the log is for.
-    expect(host.unavailableReason).toBeDefined();
-    expect(host.available).toEqual([]);
-    expect(fleet.hosts()).toHaveLength(1);
+    // Different from the case above: with no session host there is nothing to
+    // serve the log, so there is no read-only fallback to offer.
+    await expect(fleet.attach(await makeRoot())).rejects.toThrow(AttachRefused);
   });
 });
 
@@ -155,25 +174,27 @@ describe('aggregating sessions', () => {
     await fleet.createSession(a.instanceId, { title: 'on A', goal: 'g' });
     await fleet.createSession(b.instanceId, { title: 'on B', goal: 'g' });
 
-    expect(fleet.list().map((s) => s.title).sort()).toEqual(['on A', 'on B']);
+    expect((await fleet.list()).map((s) => s.title).sort()).toEqual(['on A', 'on B']);
   });
 
   it('re-sorts across hosts so a blocked session cannot hide below an idle one', async () => {
-    const fleet = makeFleet([{ kind: 'stop', stop: { kind: 'quota_exhausted', scope: 'weekly' } }]);
+    const fleet = makeFleet({
+      script: [{ kind: 'stop', stop: { kind: 'quota_exhausted', scope: 'weekly' } }],
+    });
     const a = await fleet.attach(await makeRoot());
     const b = await fleet.attach(await makeRoot());
 
-    // Idle on the first host, created *after* so it is the more recent.
     const blocked = await fleet.createSession(a.instanceId, { title: 'blocked', goal: 'g' });
     await fleet.createSession(b.instanceId, { title: 'idle', goal: 'g' });
 
     const agent = await fleet.addAgent(blocked.sessionId, { role: 'worker', runtimeId: 'echo' });
-    await fleet.send(blocked.sessionId, agent.agentId, TEXT('go'));
+    await fleet.send(blocked.sessionId, agent.agentId, TEXT);
 
     // Concatenating per-host sorted lists would put 'idle' first. §10 says
     // attention outranks recency, and it has to outrank it globally.
-    expect(fleet.list()[0]?.title).toBe('blocked');
-    expect(fleet.list()[0]?.needsAttention?.reason).toBe('quota_exhausted');
+    const listed = await fleet.list();
+    expect(listed[0]?.title).toBe('blocked');
+    expect(listed[0]?.needsAttention?.reason).toBe('quota_exhausted');
   });
 
   it('reports on-disk sessions per host', async () => {
@@ -186,7 +207,6 @@ describe('aggregating sessions', () => {
     await first.createSession(b.instanceId, { title: 'B1', goal: 'g' });
     await first.detachAll();
 
-    // A fresh fleet over the same folders: nothing loaded, everything on disk.
     const second = makeFleet();
     const a2 = await second.attach(rootA);
     const b2 = await second.attach(rootB);
@@ -200,7 +220,7 @@ describe('aggregating sessions', () => {
 
 describe('routing by session id', () => {
   it('sends a turn to the host that owns the session', async () => {
-    const fleet = makeFleet(DONE);
+    const fleet = makeFleet();
     const a = await fleet.attach(await makeRoot());
     const b = await fleet.attach(await makeRoot());
 
@@ -208,17 +228,16 @@ describe('routing by session id', () => {
     await fleet.createSession(b.instanceId, { title: 'B', goal: 'g' });
 
     const agent = await fleet.addAgent(onA.sessionId, { role: 'worker', runtimeId: 'echo' });
-    await fleet.send(onA.sessionId, agent.agentId, TEXT('hello'));
+    await fleet.send(onA.sessionId, agent.agentId, TEXT);
 
-    // The turn is in A's log and nowhere near B's — routing by uuidv7 session id
-    // needs no coordination between hosts (§5.2).
+    // Routing by uuidv7 session id needs no coordination between hosts (§5.2).
     const events = await fleet.events(onA.sessionId);
     expect(events.filter((e) => e.type === 'user.turn')).toHaveLength(1);
     expect(fleet.hostOf(onA.sessionId)?.instanceId).toBe(a.instanceId);
   });
 
   it('keeps each host log independent', async () => {
-    const fleet = makeFleet(DONE);
+    const fleet = makeFleet();
     const a = await fleet.attach(await makeRoot());
     const b = await fleet.attach(await makeRoot());
 
@@ -226,39 +245,39 @@ describe('routing by session id', () => {
     const onB = await fleet.createSession(b.instanceId, { title: 'B', goal: 'g' });
 
     const agentA = await fleet.addAgent(onA.sessionId, { role: 'worker', runtimeId: 'echo' });
-    await fleet.send(onA.sessionId, agentA.agentId, TEXT('only on A'));
+    await fleet.send(onA.sessionId, agentA.agentId, 'only on A');
 
-    const bEvents = await fleet.events(onB.sessionId);
-    expect(bEvents.some((e) => e.type === 'user.turn')).toBe(false);
+    expect((await fleet.events(onB.sessionId)).some((e) => e.type === 'user.turn')).toBe(false);
   });
 
   it('refuses a session no attached host owns', async () => {
     const fleet = makeFleet();
     await fleet.attach(await makeRoot());
-    expect(() => fleet.get('session-nobody-owns' as SessionId)).toThrow(/no attached host/);
+    await expect(fleet.get('session-nobody-owns' as SessionId)).rejects.toThrow(
+      /no attached host/,
+    );
   });
 
   it('routes a resumed session to the host it was resumed on', async () => {
-    const first = makeFleet(DONE);
+    const first = makeFleet();
     const root = await makeRoot();
     const host = await first.attach(root);
     const created = await first.createSession(host.instanceId, { title: 'later', goal: 'g' });
     await first.detachAll();
 
-    const second = makeFleet(DONE);
+    const second = makeFleet();
     const again = await second.attach(root);
-    // Not routable before it is resumed — the fleet has never seen it.
     expect(second.hostOf(created.sessionId)).toBeNull();
 
     await second.resumeSession(again.instanceId, created.sessionId);
     expect(second.hostOf(created.sessionId)?.instanceId).toBe(again.instanceId);
-    expect(second.get(created.sessionId).title).toBe('later');
+    expect((await second.get(created.sessionId)).title).toBe('later');
   });
 });
 
 describe('events carry their host', () => {
   it('tags every forwarded event with the host that produced it', async () => {
-    const fleet = makeFleet(DONE);
+    const fleet = makeFleet();
     const a = await fleet.attach(await makeRoot());
     const b = await fleet.attach(await makeRoot());
 
@@ -269,7 +288,8 @@ describe('events carry their host', () => {
 
     const onB = await fleet.createSession(b.instanceId, { title: 'B', goal: 'g' });
     const agent = await fleet.addAgent(onB.sessionId, { role: 'worker', runtimeId: 'echo' });
-    await fleet.send(onB.sessionId, agent.agentId, TEXT('go'));
+    await fleet.send(onB.sessionId, agent.agentId, TEXT);
+    await new Promise((res) => setTimeout(res, 20));
 
     // Without the host on the event, a renderer showing two hosts cannot tell
     // which pane a line belongs to.
@@ -280,34 +300,35 @@ describe('events carry their host', () => {
 });
 
 describe('permissions across hosts', () => {
-  it('collects pending requests from every host and answers the right one', async () => {
-    const fleet = makeFleet([
-      { kind: 'tool', tool: 'bash', args: { command: 'ls' } },
-      { kind: 'stop', stop: { kind: 'end_turn' } },
-    ]);
-    const a = await fleet.attach(await makeRoot());
+  it('collects pending requests and answers the right one', async () => {
+    const fleet = makeFleet({
+      script: [
+        { kind: 'tool', tool: 'bash', args: { command: 'ls' } },
+        { kind: 'stop', stop: { kind: 'end_turn' } },
+      ],
+    });
+    await fleet.attach(await makeRoot());
     const b = await fleet.attach(await makeRoot());
 
     const onB = await fleet.createSession(b.instanceId, { title: 'B', goal: 'g' });
     const agent = await fleet.addAgent(onB.sessionId, { role: 'worker', runtimeId: 'echo' });
 
-    const turn = fleet.send(onB.sessionId, agent.agentId, TEXT('go'));
-
-    // Wait for the ask to surface, then answer it without knowing which host
-    // minted it — which is the fleet's job.
-    const request = await new Promise<{ requestId: string; instanceId: string }>((resolve) => {
+    const request = new Promise<{ requestId: string; instanceId: string }>((resolve) => {
       fleet.on('permission', (instanceId: string, r: { requestId: string }) =>
         resolve({ instanceId, requestId: r.requestId }),
       );
     });
-    expect(request.instanceId).toBe(b.instanceId);
-    expect(fleet.pendingPermissions()).toHaveLength(1);
+    const turn = fleet.send(onB.sessionId, agent.agentId, TEXT);
+    const { requestId, instanceId } = await request;
 
-    await fleet.respondPermission(request.requestId, { result: 'deny', reason: 'no' });
+    expect(instanceId).toBe(b.instanceId);
+    expect(await fleet.pendingPermissions()).toHaveLength(1);
+
+    // Answered without the fleet knowing which host minted it.
+    await fleet.respondPermission(requestId, { result: 'deny', reason: 'no' });
     await turn;
 
-    expect(fleet.pendingPermissions()).toHaveLength(0);
-    void a;
+    expect(await fleet.pendingPermissions()).toHaveLength(0);
   });
 
   it('treats an unknown requestId as stale rather than throwing', async () => {
@@ -317,8 +338,6 @@ describe('permissions across hosts', () => {
     let stale: string | null = null;
     fleet.on('permission-stale', (id: string) => (stale = id));
 
-    // The ask may have been withdrawn because the agent stopped; a UI that raced
-    // that must not see a failure.
     await expect(
       fleet.respondPermission('gone', { result: 'allow', scope: 'once' }),
     ).resolves.toBe('unknown');
@@ -337,22 +356,38 @@ describe('detaching', () => {
 
     expect(fleet.hosts().map((h) => h.instanceId)).toEqual([b.instanceId]);
     expect(fleet.hostOf(onA.sessionId)).toBeNull();
-    expect(() => fleet.get(onA.sessionId)).toThrow(/no attached host/);
+    await expect(fleet.get(onA.sessionId)).rejects.toThrow(/no attached host/);
+  });
+
+  it('leaves the host running — detaching is not stopping', async () => {
+    const fleet = makeFleet();
+    const root = await makeRoot();
+    const host = await fleet.attach(root);
+    const session = await fleet.createSession(host.instanceId, { title: 'kept', goal: 'g' });
+
+    await fleet.detach(host.instanceId);
+
+    // The same host, still holding the session it was given. This is the whole
+    // reason ownership moved out of the app.
+    const again = await fleet.attach(root);
+    expect(again.instanceId).toBe(host.instanceId);
+    expect((await fleet.list()).map((s) => s.sessionId)).toEqual([session.sessionId]);
   });
 
   it('stops forwarding events from a detached host', async () => {
-    const fleet = makeFleet(DONE);
+    const fleet = makeFleet();
     const a = await fleet.attach(await makeRoot());
-    const onA = await fleet.createSession(a.instanceId, { title: 'A', goal: 'g' });
+    await fleet.createSession(a.instanceId, { title: 'A', goal: 'g' });
 
     const seen: string[] = [];
     fleet.on('event', (_i, _s, e: { type: string }) => seen.push(e.type));
 
     await fleet.detach(a.instanceId);
+    await new Promise((res) => setTimeout(res, 20));
+
     // A listener left attached would forward events for a host the UI has
     // already removed, which renders as a session that cannot be opened.
     expect(seen).toHaveLength(0);
-    void onA;
   });
 
   it('detaching an unknown host is a no-op', async () => {
@@ -360,17 +395,18 @@ describe('detaching', () => {
     await expect(fleet.detach('nobody' as InstanceId)).resolves.toBeUndefined();
   });
 
-  it('leaves the workspace on disk intact', async () => {
+  it('drops a host that announces it is closing', async () => {
     const fleet = makeFleet();
     const root = await makeRoot();
     const host = await fleet.attach(root);
-    await fleet.createSession(host.instanceId, { title: 'kept', goal: 'g' });
-    await fleet.detach(host.instanceId);
 
-    // Detach is "stop watching", not "delete".
-    const again = makeFleet();
-    const reattached = await again.attach(root);
-    expect((await again.listOnDisk()).map((s) => s.title)).toEqual(['kept']);
-    expect(reattached.instanceId).toBe(host.instanceId);
+    const detached = new Promise<string>((resolve) => {
+      fleet.on('detached', (_id: string, reason: string) => resolve(reason));
+    });
+
+    // A host exiting on its own — idle linger, or an operator stopping it.
+    // The fleet must notice rather than keep routing into a dead connection.
+    await fleet.detach(host.instanceId);
+    await expect(detached).resolves.toBeDefined();
   });
 });

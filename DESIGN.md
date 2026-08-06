@@ -1242,6 +1242,28 @@ Outstanding work is tracked as `forwardedSeq − ackedSeq`, one monotonic pair. 
 | `loom-agent-host` | remote | 1 per remote workspace | agent loops, tools, log writes, leases |
 | agent worker | with its host | 1 per running agent | one agent's loop, or one CLI subprocess |
 
+**Sessions belong to a host process, not to the app.** A `loom-host` runs per workspace, owns its `SessionManager` — and therefore its event log, its permission gate, and its turn queues — and outlives whatever started it. The app connects to it and holds no session state at all.
+
+That last part is what the whole arrangement is for. Detaching a process is not enough on its own: if the app still owned the log, a running agent's events would have nowhere to go the moment it quit, so the work would continue and the transcript would not — worse than stopping. §8's table already assigned "log writes" to the host; this makes the local case match it.
+
+```
+  app(s)  ──socket──▶  loom-host  ──fork──▶  agent host
+  render, command      sessions,             agent loops,
+  no session state     log, gate             tools
+```
+
+The fork is not ceremony. The host owns the log, so an adapter crashing *inside* it would take down the thing that makes a detached session worth having. The boundary is the one the app used to hold; only the parent changed.
+
+**A named pipe or unix socket, keyed by `instanceId`.** No port to allocate, collide over, or expose — a TCP listener on localhost is reachable by every process on the machine. Keyed by instance because §5.2 already makes that the identity of one checkout on one machine, which is exactly one host's scope.
+
+**`.devagents/host.json` is a hint; the socket is the truth.** A host can die without cleaning up, so a record proves nothing and a failed connect means "no host": clear the record and start one. Trusting the file gives the classic stale-pidfile deadlock, where an app refuses to start a host because a record of a dead one exists.
+
+**Detachment needs three things together** — `detached: true`, `unref()`, and `stdio: 'ignore'` — each closing a different way the child would otherwise die with its parent. Getting two of the three right yields a host that survives some exits and not others, which is worse than one that never survives, because the failure is intermittent.
+
+**Hosts exit on their own after an idle spell**, per §8's parking. Without it every workspace ever opened leaves a process behind, and they are invisible. A shutdown request is refused while work is in flight: a host holding a live agent must not go down because a window closed.
+
+**The protocol is versioned and the handshake refuses a mismatch.** A detached host outlives the app that spawned it, so a *newer* app can meet an *older* host — the one direction a single-process design never has to consider.
+
 **Several hosts are watched at once, and that is what makes the caps above mean anything.** `Fleet` owns one `(workspace, agent host, SessionManager)` entry per attached host and does two jobs only: it routes a call to the owning host, and it aggregates. `SessionManager` was not changed and still owns exactly one workspace, one log, and one host — that boundary is load-bearing in two directions. `instanceId` identifies one checkout on one machine (§5.2), so a manager per checkout is the honest unit; and §5.1's single-writer invariant is *per log*, so N managers over N logs preserves it where one manager over N logs would be the first place this design needed conflict resolution, which it deliberately has none of.
 
 Routing is by `sessionId` alone, which works without coordination because ids are uuidv7 — unique across hosts by construction, which is why they were chosen over per-workspace counters. Aggregation **re-sorts** rather than concatenating: each manager sorts its own list, and merging sorted lists loses the global order, so a blocked session on the second host would sit below an idle one on the first. §10 says attention outranks recency, and it has to outrank it *globally* or the rule is decorative.

@@ -15,14 +15,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionManager } from '@main/sessionManager.js';
-import { Fleet } from '@main/fleet.js';
-import { AgentHostServer } from '../src/host/server.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
-import { memoryChannelPair } from '@shared/host/memoryChannel.js';
-import type { HostCommand, HostMessage } from '@shared/host/protocol.js';
-import { AccessDenied, type AgentId, type InstanceId, type SessionId } from '@shared/types/index.js';
+import type { AgentId, InstanceId, SessionId } from '@shared/types/index.js';
 
 let root: string;
 let instanceId: InstanceId;
@@ -199,84 +195,9 @@ describe('what must not queue', () => {
     await turns;
   });
 });
-
-describe('access roles', () => {
-  function fleet(): Fleet {
-    return new Fleet({
-      runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false }],
-      spawn: () => {
-        const registry = new RuntimeRegistry();
-        registry.register(new EchoRuntime({ script: ECHOES }), {
-          label: 'Echo',
-          requiresModel: false,
-        });
-        const pair = memoryChannelPair<HostCommand, HostMessage>();
-        new AgentHostServer(pair.host, registry);
-        return { channel: pair.main };
-      },
-    });
-  }
-
-  it('lets a read-write client send', async () => {
-    const f = fleet();
-    const host = await f.attach(root);
-    const session = await f.createSession(host.instanceId, { title: 's', goal: 'g' }, 'read-write');
-    const agent = await f.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
-
-    await expect(
-      f.send(session.sessionId, agent.agentId, TEXT('go'), 'read-write'),
-    ).resolves.toBeUndefined();
-    await f.detachAll();
-  });
-
-  it('refuses every write from a read-only client', async () => {
-    const f = fleet();
-    const host = await f.attach(root);
-    const session = await f.createSession(host.instanceId, { title: 's', goal: 'g' });
-    const agent = await f.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
-
-    // Enforced at the boundary a connection addresses, never in the client: a
-    // read-only client that can still send is not read-only.
-    await expect(
-      f.send(session.sessionId, agent.agentId, TEXT('go'), 'read-only'),
-    ).rejects.toThrow(AccessDenied);
-    await expect(f.interrupt(session.sessionId, undefined, 'read-only')).rejects.toThrow(
-      AccessDenied,
-    );
-    await expect(
-      f.createSession(host.instanceId, { title: 'x', goal: 'y' }, 'read-only'),
-    ).rejects.toThrow(AccessDenied);
-    await expect(
-      f.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' }, 'read-only'),
-    ).rejects.toThrow(AccessDenied);
-    await expect(
-      f.respondPermission('any', { result: 'allow', scope: 'once' }, 'read-only'),
-    ).rejects.toThrow(AccessDenied);
-
-    await f.detachAll();
-  });
-
-  it('still lets a read-only client read everything', async () => {
-    const f = fleet();
-    const host = await f.attach(root);
-    const session = await f.createSession(host.instanceId, { title: 'watch me', goal: 'g' });
-    const agent = await f.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
-    await f.send(session.sessionId, agent.agentId, TEXT('go'));
-
-    // Read-only is a monitoring role, not a blindfold — that is the whole point
-    // of separating it from read-write.
-    expect(f.list().map((s) => s.title)).toEqual(['watch me']);
-    expect((await f.events(session.sessionId)).length).toBeGreaterThan(0);
-    expect((await f.projection(session.sessionId)).state).toBe('awaiting_input');
-    await f.detachAll();
-  });
-
-  it('names what was refused', async () => {
-    const f = fleet();
-    const host = await f.attach(root);
-    await expect(
-      f.createSession(host.instanceId, { title: 'x', goal: 'y' }, 'read-only'),
-    ).rejects.toThrow(/create a session/);
-    await f.detachAll();
-  });
-});
+/**
+ * Access-role enforcement used to be asserted here against `Fleet`. It moved to
+ * `tests/sessionHost.test.ts` when the host became the owner: the fleet no
+ * longer holds a guard, and a test against a layer that does not enforce is a
+ * test of nothing.
+ */

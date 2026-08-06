@@ -61,6 +61,19 @@ const builds = [
   },
 ];
 
+// The session host: a standalone process the app spawns detached (§6.4). It
+// outlives the app, so it is built as its own bundle rather than shipped inside
+// main's.
+builds.push({
+  ...shared,
+  entryPoints: [resolve(root, 'src/host/hostMain.ts')],
+  outfile: resolve(root, 'dist/main/loomHost.js'),
+  format: 'esm',
+  banner: {
+    js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",
+  },
+});
+
 // The agent host is a third entry point: a utilityProcess loaded by main (§8).
 // ESM like main, and `electron` stays external — a utilityProcess has a real
 // `process.parentPort` from Electron's own runtime.

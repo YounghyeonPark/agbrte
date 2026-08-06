@@ -180,22 +180,24 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
 
   handle(CH.sessionsSnapshot, async (sessionId: string, windowSize?: number) => {
     const id = sessionId as SessionId;
-    const projection = await fleet.projection(id);
+    // One round trip each, in parallel: the host owns all four answers, and
+    // serializing them would show as lag every time a session is opened.
+    const [session, projection, all, queued] = await Promise.all([
+      fleet.get(id),
+      fleet.projection(id),
+      fleet.events(id),
+      fleet.queueDepth(id),
+    ]);
     const size = windowSize ?? DEFAULT_WINDOW;
-    const all = await fleet.events(id);
     // A window over the tail, never the whole log (§7). A week-long session
     // must not become a renderer-side heap problem.
     const recent = all.slice(-size);
-    const session = fleet.get(id);
     const snapshot: SessionSnapshot = {
       session,
       projection,
       recent,
       windowFromSeq: recent[0]?.seq ?? 0,
-      queued: session.agents.reduce(
-        (total, agent) => total + fleet.queueDepth(id, agent.agentId),
-        0,
-      ),
+      queued,
     };
     return snapshot;
   });
@@ -211,9 +213,7 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
   );
 
   handle(CH.sessionsSend, (r: SendRequest) =>
-    fleet.send(r.sessionId as SessionId, r.agentId as AgentId, {
-      content: [{ type: 'text', text: r.text }],
-    }),
+    fleet.send(r.sessionId as SessionId, r.agentId as AgentId, r.text),
   );
 
   handle(CH.sessionsInterrupt, (sessionId: string, agentId?: string) =>
@@ -224,7 +224,9 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
     fleet.events(sessionId as SessionId, fromSeq),
   );
 
-  handle(CH.permissionsPending, () => fleet.pendingPermissions().map((p) => p.request));
+  handle(CH.permissionsPending, async () =>
+    (await fleet.pendingPermissions()).map((p) => p.request),
+  );
 
   handle(CH.permissionsRespond, (requestId: string, decision: PermissionDecision) =>
     fleet.respondPermission(requestId, decision),
