@@ -92,6 +92,121 @@ export class RemoteBootstrapFailed extends Error {
   }
 }
 
+/**
+ * Why a connection failed, and what the user can do about it.
+ *
+ * There is no ssh configuration to "have" — `ssh user@host` works with none at
+ * all — but there are four distinct ways a first connection fails, and they need
+ * four different actions. Reporting the raw stderr for all of them is accurate
+ * and useless: "Host key verification failed" and "Permission denied (publickey)"
+ * are the same sentence to someone who has not met them before, and both read as
+ * "this app is broken".
+ *
+ * The classifications come from the messages OpenSSH actually produced against a
+ * live host, not from guessing at them.
+ */
+export type SshFailureKind =
+  | 'no-ssh-client'
+  | 'unknown-host-key'
+  | 'auth-refused'
+  | 'name-resolution'
+  | 'unreachable'
+  | 'unknown';
+
+export interface SshDiagnosis {
+  kind: SshFailureKind;
+  /** What happened, in the user's terms rather than ssh's. */
+  summary: string;
+  /** What they do next. */
+  fix: string;
+  /** Copy-pasteable, when one command settles it. */
+  command?: string;
+}
+
+export function diagnoseSshFailure(alias: string, detail: string): SshDiagnosis {
+  const text = detail.toLowerCase();
+
+  if (text.includes('enoent') || text.includes('not recognized') || text.includes('command not found')) {
+    return {
+      kind: 'no-ssh-client',
+      summary: 'No ssh client was found on this machine.',
+      fix:
+        'Install OpenSSH — it ships with macOS and most Linux, and on Windows it is ' +
+        'an optional feature (Settings › Apps › Optional features › OpenSSH Client).',
+    };
+  }
+
+  if (text.includes('host key verification failed') || text.includes('remote host identification')) {
+    return {
+      kind: 'unknown-host-key',
+      summary: `This machine's identity has not been confirmed yet.`,
+      // Deliberately not offered as a button. Trust-on-first-use only means
+      // something if a human checks the fingerprint against something other than
+      // the connection presenting it — accepting it for them would turn a real
+      // check into a formality.
+      fix:
+        'Connect once from a terminal, check the fingerprint it shows against the ' +
+        'machine itself, and accept it. Loom will not accept a key on your behalf.',
+      command: `ssh ${alias}`,
+    };
+  }
+
+  if (text.includes('permission denied') || text.includes('too many authentication failures')) {
+    return {
+      kind: 'auth-refused',
+      summary: 'The machine refused the credentials this computer offered.',
+      // Loom cannot prompt for a password: it runs ssh with BatchMode so that a
+      // prompt fails fast instead of hanging on a stdin nobody is attached to.
+      fix:
+        'Install your public key on it, then try again. If you have no key yet, ' +
+        'run `ssh-keygen` first.',
+      command: `ssh-copy-id ${alias}`,
+    };
+  }
+
+  if (text.includes('could not resolve hostname') || text.includes('name or service not known')) {
+    return {
+      kind: 'name-resolution',
+      summary: `The name "${alias}" does not resolve to a machine.`,
+      fix:
+        'Check the spelling, or use user@hostname directly. A name only works if ' +
+        'DNS knows it or your ~/.ssh/config defines it.',
+    };
+  }
+
+  if (
+    text.includes('connection timed out') ||
+    text.includes('connection refused') ||
+    text.includes('no route to host') ||
+    text.includes('operation timed out')
+  ) {
+    return {
+      kind: 'unreachable',
+      summary: 'The machine did not answer.',
+      fix: 'Check it is powered on and reachable from here — a VPN, a firewall, or a non-default port would all do this.',
+    };
+  }
+
+  return {
+    kind: 'unknown',
+    summary: `Could not reach ${alias}.`,
+    fix: 'The message from ssh is below; running the same command in a terminal usually says more.',
+    command: `ssh ${alias}`,
+  };
+}
+
+/** A diagnosis rendered as the one string that survives an IPC boundary. */
+export function describeSshFailure(alias: string, detail: string): string {
+  const d = diagnoseSshFailure(alias, detail);
+  const parts = [d.summary, d.fix];
+  if (d.command !== undefined) parts.push(`Try: ${d.command}`);
+  // Only the first line: ssh is often chatty after the sentence that matters,
+  // and the rest pushes the actionable part off the end of a one-line error.
+  const first = detail.trim().split(/\r?\n/)[0];
+  if (first !== undefined && first !== '') parts.push(`(ssh said: ${first})`);
+  return parts.join(' ');
+}
+
 /** What a remote already has, decided by looking rather than assuming. */
 export interface RemoteProbe {
   reachable: boolean;

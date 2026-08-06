@@ -13,6 +13,7 @@
  */
 
 import {
+  describeSshFailure,
   freeLoopbackPort,
   installRemoteNode,
   probeRemote,
@@ -56,9 +57,11 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
   report('checking the remote');
   const probe = await probeRemote(runner, opts.alias);
   if (!probe.reachable) {
-    // The user's own ssh already reported why — a key, a jump host, a name that
-    // does not resolve — and repeating it beats replacing it with our guess.
-    throw new RemoteBootstrapFailed(`cannot reach ${opts.alias}`, probe.detail);
+    // Classified rather than passed through raw. "Host key verification failed"
+    // and "Permission denied (publickey)" are the same sentence to someone who
+    // has not met them before, and both read as "this app is broken" — while
+    // needing completely different actions.
+    throw new RemoteBootstrapFailed(describeSshFailure(opts.alias, probe.detail));
   }
 
   let nodePath = probe.nodePath;

@@ -13,6 +13,8 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  describeSshFailure,
+  diagnoseSshFailure,
   nodeTarballUrl,
   probeRemote,
   remoteAgentBundle,
@@ -232,5 +234,80 @@ describe('starting the host', () => {
     const runner = fakeRunner([{ match: /nohup/, stdout: record }]);
     await startRemoteHost(runner, 'box', '/home/ci', '/n/bin/node', '/w', { lingerMs: 1234 });
     expect(runner.commands[0]).toContain('LOOM_HOST_LINGER_MS=1234');
+  });
+});
+
+/**
+ * Telling the user what went wrong (§6.2).
+ *
+ * There is no ssh configuration to "have" — `ssh user@host` works with none —
+ * but a first connection fails in four distinct ways that need four different
+ * actions. Every string below came from OpenSSH against a live host, not from
+ * guessing at what it might say.
+ */
+describe('diagnosing a failed connection', () => {
+  it('recognises a host key that has not been confirmed', () => {
+    const d = diagnoseSshFailure('build-01', 'Host key verification failed.');
+
+    expect(d.kind).toBe('unknown-host-key');
+    // Deliberately a terminal command, not a button. Trust-on-first-use only
+    // means something if a human checks the fingerprint against something other
+    // than the connection presenting it; accepting it for them would turn a real
+    // check into a formality.
+    expect(d.command).toBe('ssh build-01');
+    expect(d.fix).toMatch(/will not accept a key on your behalf/);
+  });
+
+  it('recognises refused credentials and points at the fix', () => {
+    const d = diagnoseSshFailure('build-01', 'ci@10.0.0.5: Permission denied (publickey).');
+
+    expect(d.kind).toBe('auth-refused');
+    // Loom cannot prompt for a password — it runs ssh with BatchMode so a prompt
+    // fails fast rather than hanging on a stdin nobody is attached to.
+    expect(d.command).toBe('ssh-copy-id build-01');
+  });
+
+  it('recognises a name that does not resolve', () => {
+    const d = diagnoseSshFailure(
+      'typo',
+      'ssh: Could not resolve hostname typo: Name or service not known',
+    );
+
+    expect(d.kind).toBe('name-resolution');
+    // The case this question is really about: no config at all. `user@host`
+    // always works, so the guidance says so rather than implying a config is
+    // required.
+    expect(d.fix).toMatch(/user@hostname/);
+  });
+
+  it('recognises a machine that never answered', () => {
+    expect(diagnoseSshFailure('box', 'ssh: connect to host box port 22: Connection timed out').kind)
+      .toBe('unreachable');
+    expect(diagnoseSshFailure('box', 'ssh: connect to host box port 22: Connection refused').kind)
+      .toBe('unreachable');
+  });
+
+  it('recognises a missing ssh client', () => {
+    // Windows without the optional OpenSSH feature — the only case where the
+    // user has nothing to connect *with*.
+    expect(diagnoseSshFailure('box', 'spawn ssh ENOENT').kind).toBe('no-ssh-client');
+  });
+
+  it('falls back without pretending to know', () => {
+    const d = diagnoseSshFailure('box', 'something nobody anticipated');
+    expect(d.kind).toBe('unknown');
+    expect(d.fix).toMatch(/running the same command in a terminal/);
+  });
+
+  it('renders one line that keeps the action ahead of the noise', () => {
+    const rendered = describeSshFailure(
+      'build-01',
+      'Host key verification failed.\nchatter nobody needs\nmore chatter',
+    );
+
+    expect(rendered).toContain('Try: ssh build-01');
+    // ssh is often chatty after the sentence that matters, and the rest pushes
+    // the actionable part off the end of a one-line error.
+    expect(rendered).not.toContain('more chatter');
   });
 });

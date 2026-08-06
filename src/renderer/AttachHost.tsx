@@ -1,11 +1,17 @@
 /**
  * Attaching a host (DESIGN.md §6.2, §10).
  *
- * Two ways in, and the remote one is deliberately not a connection form. The
- * user's machines are already described in `~/.ssh/config` — hostname, user,
- * port, key, jump host, proxy command — and every one of those answers is better
- * than what a form would collect, because it is the same answer their terminal
- * uses. So remote attach is: pick a name, say where the workspace is.
+ * Two ways in, and the remote one is deliberately not a connection form. When the
+ * user has an `~/.ssh/config`, their machines are already described in it —
+ * hostname, user, port, key, jump host, proxy command — and every one of those
+ * answers is better than what a form would collect, because it is the same answer
+ * their terminal uses.
+ *
+ * **A config is not required.** `ssh user@host` works with none at all, so the
+ * field accepts that too and says so. Treating a config as a prerequisite would
+ * invent one: there is nothing to "set up" before a first connection, only things
+ * that can fail on it — and those are diagnosed where they happen, with the
+ * command that settles each one.
  *
  * A first attach to a machine installs a private Node and deploys the host, which
  * takes seconds rather than milliseconds, so progress is shown rather than left
@@ -69,28 +75,35 @@ export function AttachHost({ onDone }: { onDone: () => void }): JSX.Element {
               <input
                 className="field"
                 data-testid="attach-alias"
-                placeholder="ssh alias"
+                placeholder="user@hostname"
                 value={alias}
                 onChange={(e) => setAlias(e.target.value)}
               />
             ) : (
-              <select
-                className="field"
-                data-testid="attach-alias"
-                value={alias}
-                onChange={(e) => setAlias(e.target.value)}
-              >
-                {sshHosts.map((h) => (
-                  <option key={h.alias} value={h.alias}>
-                    {h.alias}
-                    {h.user !== undefined ? ` — ${h.user}@${h.hostName ?? h.alias}` : ''}
-                  </option>
-                ))}
-              </select>
+              <>
+                {/* A list *and* a field: a configured machine is the common case,
+                    but a one-off `user@host` must not require editing a config
+                    file first. */}
+                <input
+                  className="field"
+                  data-testid="attach-alias"
+                  list="loom-ssh-hosts"
+                  placeholder="alias, or user@hostname"
+                  value={alias}
+                  onChange={(e) => setAlias(e.target.value)}
+                />
+                <datalist id="loom-ssh-hosts">
+                  {sshHosts.map((h) => (
+                    <option key={h.alias} value={h.alias}>
+                      {h.user !== undefined ? `${h.user}@${h.hostName ?? h.alias}` : ''}
+                    </option>
+                  ))}
+                </datalist>
+              </>
             )}
             <small className="text-muted text-[11px]">
               {sshHosts.length === 0
-                ? 'No ~/.ssh/config found — type a name ssh already knows.'
+                ? 'No ~/.ssh/config here — user@hostname works without one.'
                 : 'From your ~/.ssh/config. Keys, ports and jump hosts come with it.'}
             </small>
           </label>
