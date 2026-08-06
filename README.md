@@ -104,9 +104,10 @@ loom stop                 # asks; refuses while work is in flight
 ```
 
 `loom run` is the scriptable half: no prompts, output on stdout, and the result
-in the exit code — **0** done, **1** failed or something needed permission,
-**2** stopped short (a hit limit, an exhausted quota) so a retry loop knows not
-to retry. A permission request with no `--yes` is **denied, not queued**: in cron
+in the exit code — **0** done, **1** failed in a way rerunning will not fix
+(misconfigured, no auth, a limit you set, something needed permission), **2**
+stopped short in a way a later rerun might get past (model unreachable, rate
+limited, quota exhausted). A retry loop wants those apart. A permission request with no `--yes` is **denied, not queued**: in cron
 there is nobody to ask, and waiting would be a job that never ends. The denial
 reaches the agent as a reason it can adapt to.
 
@@ -114,6 +115,16 @@ reaches the agent as a reason it can adapt to.
 addressing. It is meant for an ssh session on a machine with no display, likely
 in tmux, possibly with a `TERM` nobody has tested. Ctrl-C interrupts the turn;
 Ctrl-D leaves and the run keeps going.
+
+If the model lives somewhere other than Ollama on that machine, point the host at
+it — the host inherits the environment it is spawned with:
+
+```bash
+LOOM_MODEL_BASE_URL=http://gpu-box:11434/v1 loom run . "..."
+```
+
+A host that is *already* running keeps the environment it started with, so
+`loom stop` first if you are changing it.
 
 Installing on a server, from a terminal:
 

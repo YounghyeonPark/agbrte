@@ -18,7 +18,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionHostServer } from '../src/host/sessionServer.js';
-import { once } from '../src/cli/once.js';
+import { exitCodeFor, once } from '../src/cli/once.js';
 import { parse } from '../src/cli/args.js';
 import { preview } from '../src/cli/format.js';
 import { HostConnection } from '@main/host/hostConnection.js';
@@ -185,6 +185,29 @@ describe('a scripted run', () => {
     expect(await connection.list()).toHaveLength(1);
     const turns = (await connection.events(session!.sessionId)).filter((e) => e.type === 'user.turn');
     expect(turns).toHaveLength(2);
+  });
+});
+
+describe('what a stop means to a script', () => {
+  it('reports an unreachable model as a failure, not a clean pass', () => {
+    // The bug this exists for. The first version listed failing kinds and
+    // defaulted the rest to 0, so a run against a model that was down exited 0
+    // and a cron job logged a clean pass.
+    expect(exitCodeFor({ kind: 'unavailable' })).toBe(2);
+    expect(exitCodeFor({ kind: 'transport' })).toBe(2);
+  });
+
+  it('separates "try later" from "this will not fix itself"', () => {
+    // A retry loop needs these apart. Both are `pause` to the supervisor, which
+    // is why the split lives here.
+    expect(exitCodeFor({ kind: 'quota_exhausted', scope: 'daily' })).toBe(2);
+    expect(exitCodeFor({ kind: 'limit_reached', limit: 'turns' })).toBe(1);
+    expect(exitCodeFor({ kind: 'auth' })).toBe(1);
+    expect(exitCodeFor({ kind: 'misconfigured', detail: 'no such model' })).toBe(1);
+  });
+
+  it('treats a finished turn as success', () => {
+    expect(exitCodeFor({ kind: 'end_turn' })).toBe(0);
   });
 });
 

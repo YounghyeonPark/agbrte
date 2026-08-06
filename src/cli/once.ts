@@ -13,8 +13,10 @@
  *  - **A permission request with no `--yes` is a denial, not a wait.** Denying
  *    feeds a reason back to the agent, which can adapt; waiting produces a job
  *    that never ends and a queue that never drains.
- *  - **The exit code is the result.** 0 completed, 1 failed, 2 stopped for a
- *    reason a rerun will not fix — a hit limit, an exhausted quota.
+ *  - **The exit code is the result.** 0 completed, 1 failed in a way a rerun
+ *    will not fix, 2 stopped short in a way a later rerun might — see
+ *    `exitCodeFor`, which delegates to `stopDisposition` rather than keeping a
+ *    second, and inevitably incomplete, list of what counts as failure.
  *  - **Nothing is asked for.** A missing runtime or model is an error naming
  *    what to pass, not a prompt.
  *
@@ -23,7 +25,7 @@
  */
 
 import type { HostConnection } from '@main/host/hostConnection.js';
-import type { AgentId, LoomEvent, PermissionRequest, SessionId } from '@shared/types/index.js';
+import { stopDisposition, type AgentId, type LoomEvent, type PermissionRequest, type SessionId, type StopReason } from '@shared/types/index.js';
 import { c, preview } from './format.js';
 
 export interface OnceOptions {
@@ -124,19 +126,50 @@ export async function once(connection: HostConnection, opts: OnceOptions): Promi
 
   process.stderr.write(c.dim(`session ${session.sessionId}\n`));
 
-  const kind = (stop as LoomEvent | null)?.type === 'agent.stopped' ? stopKind(stop) : 'end_turn';
-  if (kind === 'error') return 1;
-  // Distinguished from a plain failure because a rerun will not help: the limit
-  // or the quota has to change first, and a job that retries on 2 loops.
-  if (kind === 'max_turns' || kind === 'max_tokens' || kind === 'quota_exhausted') {
-    process.stderr.write(`${c.warn(`stopped: ${kind}`)}\n`);
-    return 2;
-  }
-  return denied > 0 ? 1 : 0;
+  const ended = stop as LoomEvent | null;
+  const reason: StopReason =
+    ended !== null && ended.type === 'agent.stopped' ? ended.stop : { kind: 'end_turn' };
+
+  const code = exitCodeFor(reason);
+  if (code !== 0) process.stderr.write(`${c.warn(`stopped: ${reason.kind}`)}\n`);
+  // A denial is a shortfall even when the agent finished gracefully around it:
+  // the task ran without something it asked for, and a script should be able to
+  // tell that from a clean run.
+  return code !== 0 ? code : denied > 0 ? 1 : 0;
 }
 
-function stopKind(event: LoomEvent | null): string {
-  return event !== null && event.type === 'agent.stopped' ? event.stop.kind : 'end_turn';
+/**
+ * What a stop means to a script.
+ *
+ *   0  completed
+ *   1  failed, and rerunning as-is will not help
+ *   2  stopped short, and rerunning later may succeed
+ *
+ * Delegates to `stopDisposition` rather than listing kinds here. The first
+ * version did list them and defaulted anything unlisted to 0 — so a run against
+ * an unreachable model stopped with `unavailable`, matched nothing, and reported
+ * success. A cron job would have logged a clean pass while the model was down.
+ * An allow-list of failures is the wrong shape: the failure set is open and
+ * grows with the protocol, and the success set does not.
+ *
+ * The one thing `stopDisposition` cannot settle is `pause`, which covers both
+ * "quota resets in an hour" and "you set maxTurns too low". Those want opposite
+ * things from a retry loop, so they are separated here and nowhere else.
+ */
+export function exitCodeFor(stop: StopReason): 0 | 1 | 2 {
+  switch (stopDisposition(stop)) {
+    case 'done':
+    // The supervisor would have continued the loop; arriving here means the turn
+    // ended anyway, and nothing failed.
+    case 'continue':
+      return 0;
+    case 'retry':
+      return 2;
+    case 'pause':
+      return stop.kind === 'quota_exhausted' ? 2 : 1;
+    case 'fail':
+      return 1;
+  }
 }
 
 /** The part of an event worth one line of a verbose log. */
