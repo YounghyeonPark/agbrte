@@ -57,7 +57,8 @@ export const LABEL = 'text-[10px] uppercase tracking-wider';
 
 export function App(): JSX.Element {
   const store = useLoom();
-  const { hosts, runtimesByHost, sessions, onDisk, active, events, pending, error, busy } = store;
+  const { hosts, runtimesByHost, sessions, onDisk, active, events, pending, queued, error, busy } =
+    store;
 
   useEffect(() => {
     void store.boot();
@@ -153,6 +154,7 @@ export function App(): JSX.Element {
                 <Composer
                   onSend={(t) => void store.send(t)}
                   disabled={active.state === 'working'}
+                  queued={queued}
                 />
               </>
             )}

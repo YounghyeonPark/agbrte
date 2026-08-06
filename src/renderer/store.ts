@@ -37,6 +37,8 @@ export interface LoomState {
   /** Set when a gap was detected and a refetch is in flight. */
   refetching: boolean;
   pending: PermissionRequest[];
+  /** Turns waiting behind the running one, possibly sent from another device. */
+  queued: number;
   busy: boolean;
   error: string | null;
 
@@ -78,6 +80,7 @@ function applySnapshot(set: SetState, snapshot: SessionSnapshot): void {
     active: snapshot.session,
     activeId: snapshot.session.sessionId,
     events: snapshot.recent.slice(-WINDOW),
+    queued: snapshot.queued,
     refetching: false,
   });
 }
@@ -92,6 +95,7 @@ export const useLoom = create<LoomState>((set, get) => ({
   events: [],
   refetching: false,
   pending: [],
+  queued: 0,
   busy: false,
   error: null,
 

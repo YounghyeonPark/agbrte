@@ -173,9 +173,12 @@ export function PermissionPrompt({
 export function Composer({
   onSend,
   disabled,
+  queued = 0,
 }: {
   onSend: (text: string) => void;
   disabled: boolean;
+  /** Turns waiting behind the running one — possibly sent from another device. */
+  queued?: number;
 }): JSX.Element {
   const [text, setText] = useState('');
 
@@ -208,6 +211,13 @@ export function Composer({
           }
         }}
       />
+      {/* Sending into a silent queue reads as a broken app, and with several
+          clients the backlog may not be yours. */}
+      {queued > 0 && (
+        <span data-testid="queued" className="text-state-paused shrink-0 self-center text-xs">
+          {queued} waiting
+        </span>
+      )}
       <button
         className="btn"
         data-testid="composer-send"

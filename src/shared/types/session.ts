@@ -77,6 +77,24 @@ export interface ArtifactRef {
  * remainder at spawn, so a tree cannot outspend what its root was granted —
  * without which "split when the scope is too large" is a cost bomb.
  */
+/**
+ * What an attached client may do to a session (§7, §17 Q14).
+ *
+ * Enforced by the session owner, never by the client: a read-only client that
+ * can still send is not read-only. The role belongs to a *connection*, so the
+ * same person on two devices can hold different roles — a phone watching a run
+ * while the desk machine drives it.
+ */
+export type AccessRole = 'read-write' | 'read-only';
+
+/** A write attempted by a client that may only read. */
+export class AccessDenied extends Error {
+  constructor(readonly action: string) {
+    super(`read-only access cannot ${action}`);
+    this.name = 'AccessDenied';
+  }
+}
+
 export interface SessionBudget {
   tokenCeiling: number;
   spent: number;

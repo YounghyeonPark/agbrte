@@ -186,11 +186,16 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
     // A window over the tail, never the whole log (§7). A week-long session
     // must not become a renderer-side heap problem.
     const recent = all.slice(-size);
+    const session = fleet.get(id);
     const snapshot: SessionSnapshot = {
-      session: fleet.get(id),
+      session,
       projection,
       recent,
       windowFromSeq: recent[0]?.seq ?? 0,
+      queued: session.agents.reduce(
+        (total, agent) => total + fleet.queueDepth(id, agent.agentId),
+        0,
+      ),
     };
     return snapshot;
   });

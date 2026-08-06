@@ -37,6 +37,7 @@ import { RuntimeRegistry } from './runtime/registry.js';
 import { HostSupervisor } from './host/supervisor.js';
 import { openWorkspace } from './store/identity.js';
 import type {
+  AccessRole,
   AgentId,
   ExecutionTarget,
   InstanceId,
@@ -47,6 +48,7 @@ import type {
   Session,
   SessionId,
 } from '@shared/types/index.js';
+import { AccessDenied } from '@shared/types/index.js';
 import type { MainSideChannel } from '@shared/host/protocol.js';
 
 /** A runtime the host offers, as advertised to the UI. */
@@ -278,7 +280,9 @@ export class Fleet extends EventEmitter {
   async createSession(
     instanceId: InstanceId,
     input: { title: string; goal: string },
+    role: AccessRole = 'read-write',
   ): Promise<Session> {
+    requireWrite(role, 'create a session');
     const entry = this.require(instanceId);
     // The session records the host it belongs to, so §10's target badge and any
     // later reattach do not have to guess.
@@ -312,16 +316,48 @@ export class Fleet extends EventEmitter {
     return this.ownerOf(sessionId).manager.get(sessionId);
   }
 
-  addAgent(sessionId: SessionId, input: Parameters<SessionManager['addAgent']>[1]) {
+  async addAgent(
+    sessionId: SessionId,
+    input: Parameters<SessionManager['addAgent']>[1],
+    role: AccessRole = 'read-write',
+  ) {
+    requireWrite(role, 'add an agent');
     return this.ownerOf(sessionId).manager.addAgent(sessionId, input);
   }
 
-  send(sessionId: SessionId, agentId: AgentId, turn: Parameters<SessionManager['send']>[2]) {
+  /**
+   * Send a turn. Requires read-write access.
+   *
+   * The role is enforced **here**, at the boundary a client connection
+   * addresses, and never in the client: a read-only client that can still send
+   * is not read-only. Several read-write clients may send at once; the owner
+   * queues them in arrival order (§17 Q14).
+   */
+  async send(
+    sessionId: SessionId,
+    agentId: AgentId,
+    turn: Parameters<SessionManager['send']>[2],
+    role: AccessRole = 'read-write',
+  ) {
+    requireWrite(role, 'send a turn');
     return this.ownerOf(sessionId).manager.send(sessionId, agentId, turn);
   }
 
-  interrupt(sessionId: SessionId, agentId?: AgentId) {
+  /**
+   * Interrupt. Requires read-write, and deliberately **does not queue**.
+   *
+   * Queueing an interrupt behind the turn it is meant to interrupt would make it
+   * arrive after the thing it was cancelling had finished — useless at best.
+   * Out-of-band is the only ordering that means anything here.
+   */
+  async interrupt(sessionId: SessionId, agentId?: AgentId, role: AccessRole = 'read-write') {
+    requireWrite(role, 'interrupt');
     return this.ownerOf(sessionId).manager.interrupt(sessionId, agentId);
+  }
+
+  /** Turns waiting behind the running one, so a client can show the backlog. */
+  queueDepth(sessionId: SessionId, agentId: AgentId): number {
+    return this.ownerOf(sessionId).manager.queueDepth(agentId);
   }
 
   events(sessionId: SessionId, fromSeq = 0) {
@@ -362,7 +398,12 @@ export class Fleet extends EventEmitter {
   async respondPermission(
     requestId: string,
     decision: PermissionDecision,
+    role: AccessRole = 'read-write',
   ): Promise<'answered' | 'already-answered' | 'unknown'> {
+    // Requires write — a decision is what lets a tool run. It does **not** queue:
+    // the turn that asked is blocked *on this answer*, so putting it behind that
+    // turn would deadlock the session outright.
+    requireWrite(role, 'answer a permission request');
     for (const entry of this.entries.values()) {
       const outcome = await entry.manager.respondPermission(requestId, decision);
       if (outcome !== 'unknown') return outcome;
@@ -378,6 +419,18 @@ export class Fleet extends EventEmitter {
     if (!entry) throw new Error(`no attached host ${instanceId}`);
     return entry;
   }
+}
+
+/**
+ * Refuse a write from a read-only client, naming what was attempted.
+ *
+ * Every caller of this is `async`, deliberately: a guard that throws
+ * synchronously out of a promise-returning method means `send(...).catch()`
+ * never runs, and the caller sees an exception where it was handling a
+ * rejection.
+ */
+function requireWrite(role: AccessRole, action: string): void {
+  if (role === 'read-only') throw new AccessDenied(action);
 }
 
 function snapshot(entry: Entry): AttachedHost {

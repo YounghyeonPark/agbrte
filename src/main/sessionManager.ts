@@ -75,6 +75,12 @@ export class AdmissionRefused extends Error {
   }
 }
 
+interface QueuedTurn {
+  turn: UserTurn;
+  resolve: () => void;
+  reject: (err: Error) => void;
+}
+
 export interface PendingPermission extends PermissionRequest {
   resolve: (d: PermissionDecision) => void;
   askedAt: string;
@@ -127,6 +133,10 @@ export class SessionManager extends EventEmitter {
    * first" and "that prompt was never real", which the UI should not conflate.
    */
   private readonly answered = new Set<string>();
+  /** Turns waiting to run, per agent. See `send`. */
+  private readonly queues = new Map<AgentId, QueuedTurn[]>();
+  /** Agents with a runner already draining, so a turn is never started twice. */
+  private readonly draining = new Set<AgentId>();
   private readonly now: () => Date;
 
   constructor(private readonly deps: SessionManagerDeps) {
@@ -262,7 +272,78 @@ export class SessionManager extends EventEmitter {
   }
 
   /** Send a turn and run it to completion, applying the resulting state. */
+  /**
+   * Queue a turn for an agent and resolve when *this* turn completes.
+   *
+   * Several clients may hold read-write access at once (§17 Q14), so two people
+   * can send to the same agent. Turns are queued in arrival order at the owner
+   * rather than raced: arrival here is the only ordering that exists, since
+   * client clocks disagree and neither client can see the other's send.
+   *
+   * The queue is **per agent**, not per session. Agents in one session are meant
+   * to run in parallel (§4.2), so a session-wide queue would serialize work that
+   * is supposed to be concurrent. With one agent the two are identical, which is
+   * why this costs nothing today and is correct later.
+   *
+   * A turn survives the client that sent it. Queued work belongs to the session
+   * owner, so closing the app — or the phone going to sleep — does not cancel
+   * what was already asked for.
+   *
+   * **Not durable across an owner crash.** A queued turn has not happened yet, so
+   * writing it to the log would put something in the transcript that never ran.
+   * The alternative, a separate durable queue, buys little: depth is normally
+   * zero or one, and a crash already costs the running turn.
+   */
   async send(sessionId: SessionId, agentId: AgentId, turn: UserTurn): Promise<void> {
+    // Validate before queueing, so a bad target fails at the call rather than
+    // silently much later when the queue drains to it.
+    const live = this.live(sessionId);
+    this.agent(live, agentId);
+
+    return new Promise<void>((resolve, reject) => {
+      const queue = this.queues.get(agentId) ?? [];
+      queue.push({ turn, resolve, reject });
+      this.queues.set(agentId, queue);
+      this.emit('queue', sessionId, agentId, queue.length);
+      void this.drain(sessionId, agentId);
+    });
+  }
+
+  /** Turns waiting behind the one running, for a client to display. */
+  queueDepth(agentId: AgentId): number {
+    return this.queues.get(agentId)?.length ?? 0;
+  }
+
+  /**
+   * Run queued turns for one agent, one at a time.
+   *
+   * Guarded by `draining` rather than by queue length: two concurrent sends would
+   * otherwise each see a non-empty queue and start a runner, and the same turn
+   * would be delivered twice.
+   */
+  private async drain(sessionId: SessionId, agentId: AgentId): Promise<void> {
+    if (this.draining.has(agentId)) return;
+    this.draining.add(agentId);
+    try {
+      for (;;) {
+        const queue = this.queues.get(agentId);
+        const next = queue?.shift();
+        if (!next) return;
+        this.emit('queue', sessionId, agentId, queue?.length ?? 0);
+        try {
+          await this.runTurn(sessionId, agentId, next.turn);
+          next.resolve();
+        } catch (err) {
+          // One failed turn must not strand the turns behind it.
+          next.reject(err instanceof Error ? err : new Error(String(err)));
+        }
+      }
+    } finally {
+      this.draining.delete(agentId);
+    }
+  }
+
+  private async runTurn(sessionId: SessionId, agentId: AgentId, turn: UserTurn): Promise<void> {
     const live = this.live(sessionId);
     const record = this.agent(live, agentId);
     const spec = live.specs.get(agentId);

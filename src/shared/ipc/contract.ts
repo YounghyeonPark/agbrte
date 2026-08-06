@@ -117,6 +117,14 @@ export interface SessionSnapshot {
   recent: LoomEvent[];
   /** `seq` the window starts at, so the renderer knows what it is missing. */
   windowFromSeq: number;
+  /**
+   * Turns waiting behind the running one (§17 Q14).
+   *
+   * Several read-write clients can send to one agent, so a turn may sit behind
+   * someone else's. Sending into a silent queue makes the app look broken, which
+   * is the only reason this is on the snapshot at all.
+   */
+  queued: number;
 }
 
 // ----------------------------------------------------------------- the surface
