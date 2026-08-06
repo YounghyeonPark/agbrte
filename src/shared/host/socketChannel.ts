@@ -11,8 +11,9 @@
  *
  * No port to allocate, collide over, or accidentally expose. A Windows named
  * pipe and a unix domain socket are both reachable by path, which means host
- * discovery is a file (`.devagents/host.json`) rather than a registry, and the
- * OS enforces access with the same permissions as the workspace. A TCP listener
+ * discovery is a file (`.devagents/host.json`) rather than a registry, and access
+ * is enforced by the OS rather than by anything Loom has to get right at runtime
+ * — see `listen`, which narrows the socket to its owner. A TCP listener
  * on localhost is reachable by every process on the machine, including a browser
  * a model persuaded someone to open.
  *
@@ -30,6 +31,7 @@
  */
 
 import { createServer, Socket, type Server } from 'node:net';
+import { chmodSync } from 'node:fs';
 import type { HostChannel } from './protocol.js';
 
 /** Split a buffer into whole lines, holding any trailing partial. */
@@ -136,7 +138,23 @@ export class SocketChannel<Out, In> implements HostChannel<Out, In> {
   }
 }
 
-/** Accepts connections; each one becomes a channel. */
+/**
+ * Accepts connections; each one becomes a channel.
+ *
+ * The socket is narrowed to its owner as soon as it exists. Node creates a unix
+ * socket with `0777 & ~umask`, and connecting to one needs *write* permission —
+ * so under the umask of `0002` that Ubuntu ships, the default is `0775` and any
+ * member of the owner's group can attach. Measured on a real host rather than
+ * assumed. That is survivable only where each user has a private group; on a
+ * machine with a shared `dev` or `staff` group it hands a colleague a
+ * `read-write` client, because the host grants the role a client asks for
+ * (`grantRole`, §6.4) on the reasoning that reaching the socket already proved
+ * who you are. That reasoning is only sound if reaching it is actually
+ * restricted.
+ *
+ * Windows named pipes are not chmod-able and do not need to be: the default DACL
+ * grants the creating user and administrators, not everyone.
+ */
 export function listen<Out, In>(
   path: string,
   onConnection: (channel: SocketChannel<Out, In>) => void,
@@ -144,7 +162,21 @@ export function listen<Out, In>(
   return new Promise((resolve, reject) => {
     const server = createServer((socket) => onConnection(new SocketChannel<Out, In>(socket)));
     server.on('error', reject);
-    server.listen(path, () => resolve(server));
+    server.listen(path, () => {
+      if (process.platform !== 'win32') {
+        try {
+          chmodSync(path, 0o600);
+        } catch (err) {
+          // Refuse to serve rather than serve wider than intended: a host that
+          // silently kept a group-writable socket would look identical to one
+          // that is locked down.
+          server.close();
+          reject(new Error(`could not restrict ${path}: ${err instanceof Error ? err.message : String(err)}`));
+          return;
+        }
+      }
+      resolve(server);
+    });
   });
 }
 

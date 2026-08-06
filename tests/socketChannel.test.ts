@@ -10,6 +10,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:net';
@@ -223,6 +224,22 @@ describe('host socket paths', () => {
       expect(path.startsWith('\\\\.\\pipe\\')).toBe(true);
     } else {
       expect(path.endsWith('.sock')).toBe(true);
+    }
+  });
+});
+
+describe('socket permissions', () => {
+  it('narrows a unix socket to its owner', async () => {
+    if (process.platform === 'win32') return; // named pipes carry a DACL instead
+    const path = join(tmpdir(), `loom-mode-${process.pid}.sock`);
+    const server = await listen(path, () => undefined);
+    try {
+      // Node creates it `0777 & ~umask`, and connecting needs *write* — so the
+      // 0002 umask Ubuntu ships yields 0775, and the owner's group can attach as
+      // read-write. Measured on a real host, not assumed.
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    } finally {
+      server.close();
     }
   });
 });
