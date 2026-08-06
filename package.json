@@ -16,8 +16,9 @@
     "smoke": "node scripts/build.mjs --smoke && vite build && node scripts/smoke.mjs",
     "dev": "node scripts/dev.mjs",
     "start": "npm run build && node scripts/launch.mjs",
-    "loom": "tsx src/cli/run.ts",
-    "e2e": "npm run build && playwright test"
+    "e2e": "npm run build && playwright test",
+    "loom:direct": "tsx src/cli/run.ts",
+    "cli": "node scripts/build.mjs && node dist/cli/loom.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0",
@@ -46,5 +47,14 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "zustand": "^5.0.14"
-  }
+  },
+  "bin": {
+    "loom": "dist/cli/loom.js"
+  },
+  "files": [
+    "dist/cli",
+    "dist/main",
+    "README.md",
+    "DESIGN.md"
+  ]
 }

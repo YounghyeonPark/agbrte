@@ -24,6 +24,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connect, hostSocketPath } from '@shared/host/socketChannel.js';
@@ -48,10 +49,12 @@ export interface ConnectOptions {
 /** How long a spawned host gets to open its socket before we give up. */
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
 
-async function tryConnect(socket: string): Promise<HostConnection | null> {
+async function tryConnect(socket: string, client?: string): Promise<HostConnection | null> {
   try {
     const channel = await connect<SessionCommand, SessionMessage>(socket, 2_000);
-    return new HostConnection({ channel });
+    // The label reaches `grantRole`, so a workspace policy that pins a client
+    // family to read-only can never fire if this is dropped on the floor.
+    return new HostConnection({ channel, ...(client !== undefined ? { client } : {}) });
   } catch {
     // ENOENT or ECONNREFUSED: nothing is listening. Ordinary, not a failure.
     return null;
@@ -63,7 +66,7 @@ export async function connectOrSpawnHost(opts: ConnectOptions): Promise<HostConn
   const identity = await openWorkspace(workspaceRoot);
   const socket = hostSocketPath(identity.instanceId);
 
-  const existing = await tryConnect(socket);
+  const existing = await tryConnect(socket, opts.client);
   if (existing !== null) return existing;
 
   // Nothing answered. If a record says otherwise it describes a process that is
@@ -76,7 +79,7 @@ export async function connectOrSpawnHost(opts: ConnectOptions): Promise<HostConn
 
   const deadline = Date.now() + (opts.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS);
   for (;;) {
-    const connection = await tryConnect(socket);
+    const connection = await tryConnect(socket, opts.client);
     if (connection !== null) return connection;
     if (Date.now() > deadline) {
       throw new Error(`host for ${workspaceRoot} did not start listening on ${socket}`);
@@ -89,6 +92,17 @@ export async function connectOrSpawnHost(opts: ConnectOptions): Promise<HostConn
 
 function spawnDetached(workspaceRoot: string, opts: ConnectOptions): void {
   const entry = opts.hostEntry ?? resolve(HERE, '../loomHost.js');
+
+  // Checked before spawning because the child is `stdio: 'ignore'` — it has to
+  // be, to outlive us — so a missing entry produces no output anywhere and
+  // surfaces fifteen seconds later as "the host did not start listening", which
+  // points at the host rather than at the path that was wrong.
+  if (!existsSync(entry)) {
+    throw new Error(
+      `no session host bundle at ${entry} — the app and the CLI resolve this ` +
+        `relative to their own bundle, so a caller in a new location must pass hostEntry`,
+    );
+  }
 
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {

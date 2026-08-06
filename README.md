@@ -90,15 +90,42 @@ and state transitions carry none. With one user this is a nicety. With a host
 several people attach to, "the gate said yes" is not an answer to "who let it
 run that".
 
-### 7. Headless, with no app at all
+### 7. From a terminal, with no GUI anywhere
+
+`loom` is a client of the same host the window uses, so a session started at a
+terminal is the same session the app opens — not a second, lesser mode.
 
 ```bash
-npm run loom -- --workspace ./sandbox --goal "add a test" "add a test for the parser"
-npm run loom -- --workspace ./sandbox --inspect <sessionId>
+loom                      # drive the workspace here, interactively
+loom /srv/api             # or one elsewhere on this machine
+loom ls                   # one session per line, greppable
+loom run . "add a test for the parser"
+loom stop                 # asks; refuses while work is in flight
 ```
 
-Useful for exercising an adapter, and for a session you want scripted rather
-than watched.
+`loom run` is the scriptable half: no prompts, output on stdout, and the result
+in the exit code — **0** done, **1** failed or something needed permission,
+**2** stopped short (a hit limit, an exhausted quota) so a retry loop knows not
+to retry. A permission request with no `--yes` is **denied, not queued**: in cron
+there is nobody to ask, and waiting would be a job that never ends. The denial
+reaches the agent as a reason it can adapt to.
+
+`loom attach` is line-based on purpose — no full-screen interface, no cursor
+addressing. It is meant for an ssh session on a machine with no display, likely
+in tmux, possibly with a `TERM` nobody has tested. Ctrl-C interrupts the turn;
+Ctrl-D leaves and the run keeps going.
+
+Installing on a server, from a terminal:
+
+```bash
+git clone <repo> && cd loom
+./scripts/install.sh      # brings its own Node 22 if the machine has none
+```
+
+Nothing goes outside `$HOME`: a private runtime and the app land in `~/.loom`,
+the binary in `~/.loom/bin/loom`, and `rm -rf ~/.loom` removes all of it. No
+sudo, no package manager, no service. With Node 22+ already present, `npm i -g .`
+does the same job.
 
 ### 8. Resume anything
 
@@ -118,7 +145,13 @@ ollama pull qwen2.5:7b        # optional; the echo runtime needs no model
 
 npm run dev                   # Vite + esbuild watch + Electron
 npm start                     # build, then launch
+npm run cli -- --help         # the terminal client, from a checkout
 ```
+
+`npm run loom:direct` is a different thing and is not the CLI: it builds its own
+`SessionManager` in-process to exercise adapters with no host in the way, which
+makes it useful for adapter work and wrong for anything else — two of them on one
+workspace would both own the log.
 
 ## The shape of it
 
@@ -172,7 +205,7 @@ src/main/        the app side: fleet, host connections, ssh transport, IPC
 src/host/        the session host — owns sessions, the log, the gate, the queue
 src/preload/     the entire privileged surface the renderer gets
 src/renderer/    React + Tailwind, windowed projection over the log
-src/cli/         headless driver, useful for testing adapters
+src/cli/         the terminal client — a peer of the window, not a subset
 ```
 
 Three processes per workspace, not two: the app holds no session state, the host

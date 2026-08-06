@@ -14,10 +14,12 @@
  */
 
 import { build, context } from 'esbuild';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const pkgVersion = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version;
 const watch = process.argv.includes('--watch');
 
 /** Resolves the aliases the TS configs declare. */
@@ -60,6 +62,27 @@ const builds = [
     format: 'cjs',
   },
 ];
+
+// The terminal client. A separate bundle rather than part of main's because it
+// is the one entry point that runs under plain Node with no Electron anywhere —
+// `npm i -g` installs this and nothing else executable.
+builds.push({
+  ...shared,
+  entryPoints: [resolve(root, 'src/cli/loom.ts')],
+  outfile: resolve(root, 'dist/cli/loom.js'),
+  format: 'esm',
+  // Node, not Electron: this must run on a server that has never seen a GUI.
+  target: 'node22',
+  define: { __LOOM_VERSION__: JSON.stringify(pkgVersion) },
+  banner: {
+    js: [
+      // Present so `npm i -g` produces something executable on POSIX. npm writes
+      // its own .cmd shim on Windows and ignores this line.
+      '#!/usr/bin/env node',
+      "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",
+    ].join('\n'),
+  },
+});
 
 // The session host: a standalone process the app spawns detached (§6.4). It
 // outlives the app, so it is built as its own bundle rather than shipped inside

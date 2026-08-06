@@ -1,0 +1,13 @@
+# Shell scripts must be LF whatever the checkout platform.
+#
+# Earned the hard way: `install.sh` was authored on Windows with `core.autocrlf`
+# on, so the checkout had CRLF, and every line ended in a `\r` the shell treated
+# as part of the command. On the server that produced
+#
+#   scripts/install.sh: 22: : not found
+#   scripts/install.sh: 23: set: Illegal option -
+#
+# which names neither the file's real problem nor the line that has it. An
+# installer is the one file guaranteed to run on a machine that is not the one it
+# was written on, so this is not a preference.
+*.sh text eol=lf
