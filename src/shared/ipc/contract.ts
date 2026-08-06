@@ -60,6 +60,14 @@ export interface HostInfo {
   unavailableReason?: string;
 }
 
+/** A machine from the user's `~/.ssh/config`, offered instead of a form. */
+export interface SshHostInfo {
+  alias: string;
+  hostName?: string;
+  user?: string;
+  port?: number;
+}
+
 export interface RuntimeInfo {
   id: string;
   version: string;
@@ -133,8 +141,18 @@ export interface LoomApi {
   hosts: {
     /** Every attached host. Several may be attached at once (§8). */
     list(): Promise<HostInfo[]>;
-    /** Native folder picker, then attach. Null if the user cancels. */
+    /** Native folder picker, then attach a local workspace. Null if cancelled. */
     add(): Promise<HostInfo | null>;
+    /**
+     * Machines the user already has configured.
+     *
+     * The whole reason attaching a remote is easy: hostname, user, port, key,
+     * jump host and proxy command are already answered in their ssh config, and
+     * answered better than a form could.
+     */
+    sshHosts(): Promise<SshHostInfo[]>;
+    /** Attach a workspace on a configured machine. */
+    addRemote(alias: string, workspaceRoot: string): Promise<HostInfo>;
     /** Stop watching a host. The workspace on disk is untouched. */
     remove(instanceId: string): Promise<void>;
     /** Runtimes offered by one host — they need not be the same everywhere. */
@@ -197,6 +215,8 @@ export const CH = {
   hostsAdd: 'loom:hosts.add',
   hostsRemove: 'loom:hosts.remove',
   hostsRuntimes: 'loom:hosts.runtimes',
+  hostsSsh: 'loom:hosts.ssh',
+  hostsAddRemote: 'loom:hosts.addRemote',
   sessionsList: 'loom:sessions.list',
   sessionsCreate: 'loom:sessions.create',
   sessionsListOnDisk: 'loom:sessions.listOnDisk',

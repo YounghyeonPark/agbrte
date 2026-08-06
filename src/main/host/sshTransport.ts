@@ -271,7 +271,14 @@ export async function startRemoteHost(
     `${shellQuote(workspaceRoot)} >${log} 2>&1 < /dev/null & ) >/dev/null 2>&1`;
 
   const command =
-    `cd ${shellQuote(workspaceRoot)} && ${launch}; ` +
+    // Created if absent, matching the local flow — its folder picker allows
+    // making one. Refusing instead would mean the user has to ssh in and mkdir,
+    // which is the friction this is supposed to remove.
+    `mkdir -p ${shellQuote(workspaceRoot)} && cd ${shellQuote(workspaceRoot)} && ` +
+    // Truncated up front so a failure before launch cannot show the *previous*
+    // run's log. A stale "listening" line under a startup failure is actively
+    // misleading — it says the thing that just failed worked.
+    `: > ${log}; ${launch}; ` +
     // The record is written only once the socket is accepting, so waiting for it
     // is waiting for readiness — not merely for the process to exist. Waiting
     // here also keeps the session open past the moment a freshly started child

@@ -18,6 +18,7 @@ import type {
   HostInfo,
   RuntimeInfo,
   SessionSnapshot,
+  SshHostInfo,
 } from '../shared/ipc/contract.js';
 import type { LoomEvent, PermissionRequest, Session } from '../shared/types/index.js';
 
@@ -42,8 +43,13 @@ export interface LoomState {
   busy: boolean;
   error: string | null;
 
+  /** Machines from the user's ssh config, loaded when the attach panel opens. */
+  sshHosts: SshHostInfo[];
+
   boot(): Promise<void>;
   addHost(): Promise<void>;
+  loadSshHosts(): Promise<void>;
+  addRemoteHost(alias: string, workspaceRoot: string): Promise<boolean>;
   removeHost(instanceId: string): Promise<void>;
   createSession(instanceId: string, title: string, goal: string): Promise<void>;
   openSession(sessionId: string, instanceId?: string): Promise<void>;
@@ -87,6 +93,7 @@ function applySnapshot(set: SetState, snapshot: SessionSnapshot): void {
 
 export const useLoom = create<LoomState>((set, get) => ({
   hosts: [],
+  sshHosts: [],
   runtimesByHost: {},
   sessions: [],
   onDisk: [],
@@ -117,6 +124,23 @@ export const useLoom = create<LoomState>((set, get) => ({
     // Null means the picker was cancelled, which is not a failure.
     if (host === undefined || host === null) return;
     await get().boot();
+  },
+
+  async loadSshHosts() {
+    // Failing to read a config is not a reason to block the panel — the user can
+    // still type an alias that `ssh` knows about from somewhere else.
+    try {
+      set({ sshHosts: await loom().hosts.sshHosts() });
+    } catch {
+      set({ sshHosts: [] });
+    }
+  },
+
+  async addRemoteHost(alias, workspaceRoot) {
+    const host = await guard(set, () => loom().hosts.addRemote(alias, workspaceRoot));
+    if (host === undefined) return false;
+    await get().boot();
+    return true;
   },
 
   async removeHost(instanceId) {

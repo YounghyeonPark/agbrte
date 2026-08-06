@@ -202,6 +202,25 @@ describe('starting the host', () => {
     expect(runner.commands[0]).not.toContain('&;');
   });
 
+  it('creates the workspace if it is not there', async () => {
+    const runner = fakeRunner([{ match: /nohup/, stdout: record }]);
+    await startRemoteHost(runner, 'box', '/home/ci', '/n/bin/node', '/w/new');
+
+    // The local flow's folder picker can create one, so refusing here would mean
+    // the user has to ssh in and mkdir — the friction this exists to remove.
+    expect(runner.commands[0]).toContain(`mkdir -p '/w/new'`);
+  });
+
+  it('truncates the log before launching', async () => {
+    const runner = fakeRunner([{ match: /nohup/, stdout: record }]);
+    await startRemoteHost(runner, 'box', '/home/ci', '/n/bin/node', '/w');
+
+    // A failure *before* launch would otherwise tail the previous run's log, and
+    // a stale "listening" line under a startup failure says the thing that just
+    // failed worked.
+    expect(runner.commands[0]).toContain(': >');
+  });
+
   it('reports the log when the host never becomes ready', async () => {
     const runner = fakeRunner([{ match: /nohup/, code: 1, stderr: 'TIMEOUT\nEACCES /tmp' }]);
     await expect(

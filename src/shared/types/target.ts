@@ -30,6 +30,19 @@ export type ExecutionTarget =
 export type TargetKind = ExecutionTarget['kind'];
 
 /**
+ * Where a workspace is, completely: which machine, and which directory on it.
+ *
+ * The two travel together because neither answers "where is this session" on its
+ * own — a path is meaningless without the machine it is on, and that ambiguity
+ * is exactly what a fleet spanning several hosts cannot afford.
+ */
+export interface HostLocation {
+  target: ExecutionTarget;
+  /** Absolute on whichever machine `target` names. */
+  workspaceRoot: string;
+}
+
+/**
  * Enforced, not assumed. `persistentProcesses: false` disables detached runs
  * *with an explanation* rather than silently losing an overnight run.
  */

@@ -1242,6 +1242,10 @@ Outstanding work is tracked as `forwardedSeq − ackedSeq`, one monotonic pair. 
 | `loom-agent-host` | remote | 1 per remote workspace | agent loops, tools, log writes, leases |
 | agent worker | with its host | 1 per running agent | one agent's loop, or one CLI subprocess |
 
+**Attaching a remote is picking a name.** The app lists the aliases from `~/.ssh/config` and asks only where the workspace is; the alias goes to `ssh` unchanged, so their own config decides the rest. A first attach installs a private Node and deploys the host, which takes seconds, so progress is reported rather than hidden behind a spinner — and the panel says up front that nothing goes system-wide.
+
+`Fleet.attach` takes a `HostLocation` — a target *and* a path — because neither answers "which workspace" alone: a path is meaningless without the machine it is on, and that ambiguity is exactly what a fleet spanning hosts cannot afford. One connector dispatches on `target.kind`; everything above it, including the whole renderer, is identical for a workspace here and one on a build box.
+
 **Remote hosts work, over the user's own `ssh`.** This reverses §14's ordering — `ssh2` was the default, the system client the fallback — and the reason is the only thing that makes remote usable: everything hard is already configured on the user's machine. `ProxyCommand`, jump chains, FIDO keys, `ssh-agent`, `known_hosts`, host aliases. A library means reimplementing all of it, host-key TOFU UI included, and each is a chance to be subtly worse than what already works in their terminal. So attaching a remote is picking a name from `~/.ssh/config`, and `ssh2` becomes the fallback for cases where shelling out is not viable.
 
 The shape: the remote host listens on a **unix socket** in its own home, and the app reaches it with `ssh -L 127.0.0.1:<port>:<remote socket>`. A unix socket rather than a remote TCP port because a TCP listener is reachable by every user on that machine (§17 Q9). The local end being TCP on loopback is a concession to Windows, where forwarding to a local unix socket is not portable.

@@ -32,6 +32,7 @@ import type {
   AgentId,
   AgentRecord,
   ExecutionTarget,
+  HostLocation,
   InstanceId,
   LineageId,
   LoomEvent,
@@ -50,8 +51,14 @@ export interface FleetRuntime {
   requiresModel: boolean;
 }
 
-/** Opens a connection to the host owning a workspace, starting one if needed. */
-export type HostConnector = (workspaceRoot: string) => Promise<HostConnection>;
+/**
+ * Opens a connection to the host owning a workspace, starting one if needed.
+ *
+ * Takes the whole location rather than a path: which machine is as much a part
+ * of "which workspace" as the directory is, and a connector that only saw a path
+ * could not tell a local `/srv/work` from a remote one.
+ */
+export type HostConnector = (location: HostLocation) => Promise<HostConnection>;
 
 export interface FleetDeps {
   connect: HostConnector;
@@ -114,13 +121,11 @@ export class Fleet extends EventEmitter {
    * existing host rather than opening a second connection to the same owner,
    * which would buy nothing and double every push.
    */
-  async attach(
-    workspaceRoot: string,
-    target: ExecutionTarget = { kind: 'local' },
-  ): Promise<AttachedHost> {
+  async attach(location: HostLocation): Promise<AttachedHost> {
+    const { workspaceRoot, target } = location;
     let connection;
     try {
-      connection = await this.deps.connect(workspaceRoot);
+      connection = await this.deps.connect(location);
     } catch (err) {
       // No host answered and none could be started. Distinct from a host that
       // *is* up but whose agent host failed — that one attaches read-only.

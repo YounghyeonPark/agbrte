@@ -60,7 +60,7 @@ function makeFleet(opts: HostOptions = {}): Fleet {
 
   const fleet = new Fleet({
     runtimes: RUNTIMES,
-    connect: async (workspaceRoot) => {
+    connect: async ({ workspaceRoot }) => {
       let server = hosts.get(workspaceRoot);
       if (server === undefined) {
         const identity = await openWorkspace(workspaceRoot);
@@ -100,6 +100,12 @@ function makeFleet(opts: HostOptions = {}): Fleet {
 
 const TEXT = 'a message';
 
+/** A workspace on this machine — what every test here attaches. */
+const local = (workspaceRoot: string) => ({
+  target: { kind: 'local' } as const,
+  workspaceRoot,
+});
+
 beforeEach(() => {
   roots = [];
   fleets = [];
@@ -113,15 +119,15 @@ afterEach(async () => {
 describe('attaching hosts', () => {
   it('attaches several workspaces at once', async () => {
     const fleet = makeFleet();
-    const a = await fleet.attach(await makeRoot());
-    const b = await fleet.attach(await makeRoot());
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
 
     expect(fleet.hosts()).toHaveLength(2);
     expect(a.instanceId).not.toBe(b.instanceId);
   });
 
   it('reports the owning process and the granted role', async () => {
-    const host = await makeFleet().attach(await makeRoot());
+    const host = await makeFleet().attach(local(await makeRoot()));
 
     // A client can say which process it is talking to, which matters when the
     // host outlives the app that started it.
@@ -133,8 +139,8 @@ describe('attaching hosts', () => {
   it('is idempotent — attaching the same path twice keeps one connection', async () => {
     const fleet = makeFleet();
     const root = await makeRoot();
-    const first = await fleet.attach(root);
-    const second = await fleet.attach(root);
+    const first = await fleet.attach(local(root));
+    const second = await fleet.attach(local(root));
 
     // A second connection to the same owner buys nothing and doubles every push.
     expect(second.instanceId).toBe(first.instanceId);
@@ -143,7 +149,7 @@ describe('attaching hosts', () => {
 
   it('attaches read-only when the agent host failed but the session host is up', async () => {
     const fleet = makeFleet({ agentHostBroken: true });
-    const host = await fleet.attach(await makeRoot());
+    const host = await fleet.attach(local(await makeRoot()));
 
     // The session host owns the log, so transcripts still load and read. Only
     // running anything is impossible, and the UI is told why.
@@ -161,15 +167,15 @@ describe('attaching hosts', () => {
 
     // Different from the case above: with no session host there is nothing to
     // serve the log, so there is no read-only fallback to offer.
-    await expect(fleet.attach(await makeRoot())).rejects.toThrow(AttachRefused);
+    await expect(fleet.attach(local(await makeRoot()))).rejects.toThrow(AttachRefused);
   });
 });
 
 describe('aggregating sessions', () => {
   it('lists sessions from every host together', async () => {
     const fleet = makeFleet();
-    const a = await fleet.attach(await makeRoot());
-    const b = await fleet.attach(await makeRoot());
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
 
     await fleet.createSession(a.instanceId, { title: 'on A', goal: 'g' });
     await fleet.createSession(b.instanceId, { title: 'on B', goal: 'g' });
@@ -181,8 +187,8 @@ describe('aggregating sessions', () => {
     const fleet = makeFleet({
       script: [{ kind: 'stop', stop: { kind: 'quota_exhausted', scope: 'weekly' } }],
     });
-    const a = await fleet.attach(await makeRoot());
-    const b = await fleet.attach(await makeRoot());
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
 
     const blocked = await fleet.createSession(a.instanceId, { title: 'blocked', goal: 'g' });
     await fleet.createSession(b.instanceId, { title: 'idle', goal: 'g' });
@@ -201,15 +207,15 @@ describe('aggregating sessions', () => {
     const first = makeFleet();
     const rootA = await makeRoot();
     const rootB = await makeRoot();
-    const a = await first.attach(rootA);
-    const b = await first.attach(rootB);
+    const a = await first.attach(local(rootA));
+    const b = await first.attach(local(rootB));
     await first.createSession(a.instanceId, { title: 'A1', goal: 'g' });
     await first.createSession(b.instanceId, { title: 'B1', goal: 'g' });
     await first.detachAll();
 
     const second = makeFleet();
-    const a2 = await second.attach(rootA);
-    const b2 = await second.attach(rootB);
+    const a2 = await second.attach(local(rootA));
+    const b2 = await second.attach(local(rootB));
 
     const onDisk = await second.listOnDisk();
     expect(onDisk).toHaveLength(2);
@@ -221,8 +227,8 @@ describe('aggregating sessions', () => {
 describe('routing by session id', () => {
   it('sends a turn to the host that owns the session', async () => {
     const fleet = makeFleet();
-    const a = await fleet.attach(await makeRoot());
-    const b = await fleet.attach(await makeRoot());
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
 
     const onA = await fleet.createSession(a.instanceId, { title: 'A', goal: 'g' });
     await fleet.createSession(b.instanceId, { title: 'B', goal: 'g' });
@@ -238,8 +244,8 @@ describe('routing by session id', () => {
 
   it('keeps each host log independent', async () => {
     const fleet = makeFleet();
-    const a = await fleet.attach(await makeRoot());
-    const b = await fleet.attach(await makeRoot());
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
 
     const onA = await fleet.createSession(a.instanceId, { title: 'A', goal: 'g' });
     const onB = await fleet.createSession(b.instanceId, { title: 'B', goal: 'g' });
@@ -252,7 +258,7 @@ describe('routing by session id', () => {
 
   it('refuses a session no attached host owns', async () => {
     const fleet = makeFleet();
-    await fleet.attach(await makeRoot());
+    await fleet.attach(local(await makeRoot()));
     await expect(fleet.get('session-nobody-owns' as SessionId)).rejects.toThrow(
       /no attached host/,
     );
@@ -261,12 +267,12 @@ describe('routing by session id', () => {
   it('routes a resumed session to the host it was resumed on', async () => {
     const first = makeFleet();
     const root = await makeRoot();
-    const host = await first.attach(root);
+    const host = await first.attach(local(root));
     const created = await first.createSession(host.instanceId, { title: 'later', goal: 'g' });
     await first.detachAll();
 
     const second = makeFleet();
-    const again = await second.attach(root);
+    const again = await second.attach(local(root));
     expect(second.hostOf(created.sessionId)).toBeNull();
 
     await second.resumeSession(again.instanceId, created.sessionId);
@@ -278,8 +284,8 @@ describe('routing by session id', () => {
 describe('events carry their host', () => {
   it('tags every forwarded event with the host that produced it', async () => {
     const fleet = makeFleet();
-    const a = await fleet.attach(await makeRoot());
-    const b = await fleet.attach(await makeRoot());
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
 
     const seen: Array<{ instanceId: string; type: string }> = [];
     fleet.on('event', (instanceId: string, _sessionId, event: { type: string }) => {
@@ -307,8 +313,8 @@ describe('permissions across hosts', () => {
         { kind: 'stop', stop: { kind: 'end_turn' } },
       ],
     });
-    await fleet.attach(await makeRoot());
-    const b = await fleet.attach(await makeRoot());
+    await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
 
     const onB = await fleet.createSession(b.instanceId, { title: 'B', goal: 'g' });
     const agent = await fleet.addAgent(onB.sessionId, { role: 'worker', runtimeId: 'echo' });
@@ -333,7 +339,7 @@ describe('permissions across hosts', () => {
 
   it('treats an unknown requestId as stale rather than throwing', async () => {
     const fleet = makeFleet();
-    await fleet.attach(await makeRoot());
+    await fleet.attach(local(await makeRoot()));
 
     let stale: string | null = null;
     fleet.on('permission-stale', (id: string) => (stale = id));
@@ -348,8 +354,8 @@ describe('permissions across hosts', () => {
 describe('detaching', () => {
   it('forgets a host and stops routing to it', async () => {
     const fleet = makeFleet();
-    const a = await fleet.attach(await makeRoot());
-    const b = await fleet.attach(await makeRoot());
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
     const onA = await fleet.createSession(a.instanceId, { title: 'A', goal: 'g' });
 
     await fleet.detach(a.instanceId);
@@ -362,21 +368,21 @@ describe('detaching', () => {
   it('leaves the host running — detaching is not stopping', async () => {
     const fleet = makeFleet();
     const root = await makeRoot();
-    const host = await fleet.attach(root);
+    const host = await fleet.attach(local(root));
     const session = await fleet.createSession(host.instanceId, { title: 'kept', goal: 'g' });
 
     await fleet.detach(host.instanceId);
 
     // The same host, still holding the session it was given. This is the whole
     // reason ownership moved out of the app.
-    const again = await fleet.attach(root);
+    const again = await fleet.attach(local(root));
     expect(again.instanceId).toBe(host.instanceId);
     expect((await fleet.list()).map((s) => s.sessionId)).toEqual([session.sessionId]);
   });
 
   it('stops forwarding events from a detached host', async () => {
     const fleet = makeFleet();
-    const a = await fleet.attach(await makeRoot());
+    const a = await fleet.attach(local(await makeRoot()));
     await fleet.createSession(a.instanceId, { title: 'A', goal: 'g' });
 
     const seen: string[] = [];
@@ -398,7 +404,7 @@ describe('detaching', () => {
   it('drops a host that announces it is closing', async () => {
     const fleet = makeFleet();
     const root = await makeRoot();
-    const host = await fleet.attach(root);
+    const host = await fleet.attach(local(root));
 
     const detached = new Promise<string>((resolve) => {
       fleet.on('detached', (_id: string, reason: string) => resolve(reason));

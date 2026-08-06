@@ -46,6 +46,9 @@ const api: LoomApi = {
     add: () => ipcRenderer.invoke(CH.hostsAdd),
     remove: (instanceId: string) => ipcRenderer.invoke(CH.hostsRemove, instanceId),
     runtimes: (instanceId: string) => ipcRenderer.invoke(CH.hostsRuntimes, instanceId),
+    sshHosts: () => ipcRenderer.invoke(CH.hostsSsh),
+    addRemote: (alias: string, workspaceRoot: string) =>
+      ipcRenderer.invoke(CH.hostsAddRemote, alias, workspaceRoot),
   },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),

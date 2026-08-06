@@ -20,6 +20,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { registerIpc } from './ipc/register.js';
 import { Fleet, type FleetRuntime } from './fleet.js';
 import { connectOrSpawnHost } from './host/connectOrSpawn.js';
+import { connectRemoteHost } from './host/connectRemote.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -65,8 +66,29 @@ const HOST_RUNTIMES: FleetRuntime[] = [
 function buildFleet(): Fleet {
   return new Fleet({
     runtimes: HOST_RUNTIMES,
-    connect: (workspaceRoot) =>
-      connectOrSpawnHost({ workspaceRoot, hostEntry: join(HERE, 'loomHost.js') }),
+    // One connector, two transports. Everything above this line — the fleet, the
+    // IPC layer, the renderer — is identical for a workspace on this machine and
+    // one on a build box, which is the whole point of the boundary.
+    connect: async ({ target, workspaceRoot }) => {
+      if (target.kind === 'ssh') {
+        const alias = target.alias ?? target.host;
+        const { connection } = await connectRemoteHost({
+          alias,
+          workspaceRoot,
+          bundles: {
+            host: join(HERE, 'loomHost.js'),
+            agent: join(HERE, 'agentHost.js'),
+          },
+          // The app's own version, so a rebuilt app redeploys and an unchanged
+          // one does not pay for an upload it does not need.
+          bundleVersion: app.getVersion(),
+          onProgress: (step) => process.stderr.write(`[${alias}] ${step}
+`),
+        });
+        return connection;
+      }
+      return connectOrSpawnHost({ workspaceRoot, hostEntry: join(HERE, 'loomHost.js') });
+    },
   });
 }
 
@@ -129,7 +151,7 @@ app.whenReady().then(async () => {
 
   for (const root of roots) {
     try {
-      await fleet.attach(root);
+      await fleet.attach({ target: { kind: 'local' }, workspaceRoot: root });
     } catch (err) {
       process.stderr.write(`could not attach ${root}: ${String(err)}
 `);

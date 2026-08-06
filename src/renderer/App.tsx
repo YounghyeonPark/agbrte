@@ -25,6 +25,7 @@
 
 // React 19 no longer declares a global `JSX` namespace; it is exported instead.
 import { useEffect, useMemo, useState, type JSX } from 'react';
+import { AttachHost } from './AttachHost.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import { useLoom } from './store.js';
 import { Composer, EventRow, PermissionPrompt, Transcript, summarize } from './Transcript.js';
@@ -57,6 +58,7 @@ export const LABEL = 'text-[10px] uppercase tracking-wider';
 
 export function App(): JSX.Element {
   const store = useLoom();
+  const [attaching, setAttaching] = useState(false);
   const { hosts, runtimesByHost, sessions, onDisk, active, events, pending, queued, error, busy } =
     store;
 
@@ -85,10 +87,16 @@ export function App(): JSX.Element {
       <aside className="bg-panel border-line flex min-h-0 flex-col border-r">
         <header className="border-line flex items-center justify-between border-b p-3.5">
           <h1 className="text-base tracking-wide">Loom</h1>
-          <button className="btn" data-testid="add-host" onClick={() => void store.addHost()}>
-            Attach host…
+          <button
+            className="btn"
+            data-testid="add-host"
+            onClick={() => setAttaching((open) => !open)}
+          >
+            {attaching ? 'Cancel' : 'Attach host…'}
           </button>
         </header>
+
+        {attaching && <AttachHost onDone={() => setAttaching(false)} />}
 
         <nav className="grid min-h-0 content-start gap-4 overflow-y-auto p-2">
           {hosts.length === 0 && (
@@ -199,7 +207,10 @@ function HostGroup({
           >
             {host.targetKind}
           </span>
-          <span className="truncate-line text-xs" title={host.root}>
+          <span
+            className="truncate-line text-xs"
+            title={`${host.root}${host.targetKind === 'local' ? '' : ` on ${host.label}`}`}
+          >
             {host.label}
           </span>
         </div>

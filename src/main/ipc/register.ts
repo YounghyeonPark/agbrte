@@ -34,6 +34,7 @@ import {
   type RuntimeInfo,
   type SendRequest,
   type SessionSnapshot,
+  type SshHostInfo,
 } from '@shared/ipc/contract.js';
 import type {
   AgentId,
@@ -45,6 +46,7 @@ import type {
   SessionId,
 } from '@shared/types/index.js';
 import { basename } from 'node:path';
+import { readSshHosts } from '../host/sshConfig.js';
 import type { AttachedHost, Fleet, FleetRuntime } from '../fleet.js';
 import { EventBridge } from './eventBridge.js';
 
@@ -79,8 +81,15 @@ function describe(err: unknown): Error {
  * is the folder, since "local" repeated across four cards says nothing.
  */
 function labelFor(host: AttachedHost): string {
-  const target = host.target as { kind: string; host?: string; distro?: string };
-  return target.host ?? target.distro ?? basename(host.workspaceRoot);
+  const target = host.target as {
+    kind: string;
+    alias?: string;
+    host?: string;
+    distro?: string;
+  };
+  // For a remote the machine is the useful identifier — and the alias over the
+  // hostname, because the alias is what the user chose and what they would type.
+  return target.alias ?? target.host ?? target.distro ?? basename(host.workspaceRoot);
 }
 
 function toInfo(host: AttachedHost): HostInfo {
@@ -153,10 +162,30 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
     if (result.canceled || root === undefined) return null;
 
     // Attaching does not replace anything: several hosts stay attached (§8).
-    return toInfo(await fleet.attach(root));
+    return toInfo(await fleet.attach({ target: { kind: 'local' }, workspaceRoot: root }));
   });
 
   handle(CH.hostsRemove, (instanceId: string) => fleet.detach(instanceId as InstanceId));
+
+  handle(CH.hostsSsh, async (): Promise<SshHostInfo[]> =>
+    (await readSshHosts()).map((h) => ({
+      alias: h.alias,
+      ...(h.hostName !== undefined ? { hostName: h.hostName } : {}),
+      ...(h.user !== undefined ? { user: h.user } : {}),
+      ...(h.port !== undefined ? { port: h.port } : {}),
+    })),
+  );
+
+  handle(CH.hostsAddRemote, async (alias: string, workspaceRoot: string) =>
+    toInfo(
+      await fleet.attach({
+        // `useSystemConfig` is the point: the alias is handed to `ssh` unchanged,
+        // so the user's own config decides everything about the connection.
+        target: { kind: 'ssh', alias, host: alias, useSystemConfig: true },
+        workspaceRoot,
+      }),
+    ),
+  );
 
   handle(CH.hostsRuntimes, (instanceId: string): RuntimeInfo[] =>
     fleet.runtimesOn(instanceId as InstanceId).map((r) => ({

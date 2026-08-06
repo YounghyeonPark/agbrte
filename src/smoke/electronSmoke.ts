@@ -125,7 +125,7 @@ async function main(): Promise<number> {
       runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false }],
     });
 
-    const host = await fleet.attach(root);
+    const host = await fleet.attach({ target: { kind: 'local' }, workspaceRoot: root });
 
     const win = new BrowserWindow({
       show: false,
