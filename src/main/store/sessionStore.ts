@@ -22,6 +22,7 @@ import {
   type LoomEvent,
   type SessionId,
   type SessionProjection,
+  type Actor,
 } from '@shared/types/index.js';
 import { BlobStore } from './blobs.js';
 import { PathCodec } from './pathCodec.js';
@@ -74,7 +75,7 @@ export class SessionStore {
   static async create(
     workspaceRoot: string,
     meta: SessionMeta,
-    opts: { checkpointInterval?: number } = {},
+    opts: { checkpointInterval?: number; actor?: Actor } = {},
   ): Promise<SessionStore> {
     const layout = sessionLayout(workspaceRoot, meta.sessionId);
     await mkdir(layout.dir, { recursive: true, mode: PRIVATE_DIR_MODE });
@@ -88,7 +89,10 @@ export class SessionStore {
       opts.checkpointInterval ?? DEFAULT_CHECKPOINT_INTERVAL,
       workspaceRoot,
     );
-    await store.append({ type: 'session.created', goal: meta.goal, title: meta.title });
+    await store.append(
+      { type: 'session.created', goal: meta.goal, title: meta.title },
+      { ...(opts.actor !== undefined ? { actor: opts.actor } : {}) },
+    );
     return store;
   }
 

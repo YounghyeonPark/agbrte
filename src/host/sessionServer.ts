@@ -25,7 +25,13 @@
  * the same class serves a unix socket, a named pipe, or an SSH stream in Phase 5.
  */
 
-import { AccessDenied, type AccessRole, type AgentId, type SessionId } from '@shared/types/index.js';
+import {
+  AccessDenied,
+  type AccessRole,
+  type Actor,
+  type AgentId,
+  type SessionId,
+} from '@shared/types/index.js';
 import {
   SESSION_PROTOCOL_VERSION,
   type HostIdentity,
@@ -39,14 +45,18 @@ export interface SessionHostOptions {
   manager: SessionManager;
   identity: Omit<HostIdentity, 'protocol' | 'pid'>;
   /**
-   * Decides what role a client gets.
+   * Decides what role a client gets, and who the log will say it was.
    *
-   * Defaults to granting what was asked. That is right for a local socket, where
-   * reaching the pipe already means running as the workspace's user — the same
-   * trust boundary as the log itself. A remote or multi-user host replaces this
-   * rather than bolting authorization on somewhere else.
+   * One function for both because they are one question. A role that is not
+   * anchored to an identity records "someone with write access did this", which
+   * is not an answer, and an identity that grants nothing is decoration.
+   *
+   * Defaults to granting what was asked, attributed to the workspace's owner.
+   * That is right for a `0600` socket, where reaching it already *is* the proof
+   * (`host/identity.ts`). A multi-user host replaces this rather than bolting
+   * authorization on somewhere else.
    */
-  grantRole?: (requested: AccessRole, client: string) => AccessRole;
+  grantRole?: (requested: AccessRole, client: string) => { role: AccessRole; actor: Actor };
   /** Called when the host decides it should exit. */
   onIdleExit?: () => void;
   /** Milliseconds with no client and no work before exiting. 0 disables. */
@@ -58,6 +68,13 @@ interface Client {
   channel: HostSideSessionChannel;
   role: AccessRole;
   label: string;
+  /**
+   * Fixed at handshake, never re-read.
+   *
+   * A turn can outlive the connection that sent it, and the log must say who
+   * sent it rather than who is still attached when it finishes.
+   */
+  actor: Actor;
 }
 
 export class SessionHostServer {
@@ -89,7 +106,15 @@ export class SessionHostServer {
 
   /** Attach a client. Called once per accepted connection. */
   accept(channel: HostSideSessionChannel): void {
-    const client: Client = { channel, role: 'read-only', label: 'unknown' };
+    // `read-only` until the handshake says otherwise, and an actor that claims
+    // nothing. A connection that never says hello must not be able to write, and
+    // must not be able to put a name on anything either.
+    const client: Client = {
+      channel,
+      role: 'read-only',
+      label: 'unknown',
+      actor: { id: 'unknown', via: 'asserted' },
+    };
     this.clients.add(client);
     this.cancelLinger();
 
@@ -109,9 +134,11 @@ export class SessionHostServer {
     const { manager } = this.opts;
 
     if (command.t === 'hello') {
-      const granted = this.opts.grantRole?.(command.role, command.client) ?? command.role;
+      const decided = this.opts.grantRole?.(command.role, command.client);
+      const granted = decided?.role ?? command.role;
       client.role = granted;
       client.label = command.client;
+      if (decided !== undefined) client.actor = decided.actor;
       client.channel.post({
         t: 'welcome',
         id: command.id,
@@ -172,7 +199,10 @@ export class SessionHostServer {
 
         case 'session.create':
           this.requireWrite(client, 'create a session');
-          return manager.createSession({ title: command.title, goal: command.goal });
+          return manager.createSession(
+            { title: command.title, goal: command.goal },
+            client.actor,
+          );
 
         case 'session.resume':
           // A read: loading a session from its log changes nothing about it.
@@ -183,15 +213,19 @@ export class SessionHostServer {
           return manager.addAgent(
             command.sessionId as SessionId,
             command.input as Parameters<SessionManager['addAgent']>[1],
+            client.actor,
           );
 
         case 'session.send':
           this.requireWrite(client, 'send a turn');
           // Resolves when *this* turn completes, which may be after the client
           // that sent it has gone. The turn belongs to the host either way.
-          await manager.send(command.sessionId as SessionId, command.agentId as AgentId, {
-            content: [{ type: 'text', text: command.text }],
-          });
+          await manager.send(
+            command.sessionId as SessionId,
+            command.agentId as AgentId,
+            { content: [{ type: 'text', text: command.text }] },
+            client.actor,
+          );
           return undefined;
 
         case 'session.interrupt':
@@ -221,7 +255,7 @@ export class SessionHostServer {
 
         case 'permission.respond':
           this.requireWrite(client, 'answer a permission request');
-          return manager.respondPermission(command.requestId, command.decision);
+          return manager.respondPermission(command.requestId, command.decision, client.actor);
 
       }
     });

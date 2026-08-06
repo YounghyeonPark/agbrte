@@ -87,6 +87,44 @@ export interface ArtifactRef {
  */
 export type AccessRole = 'read-write' | 'read-only';
 
+/**
+ * How an identity was established.
+ *
+ * Recorded next to the identity itself because the two are not the same claim.
+ * "This is uid 1000" backed by socket permissions the kernel enforced, and "this
+ * is uid 1000" because a client said so, are worth entirely different amounts —
+ * and a log that flattens them cannot be audited later, only believed.
+ *
+ * Ordered weakest last on purpose. New sources (`tailscale`, `oidc`) slot in
+ * without touching anything that reads this, because a reader that does not know
+ * a source must treat it as no better than `asserted`.
+ */
+export type IdentitySource =
+  /** The OS refused everyone else: a 0600 socket, or a pipe's default DACL. */
+  | 'peer-credential'
+  /** An `ssh` session authenticated the unix user before a byte reached us. */
+  | 'ssh'
+  /** The client named itself and nothing checked. Never grants `read-write`. */
+  | 'asserted';
+
+/**
+ * Who caused something.
+ *
+ * `id` is stable and `label` is not — which is why they are separate fields
+ * rather than one string. An email, a login name and a display name all change
+ * while remaining the same person, and a log that keyed on one of those would
+ * quietly split one actor into several across a rename. A uid, a Tailscale user
+ * id and an OIDC `sub` do not change.
+ */
+export interface Actor {
+  /** Stable and opaque. Never an email or a display name. */
+  id: string;
+  /** What established `id`, and therefore what it is worth. */
+  via: IdentitySource;
+  /** For display only. Absent when nothing readable is known. */
+  label?: string;
+}
+
 /** A write attempted by a client that may only read. */
 export class AccessDenied extends Error {
   constructor(readonly action: string) {

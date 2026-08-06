@@ -29,6 +29,8 @@ import { listen, hostSocketPath } from '@shared/host/socketChannel.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { HostCommand, HostMessage, MainSideChannel } from '@shared/host/protocol.js';
 import { SessionHostServer } from './sessionServer.js';
+import { decideRole, loadAccessPolicy } from './accessPolicy.js';
+import { localIdentity } from './identity.js';
 import { clearHostRecord, writeHostRecord } from './discovery.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -145,6 +147,11 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     unavailableReason = err instanceof Error ? err.message : String(err);
   }
 
+  // Read before listening, so a malformed policy stops the host instead of
+  // being discovered by the first client it silently over-grants.
+  const accessPolicy = await loadAccessPolicy(workspaceRoot);
+  const identityOf = localIdentity();
+
   let server!: SessionHostServer;
   let listener!: Server;
 
@@ -164,6 +171,10 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       runtimes: available,
       ...(unavailableReason !== undefined ? { unavailableReason } : {}),
     },
+    grantRole: (requested, client) => ({
+      role: decideRole(accessPolicy, requested, client, identityOf.ceiling),
+      actor: identityOf.actor,
+    }),
     lingerMs: opts.lingerMs ?? DEFAULT_LINGER_MS,
     onIdleExit: () => {
       void stop().then(() => process.exit(0));

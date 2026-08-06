@@ -38,6 +38,15 @@ export interface RemoteConnectOptions {
   bundles: { host: string; agent: string };
   /** Stamped on the deployed bundle so a later attach knows what is there. */
   bundleVersion: string;
+  /**
+   * How this client names itself to the host.
+   *
+   * Settable because the workspace's access policy matches on it: a rule
+   * pinning `loom-app@phone-*` to read-only can never fire if every client
+   * arrives under the same hardcoded name. Defaults to naming the machine
+   * being reached, which is what a single-device user sees.
+   */
+  client?: string;
   runner?: SshRunner;
   lingerMs?: number;
   /** Progress, because a first attach installs a Node runtime and is not instant. */
@@ -108,7 +117,7 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
     const channel = await connect<SessionCommand, SessionMessage>({ port }, 10_000);
     const connection = new HostConnection({
       channel,
-      client: `loom-app@${opts.alias}`,
+      client: opts.client ?? `loom-app@${opts.alias}`,
       onClose: () => forward.close(),
     });
     return { connection, close: () => forward.close() };

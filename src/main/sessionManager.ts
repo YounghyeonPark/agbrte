@@ -41,6 +41,7 @@ import {
   type UserTurn,
   type AgentId,
   type SessionId,
+  type Actor,
 } from '@shared/types/index.js';
 import { SessionStore, type SessionMeta } from './store/sessionStore.js';
 import { workspaceLayout } from './store/layout.js';
@@ -79,6 +80,15 @@ interface QueuedTurn {
   turn: UserTurn;
   resolve: () => void;
   reject: (err: Error) => void;
+  /**
+   * Captured when the turn is queued, not when it runs.
+   *
+   * A queued turn can start long after the client that sent it disconnected, so
+   * asking "who is attached now" at execution time would attribute it to
+   * whoever happens to be watching — or to nobody. The sender is a property of
+   * the turn.
+   */
+  actor?: Actor;
 }
 
 export interface PendingPermission extends PermissionRequest {
@@ -144,7 +154,7 @@ export class SessionManager extends EventEmitter {
     this.now = deps.now ?? (() => new Date());
   }
 
-  async createSession(input: CreateSessionInput): Promise<Session> {
+  async createSession(input: CreateSessionInput, actor?: Actor): Promise<Session> {
     const sessionId = newSessionId();
     const createdAt = this.now().toISOString();
 
@@ -154,7 +164,7 @@ export class SessionManager extends EventEmitter {
       title: input.title,
       goal: input.goal,
       createdAt,
-    });
+    }, { ...(actor !== undefined ? { actor } : {}) });
 
     const session: Session = {
       sessionId,
@@ -211,7 +221,7 @@ export class SessionManager extends EventEmitter {
    * `all-or-nothing` runtime never reaches a shared workspace and a role's
    * capability floor is enforced before any work starts (§3.10, §4.2, §9).
    */
-  async addAgent(sessionId: SessionId, input: NewAgentInput): Promise<AgentRecord> {
+  async addAgent(sessionId: SessionId, input: NewAgentInput, actor?: Actor): Promise<AgentRecord> {
     const live = this.live(sessionId);
     const isolation = input.isolation ?? 'shared';
 
@@ -264,7 +274,11 @@ export class SessionManager extends EventEmitter {
         ...(spec.systemPrompt !== undefined ? { systemPrompt: spec.systemPrompt } : {}),
         ...(Object.keys(spec.limits).length > 0 ? { limits: spec.limits } : {}),
       },
-      { agentId: spec.agentId, origin: this.originFor(spec) },
+      {
+        agentId: spec.agentId,
+        origin: this.originFor(spec),
+        ...(actor !== undefined ? { actor } : {}),
+      },
     );
 
     this.touch(live);
@@ -294,7 +308,7 @@ export class SessionManager extends EventEmitter {
    * The alternative, a separate durable queue, buys little: depth is normally
    * zero or one, and a crash already costs the running turn.
    */
-  async send(sessionId: SessionId, agentId: AgentId, turn: UserTurn): Promise<void> {
+  async send(sessionId: SessionId, agentId: AgentId, turn: UserTurn, actor?: Actor): Promise<void> {
     // Validate before queueing, so a bad target fails at the call rather than
     // silently much later when the queue drains to it.
     const live = this.live(sessionId);
@@ -302,7 +316,7 @@ export class SessionManager extends EventEmitter {
 
     return new Promise<void>((resolve, reject) => {
       const queue = this.queues.get(agentId) ?? [];
-      queue.push({ turn, resolve, reject });
+      queue.push({ turn, resolve, reject, ...(actor !== undefined ? { actor } : {}) });
       this.queues.set(agentId, queue);
       this.emit('queue', sessionId, agentId, queue.length);
       void this.drain(sessionId, agentId);
@@ -331,7 +345,7 @@ export class SessionManager extends EventEmitter {
         if (!next) return;
         this.emit('queue', sessionId, agentId, queue?.length ?? 0);
         try {
-          await this.runTurn(sessionId, agentId, next.turn);
+          await this.runTurn(sessionId, agentId, next.turn, next.actor);
           next.resolve();
         } catch (err) {
           // One failed turn must not strand the turns behind it.
@@ -343,7 +357,12 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  private async runTurn(sessionId: SessionId, agentId: AgentId, turn: UserTurn): Promise<void> {
+  private async runTurn(
+    sessionId: SessionId,
+    agentId: AgentId,
+    turn: UserTurn,
+    actor?: Actor,
+  ): Promise<void> {
     const live = this.live(sessionId);
     const record = this.agent(live, agentId);
     const spec = live.specs.get(agentId);
@@ -359,7 +378,10 @@ export class SessionManager extends EventEmitter {
       handle = await this.openHandle(live, record, spec, runtime);
     }
 
-    await live.store.append({ type: 'user.turn', content: turn.content }, { agentId });
+    await live.store.append(
+      { type: 'user.turn', content: turn.content },
+      { agentId, ...(actor !== undefined ? { actor } : {}) },
+    );
     await this.setState(live, 'working');
 
     record.status = 'running';
@@ -487,6 +509,7 @@ export class SessionManager extends EventEmitter {
   async respondPermission(
     requestId: string,
     decision: PermissionDecision,
+    actor?: Actor,
   ): Promise<'answered' | 'already-answered' | 'unknown'> {
     const entry = this.pending.get(requestId);
     if (!entry) {
@@ -500,7 +523,7 @@ export class SessionManager extends EventEmitter {
     const live = this.live(entry.sessionId);
     const spec = live.specs.get(entry.agentId);
 
-    await this.logDecision(live, entry, decision, 'user');
+    await this.logDecision(live, entry, decision, 'user', undefined, actor);
     this.applyGrant(spec, entry, decision);
 
     entry.resolve(decision);
@@ -645,6 +668,8 @@ export class SessionManager extends EventEmitter {
     decision: PermissionDecision,
     via: 'policy' | 'user' | 'escalation-guard',
     evaluation?: { rule: PolicyRule | null; subject: string | null },
+    /** Only ever set when `via` is `'user'` — policy is not a person. */
+    actor?: Actor,
   ): Promise<void> {
     const spec = live.specs.get(request.agentId);
     await live.store.append(
@@ -663,6 +688,10 @@ export class SessionManager extends EventEmitter {
         agentId: request.agentId,
         // "Which agent tried that" needs the runtime and model, not just an id.
         ...(spec ? { origin: this.originFor(spec) } : {}),
+        // The question this whole field exists to answer: with several people
+        // attached to one host, "the gate said yes" is not an answer to "who
+        // let it run that".
+        ...(actor !== undefined ? { actor } : {}),
       },
     );
   }

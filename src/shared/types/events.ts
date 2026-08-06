@@ -21,7 +21,7 @@ import type { EncodedPath } from './paths.js';
 import type { PermissionDecision, PolicyRule } from './policy.js';
 import type { ModelRef, RuntimeCapabilities, StopReason } from './runtime.js';
 import type { PermissionFidelity } from './policy.js';
-import type { ChildRef, SessionBrief, SessionState } from './session.js';
+import type { Actor, ChildRef, SessionBrief, SessionState } from './session.js';
 
 /** Provenance stamped on every event that came from a model or adapter. */
 export interface EventOrigin {
@@ -42,6 +42,28 @@ export interface EventEnvelope {
   clockSkewMs?: number;
   agentId?: AgentId;
   origin?: EventOrigin;
+  /**
+   * The human who caused this, when one did.
+   *
+   * Absent means *no person acted* — an agent's own output, a state transition,
+   * a withdrawal on restart. It never means "a person we could not identify":
+   * a client whose identity cannot be established is refused `read-write`
+   * (`IdentitySource`), so it cannot produce an event that needs an actor.
+   * Reading absence as "unknown human" would make every line of agent output
+   * look like an unattributed action.
+   *
+   * Not stamped on work an agent does *because* of a turn, only on the turn
+   * itself. Marking a tool call with the name of whoever last typed would read
+   * as though they ran it, and "who approved this" already has its own event
+   * (`permission.decided`). The chain from a tool call back to its turn is in
+   * the log either way.
+   *
+   * Added late to an append-only format, so every reader must handle its
+   * absence: sessions recorded before this existed have no actor and never
+   * will. That is the honest representation — backfilling a guess would put a
+   * name on an action nobody verified.
+   */
+  actor?: Actor;
 }
 
 export type EventBody =

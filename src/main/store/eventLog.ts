@@ -21,7 +21,13 @@
 import { createReadStream } from 'node:fs';
 import { appendFile, mkdir, open, stat, truncate } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { newEventId, type EventBody, type EventOrigin, type LoomEvent } from '@shared/types/index.js';
+import {
+  newEventId,
+  type Actor,
+  type EventBody,
+  type EventOrigin,
+  type LoomEvent,
+} from '@shared/types/index.js';
 import { PRIVATE_DIR_MODE } from './layout.js';
 
 export interface ParseResult {
@@ -102,6 +108,8 @@ export interface AppendMeta {
   agentId?: LoomEvent['agentId'];
   origin?: EventOrigin;
   clockSkewMs?: number;
+  /** Set only for events a person caused. See `EventEnvelope.actor`. */
+  actor?: Actor;
   /** Injectable for deterministic tests. */
   now?: () => Date;
 }
@@ -193,6 +201,7 @@ export class EventLog {
       at: now().toISOString(),
       ...(meta.clockSkewMs !== undefined ? { clockSkewMs: meta.clockSkewMs } : {}),
       ...(meta.agentId !== undefined ? { agentId: meta.agentId } : {}),
+      ...(meta.actor !== undefined ? { actor: meta.actor } : {}),
       ...(meta.origin !== undefined ? { origin: meta.origin } : {}),
       ...body,
     } as LoomEvent;

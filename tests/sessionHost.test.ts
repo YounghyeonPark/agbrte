@@ -216,7 +216,10 @@ describe('roles are granted by the owner', () => {
       identity: { instanceId, lineageId: lineageId as never, workspaceRoot: root, runtimes: [] },
       // A remote or multi-user host replaces this rather than bolting
       // authorization on somewhere else.
-      grantRole: () => 'read-only',
+      grantRole: () => ({
+        role: 'read-only',
+        actor: { id: 'uid:1000', via: 'peer-credential', label: 'someone' },
+      }),
     });
 
     const pair = memoryChannelPair<SessionCommand, SessionMessage>();
