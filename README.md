@@ -1,35 +1,112 @@
 # Loom
 
 An agent-based development workbench. Multiple sessions, multiple agents per
-session, any model behind a pluggable adapter, running locally or on a remote
-machine — and agent memory that survives the workspace folder being moved.
+session, any model behind a pluggable adapter, running on your machine or on a
+server — and agent memory that survives the workspace folder being moved.
 
-**Status: Phase 1 complete.** A single text session edits a real repository and
-its transcript survives an app restart, verified end to end. Phases 2–8 (see
-[DESIGN.md §15](DESIGN.md)) are not built yet — no dashboard, no remote
-execution, no multi-agent, no multimodal.
+**Status: Phase 1 complete, Phase 5 (remote execution) in progress.** A text
+session edits a real repository and its transcript survives an app restart,
+verified end to end. Remote workspaces, hosts that outlive the app, and several
+clients on one session all work and are exercised against a real server. Not yet
+built: the dashboard, multi-agent, multimodal, and a web client — see
+[DESIGN.md §15](DESIGN.md) for what each phase covers and what is deliberately
+unfinished.
 
-## The shape of it
+## The one idea
 
-Three axes, deliberately independent, so adding a vendor never touches transport
-code and vice versa:
+**A session runs on a host, not inside the window.** A host is a workspace — a
+folder, on this machine or on a server — served by its own process that owns the
+event log, the permission gate, and the turn queue. The app is a client.
 
-| Axis | Interface | Means |
-|---|---|---|
-| Harness | `AgentRuntime` | who runs the loop — a vendor SDK, a CLI, or our own |
-| Model | `ModelProvider` | which model answers |
-| Location | `Transport` | where it executes (Phase 5) |
+Closing the app mid-run, driving one session from a second machine, and resuming
+after a restart are not three features. They are three consequences of that.
 
-The load-bearing decision is that **the append-only event log is the source of
-truth**, not any provider's session state. One function, `rehydrate()`,
-reconstructs context from that log, and it serves four separate requirements: a
-moved folder, a migrated machine, a switched provider, and a resumed quota
-window. It is also the in-session compactor, so the durable path is exercised
-constantly and cannot rot.
+## Ways to use it
 
-`DESIGN.md` is the real specification — 17 sections, including what is
-deliberately unfinished and why. Read §1–§3 for the architecture, §5 for
-durability, §13 for the permission model.
+### 1. A folder on this machine
+
+`Attach host… → Use a folder on this machine`. Create a session, add an agent,
+type. Pick the `echo` runtime to exercise everything without a model at all.
+
+### 2. A server over ssh
+
+`Attach host… → Remote`, then a name and a path. The name is an alias from your
+`~/.ssh/config` if you have one, or `user@hostname`, which needs no config at
+all — Loom shells out to `ssh`, so your keys, ports, jump hosts and
+`ProxyCommand`s already apply, and any NAT-traversal tool that makes `ssh <name>`
+work makes this work too.
+
+The first attach to a machine installs a private Node under `~/.loom` and copies
+two ~100 KB bundles there. Nothing system-wide, no sudo. Later attaches reuse
+them.
+
+If ssh has never connected to that machine, it will fail in one of a few
+specific ways — an unconfirmed host key, refused credentials, a name that does
+not resolve — and Loom names which one and the command that settles it. It will
+not accept a host key for you: that check only means something if a human
+compares the fingerprint against something other than the connection presenting
+it.
+
+### 3. Close the app; the run keeps going
+
+The host is detached, so quitting the app does not stop a turn. Reopen and
+attach the same workspace to land back on the session, mid-turn if it is still
+working. Detaching a host in the app (`×`) drops the connection and leaves the
+run alone; a host with nothing attached and nothing running then exits on its
+own after a while rather than lingering forever.
+
+There is no button to stop a host that is still busy, and that is the honest
+state rather than a design: the protocol has a shutdown that refuses while work
+is in flight, but nothing in the UI sends it yet.
+
+### 4. The same session from a second machine
+
+Attach the same remote workspace from another computer. Both clients see one
+transcript because there is one session; commands from either queue in arrival
+order. A permission prompt raised on one is answerable from the other, because
+pending requests live in the log rather than in a callback in some process's
+memory.
+
+### 5. Watch without being able to type
+
+A client asks for `read-write` or `read-only` at handshake and the host decides —
+enforcement is the owner's, never the client's. To pin a machine to watching,
+put this in the workspace's `.devagents/access.json`:
+
+```json
+{ "rules": [{ "client": "loom-app@laptop-*", "role": "read-only" }] }
+```
+
+A rule is a ceiling: it never grants more than a client asked for. This is a
+seatbelt, not a lock — the label is self-reported, and anyone who can reach the
+host's socket is already the workspace's owner. It exists because a live run on
+a screen you are only watching is one keystroke from being driven.
+
+### 6. Find out who did what
+
+Every event a person caused carries an actor — who sent that turn, who approved
+that shell command. Events with no actor were caused by no person; agent output
+and state transitions carry none. With one user this is a nicety. With a host
+several people attach to, "the gate said yes" is not an answer to "who let it
+run that".
+
+### 7. Headless, with no app at all
+
+```bash
+npm run loom -- --workspace ./sandbox --goal "add a test" "add a test for the parser"
+npm run loom -- --workspace ./sandbox --inspect <sessionId>
+```
+
+Useful for exercising an adapter, and for a session you want scripted rather
+than watched.
+
+### 8. Resume anything
+
+Every session on disk reopens from its own log — which agent ran, under which
+model and adapter version, what it was asked, what it did, and who approved
+each thing it needed permission for. The log is the truth, not a cache of some
+provider's session state, which is why a moved folder, a switched provider and a
+restarted machine are all the same problem.
 
 ## Running it
 
@@ -40,24 +117,37 @@ npm install
 ollama pull qwen2.5:7b        # optional; the echo runtime needs no model
 
 npm run dev                   # Vite + esbuild watch + Electron
+npm start                     # build, then launch
 ```
 
-Then: choose a workspace folder, create a session, add an agent, and type.
-Pick the `echo` runtime to exercise the UI without a model at all.
+## The shape of it
 
-Headless, without the app:
+Three axes, deliberately independent, so adding a vendor never touches transport
+code and vice versa:
 
-```bash
-npm run loom -- --workspace /path/to/repo --model qwen2.5:7b "add a test for the parser"
-```
+| Axis | Interface | Means |
+|---|---|---|
+| Harness | `AgentRuntime` | who runs the loop — a vendor SDK, a CLI, or our own |
+| Model | `ModelProvider` | which model answers |
+| Location | `HostChannel` | where it executes — in-memory, a forked process, a socket, an ssh forward |
+
+The load-bearing decision is that **the append-only event log is the source of
+truth**. One function, `rehydrate()`, reconstructs context from that log, and it
+serves four separate requirements: a moved folder, a migrated machine, a
+switched provider, and a resumed quota window. It is also the in-session
+compactor, so the durable path is exercised constantly and cannot rot.
+
+`DESIGN.md` is the real specification — 17 sections, including what is
+deliberately unfinished and why. Read §1–§3 for the architecture, §5 for
+durability, §6.4 and §8 for the host model, §13 for permissions.
 
 ## Tests
 
-Three layers, each with a different job:
+Four layers, each with a different job:
 
 ```bash
-npm test          # Vitest over the headless core — no Electron, ~1s
-npm run smoke     # a real window + a real agent host process, 14 checks
+npm test          # Vitest over the headless core — no Electron, ~3s
+npm run smoke     # a real window + a real host process, 15 checks
 npm run e2e       # Playwright drives the built app as a user
 npm run check     # typecheck (node + web projects) then npm test
 ```
@@ -69,22 +159,26 @@ layer that can verify §15's acceptance criteria, including closing the app and
 relaunching it to prove a transcript survived.
 
 Tests that need a local model **skip loudly** rather than passing. A criterion
-whose test was skipped is not a criterion that holds.
+whose test was skipped is not a criterion that holds. The remote transport's
+tests cover its decisions without a server; whether `ssh -L` reaches a remote
+unix socket, and whether a detached child outlives its session, cannot be faked
+and are not pretended at — those were established against a real machine.
 
 ## Layout
 
 ```
-src/shared/      types, the IPC contract, the agent-host protocol
-src/main/        session manager, event log, policy gate, IPC — no adapters
-src/host/        the utilityProcess that runs agent loops and tools
+src/shared/      types, the IPC contract, the agent + session protocols
+src/main/        the app side: fleet, host connections, ssh transport, IPC
+src/host/        the session host — owns sessions, the log, the gate, the queue
 src/preload/     the entire privileged surface the renderer gets
 src/renderer/    React + Tailwind, windowed projection over the log
 src/cli/         headless driver, useful for testing adapters
 ```
 
-Agent loops run in a separate process, so a crashing adapter cannot take the
-window down. Main keeps session state, the log, and the permission gate, and
-never runs an adapter.
+Three processes per workspace, not two: the app holds no session state, the host
+owns sessions and the log, and a forked agent host runs the loops and tools. A
+crashing adapter cannot take down the session, and a closing window cannot take
+down the run.
 
 ## A note on the workspace
 
