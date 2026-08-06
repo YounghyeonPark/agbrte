@@ -1,0 +1,307 @@
+/**
+ * The session host (DESIGN.md §6.4, §8).
+ *
+ * Owns a workspace's `SessionManager`, and therefore its event log, its
+ * permission gate, and its turn queues. Serves any number of connected clients.
+ *
+ * This is what makes "the session keeps running when the app closes" true.
+ * Detaching a process is not enough on its own: if the app still owned the log,
+ * a running agent's events would have nowhere to go the moment it quit — the
+ * work would continue and the transcript would not, which is worse than
+ * stopping.
+ *
+ * ## One owner, many clients
+ *
+ * Every connection gets the same `SessionManager`. That is what makes two
+ * devices see one session rather than two copies of it, and why the turn queue
+ * and the pending-permission set live here rather than in a client.
+ *
+ * A client leaving is uneventful by construction: it holds no session state to
+ * lose. Work in flight belongs to this process.
+ *
+ * ## Transport-free
+ *
+ * Takes channels, never sockets. The tests drive it over an in-memory pair, and
+ * the same class serves a unix socket, a named pipe, or an SSH stream in Phase 5.
+ */
+
+import { AccessDenied, type AccessRole, type AgentId, type SessionId } from '@shared/types/index.js';
+import {
+  SESSION_PROTOCOL_VERSION,
+  type HostIdentity,
+  type HostSideSessionChannel,
+  type RequestId,
+  type SessionCommand,
+} from '@shared/host/sessionProtocol.js';
+import type { SessionManager } from '@main/sessionManager.js';
+
+export interface SessionHostOptions {
+  manager: SessionManager;
+  identity: Omit<HostIdentity, 'protocol' | 'pid'>;
+  /**
+   * Decides what role a client gets.
+   *
+   * Defaults to granting what was asked. That is right for a local socket, where
+   * reaching the pipe already means running as the workspace's user — the same
+   * trust boundary as the log itself. A remote or multi-user host replaces this
+   * rather than bolting authorization on somewhere else.
+   */
+  grantRole?: (requested: AccessRole, client: string) => AccessRole;
+  /** Called when the host decides it should exit. */
+  onIdleExit?: () => void;
+  /** Milliseconds with no client and no work before exiting. 0 disables. */
+  lingerMs?: number;
+  now?: () => number;
+}
+
+interface Client {
+  channel: HostSideSessionChannel;
+  role: AccessRole;
+  label: string;
+}
+
+export class SessionHostServer {
+  private readonly clients = new Set<Client>();
+  private lingerTimer: NodeJS.Timeout | null = null;
+  private closed = false;
+
+  constructor(private readonly opts: SessionHostOptions) {
+    const { manager } = opts;
+
+    // Pushed to every attached client. A client that connected halfway through a
+    // turn still sees the rest of it, because the events come from the manager
+    // rather than from any client's subscription.
+    manager.on('event', (sessionId: SessionId, event: unknown) =>
+      this.broadcast({ t: 'push.event', sessionId, event: event as never }),
+    );
+    manager.on('session', (session: unknown) =>
+      this.broadcast({ t: 'push.session', session: session as never }),
+    );
+    manager.on('permission', (request: unknown) =>
+      this.broadcast({ t: 'push.permission', request: request as never }),
+    );
+    manager.on('queue', (sessionId: SessionId, agentId: AgentId, depth: number) =>
+      this.broadcast({ t: 'push.queue', sessionId, agentId, depth }),
+    );
+
+    this.armLinger();
+  }
+
+  /** Attach a client. Called once per accepted connection. */
+  accept(channel: HostSideSessionChannel): void {
+    const client: Client = { channel, role: 'read-only', label: 'unknown' };
+    this.clients.add(client);
+    this.cancelLinger();
+
+    channel.onMessage((command) => void this.dispatch(client, command));
+    channel.onClose(() => {
+      this.clients.delete(client);
+      // A departing client is not a reason to stop. It owns nothing.
+      this.armLinger();
+    });
+  }
+
+  private broadcast(message: Parameters<HostSideSessionChannel['post']>[0]): void {
+    for (const client of this.clients) client.channel.post(message);
+  }
+
+  private async dispatch(client: Client, command: SessionCommand): Promise<void> {
+    const { manager } = this.opts;
+
+    if (command.t === 'hello') {
+      const granted = this.opts.grantRole?.(command.role, command.client) ?? command.role;
+      client.role = granted;
+      client.label = command.client;
+      client.channel.post({
+        t: 'welcome',
+        id: command.id,
+        role: granted,
+        identity: {
+          ...this.opts.identity,
+          pid: process.pid,
+          protocol: SESSION_PROTOCOL_VERSION,
+        },
+      });
+      return;
+    }
+
+    if (command.t === 'shutdown') {
+      // Answered *before* stopping. `stop()` closes every channel, so replying
+      // afterwards writes into a socket the client has already seen close — and
+      // the client cannot then tell "it stopped because I asked" from "it died".
+      try {
+        this.requireWrite(client, 'shut the host down');
+      } catch (err) {
+        client.channel.post({
+          t: 'err',
+          id: command.id,
+          message: err instanceof Error ? err.message : String(err),
+          ...(err instanceof Error ? { name: err.name } : {}),
+        });
+        return;
+      }
+
+      // Refused while work is in flight. A detached host holding a live agent
+      // must not go down because a window closed — that is the whole point of it
+      // being detached.
+      if (this.busy()) {
+        client.channel.post({
+          t: 'ok',
+          id: command.id,
+          value: { stopped: false, reason: 'work is still running' },
+        });
+        return;
+      }
+
+      client.channel.post({ t: 'ok', id: command.id, value: { stopped: true } });
+      // After the reply has been posted, so the acknowledgement wins the race.
+      setTimeout(() => this.stop('shutdown requested'), 0);
+      return;
+    }
+
+    await this.reply(client, command.id, async () => {
+      switch (command.t) {
+        case 'session.list':
+          return manager.list();
+
+        case 'session.listOnDisk':
+          return manager.listOnDisk();
+
+        case 'session.get':
+          return manager.get(command.sessionId as SessionId);
+
+        case 'session.create':
+          this.requireWrite(client, 'create a session');
+          return manager.createSession({ title: command.title, goal: command.goal });
+
+        case 'session.resume':
+          // A read: loading a session from its log changes nothing about it.
+          return manager.resumeSession(command.sessionId as SessionId);
+
+        case 'session.addAgent':
+          this.requireWrite(client, 'add an agent');
+          return manager.addAgent(
+            command.sessionId as SessionId,
+            command.input as Parameters<SessionManager['addAgent']>[1],
+          );
+
+        case 'session.send':
+          this.requireWrite(client, 'send a turn');
+          // Resolves when *this* turn completes, which may be after the client
+          // that sent it has gone. The turn belongs to the host either way.
+          await manager.send(command.sessionId as SessionId, command.agentId as AgentId, {
+            content: [{ type: 'text', text: command.text }],
+          });
+          return undefined;
+
+        case 'session.interrupt':
+          this.requireWrite(client, 'interrupt');
+          await manager.interrupt(
+            command.sessionId as SessionId,
+            command.agentId as AgentId | undefined,
+          );
+          return undefined;
+
+        case 'session.events':
+          return manager.events(command.sessionId as SessionId, command.fromSeq);
+
+        case 'session.projection':
+          return manager.projection(command.sessionId as SessionId);
+
+        case 'session.queueDepth': {
+          const session = manager.get(command.sessionId as SessionId);
+          return session.agents.reduce(
+            (total, agent) => total + manager.queueDepth(agent.agentId),
+            0,
+          );
+        }
+
+        case 'permission.pending':
+          return manager.pendingPermissions();
+
+        case 'permission.respond':
+          this.requireWrite(client, 'answer a permission request');
+          return manager.respondPermission(command.requestId, command.decision);
+
+      }
+    });
+  }
+
+  private async reply(
+    client: Client,
+    id: RequestId,
+    fn: () => Promise<unknown>,
+  ): Promise<void> {
+    try {
+      const value = await fn();
+      client.channel.post({ t: 'ok', id, ...(value !== undefined ? { value } : {}) });
+    } catch (err) {
+      client.channel.post({
+        t: 'err',
+        id,
+        message: err instanceof Error ? err.message : String(err),
+        ...(err instanceof Error ? { name: err.name } : {}),
+      });
+    }
+  }
+
+  private requireWrite(client: Client, action: string): void {
+    if (client.role === 'read-only') throw new AccessDenied(action);
+  }
+
+  /** Any session mid-turn, or any prompt waiting on a human. */
+  private busy(): boolean {
+    const { manager } = this.opts;
+    if (manager.pendingPermissions().length > 0) return true;
+    return manager.list().some((session) => session.state === 'working');
+  }
+
+  /**
+   * Exit after a quiet spell with nothing attached and nothing running.
+   *
+   * §8 parks hosts for the same reason: without this, every workspace ever
+   * opened leaves a process behind, and they are invisible because nothing shows
+   * them. Re-armed whenever the last client leaves, cancelled when one arrives.
+   */
+  private armLinger(): void {
+    const lingerMs = this.opts.lingerMs ?? 0;
+    this.cancelLinger();
+    if (lingerMs <= 0 || this.closed) return;
+    if (this.clients.size > 0) return;
+
+    this.lingerTimer = setTimeout(() => {
+      if (this.clients.size > 0 || this.busy()) {
+        // Work arrived while the timer ran, or a prompt is still waiting. Try
+        // again later rather than exiting out from under it.
+        this.armLinger();
+        return;
+      }
+      this.stop('idle');
+      this.opts.onIdleExit?.();
+    }, lingerMs);
+    // Never hold the process open just to time its own exit.
+    this.lingerTimer.unref?.();
+  }
+
+  private cancelLinger(): void {
+    if (this.lingerTimer !== null) {
+      clearTimeout(this.lingerTimer);
+      this.lingerTimer = null;
+    }
+  }
+
+  /** Tell every client why, then drop them. */
+  stop(reason: string): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.cancelLinger();
+    this.broadcast({ t: 'push.closing', reason });
+    for (const client of this.clients) client.channel.close();
+    this.clients.clear();
+  }
+
+  /** Test and diagnostic view. */
+  get clientCount(): number {
+    return this.clients.size;
+  }
+}
