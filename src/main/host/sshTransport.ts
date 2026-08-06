@@ -1,0 +1,419 @@
+/**
+ * Reaching a session host over SSH (DESIGN.md §6.2, §6.4, §14).
+ *
+ * Shells out to the user's own `ssh` rather than speaking the protocol in
+ * process. §14 specifies `ssh2` as the default and this as the fallback; the
+ * order is reversed here deliberately, and the reason is the one thing that
+ * makes remote hosts usable at all: **everything hard is already configured on
+ * the user's machine.** `ProxyCommand`, jump chains, FIDO keys, `ssh-agent`,
+ * `known_hosts`, host aliases. Going through a library means reimplementing all
+ * of it — host-key TOFU UI included — and every one of those is a chance to be
+ * subtly worse than what already works in their terminal.
+ *
+ * ## Shape, verified against a real host before it was written
+ *
+ * The remote host listens on a **unix socket** in its own home directory, and
+ * the app reaches it with `ssh -L 127.0.0.1:<port>:<remote socket>`. A unix
+ * socket rather than a remote TCP port because a TCP listener is reachable by
+ * every user on that machine, which for a shared build box is the whole problem
+ * (§17 Q9). That `-L` form was tested against a live server first: the design
+ * rests on it, so guessing would have been expensive.
+ *
+ * The one concession is that the *local* end of the forward is TCP on loopback.
+ * OpenSSH can forward a local unix socket too, but not portably on Windows, and
+ * an ephemeral loopback port is a much smaller exposure than a remote one — it
+ * is reachable only from this machine, and only while the app is running.
+ *
+ * ## Bootstrap without root
+ *
+ * Nothing is installed system-wide and nothing needs `sudo`. A private Node
+ * runtime is unpacked under `~/.loom/` and the host bundle beside it. That
+ * matters for a machine you were lent rather than given: attaching a host must
+ * not mean changing it.
+ */
+
+import { spawn } from 'node:child_process';
+import { createServer, type Server } from 'node:net';
+import { readFile } from 'node:fs/promises';
+
+/**
+ * How Loom is laid out in a remote home directory.
+ *
+ * Built from the absolute `$HOME` the probe reports rather than from `~`,
+ * because the two do not survive quoting together: a path must be quoted to be
+ * safe in `sh -c`, and quoting is exactly what stops the shell expanding `~`.
+ * A literal `~/.loom/...` reaches the remote as a directory name containing a
+ * tilde, and the failure — "No such file or directory" — points at the wrong
+ * thing entirely.
+ */
+export function remoteRoot(home: string): string {
+  return `${home}/.loom`;
+}
+export function remoteNodeDir(home: string): string {
+  return `${remoteRoot(home)}/node`;
+}
+export function remoteBundle(home: string): string {
+  return `${remoteRoot(home)}/loomHost.js`;
+}
+/**
+ * The agent host, deployed beside the session host.
+ *
+ * Two files because the session host *forks* this one: it owns the log, so an
+ * adapter crashing must not reach it (§8). Shipping only the session host left
+ * the fork with nothing to exec, which surfaced as "could not resolve
+ * capabilities: agent host exited with code 1" — a message about the wrong layer.
+ */
+export function remoteAgentBundle(home: string): string {
+  return `${remoteRoot(home)}/agentHost.js`;
+}
+export function remoteNodeBin(home: string): string {
+  return `${remoteNodeDir(home)}/bin/node`;
+}
+
+/** Node shipped to a remote that has none. Pinned so a host is reproducible. */
+export const REMOTE_NODE_VERSION = 'v22.11.0';
+
+export interface SshRunner {
+  /** Run a command on the remote, returning its output. */
+  exec(alias: string, command: string): Promise<{ code: number; stdout: string; stderr: string }>;
+  /** Copy local bytes to a remote path. */
+  upload(alias: string, remotePath: string, contents: Buffer): Promise<void>;
+  /** Start `ssh -L`, resolving once the forward is usable. */
+  forward(alias: string, localPort: number, remoteSocket: string): Promise<{ close(): void }>;
+}
+
+export class RemoteBootstrapFailed extends Error {
+  constructor(
+    reason: string,
+    readonly detail?: string,
+  ) {
+    super(detail === undefined || detail === '' ? reason : `${reason}: ${detail}`);
+    this.name = 'RemoteBootstrapFailed';
+  }
+}
+
+/** What a remote already has, decided by looking rather than assuming. */
+export interface RemoteProbe {
+  reachable: boolean;
+  /** `uname -m`, so the right Node build is fetched. */
+  arch: string;
+  platform: string;
+  /** A usable `node`, whether the system's or one Loom unpacked earlier. */
+  nodePath: string | null;
+  /** True when the host bundle is already in place at the expected version. */
+  bundleVersion: string | null;
+  home: string;
+  detail: string;
+}
+
+/**
+ * One shell round trip that answers everything the bootstrap decides on.
+ *
+ * Batched deliberately: each `ssh` invocation is a full connection setup, and
+ * five sequential probes is five of them — noticeable on a link with any
+ * latency, and the whole point of remote execution is that latency is the enemy
+ * (§6.3).
+ */
+export async function probeRemote(runner: SshRunner, alias: string): Promise<RemoteProbe> {
+  const script = [
+    'echo "home=$HOME"',
+    'echo "arch=$(uname -m)"',
+    'echo "platform=$(uname -s)"',
+    // A Loom-managed Node is preferred over the system one: it is the version
+    // this host was tested with, and a system upgrade cannot move it underneath.
+    `if [ -x "$HOME/.loom/node/bin/node" ]; then echo "node=$HOME/.loom/node/bin/node"; ` +
+      'elif command -v node >/dev/null 2>&1; then echo "node=$(command -v node)"; ' +
+      'else echo "node="; fi',
+    `if [ -f "$HOME/.loom/loomHost.js" ]; then echo "bundle=$(sed -n 's/^\\/\\/ loom-bundle: //p' "$HOME/.loom/loomHost.js" | head -1)"; else echo "bundle="; fi`,
+  ].join('; ');
+
+  const result = await runner.exec(alias, script);
+  if (result.code !== 0) {
+    return {
+      reachable: false,
+      arch: '',
+      platform: '',
+      nodePath: null,
+      bundleVersion: null,
+      home: '',
+      detail: result.stderr.trim() || `ssh exited ${result.code}`,
+    };
+  }
+
+  const fields = new Map<string, string>();
+  for (const line of result.stdout.split('\n')) {
+    const at = line.indexOf('=');
+    if (at > 0) fields.set(line.slice(0, at).trim(), line.slice(at + 1).trim());
+  }
+
+  const node = fields.get('node') ?? '';
+  const bundle = fields.get('bundle') ?? '';
+  return {
+    reachable: true,
+    arch: fields.get('arch') ?? '',
+    platform: fields.get('platform') ?? '',
+    nodePath: node === '' ? null : node,
+    bundleVersion: bundle === '' ? null : bundle,
+    home: fields.get('home') ?? '',
+    detail: result.stdout.trim(),
+  };
+}
+
+/** Node's own download URL for a platform triple. */
+export function nodeTarballUrl(platform: string, arch: string, version = REMOTE_NODE_VERSION): string {
+  const os = platform.toLowerCase() === 'darwin' ? 'darwin' : 'linux';
+  const cpu = arch === 'aarch64' || arch === 'arm64' ? 'arm64' : 'x64';
+  return `https://nodejs.org/dist/${version}/node-${version}-${os}-${cpu}.tar.xz`;
+}
+
+/**
+ * Put a private Node under `~/.loom/node`, without touching the system.
+ *
+ * `--strip-components=1` so the version disappears from the path: the caller
+ * should not have to know which build is unpacked, and an upgrade replaces the
+ * directory rather than adding a second one to choose between.
+ */
+export async function installRemoteNode(
+  runner: SshRunner,
+  alias: string,
+  probe: RemoteProbe,
+): Promise<void> {
+  const url = nodeTarballUrl(probe.platform, probe.arch);
+  const dir = shellQuote(remoteNodeDir(probe.home));
+  const script = [
+    `mkdir -p ${dir}`,
+    `cd "$(mktemp -d)"`,
+    // `-f` so an HTTP error is a non-zero exit rather than a saved error page,
+    // which would then fail confusingly inside tar.
+    `curl -fsSL "${url}" -o node.tar.xz`,
+    `tar -xJf node.tar.xz -C ${dir} --strip-components=1`,
+    `rm -f node.tar.xz`,
+    `${shellQuote(remoteNodeBin(probe.home))} --version`,
+  ].join(' && ');
+
+  const result = await runner.exec(alias, script);
+  if (result.code !== 0) {
+    throw new RemoteBootstrapFailed('could not install Node on the remote', result.stderr.trim());
+  }
+}
+
+/**
+ * Copy both bundles, stamping the session host so a later probe knows what is
+ * deployed.
+ *
+ * Only the session host carries the stamp: the two always ship together, so one
+ * marker answers for both.
+ */
+export async function uploadHostBundle(
+  runner: SshRunner,
+  alias: string,
+  home: string,
+  bundles: { host: string; agent: string },
+  version: string,
+): Promise<void> {
+  const [hostBytes, agentBytes] = await Promise.all([
+    readFile(bundles.host),
+    readFile(bundles.agent),
+  ]);
+  // The stamp is a comment on the first line, which is why the probe can read
+  // the deployed version with `sed` instead of running the bundle.
+  const stamped = Buffer.concat([Buffer.from(`// loom-bundle: ${version}\n`), hostBytes]);
+
+  await runner.exec(alias, `mkdir -p ${shellQuote(remoteRoot(home))}`);
+  await runner.upload(alias, remoteAgentBundle(home), agentBytes);
+  // The session host is written last: the probe reads its stamp as "both are
+  // deployed", so writing it first would make a half-deployment look complete.
+  await runner.upload(alias, remoteBundle(home), stamped);
+}
+
+/**
+ * Start the host detached and return the record it wrote once listening.
+ *
+ * **The wait happens on the remote, inside the same command.** Backgrounding and
+ * letting `ssh` return immediately kills the child: it starts, reaches `listen`,
+ * and dies the moment the session closes — verified against a real host, where
+ * the log showed "listening" and the process was gone seconds later. Holding the
+ * session open until the host has written its record gets it past that point,
+ * after which it survives independently (also verified: the process outlived the
+ * session that started it).
+ *
+ * Doing the waiting remotely rather than polling over SSH also removes up to
+ * forty connection setups from a first attach, which on a latent link is the
+ * difference between "a moment" and "did it hang?".
+ *
+ * `setsid` puts it in its own session so a group signal cannot reach it, and
+ * `nohup` covers the SIGHUP that arrives before that takes effect.
+ */
+export async function startRemoteHost(
+  runner: SshRunner,
+  alias: string,
+  home: string,
+  nodePath: string,
+  workspaceRoot: string,
+  opts: { lingerMs?: number; readyTimeoutMs?: number } = {},
+): Promise<RemoteHostRecord> {
+  const linger = opts.lingerMs === undefined ? '' : `LOOM_HOST_LINGER_MS=${opts.lingerMs} `;
+  const log = shellQuote(`${remoteRoot(home)}/host.log`);
+  const record = shellQuote(`${workspaceRoot}/.devagents/host.json`);
+  const attempts = Math.max(1, Math.ceil((opts.readyTimeoutMs ?? 30_000) / 500));
+
+  // Assembled with explicit separators rather than joined on '; ': `&` already
+  // terminates a command, so a blanket join produces `... &; for ...`, which is
+  // a syntax error rather than a background job.
+  // The launch is wrapped in `( … ) >/dev/null 2>&1` for a reason that costs an
+  // afternoon to find: a backgrounded subshell inherits the SSH channel's stdout
+  // and stderr, and `ssh` does not return until every holder of those closes. The
+  // host is long-lived, so `ssh` hangs forever — the command has succeeded and
+  // the caller never learns. Detaching the subshell's fds lets the channel close
+  // while the host keeps running.
+  const launch =
+    `( ${linger}nohup setsid ${shellQuote(nodePath)} ${shellQuote(remoteBundle(home))} ` +
+    `${shellQuote(workspaceRoot)} >${log} 2>&1 < /dev/null & ) >/dev/null 2>&1`;
+
+  const command =
+    `cd ${shellQuote(workspaceRoot)} && ${launch}; ` +
+    // The record is written only once the socket is accepting, so waiting for it
+    // is waiting for readiness — not merely for the process to exist. Waiting
+    // here also keeps the session open past the moment a freshly started child
+    // would otherwise be killed by it closing.
+    `for i in $(seq 1 ${attempts}); do ` +
+    `if [ -s ${record} ]; then cat ${record}; exit 0; fi; sleep 0.5; done; ` +
+    `echo TIMEOUT >&2; tail -20 ${log} >&2; exit 1`;
+
+  const started = await runner.exec(alias, command);
+  if (started.code !== 0) {
+    throw new RemoteBootstrapFailed('remote host never started listening', started.stderr.trim());
+  }
+
+  try {
+    return JSON.parse(started.stdout) as RemoteHostRecord;
+  } catch {
+    throw new RemoteBootstrapFailed(
+      'the remote host wrote an unreadable record',
+      started.stdout.trim(),
+    );
+  }
+}
+
+export interface RemoteHostRecord {
+  pid: number;
+  socket: string;
+  protocol: number;
+  instanceId: string;
+}
+
+/** Read the host's own record of where it is listening. */
+export async function readRemoteHostRecord(
+  runner: SshRunner,
+  alias: string,
+  workspaceRoot: string,
+): Promise<RemoteHostRecord | null> {
+  const result = await runner.exec(
+    alias,
+    `cat ${shellQuote(`${workspaceRoot}/.devagents/host.json`)} 2>/dev/null`,
+  );
+  if (result.code !== 0 || result.stdout.trim() === '') return null;
+  try {
+    return JSON.parse(result.stdout) as RemoteHostRecord;
+  } catch {
+    // A half-written record is indistinguishable from none, and treating it as
+    // none is right: the next poll reads a complete one.
+    return null;
+  }
+}
+
+/** Quote a path for `sh -c`, which is what `ssh <host> <command>` runs. */
+export function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/** An ephemeral loopback port, chosen by the OS so two hosts cannot collide. */
+export async function freeLoopbackPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe: Server = createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      const port = typeof address === 'object' && address !== null ? address.port : 0;
+      probe.close(() => (port === 0 ? reject(new Error('no port')) : resolve(port)));
+    });
+  });
+}
+
+/** The real runner: the user's `ssh`, with their config and their credentials. */
+export function systemSshRunner(sshPath = 'ssh'): SshRunner {
+  const base = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20'];
+
+  const exec: SshRunner['exec'] = (alias, command) =>
+    new Promise((resolve) => {
+      const child = spawn(sshPath, [...base, alias, command], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d) => (stdout += d));
+      child.stderr.on('data', (d) => (stderr += d));
+      child.on('error', (err) => resolve({ code: 127, stdout, stderr: err.message }));
+      child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }));
+    });
+
+  const upload: SshRunner['upload'] = (alias, remotePath, contents) =>
+    new Promise((resolve, reject) => {
+      // `cat >` over the existing connection rather than `scp`: one code path,
+      // and it inherits the same config and credentials as everything else here.
+      const child = spawn(sshPath, [...base, alias, `cat > ${shellQuote(remotePath)}`], {
+        stdio: ['pipe', 'ignore', 'pipe'],
+      });
+      let stderr = '';
+      child.stderr.on('data', (d) => (stderr += d));
+      child.on('error', reject);
+      child.on('close', (code) =>
+        code === 0
+          ? resolve()
+          : reject(new RemoteBootstrapFailed(`upload to ${remotePath} failed`, stderr.trim())),
+      );
+      child.stdin.end(contents);
+    });
+
+  const forward: SshRunner['forward'] = async (alias, localPort, remoteSocket) => {
+    const child = spawn(
+      sshPath,
+      [...base, '-N', '-L', `127.0.0.1:${localPort}:${remoteSocket}`, alias],
+      { stdio: ['ignore', 'ignore', 'pipe'] },
+    );
+    let stderr = '';
+    child.stderr.on('data', (d) => (stderr += d));
+
+    // `ssh -N` never says it is ready, so readiness is "the port answers".
+    // Waiting a fixed time instead would be either slow or flaky depending on
+    // the link.
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      if (await portAnswers(localPort)) return { close: () => child.kill() };
+      if (child.exitCode !== null) {
+        throw new RemoteBootstrapFailed('ssh forward exited', stderr.trim());
+      }
+      if (Date.now() > deadline) {
+        child.kill();
+        throw new RemoteBootstrapFailed('ssh forward never became usable', stderr.trim());
+      }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  };
+
+  return { exec, upload, forward };
+}
+
+async function portAnswers(port: number): Promise<boolean> {
+  const { connect } = await import('node:net');
+  return new Promise((resolve) => {
+    const socket = connect(port, '127.0.0.1');
+    const done = (ok: boolean): void => {
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+    socket.setTimeout(1_000, () => done(false));
+  });
+}

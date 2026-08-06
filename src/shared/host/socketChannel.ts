@@ -148,20 +148,30 @@ export function listen<Out, In>(
   });
 }
 
+/**
+ * Where to connect: a socket path, or a loopback port.
+ *
+ * Both exist because the local host listens on a pipe or unix socket, while a
+ * remote one is reached through an `ssh -L` forward whose local end is TCP —
+ * OpenSSH can forward to a local unix socket too, but not portably on Windows.
+ */
+export type ChannelTarget = string | { port: number; host?: string };
+
 /** Connect to a listening host. Rejects if nothing is there. */
-export function connect<Out, In>(path: string, timeoutMs = 5_000): Promise<SocketChannel<Out, In>> {
+export function connect<Out, In>(
+  target: ChannelTarget,
+  timeoutMs = 5_000,
+): Promise<SocketChannel<Out, In>> {
   return new Promise((resolve, reject) => {
     const socket = new Socket();
+    const where = typeof target === 'string' ? target : `${target.host ?? '127.0.0.1'}:${target.port}`;
 
     const fail = (err: Error): void => {
       socket.destroy();
       reject(err);
     };
 
-    const timer = setTimeout(
-      () => fail(new Error(`timed out connecting to ${path}`)),
-      timeoutMs,
-    );
+    const timer = setTimeout(() => fail(new Error(`timed out connecting to ${where}`)), timeoutMs);
 
     socket.once('error', (err) => {
       clearTimeout(timer);
@@ -170,11 +180,14 @@ export function connect<Out, In>(path: string, timeoutMs = 5_000): Promise<Socke
       fail(err);
     });
 
-    socket.connect(path, () => {
+    const onReady = (): void => {
       clearTimeout(timer);
       socket.removeAllListeners('error');
       resolve(new SocketChannel<Out, In>(socket));
-    });
+    };
+
+    if (typeof target === 'string') socket.connect(target, onReady);
+    else socket.connect(target.port, target.host ?? '127.0.0.1', onReady);
   });
 }
 

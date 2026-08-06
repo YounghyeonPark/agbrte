@@ -1242,6 +1242,21 @@ Outstanding work is tracked as `forwardedSeq − ackedSeq`, one monotonic pair. 
 | `loom-agent-host` | remote | 1 per remote workspace | agent loops, tools, log writes, leases |
 | agent worker | with its host | 1 per running agent | one agent's loop, or one CLI subprocess |
 
+**Remote hosts work, over the user's own `ssh`.** This reverses §14's ordering — `ssh2` was the default, the system client the fallback — and the reason is the only thing that makes remote usable: everything hard is already configured on the user's machine. `ProxyCommand`, jump chains, FIDO keys, `ssh-agent`, `known_hosts`, host aliases. A library means reimplementing all of it, host-key TOFU UI included, and each is a chance to be subtly worse than what already works in their terminal. So attaching a remote is picking a name from `~/.ssh/config`, and `ssh2` becomes the fallback for cases where shelling out is not viable.
+
+The shape: the remote host listens on a **unix socket** in its own home, and the app reaches it with `ssh -L 127.0.0.1:<port>:<remote socket>`. A unix socket rather than a remote TCP port because a TCP listener is reachable by every user on that machine (§17 Q9). The local end being TCP on loopback is a concession to Windows, where forwarding to a local unix socket is not portable.
+
+Bootstrap touches nothing system-wide: a private Node under `~/.loom/`, the two bundles beside it, no `sudo`. Attaching a machine you were lent must not mean changing it.
+
+**Four things were only learnable against a real server**, and each is now a test:
+
+- A backgrounded subshell inherits the SSH channel's stdout and stderr, and `ssh` does not return until every holder closes them. The launch has to be wrapped in `( … ) >/dev/null 2>&1` or the command succeeds and the caller hangs forever on a host that is deliberately long-lived.
+- A child started with `ssh host 'cmd &'` dies when the session closes, `nohup setsid` notwithstanding — it reaches `listen`, logs, and is gone seconds later. Waiting for its readiness record *inside the same command* gets it past that point, after which it survives independently. That also removes up to forty connection setups from a first attach.
+- `&` already terminates a command, so joining the pieces with `'; '` produces `… &; for …`, a syntax error that bash reports in a way that reads like a quoting problem.
+- A quoted `~` reaches the remote as a directory literally named `~`. Paths must be quoted to be safe in `sh -c`, so they are built from the absolute `$HOME` the probe reports.
+
+Measured against a live host: first attach 3.1 s including deploying both bundles, reattach 1.2 s. The host and its forked agent host both outlive the client, and a second client reattaches, reads the earlier transcript, and commands it again.
+
 **Sessions belong to a host process, not to the app.** A `loom-host` runs per workspace, owns its `SessionManager` — and therefore its event log, its permission gate, and its turn queues — and outlives whatever started it. The app connects to it and holds no session state at all.
 
 That last part is what the whole arrangement is for. Detaching a process is not enough on its own: if the app still owned the log, a running agent's events would have nowhere to go the moment it quit, so the work would continue and the transcript would not — worse than stopping. §8's table already assigned "log writes" to the host; this makes the local case match it.
