@@ -50,6 +50,22 @@ export interface HostIdentity {
   workspaceRoot: string;
   /** Runtime ids the forked agent host actually registered. */
   runtimes: string[];
+  /**
+   * Models this host can reach, with no credentials attached.
+   *
+   * One host can reach several — a local server and a hosted API, two GPUs with
+   * different weights — so a client offers a choice rather than assuming one.
+   * `provider` travels with them because §13 requires that adding a provider
+   * never quietly change where source code is transmitted, and a client that
+   * cannot name the recipient cannot show it.
+   */
+  endpoints?: Array<{
+    id: string;
+    label: string;
+    provider: string;
+    baseUrl: string;
+    authenticated: boolean;
+  }>;
   /** Set when the agent host could not start. Sessions still load read-only. */
   unavailableReason?: string;
   /** The host's own pid, so a client can report which process it is talking to. */

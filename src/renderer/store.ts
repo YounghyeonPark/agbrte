@@ -57,7 +57,7 @@ export interface GilmokState {
   openSession(sessionId: string, instanceId?: string): Promise<void>;
   /** Deselect, so a narrow screen can show the list again. */
   closeSession(): void;
-  addAgent(runtimeId: string, modelId: string | null): Promise<void>;
+  addAgent(runtimeId: string, modelId: string | null, endpointId?: string): Promise<void>;
   send(text: string): Promise<void>;
   interrupt(): Promise<void>;
   respond(requestId: string, allow: boolean): Promise<void>;
@@ -210,7 +210,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
     set({ active: null, activeId: null, events: [] });
   },
 
-  async addAgent(runtimeId, modelId) {
+  async addAgent(runtimeId, modelId, endpointId) {
     const sessionId = get().activeId;
     if (sessionId === null) return;
     await guard(set, async () => {
@@ -219,7 +219,13 @@ export const useGilmok = create<GilmokState>((set, get) => ({
         role: 'lead',
         runtimeId,
         ...(modelId !== null && modelId !== ''
-          ? { model: { providerId: 'openai-compatible', modelId } }
+          ? {
+              model: {
+                providerId: 'openai-compatible',
+                modelId,
+                ...(endpointId !== undefined ? { endpointId } : {}),
+              },
+            }
           : {}),
       });
       applySnapshot(set, await gilmok().sessions.snapshot(sessionId));

@@ -41,7 +41,16 @@ export const GILMOK_HARNESS_RUNTIME_ID = 'gilmok-harness';
 
 export interface GilmokHarnessOptions {
   provider: ModelProvider;
-  endpoint: ModelEndpoint;
+  /**
+   * Which endpoint an agent's spec resolves to.
+   *
+   * A function rather than a value because one host can reach several models —
+   * a local Ollama and a hosted API, two GPUs with different weights — and the
+   * agent names the one it wants through `model.endpointId`. Binding a single
+   * endpoint at registration encoded "this server has one model", which stops
+   * being true the first time it is not.
+   */
+  endpointFor: (endpointId?: string) => ModelEndpoint;
   tools?: ToolDefinition[];
   /** Hard ceiling on provider round trips per turn. */
   maxIterations?: number;
@@ -64,7 +73,7 @@ export class GilmokHarnessRuntime implements AgentRuntime {
   async capabilities(spec: AgentSpec): Promise<RuntimeCapabilities> {
     if (!spec.model) throw new Error('GilmokHarness requires spec.model');
     // Delegated to the provider, which probes rather than self-reports (§3.3).
-    const caps = await this.opts.provider.probe(this.opts.endpoint, spec.model.modelId);
+    const caps = await this.opts.provider.probe(this.opts.endpointFor(spec.model.endpointId), spec.model.modelId);
     // The gate is ours regardless of what the model can do.
     return { ...caps, permissionFidelity: 'callback', subagents: false };
   }
@@ -127,7 +136,7 @@ class GilmokHarnessHandle implements AgentHandle {
 
       const result = await this.opts.provider.invoke(
         {
-          endpoint: this.opts.endpoint,
+          endpoint: this.opts.endpointFor(this.spec.model?.endpointId),
           modelId: this.spec.model?.modelId ?? '',
           messages: this.messages,
           maxOutputTokens: this.caps.maxOutputTokens,

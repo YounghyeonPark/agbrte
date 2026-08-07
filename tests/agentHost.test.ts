@@ -232,9 +232,12 @@ async function collect(events: AsyncIterable<RuntimeEvent>): Promise<RuntimeEven
 }
 
 describe('handshake and capabilities', () => {
-  it('announces the runtimes it offers', async () => {
+  it('announces the runtimes it offers, and the models it can reach', async () => {
     const r = rig();
-    await expect(r.client.ready).resolves.toEqual(['probe']);
+    // Widened from a bare id list: one host can reach several endpoints, and a
+    // client that cannot see them cannot offer a choice — nor name the provider
+    // a turn was sent to, which §13 requires.
+    await expect(r.client.ready).resolves.toEqual({ runtimeIds: ['probe'], endpoints: [] });
   });
 
   it('carries capabilities on the correlated reply', async () => {

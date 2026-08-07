@@ -262,7 +262,7 @@ const CANDIDATES: Candidate[] = [
     make: () =>
       new GilmokHarnessRuntime({
         provider: stubProvider([{ content: [{ type: 'text', text: 'hello' }] }]),
-        endpoint: STUB_ENDPOINT,
+        endpointFor: () => STUB_ENDPOINT,
       }),
     makeGated: () =>
       new GilmokHarnessRuntime({
@@ -273,7 +273,7 @@ const CANDIDATES: Candidate[] = [
           },
           {},
         ]),
-        endpoint: STUB_ENDPOINT,
+        endpointFor: () => STUB_ENDPOINT,
       }),
     expectsResumeToken: null,
     specOverride: { model: { providerId: 'stub', modelId: 'stub-model' } },

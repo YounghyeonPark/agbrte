@@ -140,9 +140,11 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
   // it must not stop the host: transcripts still load and read, which is the
   // whole reason the log is the source of truth.
   let available: string[] = [];
+  let endpoints: Awaited<ReturnType<typeof supervisor.endpoints>> = [];
   let unavailableReason: string | undefined;
   try {
     available = await supervisor.advertised();
+    endpoints = await supervisor.endpoints();
   } catch (err) {
     unavailableReason = err instanceof Error ? err.message : String(err);
   }
@@ -169,6 +171,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       lineageId: identity.lineageId,
       workspaceRoot,
       runtimes: available,
+      endpoints,
       ...(unavailableReason !== undefined ? { unavailableReason } : {}),
     },
     grantRole: (requested, client) => ({

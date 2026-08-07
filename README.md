@@ -119,15 +119,38 @@ addressing. It is meant for an ssh session on a machine with no display, likely
 in tmux, possibly with a `TERM` nobody has tested. Ctrl-C interrupts the turn;
 Ctrl-D leaves and the run keeps going.
 
-If the model lives somewhere other than Ollama on that machine, point the host at
-it — the host inherits the environment it is spawned with:
+A host can reach several models. List them in `~/.gilmok/endpoints.json` (mode
+`0600`) and an agent picks one:
 
-```bash
-GILMOK_MODEL_BASE_URL=http://gpu-box:11434/v1 gilmok run . "..."
+```json
+{
+  "endpoints": [
+    { "id": "local",  "baseUrl": "http://127.0.0.1:11434/v1" },
+    { "id": "gpu",    "baseUrl": "http://gpu-box:8000/v1" },
+    { "id": "vendor", "baseUrl": "https://api.example.com/v1",
+      "provider": "Example AI", "apiKey": "sk-..." }
+  ],
+  "default": "local"
+}
 ```
 
-A host that is *already* running keeps the environment it started with, so
-`gilmok stop` first if you are changing it.
+```bash
+gilmok run . --endpoint vendor --model some-model "..."
+```
+
+A file rather than an environment variable because a host started over ssh by the
+app runs a non-login shell and never sources your profile. The key stays on the
+host — it is never put on an endpoint object, never sent to a client, and never
+written to a transcript; the provider fetches it only where the request is made.
+
+**Credentials belong to the workspace, not to whoever is attached.** One
+workspace has one host process running as one user, so a second person driving
+that session spends the owner's budget. The log still says who: every
+human-caused event carries an actor. If that is not the arrangement you want,
+give people separate accounts and separate workspaces.
+
+`provider` is shown in the agent picker before the first turn, so you can see
+where your code is about to go while you can still choose otherwise.
 
 Installing on a server is one file and one command. Build it here, send it there:
 

@@ -66,6 +66,7 @@ Options for run:
   --yes                       allow every permission request (else each is denied)
   --runtime <id>              which harness; defaults to the host's first
   --model <id>                for runtimes that need one
+  --endpoint <id>             which of the host's models; see the ls output
   --session <id>              continue an existing session
   --verbose                   every event to stderr, not just the agent's text
 
@@ -265,6 +266,7 @@ async function main(): Promise<number> {
           sessionId: value('--session'),
           runtimeId: value('--runtime'),
           model: value('--model'),
+          endpointId: value('--endpoint'),
           autoApprove: flags.has('--yes'),
           verbose: flags.has('--verbose'),
         });

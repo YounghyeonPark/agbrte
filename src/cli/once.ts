@@ -35,6 +35,8 @@ export interface OnceOptions {
   sessionId?: string | undefined;
   runtimeId?: string | undefined;
   model?: string | undefined;
+  /** Which of the host's endpoints to send to. Its default when absent. */
+  endpointId?: string | undefined;
   /** Allow every permission request. Off by default — see above. */
   autoApprove: boolean;
   /** Print each event as it arrives rather than only the agent's text. */
@@ -76,7 +78,13 @@ export async function once(connection: HostConnection, opts: OnceOptions): Promi
         role: 'worker',
         runtimeId,
         ...(opts.model !== undefined
-          ? { model: { providerId: 'openai-compatible', modelId: opts.model } }
+          ? {
+              model: {
+                providerId: 'openai-compatible',
+                modelId: opts.model,
+                ...(opts.endpointId !== undefined ? { endpointId: opts.endpointId } : {}),
+              },
+            }
           : {}),
       })
     ).agentId;

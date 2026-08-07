@@ -26,6 +26,7 @@ import type {
   RequestId,
 } from '@shared/host/protocol.js';
 import type { RuntimeRegistry } from '@main/runtime/registry.js';
+import type { PublicEndpoint } from './endpoints.js';
 
 interface LiveHandle {
   handle: AgentHandle;
@@ -45,10 +46,16 @@ export class AgentHostServer {
   constructor(
     private readonly channel: HostSideChannel,
     private readonly registry: RuntimeRegistry,
+    /** Advertised so a client can offer them. Secrets are already stripped. */
+    endpoints: PublicEndpoint[] = [],
   ) {
     channel.onMessage((command) => void this.dispatch(command));
     channel.onClose(() => this.shutdown());
-    channel.post({ t: 'ready', runtimeIds: registry.list().map((d) => d.id) });
+    channel.post({
+      t: 'ready',
+      runtimeIds: registry.list().map((d) => d.id),
+      endpoints,
+    });
   }
 
   private async dispatch(command: HostCommand): Promise<void> {

@@ -102,7 +102,25 @@ export type HostMessage =
    */
   | { t: 'token'; handleId: HandleId; token: string | null }
   /** Host is up and ready for commands. Sent once. */
-  | { t: 'ready'; runtimeIds: string[] };
+  | {
+      t: 'ready';
+      runtimeIds: string[];
+      /**
+       * Models this host can reach, without their credentials.
+       *
+       * Carried so a client can offer a choice rather than assume one, and so
+       * `provider` reaches the UI — §13 requires that adding a provider never
+       * quietly change where source code is transmitted, and a client that
+       * cannot name the recipient cannot show it.
+       */
+      endpoints?: Array<{
+        id: string;
+        label: string;
+        provider: string;
+        baseUrl: string;
+        authenticated: boolean;
+      }>;
+    };
 
 // ------------------------------------------------------------------- channel
 

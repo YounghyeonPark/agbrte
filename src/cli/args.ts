@@ -19,7 +19,7 @@ interface Parsed {
 }
 
 /** Flags that consume the next argument; everything else is a boolean. */
-const VALUE_FLAGS = new Set(['--runtime', '--model', '--session', '--title', '--port', '--bind']);
+const VALUE_FLAGS = new Set(['--runtime', '--model', '--session', '--title', '--port', '--bind', '--endpoint']);
 
 export function parse(argv: string[]): Parsed {
   const flags = new Set<string>();

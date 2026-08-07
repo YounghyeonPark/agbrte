@@ -145,7 +145,7 @@ async function run(
 ): Promise<RuntimeEvent[]> {
   const runtime = new GilmokHarnessRuntime({
     provider,
-    endpoint: ENDPOINT,
+    endpointFor: () => ENDPOINT,
     ...(maxIterations !== undefined ? { maxIterations } : {}),
   });
   const handle = await runtime.start(spec(overrides), ctx);
@@ -162,7 +162,7 @@ describe('GilmokHarness — basics', () => {
   it('reports capabilities from the provider but owns the gate', async () => {
     const runtime = new GilmokHarnessRuntime({
       provider: new StubProvider([{}], { permissionFidelity: 'all-or-nothing', subagents: true }),
-      endpoint: ENDPOINT,
+      endpointFor: () => ENDPOINT,
     });
     const caps = await runtime.capabilities(spec());
     // The gate is ours regardless of what the provider claims (§3.7).
@@ -171,7 +171,7 @@ describe('GilmokHarness — basics', () => {
   });
 
   it('refuses a spec with no model', async () => {
-    const runtime = new GilmokHarnessRuntime({ provider: new StubProvider([{}]), endpoint: ENDPOINT });
+    const runtime = new GilmokHarnessRuntime({ provider: new StubProvider([{}]), endpointFor: () => ENDPOINT });
     // Omitted, not set to undefined: `exactOptionalPropertyTypes` treats those
     // as different, and the runtime must reject the genuinely absent case.
     const { model: _model, ...withoutModel } = spec();
@@ -181,7 +181,7 @@ describe('GilmokHarness — basics', () => {
   });
 
   it('reports no resume token — there is no provider-side session', async () => {
-    const runtime = new GilmokHarnessRuntime({ provider: new StubProvider([{}]), endpoint: ENDPOINT });
+    const runtime = new GilmokHarnessRuntime({ provider: new StubProvider([{}]), endpointFor: () => ENDPOINT });
     const handle = await runtime.start(spec(), context());
     expect(handle.resumeToken()).toBeNull();
   });
@@ -333,7 +333,7 @@ describe('GilmokHarness — loop control', () => {
 describe('GilmokHarness — context assembly', () => {
   it('replays a rehydrated seed as ordinary conversation', async () => {
     const provider = new StubProvider([{}]);
-    const runtime = new GilmokHarnessRuntime({ provider, endpoint: ENDPOINT });
+    const runtime = new GilmokHarnessRuntime({ provider, endpointFor: () => ENDPOINT });
     const handle = await runtime.start(spec(), {
       ...context(),
       seedHistory: [

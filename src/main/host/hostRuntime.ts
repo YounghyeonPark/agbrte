@@ -123,6 +123,18 @@ class HostBackedHandle implements AgentHandle {
   }
 }
 
+/** Everything the agent host says about itself when it comes up. */
+export interface HostAdvertisement {
+  runtimeIds: string[];
+  endpoints: Array<{
+    id: string;
+    label: string;
+    provider: string;
+    baseUrl: string;
+    authenticated: boolean;
+  }>;
+}
+
 export interface HostClientOptions {
   channel: MainSideChannel;
   /** Ready-state gate; resolves when the host announces itself. */
@@ -141,8 +153,17 @@ export class HostClient {
   private nextId = 0;
   private closed: string | null = null;
 
-  readonly ready: Promise<string[]>;
-  private announceReady!: (ids: string[]) => void;
+
+  /**
+   * What the agent host reported at handshake.
+   *
+   * Widened from a bare id list to carry endpoints too: one host can reach
+   * several models, and a client that cannot see which is available cannot
+   * offer a choice — nor say which provider a turn was sent to, which §13
+   * requires.
+   */
+  readonly ready: Promise<HostAdvertisement>;
+  private announceReady!: (advert: HostAdvertisement) => void;
   private failReady!: (err: Error) => void;
 
   constructor(private readonly opts: HostClientOptions) {
@@ -175,7 +196,7 @@ export class HostClient {
   private receive(message: HostMessage): void {
     switch (message.t) {
       case 'ready':
-        this.announceReady(message.runtimeIds);
+        this.announceReady({ runtimeIds: message.runtimeIds, endpoints: message.endpoints ?? [] });
         return;
 
       case 'ok': {

@@ -43,11 +43,22 @@ interface ChatResponse {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
+export interface OpenAiCompatibleOptions {
+  /**
+   * Looks up the credential for an endpoint id.
+   *
+   * Optional so a keyless setup — a local Ollama, the tests — needs nothing.
+   */
+  keyFor?: (endpointId: string) => string | undefined;
+}
+
 export class OpenAiCompatibleProvider implements ModelProvider {
   readonly id = OPENAI_COMPATIBLE_PROVIDER_ID;
   readonly version = '0.0.1';
 
   private readonly probeCache = new Map<string, RuntimeCapabilities>();
+
+  constructor(private readonly opts?: OpenAiCompatibleOptions) {}
 
   async listModels(endpoint: ModelEndpoint): Promise<ModelDescriptor[]> {
     const res = await this.fetchJson<{ data?: Array<{ id?: string }> }>(
@@ -197,7 +208,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     try {
       const res = await fetch(`${base}/api/show`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: this.headers(endpoint),
         body: JSON.stringify({ model: modelId }),
         signal: AbortSignal.timeout(10_000),
       });
@@ -212,6 +223,29 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     return CONSERVATIVE_CONTEXT;
   }
 
+  /**
+   * Headers for one request, including a credential when the endpoint has one.
+   *
+   * The key is fetched here rather than carried on the `ModelEndpoint`, because
+   * that object is passed around, logged, and sent to clients. `AuthMode` names
+   * an `endpointId` — a *reference* to a credential — and honouring that reading
+   * means nobody has to remember to strip a secret before serialising, which is
+   * how secrets end up in transcripts.
+   */
+  private headers(endpoint: ModelEndpoint): Record<string, string> {
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (endpoint.auth.kind === 'api-key') {
+      // `endpoint.endpointId`, not `endpoint.auth` — `ModelEndpoint.auth` says
+      // what *kind* of credential is needed and `AgentSpec.auth` is the union
+      // that names one. Two different types, one word.
+      const key = this.opts?.keyFor?.(endpoint.endpointId);
+      // Absent is left absent rather than sent empty: a server answering 401 for
+      // a missing key says something true, and `Bearer undefined` does not.
+      if (key !== undefined) headers['authorization'] = `Bearer ${key}`;
+    }
+    return headers;
+  }
+
   private async fetchJson<T>(
     endpoint: ModelEndpoint,
     path: string,
@@ -222,7 +256,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     const url = `${(endpoint.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '')}${path}`;
     const res = await fetch(url, {
       method: body === undefined ? 'GET' : 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: this.headers(endpoint),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: signal ?? AbortSignal.timeout(timeoutMs),
     });

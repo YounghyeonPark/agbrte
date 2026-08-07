@@ -76,6 +76,8 @@ export interface AttachedHost {
   target: ExecutionTarget;
   /** Runtime ids this host actually offers. Empty when its agent host failed. */
   available: string[];
+  /** Models it can reach, credentials already stripped. */
+  endpoints: Array<{ id: string; label: string; provider: string; authenticated: boolean }>;
   /** What this client was granted. May be less than it asked for. */
   role: AccessRole;
   /** The owning process, so a client can say which one it is talking to. */
@@ -186,6 +188,12 @@ export class Fleet extends EventEmitter {
       available: this.deps.runtimes
         .filter((r) => identity.runtimes.includes(r.id))
         .map((r) => r.id),
+      endpoints: (identity.endpoints ?? []).map((e) => ({
+        id: e.id,
+        label: e.label,
+        provider: e.provider,
+        authenticated: e.authenticated,
+      })),
       role: connection.role,
       pid: identity.pid,
       ...(identity.unavailableReason !== undefined
@@ -582,6 +590,7 @@ function snapshot(entry: Entry): AttachedHost {
     workspaceRoot: entry.workspaceRoot,
     target: entry.target,
     available: [...entry.available],
+    endpoints: entry.endpoints.map((e) => ({ ...e })),
     role: entry.role,
     pid: entry.pid,
     link: entry.link,

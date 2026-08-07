@@ -25,6 +25,7 @@ import type {
   RuntimeContext,
 } from '@shared/types/index.js';
 import type { MainSideChannel } from '@shared/host/protocol.js';
+import type { HostAdvertisement } from './hostRuntime.js';
 import { HostBackedRuntime, HostClient } from './hostRuntime.js';
 
 export interface HostSupervisorOptions {
@@ -78,7 +79,12 @@ export class HostSupervisor {
 
   /** Ids the running host actually reported, for reconciling against `runtimes`. */
   async advertised(): Promise<string[]> {
-    return this.current().ready;
+    return (await this.current().ready).runtimeIds;
+  }
+
+  /** Models the running host can reach, credentials already stripped. */
+  async endpoints(): Promise<HostAdvertisement['endpoints']> {
+    return (await this.current().ready).endpoints;
   }
 
   get restartCount(): number {

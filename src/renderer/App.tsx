@@ -197,7 +197,12 @@ export function App(): JSX.Element {
             />
 
             {active.agents.length === 0 ? (
-              <AgentPicker runtimes={runtimesHere} onAdd={store.addAgent} busy={busy} />
+              <AgentPicker
+                runtimes={runtimesHere}
+                endpoints={hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []}
+                onAdd={store.addAgent}
+                busy={busy}
+              />
             ) : (
               <>
                 <Transcript events={events} renderRow={(e) => <EventRow key={e.seq} event={e} />} />
@@ -419,15 +424,19 @@ function SessionHeader({
 
 function AgentPicker({
   runtimes,
+  endpoints,
   onAdd,
   busy,
 }: {
   runtimes: RuntimeInfo[];
-  onAdd: (runtimeId: string, modelId: string | null) => Promise<void>;
+  endpoints: HostInfo['endpoints'];
+  onAdd: (runtimeId: string, modelId: string | null, endpointId?: string) => Promise<void>;
   busy: boolean;
 }): JSX.Element {
   const [runtimeId, setRuntimeId] = useState('');
   const [modelId, setModelId] = useState('qwen2.5:7b');
+  const [endpointId, setEndpointId] = useState('');
+  const endpoint = endpoints.find((e) => e.id === endpointId) ?? endpoints[0];
   const selected = useMemo(() => runtimes.find((r) => r.id === runtimeId), [runtimes, runtimeId]);
 
   // Runtimes arrive asynchronously per host, so the initial list is often empty.
@@ -471,6 +480,41 @@ function AgentPicker({
               <small className="text-muted text-[11px]">
                 An Ollama or other OpenAI-compatible model reachable from that host.
               </small>
+              {endpoints.length > 1 && (
+                <label className="text-muted mt-1 grid gap-1 text-xs">
+                  Sent to
+                  <select
+                    className="field"
+                    data-testid="endpoint"
+                    value={endpoint?.id ?? ''}
+                    onChange={(e) => setEndpointId(e.target.value)}
+                  >
+                    {endpoints.map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.label} — {e.provider}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {endpoint !== undefined && (
+                /*
+                 * Named before the first turn, not after. §13 requires that
+                 * adding a provider never quietly change where source code is
+                 * transmitted, and a picker that shows only a model name is
+                 * exactly that quiet change — the recipient has to be legible at
+                 * the moment of choosing, which is the only moment it can still
+                 * be reconsidered.
+                 */
+                <small
+                  data-testid="endpoint-provider"
+                  className={endpoint.authenticated ? 'text-state-paused text-[11px]' : 'text-muted text-[11px]'}
+                >
+                  {endpoint.authenticated
+                    ? `Your code and prompts go to ${endpoint.provider}, over the network.`
+                    : `Stays on the host — ${endpoint.provider}.`}
+                </small>
+              )}
             </label>
           )}
 
@@ -479,7 +523,11 @@ function AgentPicker({
             data-testid="add-agent"
             disabled={busy || runtimeId === ''}
             onClick={() =>
-              void onAdd(runtimeId, selected?.requiresModel === true ? modelId : null)
+              void onAdd(
+                runtimeId,
+                selected?.requiresModel === true ? modelId : null,
+                endpoint?.id,
+              )
             }
           >
             Add agent

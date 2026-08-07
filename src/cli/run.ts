@@ -101,7 +101,7 @@ async function main(): Promise<void> {
 
   const provider = new OpenAiCompatibleProvider();
   const registry = new RuntimeRegistry();
-  registry.register(new GilmokHarnessRuntime({ provider, endpoint }), {
+  registry.register(new GilmokHarnessRuntime({ provider, endpointFor: () => endpoint }), {
     label: `GilmokHarness → ${args.model}`,
     requiresModel: true,
   });

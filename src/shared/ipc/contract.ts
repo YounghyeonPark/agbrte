@@ -56,6 +56,14 @@ export interface HostInfo {
   label: string;
   /** Runtime ids this host actually offers. Empty when it could not start. */
   available: string[];
+  /**
+   * Models this host can reach.
+   *
+   * `provider` is here so the UI can say where a turn's code will go *before* it
+   * is sent — §13 requires that adding a provider never quietly change that, and
+   * a picker that only shows model names changes it quietly.
+   */
+  endpoints: Array<{ id: string; label: string; provider: string; authenticated: boolean }>;
   /** Why nothing can run here. Sessions still load and read. */
   unavailableReason?: string;
   /**

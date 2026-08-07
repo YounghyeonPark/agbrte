@@ -20,6 +20,7 @@
 
 import type { HostMessage, HostCommand, HostSideChannel } from '@shared/host/protocol.js';
 import { AgentHostServer } from './server.js';
+import { loadEndpoints, type EndpointRegistry } from './endpoints.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { GilmokHarnessRuntime } from '@main/runtime/runtimes/gilmokHarness.js';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
@@ -106,17 +107,6 @@ class ForkChannel implements HostSideChannel {
   }
 }
 
-function localEndpoint(): ModelEndpoint {
-  return {
-    endpointId: 'local-ollama',
-    providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
-    baseUrl: process.env['GILMOK_MODEL_BASE_URL'] ?? 'http://127.0.0.1:11434/v1',
-    auth: { kind: 'none' },
-    locality: 'app-local',
-    dataHandling: { provider: 'local' },
-  };
-}
-
 /**
  * The runtimes this host offers.
  *
@@ -124,15 +114,17 @@ function localEndpoint(): ModelEndpoint {
  * runtime ids from the host's `ready` handshake, so anything missing here simply
  * does not appear in the UI rather than failing at `addAgent`.
  */
-export function buildHostRegistry(): RuntimeRegistry {
+export function buildHostRegistry(endpoints: EndpointRegistry): RuntimeRegistry {
   const registry = new RuntimeRegistry();
 
   registry.register(
     new GilmokHarnessRuntime({
-      provider: new OpenAiCompatibleProvider(),
-      endpoint: localEndpoint(),
+      // The credential lookup lives with the provider, which is the only place a
+      // request is actually made. The endpoint it resolves carries no secret.
+      provider: new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) }),
+      endpointFor: (endpointId) => endpoints.resolve(endpointId),
     }),
-    { label: 'Gilmok harness (local model)', requiresModel: true },
+    { label: 'Gilmok harness', requiresModel: true },
   );
 
   registry.register(new EchoRuntime(), { label: 'Echo (no model)', requiresModel: false });
@@ -159,4 +151,8 @@ process.on('unhandledRejection', (reason) => {
   process.stderr.write(`agent host unhandled rejection: ${String(reason)}\n`);
 });
 
-new AgentHostServer(channel, buildHostRegistry());
+// Awaited before the server exists, because a malformed endpoint file must
+// stop the host rather than surface as a turn that quietly went to the wrong
+// place. The failure reaches the app as `unavailableReason` on the handshake.
+const endpoints = await loadEndpoints();
+new AgentHostServer(channel, buildHostRegistry(endpoints), endpoints.list());
