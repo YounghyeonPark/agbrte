@@ -64,6 +64,8 @@ export interface FleetDeps {
   connect: HostConnector;
   /** Metadata for the runtime ids a host reports. */
   runtimes: FleetRuntime[];
+  /** Ceiling on reconnect backoff. Lowered by tests so they do not wait. */
+  maxBackoffMs?: number;
 }
 
 /** One attached host: a workspace, the process owning it, and its sessions. */
@@ -79,11 +81,32 @@ export interface AttachedHost {
   /** The owning process, so a client can say which one it is talking to. */
   pid: number;
   unavailableReason?: string;
+  /**
+   * Whether the link is up.
+   *
+   * A host that is `reconnecting` is *not* gone — the work is still running on
+   * the other side, and saying otherwise would tell the user the opposite of
+   * what is true at the worst possible moment.
+   */
+  link: 'connected' | 'reconnecting';
 }
 
 interface Entry extends AttachedHost {
   connection: HostConnection;
   unlisten: () => void;
+  /** Kept so a dropped link can be dialled again without the caller's help. */
+  location: HostLocation;
+  /**
+   * Highest `seq` delivered per session.
+   *
+   * This is what makes catch-up exact rather than approximate. `seq` is
+   * monotonic per session (§5.4d), so asking for everything after the last one
+   * seen loses nothing and repeats nothing — no timestamps, no dedup by
+   * content, no guessing.
+   */
+  seen: Map<string, number>;
+  /** Cancels an in-flight reconnect when the host is detached mid-attempt. */
+  stopReconnect?: () => void;
 }
 
 export class AttachRefused extends Error {
@@ -102,6 +125,7 @@ export class AttachRefused extends Error {
  *   'queue'      (instanceId, sessionId, agentId, depth)
  *   'host'       (AttachedHost)   — attached, or its state changed
  *   'detached'   (instanceId, reason)
+ *   'link'       (instanceId, 'connected' | 'reconnecting', reason)
  */
 export class Fleet extends EventEmitter {
   private readonly entries = new Map<InstanceId, Entry>();
@@ -154,28 +178,6 @@ export class Fleet extends EventEmitter {
       return snapshot(existing);
     }
 
-    const onEvent = (sessionId: string, event: GilmokEvent): void => {
-      this.owners.set(sessionId as SessionId, identity.instanceId);
-      this.emit('event', identity.instanceId, sessionId, event);
-    };
-    const onSession = (session: Session): void => {
-      this.owners.set(session.sessionId, identity.instanceId);
-      this.emit('session', identity.instanceId, session);
-    };
-    const onPermission = (request: PermissionRequest): void => {
-      this.emit('permission', identity.instanceId, request);
-    };
-    const onQueue = (sessionId: string, agentId: string, depth: number): void => {
-      this.emit('queue', identity.instanceId, sessionId, agentId, depth);
-    };
-    const onClosing = (reason: string): void => this.forget(identity.instanceId, reason);
-
-    connection.on('event', onEvent);
-    connection.on('session', onSession);
-    connection.on('permission', onPermission);
-    connection.on('queue', onQueue);
-    connection.on('closing', onClosing);
-
     const entry: Entry = {
       instanceId: identity.instanceId,
       lineageId: identity.lineageId,
@@ -189,19 +191,178 @@ export class Fleet extends EventEmitter {
       ...(identity.unavailableReason !== undefined
         ? { unavailableReason: identity.unavailableReason }
         : {}),
+      link: 'connected',
+      location,
+      seen: new Map(),
       connection,
-      unlisten: () => {
-        connection.off('event', onEvent);
-        connection.off('session', onSession);
-        connection.off('permission', onPermission);
-        connection.off('queue', onQueue);
-        connection.off('closing', onClosing);
-      },
+      unlisten: () => undefined,
     };
+    this.wire(entry, connection);
     this.entries.set(identity.instanceId, entry);
 
     this.emit('host', snapshot(entry));
     return snapshot(entry);
+  }
+
+  /**
+   * Attach this fleet's listeners to a connection.
+   *
+   * Separate from `attach` because a reconnect needs exactly the same wiring
+   * against a different socket. Doing it inline meant a reconnected host would
+   * be silently deaf — connected, listed, and delivering nothing.
+   */
+  private wire(entry: Entry, connection: HostConnection): void {
+    const { instanceId } = entry;
+
+    const onEvent = (sessionId: string, event: GilmokEvent): void => {
+      this.owners.set(sessionId as SessionId, instanceId);
+      // Dropped rather than re-emitted if we already have it. Catch-up and the
+      // live push overlap by construction: the host starts pushing the moment we
+      // reconnect, while we are still reading history, so the same event can
+      // arrive twice. `seq` is monotonic per session, which makes the check
+      // exact rather than a guess.
+      const last = entry.seen.get(sessionId) ?? -1;
+      if (event.seq <= last) return;
+      entry.seen.set(sessionId, event.seq);
+      this.emit('event', instanceId, sessionId, event);
+    };
+    const onSession = (session: Session): void => {
+      this.owners.set(session.sessionId, instanceId);
+      this.emit('session', instanceId, session);
+    };
+    const onPermission = (request: PermissionRequest): void => {
+      this.emit('permission', instanceId, request);
+    };
+    const onQueue = (sessionId: string, agentId: string, depth: number): void => {
+      this.emit('queue', instanceId, sessionId, agentId, depth);
+    };
+    // Two closes, two answers. `closing` is the host saying it is stopping on
+    // purpose, so there is nothing to come back to. `closed` is the link
+    // breaking, which says nothing about the host — and on a remote workspace it
+    // usually means the work is still running perfectly well on the other side.
+    const onClosing = (reason: string): void => this.forget(instanceId, reason);
+    const onClosed = (reason: string): void => {
+      if (!this.entries.has(instanceId)) return; // already detached on purpose
+      void this.reconnect(entry, reason);
+    };
+
+    connection.on('event', onEvent);
+    connection.on('session', onSession);
+    connection.on('permission', onPermission);
+    connection.on('queue', onQueue);
+    connection.on('closing', onClosing);
+    connection.on('closed', onClosed);
+
+    entry.connection = connection;
+    entry.unlisten = () => {
+      connection.off('event', onEvent);
+      connection.off('session', onSession);
+      connection.off('permission', onPermission);
+      connection.off('queue', onQueue);
+      connection.off('closing', onClosing);
+      connection.off('closed', onClosed);
+    };
+  }
+
+  /**
+   * Dial a dropped host again, then replay what was missed.
+   *
+   * The entry is **kept** while this runs. Removing it would be the easy thing
+   * and the wrong one: the sessions are still there, the agent is very likely
+   * still working, and a UI that erases the host at the first lost packet tells
+   * the user the opposite of what is true at the worst possible moment.
+   *
+   * Retries do not give up. A closed laptop lid is the case this exists for, and
+   * "eight hours later" is a normal amount of time for it — a cap measured in
+   * minutes would just be the wrong answer, slightly later.
+   */
+  private async reconnect(entry: Entry, reason: string): Promise<void> {
+    if (entry.link === 'reconnecting') return;
+    entry.unlisten();
+    entry.link = 'reconnecting';
+    this.emit('host', snapshot(entry));
+    this.emit('link', entry.instanceId, 'reconnecting', reason);
+
+    let cancelled = false;
+    entry.stopReconnect = () => {
+      cancelled = true;
+    };
+
+    for (let attempt = 0; !cancelled; attempt += 1) {
+      await this.pause(this.backoff(attempt));
+      if (cancelled || !this.entries.has(entry.instanceId)) return;
+
+      let connection: HostConnection;
+      try {
+        connection = await this.deps.connect(entry.location);
+        const identity = await connection.ready;
+        if (identity.instanceId !== entry.instanceId) {
+          // A different workspace answered on the path we remembered. Adopting
+          // it would silently point every open session at the wrong machine.
+          connection.disconnect();
+          this.forget(entry.instanceId, 'the workspace at that location is not the same one');
+          return;
+        }
+        // The pid may differ — the host can have been restarted while we were
+        // away. That is fine, and worth showing: same sessions, new process.
+        entry.pid = identity.pid;
+        entry.role = connection.role;
+      } catch {
+        continue; // still down; wait longer and try again
+      }
+
+      this.wire(entry, connection);
+      entry.link = 'connected';
+      delete entry.stopReconnect;
+
+      await this.catchUp(entry, connection);
+      this.emit('host', snapshot(entry));
+      this.emit('link', entry.instanceId, 'connected', 'reconnected');
+      return;
+    }
+  }
+
+  /**
+   * Replay everything that happened while the link was down.
+   *
+   * `fromSeq` is exclusive, so the last seq seen is exactly the right thing to
+   * ask from: nothing is lost and nothing repeats. That is why the high-water
+   * mark is per session rather than per host — sessions advance independently,
+   * and one number for the fleet would over- or under-read every session but one.
+   */
+  private async catchUp(entry: Entry, connection: HostConnection): Promise<void> {
+    for (const [sessionId, lastSeq] of [...entry.seen]) {
+      try {
+        for (const event of await connection.events(sessionId as SessionId, lastSeq)) {
+          if (event.seq <= (entry.seen.get(sessionId) ?? -1)) continue;
+          entry.seen.set(sessionId, event.seq);
+          this.emit('event', entry.instanceId, sessionId, event);
+        }
+        // The session record itself, since its state may have moved while we
+        // were away and no `push.session` reached us.
+        this.emit('session', entry.instanceId, await connection.get(sessionId as SessionId));
+      } catch {
+        // One unreadable session must not abandon the others. It keeps its old
+        // high-water mark and catches up on the next reconnect.
+      }
+    }
+    for (const request of await connection.pendingPermissions().catch(() => [])) {
+      this.emit('permission', entry.instanceId, request);
+    }
+  }
+
+  /** Quick at first, then patient. Capped so a long outage still polls. */
+  private backoff(attempt: number): number {
+    if (attempt === 0) return 0;
+    return Math.min(1_000 * 2 ** (attempt - 1), this.deps.maxBackoffMs ?? 30_000);
+  }
+
+  private pause(ms: number): Promise<void> {
+    return new Promise((done) => {
+      const timer = setTimeout(done, ms);
+      // Never hold the process open just to wait for a retry.
+      timer.unref?.();
+    });
   }
 
   /**
@@ -214,6 +375,9 @@ export class Fleet extends EventEmitter {
   async detach(instanceId: InstanceId): Promise<void> {
     const entry = this.entries.get(instanceId);
     if (!entry) return;
+    // Stopped first: a reconnect loop that outlived its entry would dial a host
+    // nobody is watching, forever.
+    entry.stopReconnect?.();
     entry.connection.disconnect();
     this.forget(instanceId, 'detached');
   }
@@ -226,6 +390,7 @@ export class Fleet extends EventEmitter {
   private forget(instanceId: InstanceId, reason: string): void {
     const entry = this.entries.get(instanceId);
     if (!entry) return;
+    entry.stopReconnect?.();
     entry.unlisten();
     for (const [sessionId, owner] of [...this.owners]) {
       if (owner === instanceId) this.owners.delete(sessionId);
@@ -398,6 +563,7 @@ function snapshot(entry: Entry): AttachedHost {
     available: [...entry.available],
     role: entry.role,
     pid: entry.pid,
+    link: entry.link,
     ...(entry.unavailableReason !== undefined
       ? { unavailableReason: entry.unavailableReason }
       : {}),

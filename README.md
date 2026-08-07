@@ -51,7 +51,10 @@ it.
 
 The host is detached, so quitting the app does not stop a turn. Reopen and
 attach the same workspace to land back on the session, mid-turn if it is still
-working. Detaching a host in the app (`×`) drops the connection and leaves the
+working. The same holds for a link that breaks rather than an app that closes: a
+dropped tunnel or a closed laptop lid marks the host `reconnecting` rather than
+removing it, retries until it is back, and replays exactly what was missed —
+`seq` is monotonic per session, so catch-up loses nothing and repeats nothing. Detaching a host in the app (`×`) drops the connection and leaves the
 run alone; a host with nothing attached and nothing running then exits on its
 own after a while rather than lingering forever.
 

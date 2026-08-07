@@ -261,6 +261,16 @@ function HostGroup({
         </div>
       </div>
 
+      {host.link === 'reconnecting' && (
+        <p data-testid="host-reconnecting" className="text-state-paused mx-1.5 mb-1 text-[11px]">
+          {/* Deliberately not phrased as a failure. The sessions are still on the
+              other side and probably still running; what broke is our link to
+              them, and telling the user the host is gone would be wrong at the
+              exact moment it matters most. */}
+          lost the link — reconnecting. Whatever is running there keeps running.
+        </p>
+      )}
+
       {host.unavailableReason !== undefined && (
         <p
           data-testid="host-unavailable"

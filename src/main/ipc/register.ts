@@ -100,6 +100,7 @@ function toInfo(host: AttachedHost): HostInfo {
     targetKind: host.target.kind,
     label: labelFor(host),
     available: host.available,
+    link: host.link,
     ...(host.unavailableReason !== undefined
       ? { unavailableReason: host.unavailableReason }
       : {}),

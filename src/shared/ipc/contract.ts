@@ -58,6 +58,14 @@ export interface HostInfo {
   available: string[];
   /** Why nothing can run here. Sessions still load and read. */
   unavailableReason?: string;
+  /**
+   * Whether the app can currently reach this host.
+   *
+   * `reconnecting` is not `gone`. The sessions are still on the other side and
+   * very likely still running, so the UI has to say "we lost the link" rather
+   * than "the host disappeared" — those prompt opposite reactions from a user.
+   */
+  link: 'connected' | 'reconnecting';
 }
 
 /** A machine from the user's `~/.ssh/config`, offered instead of a form. */

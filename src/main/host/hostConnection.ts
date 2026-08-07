@@ -69,7 +69,8 @@ export interface HostConnectionOptions {
  *   'session'    (Session)
  *   'permission' (PermissionRequest)
  *   'queue'      (sessionId, agentId, depth)
- *   'closing'    (reason)
+ *   'closing'    (reason)   — the host is stopping on purpose; do not return
+ *   'closed'     (reason)   — the link broke; the host may still be running
  */
 export class HostConnection extends EventEmitter {
   private readonly pendingCalls = new Map<string, Pending>();
@@ -192,6 +193,14 @@ export class HostConnection extends EventEmitter {
     this.failReady(new Error(this.closed));
     for (const [, pending] of this.pendingCalls) pending.reject(new Error(this.closed));
     this.pendingCalls.clear();
+    // Announced, not merely reported to the constructor's callback. Before this
+    // the only observable close was `push.closing` — a host saying it is going
+    // away *on purpose* — so a link that simply died was invisible: the fleet
+    // kept an entry pointing at a dead connection and every later command failed
+    // one at a time. The two are different facts and need different answers:
+    // `closing` means the host stopped and there is nothing to return to,
+    // `closed` means the link broke and the host is probably still running.
+    this.emit('closed', this.closed);
     this.opts.onClose?.(reason);
   }
 
