@@ -14,53 +14,13 @@
  */
 
 import { expect, test } from '@playwright/test';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { createServer } from 'node:net';
-import { rm } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { makeRepo } from './harness.js';
-
-/** A port the OS says is free, rather than one we hope is. */
-function freePort(): Promise<number> {
-  return new Promise((done, fail) => {
-    const probe = createServer();
-    probe.once('error', fail);
-    probe.listen(0, '127.0.0.1', () => {
-      const address = probe.address();
-      const port = typeof address === 'object' && address !== null ? address.port : 0;
-      probe.close(() => done(port));
-    });
-  });
-}
-
-async function reachable(url: string, ms: number): Promise<boolean> {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url);
-      if (res.ok) return true;
-    } catch {
-      // not up yet
-    }
-    await new Promise((r) => setTimeout(r, 150));
-  }
-  return false;
-}
+import { serveWebFixture } from './harness.js';
 
 test('serves the app and drives a session over a socket', async ({ page }) => {
-  const repo = await makeRepo();
-  const port = await freePort();
-  const url = `http://127.0.0.1:${port}/`;
-
-  const server: ChildProcess = spawn(
-    process.execPath,
-    [resolve('dist/cli/gilmok.js'), 'web', repo, '--port', String(port)],
-    { stdio: 'ignore' },
-  );
+  const web = await serveWebFixture();
+  const url = web.url;
 
   try {
-    expect(await reachable(url, 30_000), 'the web server never came up').toBe(true);
-
     const errors: string[] = [];
     page.on('console', (m) => {
       if (m.type() === 'error') errors.push(m.text());
@@ -89,7 +49,6 @@ test('serves the app and drives a session over a socket', async ({ page }) => {
       errors.filter((e) => /Content Security|gilmok is undefined|is not a function/i.test(e)),
     ).toEqual([]);
   } finally {
-    server.kill();
-    await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    await web.stop();
   }
 });

@@ -2,6 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!--
+      Without this, mobile Safari lays the page out at 980 CSS pixels and scales
+      the result down to fit — every media query matches the desktop branch and
+      the whole UI arrives unreadably small. It is the single tag that decides
+      whether a responsive layout is responsive at all.
+
+      `viewport-fit=cover` lets the page reach under the notch and the home
+      indicator, which is only safe alongside the `env(safe-area-inset-*)`
+      padding in styles.css.
+    -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
     <title>Gilmok</title>
     <!--
       The renderer displays model output, which is untrusted content. A CSP that

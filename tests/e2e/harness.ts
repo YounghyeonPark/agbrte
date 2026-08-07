@@ -8,8 +8,9 @@
 
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer as netCreateServer } from 'node:net';
 import { tmpdir } from 'node:os';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { delimiter, join, resolve } from 'node:path';
 
@@ -141,4 +142,57 @@ export async function warmModel(model: string): Promise<void> {
     throw new Error(`could not warm ${model}: HTTP ${response.status}`);
   }
   await response.json();
+}
+
+/**
+ * A `gilmok web` server on a free port, with its own throwaway workspace.
+ *
+ * Shared because the phone spec needs the same thing in a different file:
+ * Playwright will not let a describe block change the browser engine, so
+ * WebKit-at-phone-size has to live on its own.
+ */
+export async function serveWebFixture(): Promise<{
+  url: string;
+  repo: string;
+  stop: () => Promise<void>;
+}> {
+  const repo = await makeRepo();
+  const port = await new Promise<number>((done, fail) => {
+    const probe = netCreateServer();
+    probe.once('error', fail);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      const chosen = typeof address === 'object' && address !== null ? address.port : 0;
+      probe.close(() => done(chosen));
+    });
+  });
+  const url = `http://127.0.0.1:${port}/`;
+  const server = spawn(
+    process.execPath,
+    [resolve('dist/cli/gilmok.js'), 'web', repo, '--port', String(port)],
+    { stdio: 'ignore' },
+  );
+
+  const deadline = Date.now() + 30_000;
+  let up = false;
+  while (Date.now() < deadline && !up) {
+    try {
+      up = (await fetch(url)).ok;
+    } catch {
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+  if (!up) {
+    server.kill();
+    throw new Error('the web server never came up');
+  }
+
+  return {
+    url,
+    repo,
+    stop: async () => {
+      server.kill();
+      await rm(repo, { recursive: true, force: true }).catch(() => undefined);
+    },
+  };
 }

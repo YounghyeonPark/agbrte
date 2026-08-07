@@ -75,3 +75,41 @@
   @apply break-words whitespace-pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/*
+ * Phone-shaped screens.
+ *
+ * `100dvh` rather than `100vh`: on iOS `vh` is the height with the browser
+ * chrome *hidden*, so a full-height layout is taller than the visible area and
+ * the composer sits below the fold behind the address bar — the one control a
+ * phone user needs most. `dvh` tracks the viewport as that chrome comes and
+ * goes.
+ */
+html,
+body,
+#root {
+  height: 100dvh;
+  /* Overscroll bounce on iOS drags the whole app and reveals the page behind
+     it, which looks like the UI has come loose. */
+  overscroll-behavior: none;
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Touch targets. 44px is Apple's floor and the buttons here were 24. */
+@media (pointer: coarse) {
+  .btn {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+  }
+  .field {
+    /* Under 16px, iOS zooms the page when a field takes focus and never zooms
+       back — the layout is left scaled up until the user pinches out. */
+    font-size: 16px;
+  }
+}

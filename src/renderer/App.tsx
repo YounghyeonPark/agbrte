@@ -87,8 +87,26 @@ export function App(): JSX.Element {
   const runtimesHere = active === null ? [] : (runtimesByHost[active.instanceId] ?? []);
 
   return (
-    <div data-testid="app" className="grid h-full grid-cols-[300px_1fr]">
-      <aside className="bg-panel border-line flex min-h-0 flex-col border-r">
+    /*
+     * One pane at a time on a phone, both side by side from `md` up.
+     *
+     * The desktop layout is a fixed 300px sidebar, which on a 390pt phone is
+     * three quarters of the screen — so below `md` the two panes stack and
+     * exactly one is shown: the session list until something is open, then the
+     * session, with a back arrow to return. That is the ordinary phone pattern
+     * and it needs no new state, because "is a session open" is already the
+     * thing that decides it.
+     */
+    <div
+      data-testid="app"
+      className="grid h-full grid-cols-1 md:grid-cols-[300px_1fr]"
+      data-pane={active === null ? 'list' : 'session'}
+    >
+      <aside
+        className={`bg-panel border-line safe-top min-h-0 flex-col border-r md:flex ${
+          active === null ? 'flex' : 'hidden'
+        }`}
+      >
         <header className="border-line flex items-center justify-between border-b p-3.5">
           <h1 className="text-base tracking-wide">Gilmok</h1>
           <div className="flex gap-1.5">
@@ -139,7 +157,11 @@ export function App(): JSX.Element {
         </nav>
       </aside>
 
-      <main className="flex min-h-0 min-w-0 flex-col">
+      <main
+        className={`safe-bottom min-h-0 min-w-0 flex-col md:flex ${
+          active === null ? 'hidden md:flex' : 'flex'
+        }`}
+      >
         {error !== null && (
           <div
             role="alert"
@@ -171,6 +193,7 @@ export function App(): JSX.Element {
               session={active}
               host={hosts.find((h) => h.instanceId === active.instanceId) ?? null}
               onInterrupt={() => void store.interrupt()}
+              onBack={() => store.closeSession()}
             />
 
             {active.agents.length === 0 ? (
@@ -349,13 +372,27 @@ function SessionHeader({
   session,
   host,
   onInterrupt,
+  onBack,
 }: {
   session: Session;
   host: HostInfo | null;
   onInterrupt: () => void;
+  /** Only reachable below `md`, where the session is the whole screen. */
+  onBack: () => void;
 }): JSX.Element {
   return (
-    <div className="border-line flex items-start justify-between gap-4 border-b px-4.5 py-3.5">
+    <div className="border-line safe-top flex items-start justify-between gap-4 border-b px-4.5 py-3.5">
+      <div className="flex min-w-0 items-start gap-2">
+        {/* Hidden from `md` up, where the list is already on screen and a back
+            arrow would point at nothing. */}
+        <button
+          className="btn shrink-0 px-2 py-0.5 md:hidden"
+          data-testid="back-to-list"
+          aria-label="Back to sessions"
+          onClick={onBack}
+        >
+          ‹
+        </button>
       <div className="min-w-0">
         <h2 className="truncate-line text-[15px]">{session.title}</h2>
         <p className="text-muted truncate-line mt-0.5 text-xs">
@@ -364,6 +401,7 @@ function SessionHeader({
           {host !== null && <span data-testid="active-host">{host.label} · </span>}
           {session.goal}
         </p>
+      </div>
       </div>
       <div className="flex shrink-0 items-center gap-2.5">
         <span data-testid="session-state" className={`${LABEL} ${stateTone(session.state)}`}>

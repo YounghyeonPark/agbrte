@@ -55,6 +55,8 @@ export interface GilmokState {
   shutdownHost(instanceId: string): Promise<boolean>;
   createSession(instanceId: string, title: string, goal: string): Promise<void>;
   openSession(sessionId: string, instanceId?: string): Promise<void>;
+  /** Deselect, so a narrow screen can show the list again. */
+  closeSession(): void;
   addAgent(runtimeId: string, modelId: string | null): Promise<void>;
   send(text: string): Promise<void>;
   interrupt(): Promise<void>;
@@ -156,7 +158,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
         // while an agent is mid-turn is correct behaviour, not a fault.
         throw new Error(`host still running — ${result.reason ?? 'work is in flight'}`);
       }
-      set({ activeId: null, events: [] });
+      set({ active: null, activeId: null, events: [] });
     });
     return stopped;
   },
@@ -198,6 +200,14 @@ export const useGilmok = create<GilmokState>((set, get) => ({
       applySnapshot(set, await gilmok().sessions.snapshot(sessionId));
       set({ sessions: await gilmok().sessions.list() });
     });
+  },
+
+  closeSession() {
+    // Both, because `active` is its own field rather than derived from
+    // `activeId`. Clearing only the id left the session pane rendered against a
+    // stale record — invisible on a desktop, and on a phone it meant the back
+    // button did nothing.
+    set({ active: null, activeId: null, events: [] });
   },
 
   async addAgent(runtimeId, modelId) {
