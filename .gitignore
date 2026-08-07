@@ -22,3 +22,7 @@ dist/
 # Playwright run artifacts (traces, screenshots, last-run state)
 test-results/
 playwright-report/
+
+# Scratch workspaces from manual runs. Named this way because a stray one got
+# committed once: they contain .devagents/ with real session logs.
+tmp-*/
