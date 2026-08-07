@@ -416,3 +416,48 @@ describe('detaching', () => {
     await expect(detached).resolves.toBeDefined();
   });
 });
+
+describe('stopping a host', () => {
+  it('refuses while an agent is mid-turn, and says so', async () => {
+    // A slow script so the turn is genuinely in flight when the stop arrives.
+    const fleet = makeFleet({
+      script: [
+        { kind: 'tool', tool: 'shell', args: { cmd: 'x' } },
+        { kind: 'text', text: 'done' },
+        { kind: 'stop', stop: { kind: 'end_turn' } },
+      ],
+    });
+    const host = await fleet.attach(local(await makeRoot()));
+    const session = await fleet.createSession(host.instanceId, { title: 's', goal: 'g' });
+    const agent = await fleet.addAgent(session.sessionId, {
+      role: 'worker',
+      runtimeId: 'echo',
+      policy: { rules: [{ tool: 'shell', action: 'ask' }] },
+    });
+
+    const turn = fleet.send(session.sessionId, agent.agentId as never, 'go');
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The whole reason the host is a separate process: a window deciding to
+    // close must not take a running turn with it.
+    const result = await fleet.shutdownHost(host.instanceId);
+    expect(result.stopped).toBe(false);
+    expect(result.reason).toBeDefined();
+    expect(fleet.hosts()).toHaveLength(1);
+
+    const pending = await fleet.pendingPermissions();
+    await fleet.respondPermission(pending[0]!.request.requestId, { result: 'deny', reason: 'done' });
+    await turn.catch(() => undefined);
+  });
+
+  it('stops an idle host and drops it from the fleet', async () => {
+    const fleet = makeFleet();
+    const host = await fleet.attach(local(await makeRoot()));
+
+    const result = await fleet.shutdownHost(host.instanceId);
+    expect(result.stopped).toBe(true);
+    // Forgotten immediately rather than left to the socket close, so the UI
+    // never shows a host on its way out as "reconnecting".
+    expect(fleet.hosts()).toHaveLength(0);
+  });
+});

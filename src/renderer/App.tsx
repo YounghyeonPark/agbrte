@@ -252,8 +252,16 @@ function HostGroup({
           </button>
           <button
             className="btn px-1.5 py-0.5 text-xs"
+            data-testid="stop-host"
+            title="Stop this host — refuses while work is running"
+            onClick={() => void store.shutdownHost(host.instanceId)}
+          >
+            ■
+          </button>
+          <button
+            className="btn px-1.5 py-0.5 text-xs"
             data-testid="remove-host"
-            title="Detach this host"
+            title="Detach this host — the run keeps going"
             onClick={() => void store.removeHost(host.instanceId)}
           >
             ×

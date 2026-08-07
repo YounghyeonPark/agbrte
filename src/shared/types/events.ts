@@ -180,7 +180,22 @@ export type EventBody =
       /** Set on `rehydrated`: how much of the log the seed represents. */
       seededThroughSeq?: number;
     }
-  | { type: 'agent.compacted'; beforeTokens: number; afterTokens: number };
+  | { type: 'agent.compacted'; beforeTokens: number; afterTokens: number }
+  /**
+   * A human stopped a turn that was running.
+   *
+   * Recorded because otherwise the transcript shows a turn that simply ends, and
+   * "the model stopped" and "someone stopped it" read identically — which is
+   * fine with one user and useless with several. `agent.stopped` cannot carry
+   * this: it describes how the *model* finished, and an interrupt is a fact
+   * about a person, arriving from outside the loop.
+   *
+   * The envelope's `actor` says who. `delivered` is false when the runtime could
+   * not actually be interrupted (§13's capability model) — the request is still
+   * worth recording, because "I pressed stop and it kept going" is exactly the
+   * thing a transcript needs to explain rather than hide.
+   */
+  | { type: 'agent.interrupted'; delivered: boolean; note?: string };
 
 export type GilmokEvent = EventEnvelope & EventBody;
 
@@ -214,4 +229,5 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'agent.created',
   'agent.started',
   'agent.compacted',
+  'agent.interrupted',
 ]);

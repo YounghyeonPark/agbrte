@@ -51,6 +51,8 @@ export interface GilmokState {
   loadSshHosts(): Promise<void>;
   addRemoteHost(alias: string, workspaceRoot: string): Promise<boolean>;
   removeHost(instanceId: string): Promise<void>;
+  /** Ask a host to exit. Returns false when it refused because work is running. */
+  shutdownHost(instanceId: string): Promise<boolean>;
   createSession(instanceId: string, title: string, goal: string): Promise<void>;
   openSession(sessionId: string, instanceId?: string): Promise<void>;
   addAgent(runtimeId: string, modelId: string | null): Promise<void>;
@@ -141,6 +143,22 @@ export const useGilmok = create<GilmokState>((set, get) => ({
     if (host === undefined) return false;
     await get().boot();
     return true;
+  },
+
+  async shutdownHost(instanceId) {
+    let stopped = false;
+    await guard(set, async () => {
+      const result = await gilmok().hosts.shutdown(instanceId);
+      stopped = result.stopped;
+      if (!stopped) {
+        // Surfaced as an error banner rather than swallowed: the user pressed
+        // stop and it did not stop, and the reason is the useful part. Refusing
+        // while an agent is mid-turn is correct behaviour, not a fault.
+        throw new Error(`host still running — ${result.reason ?? 'work is in flight'}`);
+      }
+      set({ activeId: null, events: [] });
+    });
+    return stopped;
   },
 
   async removeHost(instanceId) {

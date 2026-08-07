@@ -168,6 +168,8 @@ export function registerIpc(deps: IpcDeps): { dispose: () => void } {
 
   handle(CH.hostsRemove, (instanceId: string) => fleet.detach(instanceId as InstanceId));
 
+  handle(CH.hostsShutdown, (instanceId: string) => fleet.shutdownHost(instanceId as InstanceId));
+
   handle(CH.hostsSsh, async (): Promise<SshHostInfo[]> =>
     (await readSshHosts()).map((h) => ({
       alias: h.alias,

@@ -163,6 +163,16 @@ export interface GilmokApi {
     addRemote(alias: string, workspaceRoot: string): Promise<HostInfo>;
     /** Stop watching a host. The workspace on disk is untouched. */
     remove(instanceId: string): Promise<void>;
+    /**
+     * Ask a host to exit. It is allowed to refuse.
+     *
+     * Different from `remove`, which only stops watching. This asks the *owner*
+     * to stop owning, and a host holding a live agent says no — a window closing
+     * must not take a running turn with it, which is the entire reason the host
+     * is a separate process. The refusal comes back as a value with a reason
+     * rather than as an error, because "still running" is an answer.
+     */
+    shutdown(instanceId: string): Promise<{ stopped: boolean; reason?: string }>;
     /** Runtimes offered by one host — they need not be the same everywhere. */
     runtimes(instanceId: string): Promise<RuntimeInfo[]>;
   };
@@ -222,6 +232,7 @@ export const CH = {
   hostsList: 'gilmok:hosts.list',
   hostsAdd: 'gilmok:hosts.add',
   hostsRemove: 'gilmok:hosts.remove',
+  hostsShutdown: 'gilmok:hosts.shutdown',
   hostsRuntimes: 'gilmok:hosts.runtimes',
   hostsSsh: 'gilmok:hosts.ssh',
   hostsAddRemote: 'gilmok:hosts.addRemote',

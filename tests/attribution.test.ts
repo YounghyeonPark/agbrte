@@ -279,3 +279,36 @@ describe('the access policy', () => {
     await expect(loadAccessPolicy(root)).rejects.toThrow(AccessPolicyInvalid);
   });
 });
+
+describe('interrupting', () => {
+  it('records who stopped a turn, not just that it ended', async () => {
+    const r = rig(ASKS);
+    const c = r.connect();
+    const session = await c.createSession({ title: 's', goal: 'g' });
+    const agent = await c.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    await c.interrupt(session.sessionId, agent.agentId as never);
+
+    const events = await c.events(session.sessionId);
+    const stopped = events.filter((e) => e.type === 'agent.interrupted');
+    // Without this the transcript shows a turn that simply ends, and "the model
+    // finished" reads identically to "someone pressed stop".
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]!.actor).toEqual(ALICE);
+    expect(stopped[0]!.agentId).toBe(agent.agentId);
+  });
+
+  it('records a stop the runtime could not honour', async () => {
+    const r = rig(ASKS);
+    const c = r.connect();
+    const session = await c.createSession({ title: 's', goal: 'g' });
+    const agent = await c.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+    await c.interrupt(session.sessionId, agent.agentId as never);
+
+    const events = await c.events(session.sessionId);
+    const stopped = events.find((e) => e.type === 'agent.interrupted');
+    // `delivered` is the field that explains "I pressed stop and it kept going",
+    // which is the case a transcript most needs to account for rather than hide.
+    expect(stopped).toHaveProperty('delivered');
+  });
+});

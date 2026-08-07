@@ -382,6 +382,27 @@ export class Fleet extends EventEmitter {
     this.forget(instanceId, 'detached');
   }
 
+  /**
+   * Ask a host to exit, and report whether it agreed.
+   *
+   * Distinct from `detach`, which only stops watching. This is the one operation
+   * where a client asks the *owner* to stop owning, and the owner is entitled to
+   * say no: a host holding a live agent must not go down because a window
+   * decided it should. So the refusal is a return value, not an exception —
+   * "still running, here is why" is an answer, not a failure.
+   */
+  async shutdownHost(instanceId: InstanceId): Promise<{ stopped: boolean; reason?: string }> {
+    const entry = this.require(instanceId);
+    const result = await entry.connection.requestShutdown();
+    if (result.stopped) {
+      // It will close the socket itself; forgetting now keeps the UI from
+      // briefly showing a host that is on its way out as "reconnecting".
+      entry.stopReconnect?.();
+      this.forget(instanceId, 'host stopped');
+    }
+    return result;
+  }
+
   async detachAll(): Promise<void> {
     for (const instanceId of [...this.entries.keys()]) await this.detach(instanceId);
   }

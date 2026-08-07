@@ -467,7 +467,7 @@ export class SessionManager extends EventEmitter {
    * that assumed. The abort signal fires either way, so an adapter that honors
    * only `ctx.abortSignal` is still cancellable.
    */
-  async interrupt(sessionId: SessionId, agentId?: AgentId): Promise<void> {
+  async interrupt(sessionId: SessionId, agentId?: AgentId, actor?: Actor): Promise<void> {
     const live = this.live(sessionId);
     const targets = agentId ? [agentId] : [...live.handles.keys()];
 
@@ -475,11 +475,25 @@ export class SessionManager extends EventEmitter {
       const record = live.session.agents.find((a) => a.agentId === id);
       live.aborts.get(id)?.abort(new Error('interrupted'));
 
-      if (record && !record.resolvedCapabilities.interruptible) {
+      const interruptible = record?.resolvedCapabilities.interruptible !== false;
+      if (!interruptible) {
         this.emit('degraded', live.session.sessionId, id, 'runtime is not interruptible');
-        continue;
+      } else {
+        await live.handles.get(id)?.interrupt();
       }
-      await live.handles.get(id)?.interrupt();
+
+      // Logged either way, and *after* the attempt so `delivered` reports what
+      // happened rather than what was intended. A stop that the runtime could
+      // not honour is the case a transcript most needs to explain: without this
+      // the turn simply carries on and the log offers no reason why.
+      await live.store.append(
+        {
+          type: 'agent.interrupted',
+          delivered: interruptible,
+          ...(interruptible ? {} : { note: 'this runtime cannot be interrupted mid-turn' }),
+        },
+        { agentId: id, ...(actor !== undefined ? { actor } : {}) },
+      );
     }
   }
 

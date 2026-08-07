@@ -45,6 +45,7 @@ const api: GilmokApi = {
     list: () => ipcRenderer.invoke(CH.hostsList),
     add: () => ipcRenderer.invoke(CH.hostsAdd),
     remove: (instanceId: string) => ipcRenderer.invoke(CH.hostsRemove, instanceId),
+    shutdown: (instanceId: string) => ipcRenderer.invoke(CH.hostsShutdown, instanceId),
     runtimes: (instanceId: string) => ipcRenderer.invoke(CH.hostsRuntimes, instanceId),
     sshHosts: () => ipcRenderer.invoke(CH.hostsSsh),
     addRemote: (alias: string, workspaceRoot: string) =>

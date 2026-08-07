@@ -233,6 +233,7 @@ export class SessionHostServer {
           await manager.interrupt(
             command.sessionId as SessionId,
             command.agentId as AgentId | undefined,
+            client.actor,
           );
           return undefined;
 
