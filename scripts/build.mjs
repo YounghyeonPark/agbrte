@@ -84,6 +84,18 @@ builds.push({
   },
 });
 
+// The browser's `window.gilmok`. Built for the browser, not Node: it is injected
+// ahead of the renderer's own bundle and must exist before that bundle boots.
+builds.push({
+  ...shared,
+  entryPoints: [resolve(root, 'src/web/bridge.ts')],
+  outfile: resolve(root, 'dist/web/bridge.js'),
+  platform: 'browser',
+  format: 'iife',
+  target: 'es2022',
+  banner: {},
+});
+
 // The session host: a standalone process the app spawns detached (§6.4). It
 // outlives the app, so it is built as its own bundle rather than shipped inside
 // main's.

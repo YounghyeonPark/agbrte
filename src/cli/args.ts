@@ -19,7 +19,7 @@ interface Parsed {
 }
 
 /** Flags that consume the next argument; everything else is a boolean. */
-const VALUE_FLAGS = new Set(['--runtime', '--model', '--session', '--title']);
+const VALUE_FLAGS = new Set(['--runtime', '--model', '--session', '--title', '--port', '--bind']);
 
 export function parse(argv: string[]): Parsed {
   const flags = new Set<string>();
@@ -41,7 +41,7 @@ export function parse(argv: string[]): Parsed {
     }
   }
 
-  const KNOWN = new Set(['attach', 'run', 'ls', 'serve', 'stop']);
+  const KNOWN = new Set(['attach', 'run', 'ls', 'serve', 'stop', 'web']);
   // `gilmok /srv/api` and `gilmok attach /srv/api` both work: a first argument that
   // is not a command is a path. Requiring the verb would make the common case
   // the long one.

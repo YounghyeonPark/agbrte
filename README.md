@@ -151,7 +151,23 @@ binary in `~/.gilmok/bin/gilmok`, and `rm -rf ~/.gilmok` removes all of it. No s
 package manager, no service. On a machine that already has the source and Node,
 `npm i -g .` does the same job.
 
-### 8. Resume anything
+### 8. Open it in a browser — a phone, over your VPN
+
+```bash
+gilmok web .                       # loopback only
+gilmok web . --bind $(tailscale ip -4)
+```
+
+The same app, not a cut-down one: the renderer is unchanged and talks to a
+WebSocket instead of Electron IPC, so what a phone sees is what the desktop sees.
+
+**There is no login.** Anyone who can reach the address can drive the session, so
+the address is the entire boundary — which is why it binds to loopback unless you
+name something else, and why a tailnet address is the intended answer. Your phone
+is already on that private network; nothing is exposed to the internet, and the
+network has already established who is connecting. Do not bind this to `0.0.0.0`.
+
+### 9. Resume anything
 
 Every session on disk reopens from its own log — which agent ran, under which
 model and adapter version, what it was asked, what it did, and who approved

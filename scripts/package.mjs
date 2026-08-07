@@ -18,18 +18,29 @@
 
 import { execFileSync } from 'node:child_process';
 import { gzipSync } from 'node:zlib';
-import { mkdirSync, readFileSync, writeFileSync, chmodSync, statSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, chmodSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** What a headless machine needs, and nothing else. The app's own files stay out. */
+/** What a headless machine needs, and nothing else. Electron's own files stay out. */
 const PAYLOAD = {
   'cli/gilmok.js': 'dist/cli/gilmok.js',
   'main/gilmokHost.js': 'dist/main/gilmokHost.js',
   'main/agentHost.js': 'dist/main/agentHost.js',
+  'web/bridge.js': 'dist/web/bridge.js',
 };
+
+/**
+ * Directories carried whole, because their contents are hashed at build time.
+ *
+ * The renderer's bundle is `index-C-IOJcA3.js` today and something else after the
+ * next edit, so it cannot be listed by name. Included at all because `gilmok web`
+ * serves it, and a server install that could not serve the UI would make the one
+ * command a phone needs the one command that does not work there.
+ */
+const PAYLOAD_DIRS = { renderer: 'dist/renderer' };
 
 if (!process.argv.includes('--no-build')) {
   execFileSync(process.execPath, [resolve(root, 'scripts/build.mjs')], { stdio: 'inherit' });
@@ -69,6 +80,23 @@ for (const [name, contents] of Object.entries(files)) {
         `Keep the claude-agent-sdk adapter out of the headless entry points, or load it dynamically.`,
     );
   }
+}
+
+for (const [prefix, from] of Object.entries(PAYLOAD_DIRS)) {
+  const base = resolve(root, from);
+  if (!statSync(base, { throwIfNoEntry: false })) throw new Error(`missing ${from} — run the build first`);
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = resolve(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      // Source maps are for debugging here, not on someone else's server, and
+      // they are four times the size of the code they describe.
+      else if (!entry.name.endsWith('.map')) {
+        files[`${prefix}/${relative(base, full).split(sep).join('/')}`] = readFileSync(full, 'utf8');
+      }
+    }
+  };
+  walk(base);
 }
 
 const payload = gzipSync(Buffer.from(JSON.stringify(files)), { level: 9 }).toString('base64');

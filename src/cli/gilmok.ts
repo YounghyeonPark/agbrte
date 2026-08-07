@@ -49,11 +49,18 @@ const USAGE = `gilmok — an agent workbench, at a terminal
   gilmok run [path] "<prompt>"  one turn, no prompts, an exit code
   gilmok ls [path]              list sessions, one per line
   gilmok serve [path]           run the host in the foreground (no client)
+  gilmok web [path]             serve the app in a browser — a phone, over your VPN
   gilmok stop [path]            ask the host to exit; refuses while work is running
   gilmok --version
 
 Path defaults to the current directory. A host is started if none is running,
 and is left running when you leave — that is the point of it.
+
+Options for web:
+  --port <n>                  default 7717
+  --bind <addr>               default 127.0.0.1. Use your tailnet address to
+                              reach it from a phone. Anyone who can reach the
+                              address can drive the session — there is no login.
 
 Options for run:
   --yes                       allow every permission request (else each is denied)
@@ -148,6 +155,58 @@ async function main(): Promise<number> {
       const stop = (): void => {
         void host.stop().then(done);
       };
+      process.on('SIGINT', stop);
+      process.on('SIGTERM', stop);
+    });
+    return 0;
+  }
+
+  if (command === 'web') {
+    const { serveWeb } = await import('../web/server.js');
+    const { Fleet } = await import('@main/fleet.js');
+    const here = dirname(fileURLToPath(import.meta.url));
+
+    // A fleet of exactly one: this is served *by* a workspace, so it shows that
+    // workspace. Attaching another machine is a thing you do where the
+    // filesystem is, and `hosts.add` says so rather than offering a path field.
+    const fleet = new Fleet({
+      runtimes: [
+        { id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false },
+        { id: 'gilmok-harness', label: 'Gilmok harness', version: '0.0.1', requiresModel: true },
+      ],
+      connect: async () =>
+        connectOrSpawnHost({
+          workspaceRoot: path,
+          hostEntry: findHostEntry(),
+          execPath: process.execPath,
+          client: `gilmok-web@${process.env['HOSTNAME'] ?? 'server'}`,
+        }),
+    });
+    await fleet.attach({ target: { kind: 'local' }, workspaceRoot: path });
+
+    const bind = value('--bind') ?? '127.0.0.1';
+    const server = await serveWeb({
+      api: { fleet, runtimes: [] },
+      rendererDir: resolve(here, '../renderer'),
+      port: Number(value('--port') ?? 7717),
+      host: bind,
+    });
+
+    process.stdout.write(`${c.dim(`gilmok web  ${path}`)}\n${server.url}\n`);
+    if (bind === '127.0.0.1' || bind === 'localhost') {
+      process.stdout.write(
+        c.dim('Loopback only. Pass --bind <your tailnet address> to reach it from a phone.\n'),
+      );
+    } else {
+      // Said plainly every time, because it is true every time and the address
+      // is the entire boundary: there is no login in front of this.
+      process.stdout.write(
+        c.warn(`Anyone who can reach ${bind} can drive this session. There is no login.\n`),
+      );
+    }
+
+    await new Promise<void>((done) => {
+      const stop = (): void => void server.close().then(done);
       process.on('SIGINT', stop);
       process.on('SIGTERM', stop);
     });

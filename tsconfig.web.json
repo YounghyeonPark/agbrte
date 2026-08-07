@@ -9,5 +9,5 @@
     "types": [],
     "allowImportingTsExtensions": true
   },
-  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/shared/**/*.ts", "vite.config.ts"]
+  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/shared/**/*.ts", "src/web/bridge.ts", "vite.config.ts"]
 }
