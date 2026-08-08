@@ -112,12 +112,30 @@ interface LiveSession {
   aborts: Map<AgentId, AbortController>;
   /** Whether this session has already recorded the move. */
   notedRelocation?: boolean;
+  /**
+   * When this session last appended anything.
+   *
+   * Not `updatedAt`, which moves only when an agent is added or the state
+   * changes — a session mid-turn can go quiet for an hour without either. Every
+   * append is the honest signal that something is still happening.
+   */
+  lastEventAt: number;
 }
 
 export interface SessionManagerDeps {
   registry: RuntimeRegistry;
   workspaceRoot: string;
   instanceId: InstanceId;
+  /**
+   * How long a working session may go silent before it is called stalled.
+   *
+   * A judgement call, and deliberately generous. A model can legitimately take
+   * minutes on a long generation and a tool can be slow; calling those stuck
+   * would train the user to ignore the signal, which is the only failure mode
+   * that matters for a warning. Five minutes of complete silence from something
+   * that normally emits text as it goes is genuinely unusual.
+   */
+  stallAfterMs?: number;
   /**
    * Set when this workspace was opened somewhere other than where it last was.
    *
@@ -129,6 +147,9 @@ export interface SessionManagerDeps {
   relocatedFrom?: string;
   now?: () => Date;
 }
+
+/** Five minutes of complete silence from something that streams as it goes. */
+const DEFAULT_STALL_AFTER_MS = 5 * 60 * 1_000;
 
 export class SessionManager extends EventEmitter {
   private readonly sessions = new Map<SessionId, LiveSession>();
@@ -147,9 +168,25 @@ export class SessionManager extends EventEmitter {
   private readonly draining = new Set<AgentId>();
   private readonly now: () => Date;
 
+  private readonly sweeper: NodeJS.Timeout | null;
+
   constructor(private readonly deps: SessionManagerDeps) {
     super();
     this.now = deps.now ?? (() => new Date());
+
+    const after = deps.stallAfterMs ?? DEFAULT_STALL_AFTER_MS;
+    // One timer for every session rather than one each: the check is a
+    // comparison against a number, and N timers would be N wakeups to do work a
+    // single pass does. Swept at a fraction of the threshold so the reported
+    // `since` is not off by a whole interval.
+    this.sweeper = after > 0 ? setInterval(() => this.sweepStalled(), Math.max(1_000, after / 5)) : null;
+    // Never hold the process open just to notice silence.
+    this.sweeper?.unref?.();
+  }
+
+  /** Stop the stall sweeper. Sessions are unaffected; they live in the log. */
+  dispose(): void {
+    if (this.sweeper !== null) clearInterval(this.sweeper);
   }
 
   async createSession(input: CreateSessionInput, actor?: Actor): Promise<Session> {
@@ -186,7 +223,10 @@ export class SessionManager extends EventEmitter {
     // Live forwarding for the UI (§7). Wired here rather than from the IPC
     // layer so exactly one place knows which session a store belongs to, and
     // the renderer never receives an event it cannot attribute.
-    store.onAppend = (event) => this.emit('event', sessionId, event);
+    store.onAppend = (event) => {
+      this.spoke(sessionId);
+      this.emit('event', sessionId, event);
+    };
 
     this.sessions.set(sessionId, {
       session,
@@ -198,6 +238,7 @@ export class SessionManager extends EventEmitter {
       handles: new Map(),
       specs: new Map(),
       aborts: new Map(),
+      lastEventAt: this.now().getTime(),
     });
 
     this.emit('session', session);
@@ -807,6 +848,55 @@ export class SessionManager extends EventEmitter {
     this.emit('state', live.session.sessionId, to, from);
   }
 
+  /**
+   * A session said something, so it is not stuck.
+   *
+   * Clearing on the *first* event rather than on a turn ending is what makes
+   * `stalled` reversible. A long turn that goes quiet and then resumes was never
+   * stuck, and a warning that stays up after the thing it warned about resolved
+   * is how a signal stops being read.
+   */
+  private spoke(sessionId: SessionId): void {
+    const live = this.sessions.get(sessionId);
+    if (live === undefined) return;
+    live.lastEventAt = this.now().getTime();
+    if (live.session.needsAttention?.reason === 'stalled') {
+      live.session.needsAttention = null;
+      this.emit('session', live.session);
+    }
+  }
+
+  /**
+   * Mark sessions that have gone silent mid-turn.
+   *
+   * A **suspicion, not a verdict**: the state stays `working`, because that is
+   * what it is — an agent may legitimately be slow, and moving it to a paused or
+   * failed state would claim something untrue about work still in flight and
+   * would have to be undone the moment it spoke again. `needsAttention` exists
+   * precisely to say "a person should look" without asserting what happened.
+   *
+   * Only sessions that are `working`. A paused one is waiting for a human by
+   * design, which is a different thing with its own reason, and calling that
+   * stalled would flag every session anybody ever left overnight.
+   */
+  private sweepStalled(): void {
+    const after = this.deps.stallAfterMs ?? DEFAULT_STALL_AFTER_MS;
+    if (after <= 0) return;
+    const now = this.now().getTime();
+
+    for (const live of this.sessions.values()) {
+      if (live.session.state !== 'working') continue;
+      if (live.session.needsAttention !== null) continue;
+      if (now - live.lastEventAt < after) continue;
+
+      live.session.needsAttention = {
+        reason: 'stalled',
+        since: new Date(live.lastEventAt).toISOString(),
+      };
+      this.emit('session', live.session);
+    }
+  }
+
   private touch(live: LiveSession): void {
     live.session.updatedAt = this.now().toISOString();
     this.emit('session', live.session);
@@ -882,7 +972,10 @@ export class SessionManager extends EventEmitter {
     const meta = await store.readMeta();
     const { projection } = await store.load();
 
-    store.onAppend = (event) => this.emit('event', sessionId, event);
+    store.onAppend = (event) => {
+      this.spoke(sessionId);
+      this.emit('event', sessionId, event);
+    };
 
     const target: ExecutionTarget = { kind: 'local' };
     const session: Session = {
@@ -906,6 +999,7 @@ export class SessionManager extends EventEmitter {
     const live: LiveSession = {
       session,
       store,
+      lastEventAt: this.now().getTime(),
       policy: defaultPolicyForTarget(target.kind),
       handles: new Map(),
       specs: new Map(),

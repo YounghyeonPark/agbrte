@@ -1262,6 +1262,12 @@ Making that true required splitting `register.ts`. An ESM `import ... from 'elec
 
 One browser detail worth recording: the built CSP names `ws://localhost:*`, which is right for Electron and wrong for a phone reaching a tailnet address. `connect-src 'self'` is supposed to cover a same-origin WebSocket and browsers have disagreed about that for years — Safari being precisely the browser this has to work in. The served page therefore takes the origin from the request's own `Host` header, which is correct whether the phone arrives by IP or by MagicDNS name.
 
+**A session that goes quiet mid-turn is flagged as a suspicion, never as a verdict.** A hung agent and a busy one both report `working`, which is the one thing the dashboard exists to tell apart. So silence past a threshold sets `needsAttention: 'stalled'` and **leaves the state alone**: the agent may simply be slow, and moving it to a paused or failed state would assert something untrue about work still in flight and have to be undone the moment it spoke. `needsAttention` exists precisely to say "a person should look" without claiming what happened, and the card says *quiet — may be stuck* rather than *stalled*.
+
+It clears on the **first** append, not at the end of a turn: a long generation that goes quiet and resumes was never stuck, and a warning still up after the thing it warned about resolved is how a signal stops being read. The clock is `lastEventAt`, not `updatedAt` — the latter moves only when an agent is added or the state changes, so a session mid-turn can go silent for an hour without touching it. Paused sessions are exempt: waiting for a human is not being stuck, and flagging it would light up everything anyone left overnight.
+
+The threshold is generous at five minutes and injectable. Crying wolf is the only failure mode that matters for a warning, and one timer sweeps every session rather than one timer each — the check is a comparison against a number.
+
 **The dashboard shows every session, ranked by who needs a human.** Several hosts and several sessions is the designed shape rather than an edge case — §8's caps are per host and every card carries a target badge for that reason — but the app could only show one session at a time, so "what is running and what is stuck" was answered by clicking through a list. `byAttentionThenRecency` moved from the session manager to sit beside `Session`, because the renderer needs it too: sessions arrive ranked and then drift as pushes replace them in place. One comparator, or the dashboard and the rest of the app would eventually disagree about what matters.
 
 **Only what is true is drawn.** No progress bars: `checklist` exists on the session and no tool emits `checklist.updated`, so a bar would read 0/0 on every card forever — worse than none, because it looks like nothing is happening. No cost: that needs a per-model price nothing supplies. Tokens *are* drawn, because `usage` is genuinely populated by every runtime. The host badge appears only when more than one host is attached; a label identical on every card answers nothing while taking the width the title needs.
@@ -1642,7 +1648,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built |
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | validation satisfied early; **breadth** remains |
-| 4 | Multi-session + dashboard | 5th | dashboard and the Needs-you rail done; quota, parking, notifications remain |
+| 4 | Multi-session + dashboard | 5th | dashboard, Needs-you rail, stall detection done; quota, parking, notifications remain |
 | 6 | Multi-agent + hierarchy | 6th | not started |
 | 7 | Multimodal | 7th | not started |
 | 8 | Breadth + polish | 8th | not started |

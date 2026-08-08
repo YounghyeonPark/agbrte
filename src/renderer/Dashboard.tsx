@@ -41,7 +41,10 @@ const ASKS: Record<AttentionReason, string> = {
   quota_exhausted: 'out of quota',
   split_proposed: 'proposing a split',
   failed: 'failed',
-  stalled: 'stalled',
+  // Not "stalled" flat: the state is still `working` and the agent may simply
+  // be slow. The card should prompt a look, not report a diagnosis it has not
+  // made.
+  stalled: 'quiet — may be stuck',
 };
 
 function tokens(session: Session): number {
