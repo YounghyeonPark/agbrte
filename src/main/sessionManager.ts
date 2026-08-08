@@ -149,6 +149,21 @@ export interface PendingPermission extends PermissionRequest {
   askedAt: string;
 }
 
+/** States that mean nothing more will happen without someone acting. */
+function isSettled(state: SessionState): boolean {
+  return state === 'done' || state === 'failed' || state === 'awaiting_input';
+}
+
+/** What a session has cost so far, summed across its agents. */
+function totalCost(session: Session): number | 'unknown' {
+  let total = 0;
+  for (const agent of session.agents) {
+    if (agent.usage.cost === 'unknown') return 'unknown';
+    total += agent.usage.cost;
+  }
+  return total;
+}
+
 /** Grants apply to the asking agent, so its siblings are never widened. */
 function clonePolicy(policy: ToolPolicy): ToolPolicy {
   return { defaultAction: policy.defaultAction, rules: policy.rules.map((r) => ({ ...r })) };
@@ -1164,9 +1179,20 @@ export class SessionManager extends EventEmitter {
   private async setState(live: LiveSession, to: SessionState, reason?: string): Promise<void> {
     if (live.session.state === to) return;
     const from = live.session.state;
-    live.session.state = to;
-    live.session.needsAttention = attentionFor(to, this.now().toISOString());
+
+    /**
+     * A parent cannot finish while a descendant is still working (§4.3).
+     *
+     * `awaiting_children` is one of the `awaiting_*` family: paused, holding all
+     * state, will resume. Letting a parent reach `done` with live children would
+     * mark the work finished while some of it is still running, and a dashboard
+     * that says done is the one thing nobody looks at again.
+     */
+    const settled = to === 'done' || to === 'awaiting_input';
+    live.session.state = settled && this.hasActiveChildren(live) ? 'awaiting_children' : to;
+    live.session.needsAttention = attentionFor(live.session.state, this.now().toISOString());
     this.touch(live);
+    this.rollUp(live);
 
     await live.store.append({
       type: 'session.state',
@@ -1192,6 +1218,10 @@ export class SessionManager extends EventEmitter {
     if (live.session.needsAttention?.reason === 'stalled') {
       live.session.needsAttention = null;
       this.emit('session', live.session);
+      // And up, so a warning that resolved stops showing at the root too. A
+      // summons left standing after the thing it pointed at cleared is how the
+      // rail stops being read.
+      this.rollUp(live);
     }
   }
 
@@ -1269,6 +1299,9 @@ export class SessionManager extends EventEmitter {
         since: new Date(live.lastEventAt).toISOString(),
       };
       this.emit('session', live.session);
+      // Bubbled like any other blockage. A stalled grandchild that only showed
+      // on its own card is exactly the thing §4.3 says nobody will ever find.
+      this.rollUp(live);
     }
   }
 
@@ -1421,6 +1454,154 @@ export class SessionManager extends EventEmitter {
     this.emit('session', parent.session);
     this.emit('session', live.session);
     return live.session;
+  }
+
+/**
+   * Push this session's state up to its parent, and bubble what is blocked.
+   *
+   * Two things travel up and they are different in kind. `lastKnown` is a
+   * **cache** for rendering a tree whose children may be unreachable — §4.3 is
+   * explicit that it is "never authoritative". `needsAttention` is a **summons**:
+   * §4.3 calls bubbling "the single most important tree behavior in the UI",
+   * because a child three levels down waiting on a permission prompt is the
+   * easiest thing in the system to lose. A parent sitting in `awaiting_children`
+   * looks patient; the question underneath it goes unanswered forever.
+   *
+   * Walks to the root rather than one level, since the rail is at the top and a
+   * blockage that stopped at the parent would still be two expansions away.
+   *
+   * **Within this host only.** A tree spanning two workspaces has an edge no
+   * `SessionManager` can see across, and §4.3 already names this as open: the
+   * fleet, or the host owning the root, has to carry it. Bubbling as far as one
+   * manager reaches is honest; pretending otherwise would put a rail on screen
+   * that silently omits half a tree.
+   */
+  private rollUp(live: LiveSession): void {
+    const parentId = live.session.tree.parentSessionId;
+    if (parentId === undefined) return;
+    const parent = this.sessions.get(parentId as SessionId);
+    if (parent === undefined) return;
+
+    const ref = parent.session.children.find((c) => c.sessionId === live.session.sessionId);
+    if (ref !== undefined) {
+      ref.lastKnown = {
+        state: live.session.state,
+        checklistDone: live.session.checklist.filter((i) => i.state === 'done').length,
+        checklistTotal: live.session.checklist.length,
+        updatedAt: live.session.updatedAt,
+        cost: totalCost(live.session),
+      };
+    }
+
+    // Recomputed from scratch rather than patched. A parent whose own state also
+    // changed, or whose child just cleared, has to be able to *lose* a bubbled
+    // attention — and an incremental update that only ever adds is how a stale
+    // summons stays on screen after the thing it pointed at was answered.
+    this.recomputeAttention(parent);
+    this.rollUp(parent);
+  }
+
+  /** Whether anything below this session is still working. */
+  private hasActiveChildren(live: LiveSession): boolean {
+    return live.session.children.some((c) => !isSettled(c.lastKnown.state));
+  }
+
+  /**
+   * A session's own blockage, or the nearest one beneath it.
+   *
+   * Its own wins. A parent that is itself waiting on a permission prompt is not
+   * helped by being told a grandchild is too — the thing in front of you is the
+   * thing you can answer.
+   */
+  private recomputeAttention(parent: LiveSession): void {
+    const own = attentionFor(parent.session.state, parent.session.needsAttention?.since ?? this.now().toISOString());
+    if (own !== null) {
+      parent.session.needsAttention = own;
+      this.touch(parent);
+      return;
+    }
+
+    const found = this.findBlockedDescendant(parent, []);
+    parent.session.needsAttention =
+      found === null
+        ? null
+        : {
+            reason: found.attention.reason,
+            since: found.attention.since,
+            // The breadcrumb travels with it, because "something below this
+            // needs you" is not actionable — you have to be able to get there.
+            from: { sessionId: found.sessionId, title: found.title, path: found.path },
+          };
+    this.touch(parent);
+  }
+
+  /** Depth-first, nearest first: the closest blockage is the one to name. */
+  private findBlockedDescendant(
+    live: LiveSession,
+    path: string[],
+  ): { sessionId: SessionId; title: string; path: string[]; attention: NonNullable<Session['needsAttention']> } | null {
+    for (const ref of live.session.children) {
+      const child = this.sessions.get(ref.sessionId as SessionId);
+      if (child === undefined) continue;
+      const here = [...path, child.session.title];
+
+      const attention = child.session.needsAttention;
+      /**
+       * `needs_input` does not travel.
+       *
+       * Every turn ends there, so a tree of any size would permanently show a
+       * summons from some child or other — and a rail that is always lit is a
+       * rail nobody reads, which is the one failure mode that matters for a
+       * warning. The same reason it is silent in the notifier and absent from
+       * the inbox. It stays on the child's own card, where it is true and where
+       * looking at it is a choice.
+       */
+      if (attention !== null && attention.reason !== 'needs_input') {
+        // A blockage already bubbled from further down keeps its own origin,
+        // rather than being re-attributed to the child that relayed it.
+        return attention.from !== undefined
+          ? { sessionId: attention.from.sessionId, title: attention.from.title, path: [...here, ...attention.from.path], attention }
+          : { sessionId: child.session.sessionId, title: child.session.title, path: here, attention };
+      }
+
+      const deeper = this.findBlockedDescendant(child, here);
+      if (deeper !== null) return deeper;
+    }
+    return null;
+  }
+
+  /**
+   * Cancel a session, turning its children into roots (§4.3).
+   *
+   * > Cancelling a parent orphans its children into roots rather than destroying
+   * > them.
+   *
+   * Each child is self-contained and independently valuable — its own log, its
+   * own workspace, its own budget — so adopting it as a root is the safe default
+   * and cascading cancellation is the thing that needs asking about. A child
+   * destroyed with its parent takes a transcript worth reading with it.
+   */
+  async cancelSession(sessionId: SessionId, actor?: Actor): Promise<void> {
+    const live = this.live(sessionId);
+
+    for (const ref of live.session.children) {
+      const child = this.sessions.get(ref.sessionId as SessionId);
+      if (child === undefined) continue;
+
+      child.session.tree = {
+        rootSessionId: child.session.sessionId,
+        depth: 0,
+        ancestry: [],
+      };
+      await child.store.append(
+        { type: 'session.orphaned', formerParentSessionId: sessionId },
+        { ...(actor !== undefined ? { actor } : {}) },
+      );
+      this.emit('session', child.session);
+    }
+
+    live.session.children = [];
+    await this.setState(live, 'failed', 'cancelled by the user');
   }
 
   /** Current derived state, folded from the log (§5.1). */

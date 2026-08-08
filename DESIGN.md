@@ -862,7 +862,17 @@ It refuses rather than degrades in four cases, all for the same reason: §4.3 ke
 - **A refused split leaves nothing behind** — no reservation, no half-written edge, no child. A parent that lost budget to children which were never created would be the worst of both outcomes.
 - **The edge is written on both logs**: the parent's `session.spawned_child` and the child's `session.brief_received`. Either alone reconstructs the relationship, which is what makes a child in another workspace self-contained rather than a dangling reference.
 
-**Still absent:** split *proposals* — the `propose_split` tool and its approval flow — result roll-up, `awaiting_children`, and `needsAttention` bubbling.
+**Roll-up, `awaiting_children`, bubbling and orphan-on-cancel are built.** Two different things travel up and conflating them would have been the bug: `lastKnown` is a **cache** for rendering a tree whose children may be unreachable, and `needsAttention` is a **summons**.
+
+- **`needs_input` deliberately does not bubble.** Every turn ends there, so a tree of any size would permanently show a summons from some child or other — and a rail that is always lit is a rail nobody reads. It stays on the child's own card, where it is true and where looking at it is a choice. The same rule already governs the notifier and the inbox: three features, one reason.
+- **A session's own blockage outranks one beneath it.** A parent itself waiting on a prompt is not helped by being told a grandchild is too; the thing in front of you is the thing you can answer.
+- **A relayed summons keeps its origin.** Re-attributing it to the session that passed it along would send the user to a session with nothing to answer, which is worse than not surfacing it — it looks like an answer and is not.
+- **Attention is recomputed rather than patched.** An incremental update that only ever adds is how a stale summons stays on screen after the thing it pointed at was resolved.
+- **Cancelling adopts children as roots**, and records `session.orphaned` on each. The edge was recorded when it was made; its removal is equally part of the history, and an orphan stays immediately runnable.
+
+**Within one host only.** A tree spanning two workspaces has an edge no single `SessionManager` can see across, and this is the open question already named above: the fleet, or the host owning the root, has to carry it. Bubbling as far as one manager reaches is honest; the alternative would put a rail on screen that silently omits half a tree.
+
+**Still absent:** split *proposals* — the `propose_split` tool and its approval flow — and the result path back up (`session.child_result` is folded by the reducer but nothing produces one).
 
 **Results flow up by reference; only a bounded summary is injected.** A child returns a structured summary within `summaryMaxTokens`, plus artifact refs and checklist outcomes. If its result exceeds the ceiling, the child **writes an artifact and returns a pointer** — it does not get to negotiate a larger injection. The parent may drill into a child's full log in the UI, but that is a human reading a transcript, not context entering a model.
 

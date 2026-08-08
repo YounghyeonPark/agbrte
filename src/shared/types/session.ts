@@ -268,7 +268,27 @@ export interface Session {
   checklist: ChecklistItem[];
   artifacts: ArtifactRef[];
   budget?: SessionBudget;
-  needsAttention: null | { reason: AttentionReason; since: string };
+  /**
+   * What is blocking here, or beneath here (§4.3, §10).
+   *
+   * `from` is set when the blockage belongs to a *descendant* rather than to
+   * this session. §4.3 calls bubbling "the single most important tree behavior
+   * in the UI": a child three levels down waiting on a permission prompt is the
+   * easiest thing in the system to lose, and a rail that showed only a session's
+   * own blockage would show a parent sitting in `awaiting_children` looking
+   * patient while the actual question went unanswered forever.
+   *
+   * The breadcrumb comes with it, because "something below this needs you" is
+   * not actionable — you have to be able to get there.
+   */
+  needsAttention:
+    | null
+    | {
+        reason: AttentionReason;
+        since: string;
+        /** Absent when it is this session's own. */
+        from?: { sessionId: SessionId; title: string; path: string[] };
+      };
   tree: TreePosition;
   /** Cached projection; each child owns its own truth. */
   children: ChildRef[];
