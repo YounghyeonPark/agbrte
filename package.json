@@ -1,7 +1,7 @@
 {
   "name": "agbrte",
   "version": "0.0.1",
-  "description": "An agent workbench: durable, host-owned agent sessions you attach to from anywhere.",
+  "description": "Agent Bridge Terminal — durable, bridge-owned agent sessions you attach to from any terminal.",
   "license": "Apache-2.0",
   "author": "Younghyeon Park <ypark.dev@gmail.com>",
   "repository": {

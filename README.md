@@ -1,5 +1,7 @@
 # Agbrte
 
+**Ag**ent **Br**idge **Te**rminal.
+
 An agent-based development workbench. Multiple sessions, multiple agents per
 session, any model behind a pluggable adapter, running on your machine or on a
 server — and agent memory that survives the workspace folder being moved.
@@ -10,8 +12,8 @@ that outlive the app, and several clients on one session are exercised against a
 real server — including a phone, over a browser, on a tailnet. There is a
 dashboard with a Needs-you rail, stall detection, quota parking that resumes on
 its own, notifications, a CLI for headless machines, and a one-file installer.
-Four runtime shapes run the same conformance suite, including the agent CLI you
-already have installed.
+One conformance suite runs against five deliberately different runtimes,
+including the agent CLI you already have installed.
 
 **Not built yet:** multi-agent and hierarchy (phase 6), multimodal (phase 7), the
 `QuotaScheduler`, a second cloud provider, and the conformance matrix in the UI.
@@ -20,12 +22,18 @@ unfinished; where something is only partly true, it says which part.
 
 ## The one idea
 
-**A session runs on a host, not inside the window.** A host is a workspace — a
-folder, on this machine or on a server — served by its own process that owns the
-event log, the permission gate, and the turn queue. The app is a client.
+**A session runs on the bridge, not inside the terminal.** The bridge is a
+workspace — a folder, on this machine or on a server — served by its own process
+that owns the event log, the permission gate, and the turn queue. The terminal is
+whatever you are sitting at: the desktop app, a browser on your phone, the CLI on
+a machine with no display. All of them are clients, and none of them holds the
+session.
 
 Closing the app mid-run, driving one session from a second machine, and resuming
 after a restart are not three features. They are three consequences of that.
+
+That is the whole name: **Ag**ent **Br**idge **Te**rminal, in the order the
+architecture is built.
 
 ## Ways to use it
 

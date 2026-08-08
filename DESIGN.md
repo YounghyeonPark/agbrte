@@ -1,6 +1,8 @@
-# Agbrte — Agent-Based Development Workbench
+# Agbrte — Agent Bridge Terminal
 
-**Working codename:** Agbrte (sessions are threads; a session weaves several agents together). Rename freely.
+**The name.** **Ag**ent **Br**idge **Te**rminal — three words that describe the architecture rather than decorate it. The **agent** is what runs. The **bridge** is the host: one process per workspace, owning the event log, the permission gate, and the turn queue, outliving every client attached to it (§8). The **terminal** is whatever you happen to be sitting at — the desktop app, a browser on a phone, the CLI on a machine with no display — and they are interchangeable by construction.
+
+The design is in the order of those words. A session runs on the bridge, never inside the terminal, which is why closing the app mid-run, driving one session from a second machine, and resuming after a restart are not three features but one property seen three times.
 
 **Status:** Architecture design, v0.5 — session hierarchy and scope-driven splitting. Greenfield.
 
