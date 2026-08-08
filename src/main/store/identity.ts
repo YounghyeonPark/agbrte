@@ -13,6 +13,7 @@
  */
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import {
   newInstanceId,
   newLineageId,
@@ -36,6 +37,23 @@ export interface ProjectFile {
 export interface InstanceFile {
   instanceId: InstanceId;
   createdAt: string;
+  /**
+   * Where this checkout was last opened.
+   *
+   * The one thing that makes a move *detectable*. Identity is deliberately never
+   * derived from a path — that is what allows relocation at all (§5.3) — but the
+   * consequence is that a moved workspace is byte-identical to one that never
+   * moved: `instance.json` travels with the folder, so every field matches. The
+   * only way to notice is to have written down where it was.
+   *
+   * In `instance.json` and not `project.json` because this file is gitignored
+   * and per-checkout. A clone must not inherit the previous machine's path and
+   * then believe it has been relocated.
+   *
+   * Absent on files written before this existed. Absent means "unknown", not
+   * "unmoved" — the first open after an upgrade records it and claims nothing.
+   */
+  lastKnownPath?: string;
 }
 
 export interface WorkspaceIdentity {
@@ -43,7 +61,17 @@ export interface WorkspaceIdentity {
   lineageId: LineageId;
   instanceId: InstanceId;
   /** How this open resolved — surfaced in the UI so a clone is never a surprise. */
-  origin: 'created' | 'existing' | 'cloned';
+  /**
+   * How this workspace came to be here.
+   *
+   * `relocated` is the one with a consequence rather than a label: a native
+   * resume token was minted by a vendor against the *old* location, and the
+   * honest assumption is that it no longer describes anything. See
+   * `SessionManager.openHandle`.
+   */
+  origin: 'created' | 'existing' | 'cloned' | 'relocated';
+  /** Where it was, when it has moved. For saying so rather than just knowing. */
+  movedFrom?: string;
 }
 
 const MEMORY_INDEX_HEADER = `# Project memory
@@ -65,9 +93,27 @@ Written by agents via the \`remember\` tool; edits by hand are welcome.
  *            which is correct and falls out of the model rather than being
  *            special-cased.
  */
+export interface OpenOptions {
+  displayName?: string;
+  /**
+   * Whether to write down that the workspace is now here.
+   *
+   * **Off by default, deliberately.** Recording *consumes* the relocation
+   * signal: once `lastKnownPath` matches, the next open reports `existing` and
+   * the move is gone. Only the process that owns the workspace should do that —
+   * the host — and it was a client that reached the folder first, so a client
+   * that recorded on the way past would swallow the move before the host ever
+   * saw it. That is not hypothetical; it is what happened, and the resume after
+   * a real move came back with no `workspace.relocated` in the log.
+   *
+   * Defaulting to off means a caller added later cannot consume it by accident.
+   */
+  record?: boolean;
+}
+
 export async function openWorkspace(
   root: string,
-  opts: { displayName?: string } = {},
+  opts: OpenOptions = {},
 ): Promise<WorkspaceIdentity> {
   const layout = workspaceLayout(root);
 
@@ -105,17 +151,36 @@ export async function openWorkspace(
   const instance: InstanceFile =
     existingInstance ?? { instanceId: newInstanceId(), createdAt: new Date().toISOString() };
 
+  // Compared before it is overwritten, and normalised first: the same directory
+  // reached as `C:\dev\x` and `C:/dev/x` is not a move, and reporting one would
+  // throw away every native resume token for a path separator.
+  const here = resolve(root);
+  const before = instance.lastKnownPath;
+  const moved = before !== undefined && resolve(before) !== here;
+
   if (!existingInstance) {
-    await writeJson(layout.instanceFile, instance);
+    // A brand-new instance file has to be written whatever the caller wanted;
+    // there is nothing to consume yet.
+    await writeJson(layout.instanceFile, { ...instance, lastKnownPath: here });
+  } else if (opts.record === true && before !== here) {
+    await writeJson(layout.instanceFile, { ...instance, lastKnownPath: here });
   }
 
   const origin: WorkspaceIdentity['origin'] = !existingProject
     ? 'created'
-    : existingInstance
-      ? 'existing'
-      : 'cloned';
+    : !existingInstance
+      ? 'cloned'
+      : moved
+        ? 'relocated'
+        : 'existing';
 
-  return { layout, lineageId: project.lineageId, instanceId: instance.instanceId, origin };
+  return {
+    layout,
+    lineageId: project.lineageId,
+    instanceId: instance.instanceId,
+    origin,
+    ...(moved && before !== undefined ? { movedFrom: before } : {}),
+  };
 }
 
 /** Read identity without creating anything — used by the resolver (§5.3). */

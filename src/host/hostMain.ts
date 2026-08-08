@@ -105,7 +105,8 @@ export interface RunningHost {
 
 export async function startSessionHost(opts: StartHostOptions): Promise<RunningHost> {
   const workspaceRoot = resolve(opts.workspaceRoot);
-  const identity = await openWorkspace(workspaceRoot);
+  // The host owns the workspace, so the host is what records where it is.
+  const identity = await openWorkspace(workspaceRoot, { record: true });
   const socket = hostSocketPath(identity.instanceId);
 
   const agentEntry = opts.agentHostEntry ?? resolve(HERE, 'agentHost.js');
@@ -131,6 +132,12 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
   }
 
   const manager = new SessionManager({
+    // Threaded from `openWorkspace`, which is the only thing that can tell: a
+    // moved workspace is byte-identical to one that never moved, so detection
+    // depends on the path this checkout was last opened at being written down.
+    ...(identity.origin === 'relocated' && identity.movedFrom !== undefined
+      ? { relocatedFrom: identity.movedFrom }
+      : {}),
     registry,
     workspaceRoot,
     instanceId: identity.instanceId,
@@ -172,6 +179,9 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       workspaceRoot,
       runtimes: available,
       endpoints,
+      ...(identity.origin === 'relocated' && identity.movedFrom !== undefined
+        ? { movedFrom: identity.movedFrom }
+        : {}),
       ...(unavailableReason !== undefined ? { unavailableReason } : {}),
     },
     grantRole: (requested, client) => ({
@@ -179,7 +189,10 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       actor: identityOf.actor,
     }),
     lingerMs: opts.lingerMs ?? DEFAULT_LINGER_MS,
-    onIdleExit: () => {
+    // Whatever the reason — the idle timer, or a client asking — the process
+    // goes. A host that stops serving but keeps its socket is worse than one
+    // that never stopped: the next client finds it and believes it is live.
+    onStopped: () => {
       void stop().then(() => process.exit(0));
     },
   });

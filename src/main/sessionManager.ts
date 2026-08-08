@@ -123,12 +123,23 @@ interface LiveSession {
   specs: Map<AgentId, AgentSpec>;
   /** Real controllers, so `ctx.abortSignal` can actually fire. */
   aborts: Map<AgentId, AbortController>;
+  /** Whether this session has already recorded the move. */
+  notedRelocation?: boolean;
 }
 
 export interface SessionManagerDeps {
   registry: RuntimeRegistry;
   workspaceRoot: string;
   instanceId: InstanceId;
+  /**
+   * Set when this workspace was opened somewhere other than where it last was.
+   *
+   * A native resume token was minted by a vendor against the *old* location, so
+   * the honest assumption is that it no longer describes anything — see
+   * `openHandle`. Absent means "not known to have moved", which is also what an
+   * `instance.json` written before relocation was tracked reports.
+   */
+  relocatedFrom?: string;
   now?: () => Date;
 }
 
@@ -420,7 +431,39 @@ export class SessionManager extends EventEmitter {
     const caps = record.resolvedCapabilities;
     const ctx = this.contextFor(live, spec);
 
-    if (caps.nativeResume && record.resumeToken !== null) {
+    // Skipped outright after a move, rather than attempted and allowed to fail.
+    // A vendor's resume token was minted against the old path, and the two ways
+    // it can behave are both bad: reject — which costs a round trip to learn
+    // what we already know — or *succeed* against state that describes a
+    // directory the code is no longer in. §15's criterion for this phase is
+    // explicitly "verified with the native resume token deliberately
+    // invalidated", because the durable path is the one that has to carry it.
+    const trustToken = this.deps.relocatedFrom === undefined;
+
+    // Recorded whether or not there was a token to discard. The move is a fact
+    // about the workspace, not about one runtime's resume support — putting it
+    // inside the token branch meant a runtime that mints no token left no trace
+    // of having moved at all. Once per session, not once per agent, or the log
+    // fills with the same sentence.
+    if (!trustToken && !live.notedRelocation) {
+      live.notedRelocation = true;
+      await live.store.append({
+        type: 'workspace.relocated',
+        from: this.deps.relocatedFrom as string,
+        to: this.deps.workspaceRoot,
+      });
+    }
+
+    if (!trustToken && record.resumeToken !== null) {
+      this.emit(
+        'resume-rejected',
+        live.session.sessionId,
+        spec.agentId,
+        new Error(`workspace moved from ${this.deps.relocatedFrom}; native resume token discarded`),
+      );
+    }
+
+    if (trustToken && caps.nativeResume && record.resumeToken !== null) {
       try {
         const handle = await runtime.resume(spec, record.resumeToken, ctx);
         live.handles.set(spec.agentId, handle);

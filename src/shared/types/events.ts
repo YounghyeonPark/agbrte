@@ -195,7 +195,21 @@ export type EventBody =
    * worth recording, because "I pressed stop and it kept going" is exactly the
    * thing a transcript needs to explain rather than hide.
    */
-  | { type: 'agent.interrupted'; delivered: boolean; note?: string };
+  | { type: 'agent.interrupted'; delivered: boolean; note?: string }
+  /**
+   * The workspace was opened somewhere other than where it last was (§5.3).
+   *
+   * Recorded because it explains a change the transcript otherwise cannot: an
+   * agent that resumed natively yesterday rehydrates today, and without this the
+   * log shows a different `resumeMode` for no visible reason. Identity is never
+   * derived from a path — that is what makes a move survivable — so a move
+   * leaves no other trace at all.
+   *
+   * The old path is kept verbatim rather than encoded. `EncodedPath` is
+   * workspace-relative and this is precisely a fact about the workspace's own
+   * absolute location, which is the one thing that encoding would erase.
+   */
+  | { type: 'workspace.relocated'; from: string; to: string };
 
 export type GilmokEvent = EventEnvelope & EventBody;
 
@@ -230,4 +244,5 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'agent.started',
   'agent.compacted',
   'agent.interrupted',
+  'workspace.relocated',
 ]);

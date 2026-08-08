@@ -69,6 +69,15 @@ export interface HostIdentity {
   }>;
   /** Set when the agent host could not start. Sessions still load read-only. */
   unavailableReason?: string;
+  /**
+   * Where this workspace was before it moved (§5.3).
+   *
+   * Carried to clients because it explains a behaviour change they would
+   * otherwise see without a cause: agents that resumed natively yesterday
+   * rehydrate today. A move leaves no other trace — identity is deliberately not
+   * derived from a path — so if the host does not say so, nothing can.
+   */
+  movedFrom?: string;
   /** The host's own pid, so a client can report which process it is talking to. */
   pid: number;
   /** Protocol version, so a stale app fails loudly rather than subtly. */

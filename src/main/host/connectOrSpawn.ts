@@ -67,7 +67,22 @@ export async function connectOrSpawnHost(opts: ConnectOptions): Promise<HostConn
   const socket = hostSocketPath(identity.instanceId);
 
   const existing = await tryConnect(socket, opts.client);
-  if (existing !== null) return existing;
+  if (existing !== null) {
+    const serving = await existing.ready.catch(() => null);
+    if (serving === null || resolve(serving.workspaceRoot) === workspaceRoot) return existing;
+
+    // The host answering is serving a *different* directory under the same
+    // identity, which happens for exactly one reason: the workspace moved and a
+    // host at the old location is still running. The socket is keyed by
+    // `instanceId` and that survives a move by design, so the old host answers
+    // requests made from the new path and then fails opening files that are no
+    // longer there. Only a real move surfaces this — every path in the code is
+    // correct in isolation.
+    existing.disconnect();
+    const stopped = await stopStale(socket, workspaceRoot, serving.workspaceRoot, opts.client);
+    if (!stopped.ok) throw new Error(stopped.reason);
+    await clearHostRecord(workspaceRoot);
+  }
 
   // Nothing answered. If a record says otherwise it describes a process that is
   // no longer there, so clear it rather than leaving a lie on disk.
@@ -88,6 +103,50 @@ export async function connectOrSpawnHost(opts: ConnectOptions): Promise<HostConn
     // on Windows named pipes, so there is nothing to watch for.
     await new Promise((r) => setTimeout(r, 100));
   }
+}
+
+/**
+ * Retire a host still serving this workspace's previous location.
+ *
+ * Asked to stop rather than killed, and allowed to refuse: it may be holding a
+ * live agent, and taking that down because a folder was renamed would lose work
+ * for a reason the user would never connect to the cause. A refusal is reported
+ * with both paths, because "no host for /new/path" is a true sentence that
+ * explains nothing.
+ */
+async function stopStale(
+  socket: string,
+  wanted: string,
+  serving: string,
+  client?: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const connection = await tryConnect(socket, client);
+  if (connection === null) return { ok: true }; // it went away on its own
+
+  try {
+    const result = await connection.requestShutdown();
+    if (!result.stopped) {
+      return {
+        ok: false,
+        reason:
+          `this workspace has moved to ${wanted}, but a host is still running at ` +
+          `${serving} and will not stop: ${result.reason ?? 'work is in flight'}. ` +
+          `Let it finish, or stop it there.`,
+      };
+    }
+  } catch {
+    return { ok: true }; // it died while being asked, which is the outcome wanted
+  } finally {
+    connection.disconnect();
+  }
+
+  // The socket is removed by the departing host; waiting for that to actually
+  // happen is what stops the replacement failing with EADDRINUSE.
+  const deadline = Date.now() + 5_000;
+  while (existsSync(socket) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return { ok: true };
 }
 
 function spawnDetached(workspaceRoot: string, opts: ConnectOptions): void {

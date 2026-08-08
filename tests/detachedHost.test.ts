@@ -12,7 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, access } from 'node:fs/promises';
+import { mkdtemp, rm, rename, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { connectOrSpawnHost } from '@main/host/connectOrSpawn.js';
@@ -25,6 +25,8 @@ const HOST_BUNDLE = resolve(import.meta.dirname, '../dist/main/gilmokHost.js');
 
 let root: string;
 let open: HostConnection[] = [];
+/** Extra directories a test created, so a move leaves nothing behind. */
+let roots: string[] = [];
 
 /** Ask a host to stop, so a test does not leave a process behind. */
 async function stopHost(connection: HostConnection): Promise<void> {
@@ -43,6 +45,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   for (const connection of open) await stopHost(connection);
+  for (const extra of roots) await rm(extra, { recursive: true, force: true });
+  roots = [];
   await rm(root, { recursive: true, force: true });
 });
 
@@ -193,4 +197,55 @@ describe('processAlive', () => {
     // decides whether a host is usable.
     expect(processAlive(999_999)).toBe(false);
   });
+});
+
+/**
+ * A workspace that moved while its host kept running (§5.3).
+ *
+ * The socket is keyed by `instanceId`, and that survives a move by design —
+ * identity is never derived from a path, which is the whole reason relocation
+ * works at all. The consequence is one no path-handling code can catch on its
+ * own: a client opening the workspace at its *new* location computes the same
+ * socket, reaches the host still serving the *old* one, and gets answers about a
+ * directory that is no longer there. Every function involved is individually
+ * correct.
+ */
+describe('a workspace that moved out from under its host', () => {
+  it('retires the host serving the old path instead of talking to it', async () => {
+    if (!(await built())) throw new Error(`run \`npm run build\` first`);
+
+    const first = await connectOrSpawnHost({
+      workspaceRoot: root,
+      hostEntry: HOST_BUNDLE,
+      execPath: process.execPath,
+      startupTimeoutMs: 20_000,
+    });
+    open.push(first);
+    const before = await first.ready;
+    expect(resolve(before.workspaceRoot)).toBe(resolve(root));
+
+    // The folder moves. The host does not notice — it has no reason to.
+    const moved = `${root}-moved`;
+    roots.push(moved);
+    await rename(root, moved);
+
+    const second = await connectOrSpawnHost({
+      workspaceRoot: moved,
+      hostEntry: HOST_BUNDLE,
+      execPath: process.execPath,
+      startupTimeoutMs: 20_000,
+    });
+    open.push(second);
+    const after = await second.ready;
+
+    // A different process, serving the place the workspace actually is. Getting
+    // the old one back would mean every file operation aimed at a path that no
+    // longer exists.
+    expect(resolve(after.workspaceRoot)).toBe(resolve(moved));
+    expect(after.pid).not.toBe(before.pid);
+    // Same workspace, so the same identity: a new one here would orphan every
+    // session in the folder.
+    expect(after.instanceId).toBe(before.instanceId);
+    // Two hosts started and one retired, which is not quick.
+  }, 60_000);
 });

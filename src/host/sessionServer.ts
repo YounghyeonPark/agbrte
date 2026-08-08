@@ -57,8 +57,17 @@ export interface SessionHostOptions {
    * authorization on somewhere else.
    */
   grantRole?: (requested: AccessRole, client: string) => { role: AccessRole; actor: Actor };
-  /** Called when the host decides it should exit. */
-  onIdleExit?: () => void;
+  /**
+   * Called whenever this server stops serving, for any reason.
+   *
+   * Named for the *fact* rather than for one cause, because it had one cause and
+   * that was the bug: it fired on the idle timer only, so a client asking the
+   * host to shut down got an acknowledgement while the process stayed up holding
+   * its socket — still accepting connections, still answering. `gilmok stop`
+   * reported success and left a host behind, and the next client to compute that
+   * socket found the zombie rather than starting a replacement.
+   */
+  onStopped?: (reason: string) => void;
   /** Milliseconds with no client and no work before exiting. 0 disables. */
   lingerMs?: number;
   now?: () => number;
@@ -315,7 +324,6 @@ export class SessionHostServer {
         return;
       }
       this.stop('idle');
-      this.opts.onIdleExit?.();
     }, lingerMs);
     // Never hold the process open just to time its own exit.
     this.lingerTimer.unref?.();
@@ -336,6 +344,10 @@ export class SessionHostServer {
     this.broadcast({ t: 'push.closing', reason });
     for (const client of this.clients) client.channel.close();
     this.clients.clear();
+    // One exit path for every reason it stops. The owner closes the listener and
+    // ends the process; leaving that to only one caller is how a "stopped" host
+    // kept answering.
+    this.opts.onStopped?.(reason);
   }
 
   /** Test and diagnostic view. */
