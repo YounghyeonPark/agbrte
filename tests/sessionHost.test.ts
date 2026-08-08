@@ -177,6 +177,46 @@ describe('the host owns the session', () => {
   });
 });
 
+describe('the inbox, over the wire', () => {
+  /**
+   * The hop the unit tests cannot cover.
+   *
+   * `SessionManager.inbox()` is tested directly, but the entries have to survive
+   * serialization and reach a client that was not attached when any of it
+   * happened — which is the whole case the inbox exists for, since a detached
+   * host is where those events accumulate with nobody connected.
+   */
+  it('reaches a client that was not there when it happened', async () => {
+    const r = rig([{ kind: 'stop', stop: { kind: 'refused' } }]);
+    const author = r.connect();
+    const { sessionId, agentId } = await sessionWithAgent(author);
+    await author.send(sessionId, agentId as never, 'go');
+    author.disconnect();
+
+    const later = r.connect();
+    await later.ready;
+    const entries = await later.inbox();
+
+    expect(entries.map((e) => e.trigger)).toContain('failed');
+    expect(entries[0]?.unread).toBe(true);
+  });
+
+  it('lets a read-only client clear its own badge', async () => {
+    const r = rig([{ kind: 'stop', stop: { kind: 'refused' } }]);
+    const author = r.connect();
+    const { sessionId, agentId } = await sessionWithAgent(author);
+    await author.send(sessionId, agentId as never, 'go');
+
+    const reader = r.connect({ role: 'read-only' });
+    await reader.ready;
+    // Not gated on write access: marking what *you* have read changes nothing
+    // about the work, and a viewer who cannot clear a badge is told about the
+    // same thing forever.
+    await expect(reader.markInboxRead()).resolves.toBeUndefined();
+    expect((await reader.inbox()).every((e) => !e.unread)).toBe(true);
+  });
+});
+
 describe('asking a runtime what it declares', () => {
   it('answers without a session, because the answer informs the choice', async () => {
     const c = rig().connect();

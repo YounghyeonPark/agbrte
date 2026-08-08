@@ -117,6 +117,10 @@ const api: AgbrteApi = {
     runtimes: call(CH.hostsRuntimes),
     conformance: call(CH.hostsConformance),
   },
+  inbox: {
+    list: call(CH.inboxList),
+    markRead: call(CH.inboxMarkRead),
+  },
   sessions: {
     list: call(CH.sessionsList),
     create: call(CH.sessionsCreate),

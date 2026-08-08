@@ -28,6 +28,7 @@ import { useEffect, useMemo, useState, type JSX } from 'react';
 import { AttachHost } from './AttachHost.js';
 import { Dashboard } from './Dashboard.js';
 import { SupportMatrix } from './SupportMatrix.js';
+import { Inbox } from './Inbox.js';
 import { StartGuide } from './StartGuide.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import { useAgbrte } from './store.js';
@@ -76,14 +77,22 @@ export function App(): JSX.Element {
    * something worth seeing.
    */
   const [pane, setPane] = useState<'main' | 'hosts'>('main');
-  const { hosts, runtimesByHost, conformanceByHost, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
+  const { hosts, runtimesByHost, conformanceByHost, inbox, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
     store;
 
   useEffect(() => {
     void store.boot();
+    void useAgbrte.getState().refreshInbox();
 
     const offEvents = window.agbrte.on.events((b) => useAgbrte.getState().applyBatch(b));
-    const offSession = window.agbrte.on.session((s) => useAgbrte.getState().applySession(s));
+    const offSession = window.agbrte.on.session((s) => {
+      useAgbrte.getState().applySession(s);
+      // Refreshed on every state push rather than polled. The inbox is folded
+      // from the log, so it only ever changes when the log does — and the push
+      // that carries a session into `done` is exactly the moment an entry for
+      // it exists to be read.
+      void useAgbrte.getState().refreshInbox();
+    });
     const offPermission = window.agbrte.on.permission((r) => useAgbrte.getState().applyPermission(r));
     const offResolved = window.agbrte.on.permissionResolved((r) =>
       useAgbrte.getState().applyPermissionResolved(r),
@@ -127,7 +136,14 @@ export function App(): JSX.Element {
       >
         <header className="border-line flex items-center justify-between border-b p-3.5">
           <h1 className="text-base tracking-wide">Agbrte</h1>
-          <div className="flex gap-1.5">
+          <div className="flex items-center gap-1.5">
+            {/* §11: the durable record of what the notifier could not deliver —
+                while focused, in a browser, or with the app closed entirely. */}
+            <Inbox
+              entries={inbox}
+              onMarkRead={() => void useAgbrte.getState().markInboxRead()}
+              onOpen={(entry) => void store.openSession(entry.sessionId, entry.instanceId)}
+            />
             <button
               className="btn px-2 md:hidden"
               data-testid="show-main"

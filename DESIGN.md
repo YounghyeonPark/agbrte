@@ -1538,6 +1538,19 @@ type NotifyTrigger =
 - **Suppress when focused** — visible focused session gets an in-app toast only.
 - **Actionable** — `Open`, `Approve`, `Dismiss` where the OS supports it.
 - **Fired from mirrored events**, so a detached run that finished at 3 a.m. notifies you on reconnect; the **in-app inbox is the durable record** regardless.
+
+**The inbox is built, and it is a fold over the log rather than a store.** §5 makes the event log the source of truth, so an inbox kept beside it is a second one that can disagree — a line for a session whose transcript says otherwise, or a run that finished with nothing in the list. Every entry is folded out of events that were already being written, which is also why it survives a crash, a relocation, and the app never having been open when the thing happened.
+
+That last case is the point. "Regardless" in the sentence above covers three holes the notifier has by design, and an inbox recording what was *delivered* would inherit all of them: it is silent while a window has focus, it cannot exist in a browser (`Notification` needs a secure context and the intended arrangement is `http://` to a tailnet address), and it has nobody to tell while the app is closed and a detached host works through the night.
+
+- **Six triggers, not the full `NotifyTrigger` union.** Only the ones the fold can actually produce today: `result_produced`, `failed`, `awaiting_permission`, `credentials_needed`, `quota_exhausted`, `quota_restored`. Naming a trigger nothing can emit puts a row in the type that never appears, which reads as a gap in the data rather than in the code.
+- **`awaiting_input` is deliberately absent**, for the same reason `needs_input` is silent in the notifier: every turn ends there, so recording it buries every real event under a per-turn log of nothing having happened.
+- **Read state is one timestamp per workspace**, not a flag per entry. Entries are chronological, so a per-entry set is a second thing to keep consistent for no gain. It lives beside the log rather than in it — how far someone has read is a fact about a reader, and putting it in the transcript would make "I looked at this" part of the session's history. Per *workspace* rather than per client, so two devices attached to one host agree about what has been seen (§8).
+- **Marking read is not gated on write access.** It changes nothing about the work, and a read-only viewer who cannot clear a badge is told about the same thing forever.
+- **Marked read on closing, not on opening.** Clearing on open costs you the highlighting the instant you look, which is the only thing the count was for.
+- **A bounded window of each log is folded**, so opening the inbox costs the same on a workspace used for a month as on one opened yesterday.
+
+**Not built:** coalescing per tree, quiet hours, per-trigger opt-out, and OS-level actions (`Open` / `Approve` / `Dismiss`). Tree coalescing is the one that matters and it waits for Phase 6, since there are no trees yet to coalesce.
 - `quota_restored` matters: parked work resuming hours later is exactly the event you'd otherwise miss entirely.
 - Per-workspace and per-trigger opt-out, plus quiet hours.
 
@@ -1719,7 +1732,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built |
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
-| 4 | Multi-session + dashboard | 5th | **done** except the inbox — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler |
+| 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
 | 6 | Multi-agent + hierarchy | 6th | not started |
 | 7 | Multimodal | 7th | not started |
 | 8 | Breadth + polish | 8th | not started |

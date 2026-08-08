@@ -31,6 +31,7 @@ import {
   type AttentionReason,
   type EventOrigin,
   type ExecutionTarget,
+  type InboxEntry,
   type InstanceId,
   type AgbrteEvent,
   type PermissionDecision,
@@ -49,6 +50,7 @@ import { workspaceLayout } from './store/layout.js';
 import { rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
+import { entriesFrom, merge, ReadMarker } from './inbox.js';
 import type { Isolation, RoleRequirements, RuntimeRegistry } from './runtime/registry.js';
 import { defaultPolicyForTarget, evaluatePolicy } from './policy/evaluate.js';
 
@@ -177,6 +179,15 @@ export interface SessionManagerDeps {
 
 /** Five minutes of complete silence from something that streams as it goes. */
 const DEFAULT_STALL_AFTER_MS = 5 * 60 * 1_000;
+
+/**
+ * How much of each log the inbox folds.
+ *
+ * Bounded so opening it costs the same on a workspace used for a month as on one
+ * opened yesterday, and generous enough that a session which finished overnight
+ * is still in range — that being the case the inbox exists for.
+ */
+const INBOX_EVENT_WINDOW = 500;
 
 export class SessionManager extends EventEmitter {
   private readonly sessions = new Map<SessionId, LiveSession>();
@@ -1062,6 +1073,44 @@ export class SessionManager extends EventEmitter {
   /** Current derived state, folded from the log (§5.1). */
   async projection(sessionId: SessionId) {
     return (await this.live(sessionId).store.load()).projection;
+  }
+
+  /**
+   * Everything here worth having told someone about (§11).
+   *
+   * Folded from the logs rather than accumulated in memory, so it reads the same
+   * after a restart, after a crash, and for a client that was not attached when
+   * any of it happened — which is most of the point, since a detached host keeps
+   * working while the app is closed.
+   *
+   * Only the tail of each log is read. An inbox is a list you look at, not an
+   * archive, and folding a month of transcript to show twenty lines would make
+   * opening it cost more the longer a workspace had been used.
+   */
+  async inbox(limit = 50): Promise<InboxEntry[]> {
+    const readAt = await this.readMarker().read();
+    const parts = await Promise.all(
+      [...this.sessions.values()].map(async (live) => {
+        const from = Math.max(0, live.store.nextSeq - INBOX_EVENT_WINDOW);
+        return entriesFrom(live.session, await live.store.readEvents(from), readAt);
+      }),
+    );
+    return merge(parts, limit);
+  }
+
+  /**
+   * Mark everything up to now as seen.
+   *
+   * Per workspace, not per client: two devices attached to one host should agree
+   * about what has already been looked at, for the same reason the host owns
+   * session state at all (§8).
+   */
+  async markInboxRead(at: Date = this.now()): Promise<void> {
+    await this.readMarker().mark(at);
+  }
+
+  private readMarker(): ReadMarker {
+    return ReadMarker.in(workspaceLayout(this.deps.workspaceRoot).devagents);
   }
 
   /** Session ids present on disk, whether or not they are loaded (§5.1). */

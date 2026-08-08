@@ -21,12 +21,14 @@ import {
   type SessionCommand,
   type SessionMessage,
 } from '@shared/host/sessionProtocol.js';
+
 import type {
   AccessRole,
   AgentId,
   AgentRecord,
   AgbrteEvent,
   PermissionDecision,
+  InboxEntry,
   PermissionRequest,
   RuntimeCapabilities,
   Session,
@@ -259,6 +261,14 @@ export class HostConnection extends EventEmitter {
 
   queueDepth(sessionId: SessionId): Promise<number> {
     return this.call({ t: 'session.queueDepth', sessionId });
+  }
+
+  inbox(limit?: number): Promise<InboxEntry[]> {
+    return this.call({ t: 'inbox.list', ...(limit !== undefined ? { limit } : {}) });
+  }
+
+  markInboxRead(): Promise<void> {
+    return this.call({ t: 'inbox.markRead' });
   }
 
   /** What a runtime declares, or `null` where it could not be asked. */

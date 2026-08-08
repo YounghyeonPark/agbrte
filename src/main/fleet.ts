@@ -39,6 +39,7 @@ import type {
   AgbrteEvent,
   PermissionDecision,
   PermissionRequest,
+  InboxEntry,
   RuntimeCapabilities,
   Session,
   SessionId,
@@ -468,6 +469,39 @@ export class Fleet extends EventEmitter {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The inbox across every attached host, newest first.
+   *
+   * Merged here rather than per host because "what happened while I was away" is
+   * one question, and answering it once per workspace would make the user do the
+   * interleaving themselves. A host that cannot be reached contributes nothing
+   * rather than failing the whole list — its events are still on its disk.
+   */
+  async inbox(limit = 50): Promise<InboxEntry[]> {
+    const parts = await Promise.all(
+      [...this.entries.values()].map(async (entry) => {
+        try {
+          return await entry.connection.inbox(limit);
+        } catch {
+          return [] as InboxEntry[];
+        }
+      }),
+    );
+    return parts
+      .flat()
+      .sort((a, b) => b.at.localeCompare(a.at))
+      .slice(0, limit);
+  }
+
+  /** Mark every attached host as read. One gesture, one meaning. */
+  async markInboxRead(): Promise<void> {
+    await Promise.all(
+      [...this.entries.values()].map((entry) =>
+        entry.connection.markInboxRead().catch(() => undefined),
+      ),
+    );
   }
 
   runtimesOn(instanceId: InstanceId): FleetRuntime[] {

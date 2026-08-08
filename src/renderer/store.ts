@@ -22,6 +22,7 @@ import type {
 } from '../shared/ipc/contract.js';
 import type {
   AgbrteEvent,
+  InboxEntry,
   MatrixCell,
   PermissionRequest,
   PermissionResolved,
@@ -38,6 +39,10 @@ export interface AgbrteState {
   runtimesByHost: Record<string, RuntimeInfo[]>;
   /** The support matrix per host (§3.13). Empty until a host has answered. */
   conformanceByHost: Record<string, MatrixCell[]>;
+  /** What happened while nobody was looking (§11), newest first. */
+  inbox: InboxEntry[];
+  refreshInbox(): Promise<void>;
+  markInboxRead(): Promise<void>;
   sessions: Session[];
   onDisk: Array<{ instanceId: string; sessionId: string; title: string; goal: string }>;
   activeId: string | null;
@@ -113,6 +118,7 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
   sshHosts: [],
   runtimesByHost: {},
   conformanceByHost: {},
+  inbox: [],
   sessions: [],
   onDisk: [],
   activeId: null,
@@ -361,6 +367,19 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
           [h.instanceId, await agbrte().hosts.conformance(h.instanceId).catch(() => [])] as const,
       ),
     ).then((pairs) => set({ conformanceByHost: Object.fromEntries(pairs) }));
+  },
+
+  async refreshInbox() {
+    // Allowed to fail quietly. A host that cannot be reached contributes no
+    // entries, and an inbox that threw would take the window down with it.
+    set({ inbox: await agbrte().inbox.list().catch(() => []) });
+  },
+
+  async markInboxRead() {
+    await agbrte().inbox.markRead().catch(() => undefined);
+    // Cleared locally as well as on the host, so the badge goes out now rather
+    // than on whatever the next refresh happens to be.
+    set({ inbox: get().inbox.map((e) => ({ ...e, unread: false })) });
   },
 
   dismissNotice() {

@@ -57,6 +57,10 @@ const api: AgbrteApi = {
     addRemote: (alias: string, workspaceRoot: string) =>
       ipcRenderer.invoke(CH.hostsAddRemote, alias, workspaceRoot),
   },
+  inbox: {
+    list: (limit?: number) => ipcRenderer.invoke(CH.inboxList, limit),
+    markRead: () => ipcRenderer.invoke(CH.inboxMarkRead),
+  },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),
     create: (r: CreateSessionRequest) => ipcRenderer.invoke(CH.sessionsCreate, r),

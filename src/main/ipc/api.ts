@@ -243,6 +243,9 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     return buildMatrix(runtimes, await deps.loadConformance());
   });
 
+  handle(CH.inboxList, (limit?: number) => fleet.inbox(limit));
+  handle(CH.inboxMarkRead, () => fleet.markInboxRead());
+
   handle(CH.sessionsList, () => fleet.list());
 
   handle(CH.sessionsCreate, (r: CreateSessionRequest) =>

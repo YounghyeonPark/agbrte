@@ -118,6 +118,14 @@ export type SessionCommand =
    * version, so only the machine that has the adapter can answer (§3.2).
    */
   | { t: 'runtime.capabilities'; id: RequestId; runtimeId: string }
+  /**
+   * The durable record of what happened here (§11).
+   *
+   * Per host, because it is folded from that host's logs — and a detached host
+   * is exactly where the events nobody was told about accumulate.
+   */
+  | { t: 'inbox.list'; id: RequestId; limit?: number }
+  | { t: 'inbox.markRead'; id: RequestId }
   | { t: 'permission.pending'; id: RequestId }
   | { t: 'permission.respond'; id: RequestId; requestId: string; decision: PermissionDecision }
   /**

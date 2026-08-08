@@ -26,7 +26,7 @@
  * the previous single-workspace shape was the limitation.
  */
 
-import type { MatrixCell } from '../types/index.js';
+import type { InboxEntry, MatrixCell } from '../types/index.js';
 import type {
   AgentRecord,
   AgentRole,
@@ -202,6 +202,17 @@ export interface AgbrteApi {
      */
     conformance(instanceId: string): Promise<MatrixCell[]>;
   };
+  /**
+   * What happened while you were not looking (§11).
+   *
+   * Across every attached host, because it is one question. Not on `sessions`:
+   * an entry may name a session this client has not loaded, and half of them
+   * describe sessions that finished with nobody attached.
+   */
+  inbox: {
+    list(limit?: number): Promise<InboxEntry[]>;
+    markRead(): Promise<void>;
+  };
   sessions: {
     list(): Promise<Session[]>;
     create(r: CreateSessionRequest): Promise<Session>;
@@ -269,6 +280,8 @@ export const CH = {
   hostsShutdown: 'agbrte:hosts.shutdown',
   hostsRuntimes: 'agbrte:hosts.runtimes',
   hostsConformance: 'agbrte:hosts.conformance',
+  inboxList: 'agbrte:inbox.list',
+  inboxMarkRead: 'agbrte:inbox.markRead',
   hostsSsh: 'agbrte:hosts.ssh',
   hostsAddRemote: 'agbrte:hosts.addRemote',
   sessionsList: 'agbrte:sessions.list',

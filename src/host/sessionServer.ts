@@ -269,6 +269,15 @@ export class SessionHostServer {
         case 'runtime.capabilities':
           return probeCapabilities(manager, this.opts.identity, command.runtimeId);
 
+        case 'inbox.list':
+          return manager.inbox(command.limit);
+
+        case 'inbox.markRead':
+          // Not gated on write access. Marking what *you* have read changes
+          // nothing about the work, and a read-only client that cannot clear its
+          // own badge would be told about the same thing forever.
+          return manager.markInboxRead();
+
         case 'permission.pending':
           return manager.pendingPermissions();
 
