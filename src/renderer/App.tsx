@@ -63,7 +63,7 @@ export function App(): JSX.Element {
   // Toggled open even with a session showing, because a guide you can only
   // reach from an empty window is unreachable exactly when it is wanted.
   const [guide, setGuide] = useState(false);
-  const { hosts, runtimesByHost, sessions, onDisk, active, events, pending, queued, error, busy } =
+  const { hosts, runtimesByHost, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
     store;
 
   useEffect(() => {
@@ -72,6 +72,9 @@ export function App(): JSX.Element {
     const offEvents = window.gilmok.on.events((b) => useGilmok.getState().applyBatch(b));
     const offSession = window.gilmok.on.session((s) => useGilmok.getState().applySession(s));
     const offPermission = window.gilmok.on.permission((r) => useGilmok.getState().applyPermission(r));
+    const offResolved = window.gilmok.on.permissionResolved((r) =>
+      useGilmok.getState().applyPermissionResolved(r),
+    );
     const offHosts = window.gilmok.on.hosts((h) => useGilmok.getState().applyHosts(h));
 
     // Without these the listeners accumulate on every remount and events render
@@ -80,6 +83,7 @@ export function App(): JSX.Element {
       offEvents();
       offSession();
       offPermission();
+      offResolved();
       offHosts();
     };
   }, []);
@@ -170,6 +174,22 @@ export function App(): JSX.Element {
           >
             <span>{error}</span>
             <button className="btn" onClick={() => store.dismissError()}>
+              dismiss
+            </button>
+          </div>
+        )}
+
+        {notice !== null && (
+          /* Not an error: nothing went wrong. Someone on another device
+             answered a question this one was also showing, which is the
+             feature working — but a prompt vanishing with no explanation
+             looks like a bug, so it says what happened. */
+          <div
+            data-testid="notice"
+            className="border-line mx-4.5 mt-3 flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-xs"
+          >
+            <span className="text-muted">{notice}</span>
+            <button className="btn" onClick={() => store.dismissNotice()}>
               dismiss
             </button>
           </div>

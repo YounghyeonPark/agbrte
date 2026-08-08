@@ -36,6 +36,7 @@ import type {
   GilmokEvent,
   PermissionDecision,
   PermissionRequest,
+  PermissionResolved,
   Session,
   SessionProjection,
 } from '../types/index.js';
@@ -122,6 +123,15 @@ export type SessionMessage =
   | { t: 'push.event'; sessionId: string; event: GilmokEvent }
   | { t: 'push.session'; session: Session }
   | { t: 'push.permission'; request: PermissionRequest }
+  /**
+   * A prompt that is no longer open.
+   *
+   * The other half of `push.permission`. A request reaches every attached
+   * client, so an answer has to as well — without this the device that did not
+   * answer keeps showing a settled question and only learns otherwise by
+   * pressing a button and being told it was too late.
+   */
+  | { t: 'push.permissionResolved'; resolved: PermissionResolved }
   | { t: 'push.queue'; sessionId: string; agentId: string; depth: number }
   /** The host is going away on purpose, so a client can say so rather than guess. */
   | { t: 'push.closing'; reason: string };

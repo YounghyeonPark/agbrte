@@ -68,6 +68,7 @@ export interface HostConnectionOptions {
  *   'event'      (sessionId, GilmokEvent)
  *   'session'    (Session)
  *   'permission' (PermissionRequest)
+ *   'permission-resolved' (PermissionResolved)
  *   'queue'      (sessionId, agentId, depth)
  *   'closing'    (reason)   — the host is stopping on purpose; do not return
  *   'closed'     (reason)   — the link broke; the host may still be running
@@ -171,6 +172,10 @@ export class HostConnection extends EventEmitter {
         return;
       case 'push.permission':
         this.emit('permission', message.request);
+        return;
+
+      case 'push.permissionResolved':
+        this.emit('permission-resolved', message.resolved);
         return;
       case 'push.queue':
         this.emit('queue', message.sessionId, message.agentId, message.depth);

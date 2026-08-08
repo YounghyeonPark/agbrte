@@ -29,7 +29,12 @@ import {
   type GilmokApi,
   type SendRequest,
 } from '../shared/ipc/contract.js';
-import type { PermissionDecision, PermissionRequest, Session } from '../shared/types/index.js';
+import type {
+  PermissionDecision,
+  PermissionRequest,
+  PermissionResolved,
+  Session,
+} from '../shared/types/index.js';
 
 /** Wire one push channel to a callback, returning its unsubscribe. */
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -75,6 +80,8 @@ const api: GilmokApi = {
     events: (cb: (b: EventBatch) => void) => subscribe(PUSH.events, cb),
     session: (cb: (s: Session) => void) => subscribe(PUSH.session, cb),
     permission: (cb: (r: PermissionRequest) => void) => subscribe(PUSH.permission, cb),
+    permissionResolved: (cb: (r: PermissionResolved) => void) =>
+      subscribe(PUSH.permissionResolved, cb),
     hosts: (cb: (h: HostInfo[]) => void) => subscribe(PUSH.hosts, cb),
   },
   ack: (sessionId: string, seq: number) => ipcRenderer.send(CH.ack, sessionId, seq),

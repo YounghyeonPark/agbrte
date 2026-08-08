@@ -20,7 +20,12 @@ import type {
   SessionSnapshot,
   SshHostInfo,
 } from '../shared/ipc/contract.js';
-import type { GilmokEvent, PermissionRequest, Session } from '../shared/types/index.js';
+import type {
+  GilmokEvent,
+  PermissionRequest,
+  PermissionResolved,
+  Session,
+} from '../shared/types/index.js';
 
 /** Events retained in memory. Chosen to comfortably exceed a screenful. */
 const WINDOW = 400;
@@ -38,6 +43,8 @@ export interface GilmokState {
   /** Set when a gap was detected and a refetch is in flight. */
   refetching: boolean;
   pending: PermissionRequest[];
+  /** A transient line about something that happened elsewhere. */
+  notice: string | null;
   /** Turns waiting behind the running one, possibly sent from another device. */
   queued: number;
   busy: boolean;
@@ -64,8 +71,11 @@ export interface GilmokState {
   applyBatch(batch: EventBatch): void;
   applySession(session: Session): void;
   applyPermission(request: PermissionRequest): void;
+  /** A prompt settled elsewhere, or withdrawn. Removes it and says why. */
+  applyPermissionResolved(resolved: PermissionResolved): void;
   applyHosts(hosts: HostInfo[]): void;
   dismissError(): void;
+  dismissNotice(): void;
 }
 
 const gilmok = () => window.gilmok;
@@ -106,6 +116,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
   events: [],
   refetching: false,
   pending: [],
+  notice: null,
   queued: 0,
   busy: false,
   error: null,
@@ -308,6 +319,22 @@ export const useGilmok = create<GilmokState>((set, get) => ({
     });
   },
 
+  applyPermissionResolved(resolved) {
+    const had = get().pending.some((p) => p.requestId === resolved.requestId);
+    set({ pending: get().pending.filter((p) => p.requestId !== resolved.requestId) });
+    // Only narrated when this client was actually showing it. A device that
+    // never saw the prompt does not need to be told about its ending, and a
+    // notice for something you never saw reads as a fault.
+    if (!had) return;
+    const who = resolved.actor?.label;
+    set({
+      notice:
+        resolved.outcome === 'withdrawn'
+          ? `A permission request was withdrawn — ${resolved.reason ?? 'it can no longer be answered'}`
+          : `${who ?? 'Someone else'} ${resolved.decision?.result === 'deny' ? 'denied' : 'allowed'} a permission request`,
+    });
+  },
+
   applyPermission(request) {
     set({ pending: [...get().pending, request] });
   },
@@ -319,6 +346,10 @@ export const useGilmok = create<GilmokState>((set, get) => ({
     void Promise.all(
       hosts.map(async (h) => [h.instanceId, await gilmok().hosts.runtimes(h.instanceId)] as const),
     ).then((pairs) => set({ runtimesByHost: Object.fromEntries(pairs) }));
+  },
+
+  dismissNotice() {
+    set({ notice: null });
   },
 
   dismissError() {

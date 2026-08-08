@@ -97,6 +97,9 @@ export class SessionHostServer {
     manager.on('permission', (request: unknown) =>
       this.broadcast({ t: 'push.permission', request: request as never }),
     );
+    manager.on('permission-resolved', (resolved: unknown) =>
+      this.broadcast({ t: 'push.permissionResolved', resolved: resolved as never }),
+    );
     manager.on('queue', (sessionId: SessionId, agentId: AgentId, depth: number) =>
       this.broadcast({ t: 'push.queue', sessionId, agentId, depth }),
     );

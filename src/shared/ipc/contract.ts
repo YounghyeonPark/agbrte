@@ -32,6 +32,7 @@ import type {
   GilmokEvent,
   PermissionDecision,
   PermissionRequest,
+  PermissionResolved,
   Session,
   SessionProjection,
 } from '../types/index.js';
@@ -223,6 +224,14 @@ export interface GilmokApi {
     /** A session record changed — state, agents, usage. */
     session(cb: (s: Session) => void): () => void;
     permission(cb: (r: PermissionRequest) => void): () => void;
+    /**
+     * A prompt that is no longer open — answered elsewhere, or withdrawn.
+     *
+     * Without this a second device keeps showing a question that has been
+     * settled, and finds out only by answering it and being told it was too
+     * late. §15 names that the criterion proving the whole topology.
+     */
+    permissionResolved(cb: (r: PermissionResolved) => void): () => void;
     /** A host was attached, detached, or changed availability. */
     hosts(cb: (hosts: HostInfo[]) => void): () => void;
   };
@@ -263,6 +272,7 @@ export const PUSH = {
   events: 'gilmok:push.events',
   session: 'gilmok:push.session',
   permission: 'gilmok:push.permission',
+  permissionResolved: 'gilmok:push.permissionResolved',
   hosts: 'gilmok:push.hosts',
 } as const;
 

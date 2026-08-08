@@ -124,6 +124,7 @@ export class AttachRefused extends Error {
  *   'event'      (instanceId, sessionId, GilmokEvent)
  *   'session'    (instanceId, Session)
  *   'permission' (instanceId, PermissionRequest)
+ *   'permission-resolved' (instanceId, PermissionResolved)
  *   'queue'      (instanceId, sessionId, agentId, depth)
  *   'host'       (AttachedHost)   — attached, or its state changed
  *   'detached'   (instanceId, reason)
@@ -241,6 +242,9 @@ export class Fleet extends EventEmitter {
     const onPermission = (request: PermissionRequest): void => {
       this.emit('permission', instanceId, request);
     };
+    const onResolved = (resolved: unknown): void => {
+      this.emit('permission-resolved', instanceId, resolved);
+    };
     const onQueue = (sessionId: string, agentId: string, depth: number): void => {
       this.emit('queue', instanceId, sessionId, agentId, depth);
     };
@@ -257,6 +261,7 @@ export class Fleet extends EventEmitter {
     connection.on('event', onEvent);
     connection.on('session', onSession);
     connection.on('permission', onPermission);
+    connection.on('permission-resolved', onResolved);
     connection.on('queue', onQueue);
     connection.on('closing', onClosing);
     connection.on('closed', onClosed);
@@ -266,6 +271,7 @@ export class Fleet extends EventEmitter {
       connection.off('event', onEvent);
       connection.off('session', onSession);
       connection.off('permission', onPermission);
+      connection.off('permission-resolved', onResolved);
       connection.off('queue', onQueue);
       connection.off('closing', onClosing);
       connection.off('closed', onClosed);

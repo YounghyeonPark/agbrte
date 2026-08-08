@@ -136,11 +136,14 @@ export function createApi(deps: IpcDeps): GilmokApiHost {
     broadcast(PUSH.session, session);
   const onPermission = (_instanceId: string, request: PermissionRequest): void =>
     broadcast(PUSH.permission, request);
+  const onResolved = (_instanceId: string, resolved: unknown): void =>
+    broadcast(PUSH.permissionResolved, resolved);
   const onHosts = (): void => broadcast(PUSH.hosts, fleet.hosts().map(toInfo));
 
   fleet.on('event', onEvent);
   fleet.on('session', onSession);
   fleet.on('permission', onPermission);
+  fleet.on('permission-resolved', onResolved);
   fleet.on('host', onHosts);
   fleet.on('detached', onHosts);
 
@@ -285,6 +288,7 @@ export function createApi(deps: IpcDeps): GilmokApiHost {
       fleet.off('event', onEvent);
       fleet.off('session', onSession);
       fleet.off('permission', onPermission);
+      fleet.off('permission-resolved', onResolved);
       fleet.off('host', onHosts);
       fleet.off('detached', onHosts);
       bridge.releaseAll();

@@ -306,6 +306,11 @@ describe('durable permission requests', () => {
 
     // The app dies with the prompt still on screen. `first` is unreachable now.
     const second = manager(asksBash);
+    // Announced as well as logged: a client attached to the resumed session is
+    // showing that prompt, and a question nobody can answer any more has to come
+    // off every screen rather than waiting to be pressed and refused.
+    const announced: Array<Record<string, unknown>> = [];
+    second.on('permission-resolved', (r: Record<string, unknown>) => announced.push(r));
     const resumed = await second.resumeSession(created.sessionId);
 
     // Offering it would be worse than offering nothing: the promise it was
@@ -313,6 +318,10 @@ describe('durable permission requests', () => {
     expect((await second.projection(created.sessionId)).pendingPermissions).toEqual([]);
     const events = await second.events(created.sessionId);
     expect(events.some((e) => e.type === 'permission.withdrawn')).toBe(true);
+    expect(announced).toHaveLength(1);
+    expect(announced[0]).toMatchObject({ requestId, outcome: 'withdrawn' });
+    // No actor: nobody decided. Naming someone would invent a decision.
+    expect(announced[0]?.['actor']).toBeUndefined();
 
     // And the session is not left claiming it needs an answer.
     expect(resumed.state).not.toBe('awaiting_permission');

@@ -542,6 +542,20 @@ export class SessionManager extends EventEmitter {
 
     entry.resolve(decision);
 
+    // Announced, because the prompt is on more than one screen. A request
+    // reaches every attached client, so an answer has to as well — otherwise the
+    // device that did not answer keeps showing a question that has already been
+    // settled, and only finds out by pressing a button and being told it was too
+    // late. §15 names this the criterion that proves the topology, and it is the
+    // half that was missing: the ask was broadcast and the answer was not.
+    this.emit('permission-resolved', {
+      requestId,
+      sessionId: entry.sessionId,
+      outcome: 'answered' as const,
+      decision,
+      ...(actor !== undefined ? { actor } : {}),
+    });
+
     // Per session: another session's open prompt must not keep this one parked,
     // and this one's must not be cleared by a sibling being answered.
     if (!this.hasPendingFor(entry.sessionId)) await this.setState(live, 'working');
@@ -566,6 +580,15 @@ export class SessionManager extends EventEmitter {
         },
         { agentId: request.agentId },
       );
+      // Same reason as an answer: a prompt nobody can answer any more must
+      // disappear from every screen showing it, not just from the one that
+      // happened to reload.
+      this.emit('permission-resolved', {
+        requestId: request.requestId,
+        sessionId: live.session.sessionId,
+        outcome: 'withdrawn' as const,
+        reason: 'the agent that asked is no longer running',
+      });
     }
   }
 

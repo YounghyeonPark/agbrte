@@ -312,3 +312,56 @@ describe('interrupting', () => {
     expect(stopped).toHaveProperty('delivered');
   });
 });
+
+/**
+ * §15 Phase 5's proving criterion.
+ *
+ * > *open the same live session on a second device, answer a permission prompt
+ * > there, and watch the first device show it resolved rather than keep asking.*
+ *
+ * DESIGN calls this "the criterion that proves the topology, because it is the
+ * one the current shape cannot pass". It could not, for a specific reason: the
+ * *question* was broadcast to every attached client and the *answer* was not, so
+ * the device that did not answer kept a settled prompt on screen and learned
+ * otherwise only by pressing a button and being told it was too late.
+ */
+describe('a prompt answered on one device', () => {
+  it('is announced to every other client', async () => {
+    const r = rig(ASKS);
+    const alice = r.connect('alice');
+    const bob = r.connect('bob');
+    await Promise.all([alice.ready, bob.ready]);
+
+    const session = await alice.createSession({ title: 's', goal: 'g' });
+    const agent = await alice.addAgent(session.sessionId, {
+      role: 'worker',
+      runtimeId: 'echo',
+      policy: { rules: [{ tool: 'shell', action: 'ask' }] },
+    });
+
+    // Both see the question.
+    const askedAlice = new Promise<{ requestId: string }>((done) =>
+      alice.on('permission', (req) => done(req as { requestId: string })),
+    );
+    const askedBob = new Promise<{ requestId: string }>((done) =>
+      bob.on('permission', (req) => done(req as { requestId: string })),
+    );
+    // Alice is the one told it is over, having not answered it herself.
+    const toldAlice = new Promise<Record<string, unknown>>((done) =>
+      alice.on('permission-resolved', (r) => done(r as Record<string, unknown>)),
+    );
+
+    const turn = alice.send(session.sessionId, agent.agentId as never, 'go');
+    const [request] = await Promise.all([askedAlice, askedBob]);
+
+    await bob.respondPermission(request.requestId, { result: 'allow', scope: 'once' });
+    await turn;
+
+    const resolved = await toldAlice;
+    expect(resolved['requestId']).toBe(request.requestId);
+    expect(resolved['outcome']).toBe('answered');
+    // Who, not just that — the difference between a prompt vanishing
+    // mysteriously and one that says "Bob allowed this".
+    expect(resolved['actor']).toEqual(BOB);
+  });
+});

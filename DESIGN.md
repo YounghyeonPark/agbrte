@@ -1262,6 +1262,8 @@ Making that true required splitting `register.ts`. An ESM `import ... from 'elec
 
 One browser detail worth recording: the built CSP names `ws://localhost:*`, which is right for Electron and wrong for a phone reaching a tailnet address. `connect-src 'self'` is supposed to cover a same-origin WebSocket and browsers have disagreed about that for years — Safari being precisely the browser this has to work in. The served page therefore takes the origin from the request's own `Host` header, which is correct whether the phone arrives by IP or by MagicDNS name.
 
+**An answered prompt is announced, not only logged.** §15 named this the criterion that proves the topology, and the reason it could not pass was narrow: the *question* was broadcast to every attached client and the *answer* was not. A second device kept a settled prompt on screen and learned otherwise only by pressing a button and being told it was too late. `push.permissionResolved` closes it, carrying who decided — the difference between a prompt that vanishes mysteriously and one that says "Bob allowed this". A withdrawal is announced the same way and carries no actor, because nobody decided; naming someone would invent a decision that was never made. A client that was not showing the prompt is told nothing, since a notice about something you never saw reads as a fault.
+
 **A dropped link is not a stopped host.** Those are two different facts and the code now says so: `push.closing` means the host stopped on purpose and there is nothing to return to; a socket dying says nothing at all about the host, and on a remote workspace usually means the agent is still working. Before this only the first was observable, so a dead tunnel left an entry pointing at a dead connection and every later command failed one at a time. The fleet now **keeps the host**, marks it `reconnecting`, and dials again with backoff that never gives up — a closed laptop lid is the case this exists for, and eight hours is a normal amount of time for one.
 
 **Catch-up is exact, not approximate.** `seq` is monotonic per session (§5.4d) and `readEvents(fromSeq)` is exclusive, so the highest seq delivered per session is precisely the right thing to ask from: nothing is lost and nothing repeats. The high-water mark is per *session* rather than per host because sessions advance independently — one number for a fleet would over- or under-read every session but one. Catch-up and the live push overlap by construction (the host starts pushing the moment the socket is up, while history is still being read), so the same `seq` guard drops the overlap rather than deduplicating by content. Verified against a real machine by cutting an `ssh -L` forward mid-session, running a turn on the server while the app was disconnected, and reconnecting: 15 events, 0 duplicates, the missed turn among them.
@@ -1621,7 +1623,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | # | Phase | Order | State |
 |---|---|---|---|
 | 1 | Skeleton | 1st | **done**, verified end to end |
-| 5 | Remote execution | **2nd** | moved up — see below |
+| 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built |
 | 2 | Persistence hardening | 3rd | `rehydrate`, `PathCodec`, identity done; **detection** missing |
 | 3 | Three-shape proof | 4th | validation satisfied early; **breadth** remains |
 | 4 | Multi-session + dashboard | 5th | not started |

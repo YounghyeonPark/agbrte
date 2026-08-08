@@ -138,6 +138,7 @@ const api: GilmokApi = {
     events: (cb) => link.on(PUSH.events, cb as (p: unknown) => void),
     session: (cb) => link.on(PUSH.session, cb as (p: unknown) => void),
     permission: (cb) => link.on(PUSH.permission, cb as (p: unknown) => void),
+    permissionResolved: (cb) => link.on(PUSH.permissionResolved, cb as (p: unknown) => void),
     hosts: (cb) => link.on(PUSH.hosts, cb as (p: unknown) => void),
   },
 };

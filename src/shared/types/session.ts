@@ -6,6 +6,7 @@ import type { AgentId, InstanceId, SessionId } from './ids.js';
 import type { NormalizedTurn } from './content.js';
 import type { AgentRole, AgentSpec, ModelRef, RuntimeCapabilities } from './runtime.js';
 import type { ExecutionTarget } from './target.js';
+import type { PermissionDecision } from './policy.js';
 import type { WorkspacePath } from './paths.js';
 
 /**
@@ -123,6 +124,26 @@ export interface Actor {
   via: IdentitySource;
   /** For display only. Absent when nothing readable is known. */
   label?: string;
+}
+
+/**
+ * A permission request that is no longer open.
+ *
+ * Sent to every attached client, not only the one that answered. With several
+ * devices on one session the same prompt is on several screens, so the answer
+ * has to travel the same way the question did.
+ *
+ * `actor` says who settled it, which is the difference between a prompt that
+ * vanishes mysteriously and one that says "Bob allowed this". It is absent on a
+ * withdrawal, because nobody decided — the agent that asked simply went away.
+ */
+export interface PermissionResolved {
+  requestId: string;
+  sessionId: SessionId;
+  outcome: 'answered' | 'withdrawn';
+  decision?: PermissionDecision;
+  reason?: string;
+  actor?: Actor;
 }
 
 /** A write attempted by a client that may only read. */

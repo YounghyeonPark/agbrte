@@ -7,6 +7,10 @@
     "moduleResolution": "NodeNext",
     "types": ["node"]
   },
+  // `tests/rendererStore.test.ts` is renderer code and belongs to the web
+  // project: importing the store here would drag `window` into a project whose
+  // lib is deliberately Node-only.
+  "exclude": ["tests/rendererStore.test.ts"],
   "include": [
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
