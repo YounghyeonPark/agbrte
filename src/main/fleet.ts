@@ -25,7 +25,8 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { byAttentionThenRecency } from './sessionManager.js';
+
+import { byAttentionThenRecency } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
 import type {
   AccessRole,

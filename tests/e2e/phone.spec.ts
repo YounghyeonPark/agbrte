@@ -10,11 +10,13 @@
  */
 
 import { devices, expect, test } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
 import { serveWebFixture } from './harness.js';
 
 test.use({ ...devices['iPhone 14 Pro Max'] });
 
-test('shows one pane at a time, at a readable size', async ({ page }) => {
+test('lays out at the device width, one pane at a time', async ({ page }) => {
   const web = await serveWebFixture();
 
   try {
@@ -29,22 +31,49 @@ test('shows one pane at a time, at a readable size', async ({ page }) => {
     const width = page.viewportSize()?.width ?? 0;
     expect(width).toBeLessThan(500);
 
-    // The list owns the screen while nothing is open. The desktop's fixed 300px
-    // sidebar would leave about 90px for everything else.
-    const sidebar = page.locator('[data-testid=host]');
-    await expect(sidebar).toBeVisible({ timeout: 20_000 });
-    expect((await sidebar.boundingBox())?.width ?? 0).toBeGreaterThan(width * 0.8);
+    // The main pane owns the screen. The desktop's fixed 300px sidebar would
+    // leave about 90px for everything else, so below `md` exactly one shows —
+    // and the one worth showing is where the dashboard and the guide are.
+    const main = page.locator('[data-testid=start-guide]');
+    await expect(main).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('[data-testid=host]')).toBeHidden();
 
-    await page.locator('[data-testid=new-session]').click();
-    await page.locator('[data-testid=new-title]').fill('on a phone');
-    await page.locator('[data-testid=new-submit]').click();
-    await expect(page.locator('[data-testid=picker]')).toBeVisible({ timeout: 20_000 });
-
-    // Opening a session hands it the whole screen, and there is a way back —
-    // without which a phone user is stuck in the first session they open.
-    await expect(page.locator('[data-testid=back-to-list]')).toBeVisible();
-    await page.locator('[data-testid=back-to-list]').click();
+    // The hosts pane is reachable, since it holds the only way to start a
+    // session or attach a machine.
+    await page.locator('[data-testid=show-hosts]').click();
     await expect(page.locator('[data-testid=host]')).toBeVisible();
+    await expect(main).toBeHidden();
+  } finally {
+    await web.stop();
+  }
+});
+
+test('opens a session full-screen, and comes back to the dashboard', async ({ page }) => {
+  const web = await serveWebFixture();
+
+  try {
+    // Made through the CLI: what is under test is the phone's navigation, and
+    // clicking a session into existence would make it about the picker.
+    execFileSync(
+      process.execPath,
+      [resolve('dist/cli/gilmok.js'), 'run', web.repo, '--runtime', 'echo', '--title', 'on a phone', 'go'],
+      { stdio: 'ignore' },
+    );
+
+    await page.goto(web.url);
+    // A session exists, so the dashboard is what is useful rather than the guide.
+    await expect(page.locator('[data-testid=dashboard]')).toBeVisible({ timeout: 25_000 });
+    await expect(page.locator('[data-testid=session-card]')).toHaveCount(1);
+
+    await page.locator('[data-testid=session-card]').click();
+    await expect(page.locator('[data-testid=composer-input]')).toBeVisible({ timeout: 20_000 });
+    // Full screen: the list is not competing for a 390pt display.
+    await expect(page.locator('[data-testid=dashboard]')).toBeHidden();
+
+    // And there is a way back — without which a phone user is stuck in the first
+    // session they open.
+    await page.locator('[data-testid=back-to-list]').click();
+    await expect(page.locator('[data-testid=dashboard]')).toBeVisible();
   } finally {
     await web.stop();
   }

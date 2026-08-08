@@ -1262,6 +1262,12 @@ Making that true required splitting `register.ts`. An ESM `import ... from 'elec
 
 One browser detail worth recording: the built CSP names `ws://localhost:*`, which is right for Electron and wrong for a phone reaching a tailnet address. `connect-src 'self'` is supposed to cover a same-origin WebSocket and browsers have disagreed about that for years — Safari being precisely the browser this has to work in. The served page therefore takes the origin from the request's own `Host` header, which is correct whether the phone arrives by IP or by MagicDNS name.
 
+**The dashboard shows every session, ranked by who needs a human.** Several hosts and several sessions is the designed shape rather than an edge case — §8's caps are per host and every card carries a target badge for that reason — but the app could only show one session at a time, so "what is running and what is stuck" was answered by clicking through a list. `byAttentionThenRecency` moved from the session manager to sit beside `Session`, because the renderer needs it too: sessions arrive ranked and then drift as pushes replace them in place. One comparator, or the dashboard and the rest of the app would eventually disagree about what matters.
+
+**Only what is true is drawn.** No progress bars: `checklist` exists on the session and no tool emits `checklist.updated`, so a bar would read 0/0 on every card forever — worse than none, because it looks like nothing is happening. No cost: that needs a per-model price nothing supplies. Tokens *are* drawn, because `usage` is genuinely populated by every runtime. The host badge appears only when more than one host is attached; a label identical on every card answers nothing while taking the width the title needs.
+
+**A phone opens on the dashboard.** The earlier rule — sidebar until a session is open — was right when the main pane held only a start guide and became wrong the moment it held something worth seeing. The hosts pane holds the only way to attach a machine or start a session, so it is reachable from a single control in the main pane's header. Putting that control inside the dashboard was the first attempt and left a phone with no sessions yet unable to make one.
+
 **A move is only detectable if you wrote down where it was.** Identity is deliberately never derived from a path — that is what makes relocation survivable — and the consequence is that a moved workspace is byte-identical to one that never moved: `project.json` and `instance.json` travel with the folder and every field matches. `instance.json` therefore records `lastKnownPath`, in the gitignored per-checkout file so a clone cannot inherit another machine's path and believe it has been relocated.
 
 **Recording consumes the signal, so only an owner may record.** Once `lastKnownPath` matches, the move is gone. `openWorkspace` defaults to *not* recording and the host opts in, because a client reaches the folder first: the first version had the client record on the way past, and a resume after a real move came back with no `workspace.relocated` in the log at all. Defaulting to off means a caller added later cannot swallow it by accident.
@@ -1636,7 +1642,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built |
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | validation satisfied early; **breadth** remains |
-| 4 | Multi-session + dashboard | 5th | not started |
+| 4 | Multi-session + dashboard | 5th | dashboard and the Needs-you rail done; quota, parking, notifications remain |
 | 6 | Multi-agent + hierarchy | 6th | not started |
 | 7 | Multimodal | 7th | not started |
 | 8 | Breadth + polish | 8th | not started |

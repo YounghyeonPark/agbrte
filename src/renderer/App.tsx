@@ -26,6 +26,7 @@
 // React 19 no longer declares a global `JSX` namespace; it is exported instead.
 import { useEffect, useMemo, useState, type JSX } from 'react';
 import { AttachHost } from './AttachHost.js';
+import { Dashboard } from './Dashboard.js';
 import { StartGuide } from './StartGuide.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import { useGilmok } from './store.js';
@@ -63,6 +64,17 @@ export function App(): JSX.Element {
   // Toggled open even with a session showing, because a guide you can only
   // reach from an empty window is unreachable exactly when it is wanted.
   const [guide, setGuide] = useState(false);
+  /*
+   * Which pane a narrow screen is showing. Above `md` both are up and this is
+   * ignored.
+   *
+   * It defaults to the main pane because that is where the dashboard is, and on
+   * a phone "what is running and what needs me" is the reason you opened the
+   * app. The earlier rule — sidebar until a session is open — was right when the
+   * main pane held only a start guide and became wrong the moment it held
+   * something worth seeing.
+   */
+  const [pane, setPane] = useState<'main' | 'hosts'>('main');
   const { hosts, runtimesByHost, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
     store;
 
@@ -108,12 +120,20 @@ export function App(): JSX.Element {
     >
       <aside
         className={`bg-panel border-line safe-top min-h-0 flex-col border-r md:flex ${
-          active === null ? 'flex' : 'hidden'
+          pane === 'hosts' && active === null ? 'flex' : 'hidden'
         }`}
       >
         <header className="border-line flex items-center justify-between border-b p-3.5">
           <h1 className="text-base tracking-wide">Gilmok</h1>
           <div className="flex gap-1.5">
+            <button
+              className="btn px-2 md:hidden"
+              data-testid="show-main"
+              title="Back to sessions"
+              onClick={() => setPane('main')}
+            >
+              ‹
+            </button>
             <button
               className="btn px-2"
               data-testid="show-guide"
@@ -162,8 +182,8 @@ export function App(): JSX.Element {
       </aside>
 
       <main
-        className={`safe-bottom min-h-0 min-w-0 flex-col md:flex ${
-          active === null ? 'hidden md:flex' : 'flex'
+        className={`safe-bottom relative min-h-0 min-w-0 flex-col md:flex ${
+          pane === 'hosts' && active === null ? 'hidden md:flex' : 'flex'
         }`}
       >
         {error !== null && (
@@ -178,6 +198,20 @@ export function App(): JSX.Element {
             </button>
           </div>
         )}
+
+        {/* The hosts pane holds the only way to attach a machine or start a
+            session, and below `md` it is hidden. One control here rather than
+            one inside each of the dashboard and the guide: it has to exist in
+            both states, and the first version put it in the dashboard only —
+            which left a phone with no sessions yet unable to make one. */}
+        <button
+          className="btn absolute right-3 top-3 z-10 px-2 md:hidden"
+          data-testid="show-hosts"
+          title="Hosts and new sessions"
+          onClick={() => setPane('hosts')}
+        >
+          ☰
+        </button>
 
         {notice !== null && (
           /* Not an error: nothing went wrong. Someone on another device
@@ -195,7 +229,17 @@ export function App(): JSX.Element {
           </div>
         )}
 
-        {active === null || guide ? (
+        {active === null && !guide && sessions.length > 0 ? (
+          /* The dashboard once there is something to show, the guide when there
+             is not. An empty grid teaches nothing and a guide is noise once you
+             have sessions running — which of the two is useful is decided by
+             whether any exist, not by a preference. */
+          <Dashboard
+            sessions={sessions}
+            hosts={hosts}
+            onOpen={(sessionId, instanceId) => void store.openSession(sessionId, instanceId)}
+          />
+        ) : active === null || guide ? (
           <StartGuide
             hasHosts={hosts.length > 0}
             onAttachLocal={() => {

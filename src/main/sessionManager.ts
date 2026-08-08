@@ -16,6 +16,7 @@ import { EventEmitter } from 'node:events';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  byAttentionThenRecency,
   isPaused,
   newAgentId,
   newSessionId,
@@ -94,20 +95,6 @@ interface QueuedTurn {
 export interface PendingPermission extends PermissionRequest {
   resolve: (d: PermissionDecision) => void;
   askedAt: string;
-}
-
-/**
- * Display order for sessions (§10): needsAttention first, then most recent.
- *
- * With many sessions the scarce resource is your attention, so blocked work must
- * be impossible to miss. Exported because a fleet spanning several hosts has to
- * re-sort the merged list — concatenating per-host sorted lists does not preserve
- * this order, and two copies of the comparator would drift.
- */
-export function byAttentionThenRecency(a: Session, b: Session): number {
-  const attention = Number(Boolean(b.needsAttention)) - Number(Boolean(a.needsAttention));
-  if (attention !== 0) return attention;
-  return b.updatedAt.localeCompare(a.updatedAt);
 }
 
 /** Grants apply to the asking agent, so its siblings are never widened. */
