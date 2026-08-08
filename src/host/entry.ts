@@ -24,6 +24,8 @@ import { loadEndpoints, type EndpointRegistry } from './endpoints.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { GilmokHarnessRuntime } from '@main/runtime/runtimes/gilmokHarness.js';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
+import { CliStdioRuntime, detectCli } from '@main/runtime/runtimes/cliStdio.js';
+import { CLI_MANIFESTS } from '@main/runtime/cli/manifests.js';
 import {
   OpenAiCompatibleProvider,
   OPENAI_COMPATIBLE_PROVIDER_ID,
@@ -114,7 +116,7 @@ class ForkChannel implements HostSideChannel {
  * runtime ids from the host's `ready` handshake, so anything missing here simply
  * does not appear in the UI rather than failing at `addAgent`.
  */
-export function buildHostRegistry(endpoints: EndpointRegistry): RuntimeRegistry {
+export async function buildHostRegistry(endpoints: EndpointRegistry): Promise<RuntimeRegistry> {
   const registry = new RuntimeRegistry();
 
   registry.register(
@@ -128,6 +130,32 @@ export function buildHostRegistry(endpoints: EndpointRegistry): RuntimeRegistry 
   );
 
   registry.register(new EchoRuntime(), { label: 'Echo (no model)', requiresModel: false });
+
+  /**
+   * Installed CLIs, offered only where they exist (§3.12).
+   *
+   * Detected rather than listed, because this host may be a laptop or a server
+   * three time zones away and the answer differs per machine — which is the
+   * whole reason capabilities are a function rather than a constant (§3.2).
+   * Listing an uninstalled CLI would put a runtime in the picker whose every
+   * session fails at the first spawn.
+   *
+   * Detection is a subprocess each, run in parallel: a missing binary resolves
+   * fast, but a slow one should not delay the rest of the host coming up.
+   */
+  const detected = await Promise.all(
+    CLI_MANIFESTS.map(async (manifest) => ({ manifest, found: await detectCli(manifest) })),
+  );
+  for (const { manifest, found } of detected) {
+    if (found === null) continue;
+    registry.register(new CliStdioRuntime({ manifest, toolVersion: found.version }), {
+      // The version is in the label because these protocols are the vendor's to
+      // change, and "which build produced this transcript" is the first question
+      // asked when one does.
+      label: `${manifest.label} ${found.version}`,
+      requiresModel: false,
+    });
+  }
 
   return registry;
 }
@@ -155,4 +183,4 @@ process.on('unhandledRejection', (reason) => {
 // stop the host rather than surface as a turn that quietly went to the wrong
 // place. The failure reaches the app as `unavailableReason` on the handshake.
 const endpoints = await loadEndpoints();
-new AgentHostServer(channel, buildHostRegistry(endpoints), endpoints.list());
+new AgentHostServer(channel, await buildHostRegistry(endpoints), endpoints.list());

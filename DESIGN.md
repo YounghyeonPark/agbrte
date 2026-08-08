@@ -575,6 +575,24 @@ So the accurate claim is narrower than "no invisible allow rules can reach the a
 
 *Unconfirmed:* whether an explicit `permissionMode: 'default'` on `Options` overrides a `permissions.defaultMode` arriving from the policy tier. The SDK documents a separate trust filter (`filterEscalatingDefaultMode`) for repo-committed files but says nothing about option-versus-policy precedence. Treat it as unknown until a conformance assertion covers it.
 
+**What building it changed.** The adapter now exists and runs the conformance suite; seven things about this section turned out to be wrong or underspecified, and they are recorded here rather than fixed silently.
+
+- **`parse.map: EventFieldMap` is a function, not a map.** A field map can lift `msg.foo.bar` into an event and nothing these CLIs emit is that shape: one assistant record carries an array of content blocks that becomes several events, and a tool result means nothing until it is paired with the `tool_use` whose id it carries. A declarative map would have grown until it was a language. The manifest supplies a small **reader factory** instead — a factory because pairing needs per-run state and a manifest is a shared constant, so one reader instance would leak tool ids between concurrent agents.
+
+- **Deterministic mode is derived from `AuthMode`, not configured.** The table above offers it as a user choice, and for Claude Code it is also what skips OAuth and keychain reads. Under `vendor-cli-session` the login it declines to read *is the entire reason* we are invoking the user's own CLI, so the two settings cannot both be honoured. The default stands — deterministic — and choosing `vendor-cli-session` **is** the opt-in to local config, rather than a second switch that can be set to contradict the first.
+
+- **A scoped `allow` rule cannot be compiled, and is dropped.** §13's defaults table is scoped on every row: writes *inside* the workspace are allowed, writes outside are `ask`. An allowlist has no notion of inside and outside, so `{tool:'write', scope:'inside', action:'allow'}` compiled to a bare `Write` would hand over the whole filesystem while the UI kept displaying a rule that says "inside" — §13's widening bug, arriving through a translation instead of through a bad rule. It is therefore dropped, falls through to a denial and a prompt, and the loss is reported. A scoped **deny** compiles without its scope, because denying both sides is stricter than asked; that is reported too.
+
+- **`allow once` has no allowlist equivalent**, because a rule granted before spawn lasts as long as the process. The closest honest thing is the call's **designated argument** as an exact pattern — `Bash(git status)` matches that call and nothing else, so approving it does not also approve `git push`. Where no designated argument exists the grant widens to the whole tool and says so. The argument is chosen from an ordered list rather than "first string found": tools carry incidental strings, and pinning a grant to a description produces a rule that matches nothing while looking specific.
+
+- **`RuntimeDescriptor.requiresModel` is a boolean answering a three-valued question.** Required for `GilmokHarness`, *optional* here — these CLIs take `-m` and choosing one is legitimate — and meaningless for `echo`. Admission rejects any spec carrying a model when `requiresModel` is false, so `modelArgs` was left out of the manifest entirely rather than shipped as code admission guarantees never runs. **Model selection for installed CLIs is blocked on making that field a tri-state**, which touches the IPC contract and the renderer and was not worth bundling into this change.
+
+- **Exit 143 is clean only when we caused it.** The operational note below says to treat it as a stop rather than a crash, and that holds for our own `stop()` — which kills the process and returns before any exit mapping runs. An *external* SIGTERM mid-turn is a different event: an OOM killer or a `systemctl stop` cut the turn in half, and mapping that to `end_turn` would move the session to `awaiting_input` as though the work had finished. It is reported as `transport`, which is retryable, on the standing rule that a truncated turn reported as success is the worst outcome available.
+
+- **A blanket-only CLI needs no new enforcement.** Gemini CLI's allowlist syntax and resume semantics are not documented well enough to compile a policy into, so its manifest declares `all-or-nothing` — and §9's existing admission rule then refuses to run it in a shared workspace, making the sandbox the boundary, with no new code. Declaring `precomputed-allowlist` to make it feel more capable would have been the one failure §13 calls worse than having no gate.
+
+**Verification status.** The adapter is exercised end to end against a **real subprocess** speaking the protocol over real pipes — spawn, chunked NDJSON, non-protocol output, exit codes, and a full deny → ask → grant → resume across two genuinely separate processes. What that cannot prove is the **flag names**, which are the vendor's to change; both manifests carry `verified: false`, and a conformance run against an installed build is what flips it. Neither `claude` nor `gemini` was installed on either machine available here, so that run has not happened.
+
 **Operational contract** — details that will otherwise be discovered painfully:
 
 - **SIGTERM** is `stop()`: the CLI aborts the turn, kills its Bash process tree, runs its session-end hooks, and exits **143**. Treat 143 as clean, not a crash.
@@ -612,19 +630,25 @@ Downgrade is a declared pipeline driven by capabilities, not scattered condition
 
 **The conformance suite is what keeps this abstraction from rotting.** Every adapter, both branches, runs one scenario set, and the *point* of the set is that it is run identically against deliberately different implementations. This exists because 158 passing tests failed to catch a reference adapter that emitted zero events: every runtime test asserted against the in-repo `echo` runtime, so the interface was only ever validated by the implementation that happened to satisfy it — §16's first risk, arriving on schedule.
 
-**Scenario status is part of the design, not a CI detail.** Claiming a scenario the suite does not run is the fiction this section exists to prevent, so the target set is listed with what is actually verified today (Phase 1: two adapters — `echo` and `claude-agent-sdk` driven through an injected `query` against scripted SDK streams, no credentials, no real endpoints).
+**Five candidates run it now**, and they are deliberately unalike: `echo`; `claude-agent-sdk` through an injected `query`; `GilmokHarness` over a raw provider; `agent-cli-stdio` against a real subprocess speaking the protocol over real pipes; and `echo` again reached through the agent-host control protocol. The last two matter most to the claim — one is a text protocol with no loop to hold, the other is the same adapter after serialization and a process boundary.
+
+**Scenario status is part of the design, not a CI detail.** Claiming a scenario the suite does not run is the fiction this section exists to prevent, so the target set is listed with what is actually verified today No credentials and no real endpoints are involved anywhere in it: what the suite proves is the adapter, and what it cannot prove is the vendor's behaviour.
 
 | Scenario | Status | Note |
 |---|---|---|
-| stream subscribable before first `send()` | ✔ both adapters | added to the set in Phase 1 — §3.2's obligation, and the zero-event bug |
-| stream consumable once | ✔ both adapters | a second consumer races the first |
-| explicit terminal stop, never an implicit clean finish | ✔ both adapters | a truncated turn reported as success is the worst available outcome |
-| usage reported for the turn | ✔ both adapters | value accuracy against a real endpoint is **not** verified |
-| single tool call through the gate before execution | ✔ both adapters | asserted on the real `canUseTool` wiring |
-| resume token consistent with declared `nativeResume` | ✔ both adapters | an adapter may not claim native resume and supply nothing |
+| stream subscribable before first `send()` | ✔ all five | added to the set in Phase 1 — §3.2's obligation, and the zero-event bug |
+| stream consumable once | ✔ all five | a second consumer races the first |
+| explicit terminal stop, never an implicit clean finish | ✔ all five | a truncated turn reported as success is the worst available outcome |
+| usage reported for the turn | ✔ all five | value accuracy against a real endpoint is **not** verified |
+| single tool call through the gate before execution | ✔ all five | asserted on the real `canUseTool` wiring |
+| resume token consistent with declared `nativeResume` | ✔ all five | an adapter may not claim native resume and supply nothing |
 | gate configuration the fidelity claim depends on | ✔ SDK adapter | no `allowedTools`, `permissionMode: 'default'`, `settingSources: []`, `canUseTool` always present, denial carries its reason |
 | kill and resume from log | ✔ host-level | covered against `echo` incl. a rejected native resume; not yet per-adapter |
-| permission denial surfaced and resumed after grant | ◐ partial | denial → reason → agent adapts is covered; grant-and-resume for a `precomputed-allowlist` agent needs the CLI branch (Phase 3) |
+| permission denial surfaced and resumed after grant | ✔ verified | the full §3.12 flow across two real processes: denied, asked, granted, resumed with the work kept |
+| NDJSON record split across pipe chunks | ✔ CLI adapter | one record written seven bytes at a time; naive per-chunk parsing loses the middle of real output |
+| non-protocol output on stdout | ✔ CLI adapter | an npm notice is not a failed turn |
+| truncated run is not a clean finish | ✔ CLI adapter | a process that dies mid-turn stops as `transport`, never `end_turn` |
+| uninstalled binary is not retried | ✔ CLI adapter | `misconfigured`, not `transport` — retrying cannot install a CLI |
 | two parallel calls · tool error recovered · nested schema after degradation · image input · 200-message context with compaction · interrupt mid-stream · refusal · rate-limit backoff · **quota exhaustion and scheduled resume** · context-overflow recovery · malformed args repaired · cost/usage accuracy | ✘ not yet run | Phase 3 (§15), and most need real endpoints or the schema degrader, neither of which exists |
 
 Results publish as a **support matrix in the app**, so choosing a runtime shows what it can actually do here. An adapter that can't pass a scenario declares the capability `false` and the orchestrator routes around it — a configuration fact, not a runtime surprise. The matrix must distinguish *verified*, *declared*, and *not run*: a green cell earned by a scripted fixture is not the same claim as one earned against a live endpoint, and collapsing them would reintroduce exactly the confidence this table exists to remove.
@@ -1659,7 +1683,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 1 | Skeleton | 1st | **done**, verified end to end |
 | 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built |
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
-| 3 | Three-shape proof | 4th | validation satisfied early; **breadth** remains |
+| 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` landed; a second real provider and the UI matrix remain |
 | 4 | Multi-session + dashboard | 5th | dashboard, Needs-you rail, stall detection, parking, notifications done; QuotaScheduler remains |
 | 6 | Multi-agent + hierarchy | 6th | not started |
 | 7 | Multimodal | 7th | not started |
@@ -1669,7 +1693,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 
 Building Phases 2, 3, and 4 against a local-only assumption invites rework, because each of them touches state that a server-authoritative topology relocates: relocation resolution becomes a question about the server's filesystem, quota scheduling spans clients, and the dashboard reads a mirror rather than a local log. Second, **device independence is a headline requirement and Phase 5 is where it lives** — the log already being the source of truth means a second device is a new windowed projection rather than a sync protocol, but only once the log is authoritative somewhere central. Third, computer use and multimodal both get materially safer afterwards: an agent driving a virtual display on an expendable server is a bounded blast radius, which is the only honest answer to `click(x, y)` being outside what §13 can gate.
 
-**This does not contradict Phase 3's "deliberately early" argument**, which is worth being precise about because it reads like it should. That argument is that an abstraction validated against one implementation is not validated, and it has already been satisfied: four runtimes run the contract suite — `echo`, the Claude SDK adapter, `GilmokHarness` over a raw provider, and the same adapter reached through the agent-host protocol. What remains in Phase 3 is *breadth* — a second real provider, the installed-CLI adapters, the conformance matrix in the UI — not validation. Breadth can follow the substrate; validation could not.
+**This does not contradict Phase 3's "deliberately early" argument**, which is worth being precise about because it reads like it should. That argument is that an abstraction validated against one implementation is not validated, and it has already been satisfied: four runtimes run the contract suite — `echo`, the Claude SDK adapter, `GilmokHarness` over a raw provider, and the same adapter reached through the agent-host protocol. What remains in Phase 3 is *breadth* — a second real provider and the conformance matrix in the UI — not validation. The installed-CLI branch has since landed, which is the piece of that breadth that needed no credentials to be real. Breadth can follow the substrate; validation could not.
 
 **Not in any phase: computer use / GUI control.** §12 is capture as *input* — you show the agent something, or the host screenshots a URL the agent serves. Nothing actuates a mouse or keyboard, and that is a scope decision rather than an omission. Three things must land before it is even expressible: tool results must carry content blocks instead of a `string` (a screenshot cannot be returned today), the tool model needs a notion of a provider-defined built-in tool that we do not author a schema for, and a frame must carry its coordinate space so downscaling cannot silently misplace every click. All three are in §16.
 

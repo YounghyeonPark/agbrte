@@ -14,6 +14,11 @@ import { describe, expect, it } from 'vitest';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { ClaudeAgentSdkRuntime } from '@main/runtime/runtimes/claudeAgentSdk.js';
 import { GilmokHarnessRuntime } from '@main/runtime/runtimes/gilmokHarness.js';
+import { CliStdioRuntime } from '@main/runtime/runtimes/cliStdio.js';
+import { CLAUDE_CODE_MANIFEST } from '@main/runtime/cli/manifests.js';
+import type { CliAgentManifest } from '@main/runtime/cli/manifest.js';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { AgentHostServer } from '../src/host/server.js';
 import { HostBackedRuntime, HostClient } from '@main/host/hostRuntime.js';
@@ -209,6 +214,22 @@ function stubProvider(script: Array<Partial<ProviderResult>>): ModelProvider {
   };
 }
 
+// ------------------------------------------------------------- CLI fixture
+
+const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fakeCli.mjs');
+
+/** The real Claude Code manifest, pointed at a fixture instead of an install. */
+function fixtureCliManifest(mode: string): CliAgentManifest {
+  return {
+    ...CLAUDE_CODE_MANIFEST,
+    detect: { ...CLAUDE_CODE_MANIFEST.detect, binary: process.execPath },
+    invoke: {
+      ...CLAUDE_CODE_MANIFEST.invoke,
+      baseArgs: [FAKE_CLI, '--mode', mode, ...CLAUDE_CODE_MANIFEST.invoke.baseArgs],
+    },
+  };
+}
+
 interface Candidate {
   name: string;
   /** A runtime whose turn yields text, then usage, then a clean end_turn. */
@@ -277,6 +298,25 @@ const CANDIDATES: Candidate[] = [
       }),
     expectsResumeToken: null,
     specOverride: { model: { providerId: 'stub', modelId: 'stub-model' } },
+  },
+  {
+    /**
+     * An installed CLI, driven as a subprocess (§3.12).
+     *
+     * The shape furthest from the other three: no loop to hold, one process per
+     * turn, a text protocol over a pipe, and a gate that can only refuse ahead
+     * of time. It runs here against a fixture that speaks the protocol over real
+     * pipes, so what the contract is checking is the adapter rather than a mock
+     * of it — the same claims as everyone else, arrived at completely
+     * differently.
+     */
+    name: 'agent-cli-stdio (a real subprocess)',
+    make: () => new CliStdioRuntime({ manifest: fixtureCliManifest('plain') }),
+    makeGated: () => new CliStdioRuntime({ manifest: fixtureCliManifest('deny-once') }),
+    // The CLI prints a session id, which is a cache and never truth (§5.4).
+    expectsResumeToken: 'sess-fake-1',
+    // A real spawn needs a directory that exists; the others never touch it.
+    specOverride: { workspacePath: process.cwd() },
   },
   {
     /**
