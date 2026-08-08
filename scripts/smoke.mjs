@@ -17,9 +17,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // The child reports here rather than to a stream. On Windows the electron
 // binary is GUI-subsystem, so nothing its JS writes to fd 1 or fd 2 reaches this
 // process — a file is the only channel that works on every platform.
-const resultsPath = join(tmpdir(), `gilmok-smoke-${process.pid}.txt`);
+const resultsPath = join(tmpdir(), `agbrte-smoke-${process.pid}.txt`);
 
-const env = { ...process.env, GILMOK_SMOKE_OUT: resultsPath };
+const env = { ...process.env, AGBRTE_SMOKE_OUT: resultsPath };
 // See scripts/launch.mjs — inherited from any Electron-based parent terminal,
 // and it would silently turn this into a plain Node run with no `app`.
 delete env['ELECTRON_RUN_AS_NODE'];

@@ -35,7 +35,7 @@ let dirs: string[] = [];
 async function serve(
   onConnection?: (channel: SocketChannel<Ping, Ping>) => void,
 ): Promise<{ path: string; accepted: Promise<SocketChannel<Ping, Ping>> }> {
-  const dir = await mkdtemp(join(tmpdir(), 'gilmok-sock-'));
+  const dir = await mkdtemp(join(tmpdir(), 'agbrte-sock-'));
   dirs.push(dir);
   // A unique instance id per test, which is also how a real host names its
   // socket — one per checkout (§5.2).
@@ -231,7 +231,7 @@ describe('host socket paths', () => {
 describe('socket permissions', () => {
   it('narrows a unix socket to its owner', async () => {
     if (process.platform === 'win32') return; // named pipes carry a DACL instead
-    const path = join(tmpdir(), `gilmok-mode-${process.pid}.sock`);
+    const path = join(tmpdir(), `agbrte-mode-${process.pid}.sock`);
     const server = await listen(path, () => undefined);
     try {
       // Node creates it `0777 & ~umask`, and connecting needs *write* — so the

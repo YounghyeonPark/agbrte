@@ -26,7 +26,7 @@ import {
   type CreateSessionRequest,
   type EventBatch,
   type HostInfo,
-  type GilmokApi,
+  type AgbrteApi,
   type SendRequest,
 } from '../shared/ipc/contract.js';
 import type {
@@ -45,7 +45,7 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
   };
 }
 
-const api: GilmokApi = {
+const api: AgbrteApi = {
   hosts: {
     list: () => ipcRenderer.invoke(CH.hostsList),
     add: () => ipcRenderer.invoke(CH.hostsAdd),
@@ -87,4 +87,4 @@ const api: GilmokApi = {
   ack: (sessionId: string, seq: number) => ipcRenderer.send(CH.ack, sessionId, seq),
 };
 
-contextBridge.exposeInMainWorld('gilmok', api);
+contextBridge.exposeInMainWorld('agbrte', api);

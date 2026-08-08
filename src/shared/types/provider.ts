@@ -3,7 +3,7 @@
  *
  * A `ModelProvider` does one request. It knows nothing about sessions,
  * workspaces, tools-as-policy, or transports — that smallness is the point, and
- * it is what lets `GilmokHarness` supply everything above it (§3.7).
+ * it is what lets `AgbrteHarness` supply everything above it (§3.7).
  *
  * ## Correction to §3.6
  *
@@ -54,7 +54,7 @@ export interface DegradedTool {
 }
 
 export interface NormalizedToolCall {
-  /** Gilmok's id. Vendor ids are mapped to ours (§3.5). */
+  /** Agbrte's id. Vendor ids are mapped to ours (§3.5). */
   id: string;
   name: string;
   args: unknown;

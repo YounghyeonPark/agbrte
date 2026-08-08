@@ -1,6 +1,6 @@
 /**
  * The runtime layer (DESIGN.md §3) — the interface both adapter branches
- * present: external harnesses, and GilmokHarness driven by a ModelProvider.
+ * present: external harnesses, and AgbrteHarness driven by a ModelProvider.
  *
  * A runtime adapter contains no transport awareness. It sees a local
  * filesystem path and a local egress URL, which are genuinely local to
@@ -39,7 +39,7 @@ export interface ModelRef {
 }
 
 /**
- * Where credentials live (§3.11). Gilmok never stores, proxies, or replays a
+ * Where credentials live (§3.11). Agbrte never stores, proxies, or replays a
  * vendor session token: under `vendor-cli-session` we invoke the user's own
  * tool and stay out of the auth path entirely.
  */
@@ -51,7 +51,7 @@ export type AuthMode =
 /** Whether a credential is metered per token or by a resetting window (§3.9). */
 export type QuotaModel = 'per-token-billing' | 'windowed-allowance';
 
-/** How much of a run's cost Gilmok can actually observe (§10). */
+/** How much of a run's cost Agbrte can actually observe (§10). */
 export type CostReporting = 'per-request' | 'telemetry' | 'none';
 
 export interface RuntimeCapabilities {
@@ -157,7 +157,7 @@ export interface AgentSpec {
   role: AgentRole;
   /** Which harness. */
   runtimeId: string;
-  /** Required iff the harness is GilmokHarness. */
+  /** Required iff the harness is AgbrteHarness. */
   model?: ModelRef;
   auth: AuthMode;
   reasoning?: ReasoningRequest;

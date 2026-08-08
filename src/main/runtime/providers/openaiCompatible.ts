@@ -130,7 +130,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       parallelToolCalls: parallel,
       schemaProfile,
       toolResultPairing: 'batched',
-      // GilmokHarness owns the gate for every provider-backed agent (§3.7).
+      // AgbrteHarness owns the gate for every provider-backed agent (§3.7).
       permissionFidelity: 'callback',
       contextWindow,
       maxOutputTokens: Math.min(4_096, Math.floor(contextWindow / 4)),

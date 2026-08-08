@@ -29,7 +29,7 @@ import { workspaceLayout } from '@main/store/layout.js';
 let dirs: string[] = [];
 
 async function make(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'gilmok-move-'));
+  const dir = await mkdtemp(join(tmpdir(), 'agbrte-move-'));
   dirs.push(dir);
   return dir;
 }

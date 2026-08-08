@@ -1,5 +1,5 @@
 /**
- * `GilmokHarness` (DESIGN.md §3.7) — our own agent loop.
+ * `AgbrteHarness` (DESIGN.md §3.7) — our own agent loop.
  *
  * The second branch of the runtime layer. A `ModelProvider` answers one request;
  * everything a harness would supply, we supply here:
@@ -37,9 +37,18 @@ import {
 } from '@shared/types/index.js';
 import { DEFAULT_TOOLS, toolByName, type ToolDefinition } from '../../tools/index.js';
 
-export const GILMOK_HARNESS_RUNTIME_ID = 'gilmok-harness';
+export const AGBRTE_HARNESS_RUNTIME_ID = 'agbrte-harness';
 
-export interface GilmokHarnessOptions {
+/**
+ * The id this runtime carried when the project was called Gilmok.
+ *
+ * Every registry that offers the harness aliases this to the current id, because
+ * `runtimeId` is written into `session.json` and the event log: a session
+ * created before the rename still names it, and the log is truth (§5.4).
+ */
+export const RETIRED_HARNESS_RUNTIME_ID = 'gilmok-harness';
+
+export interface AgbrteHarnessOptions {
   provider: ModelProvider;
   /**
    * Which endpoint an agent's spec resolves to.
@@ -60,18 +69,18 @@ const DEFAULT_MAX_ITERATIONS = 12;
 /** Identical call repeated this many times means the loop is stuck, not working. */
 const NO_PROGRESS_LIMIT = 3;
 
-export class GilmokHarnessRuntime implements AgentRuntime {
-  readonly id = GILMOK_HARNESS_RUNTIME_ID;
+export class AgbrteHarnessRuntime implements AgentRuntime {
+  readonly id = AGBRTE_HARNESS_RUNTIME_ID;
   readonly version = '0.0.1';
 
-  constructor(private readonly opts: GilmokHarnessOptions) {}
+  constructor(private readonly opts: AgbrteHarnessOptions) {}
 
   get toolVersion(): string {
     return `${this.opts.provider.id}@${this.opts.provider.version}`;
   }
 
   async capabilities(spec: AgentSpec): Promise<RuntimeCapabilities> {
-    if (!spec.model) throw new Error('GilmokHarness requires spec.model');
+    if (!spec.model) throw new Error('AgbrteHarness requires spec.model');
     // Delegated to the provider, which probes rather than self-reports (§3.3).
     const caps = await this.opts.provider.probe(this.opts.endpointFor(spec.model.endpointId), spec.model.modelId);
     // The gate is ours regardless of what the model can do.
@@ -80,7 +89,7 @@ export class GilmokHarnessRuntime implements AgentRuntime {
 
   async start(spec: AgentSpec, ctx: RuntimeContext): Promise<AgentHandle> {
     const caps = await this.capabilities(spec);
-    return new GilmokHarnessHandle(spec, ctx, caps, this.opts);
+    return new AgbrteHarnessHandle(spec, ctx, caps, this.opts);
   }
 
   /** No provider-side session exists, so resume is always a rehydrated start. */
@@ -89,7 +98,7 @@ export class GilmokHarnessRuntime implements AgentRuntime {
   }
 }
 
-class GilmokHarnessHandle implements AgentHandle {
+class AgbrteHarnessHandle implements AgentHandle {
   private readonly queue: RuntimeEvent[] = [];
   private readonly messages: ProviderMessage[] = [];
   private readonly tools: ToolDefinition[];
@@ -101,7 +110,7 @@ class GilmokHarnessHandle implements AgentHandle {
     private readonly spec: AgentSpec,
     private readonly ctx: RuntimeContext,
     private readonly caps: RuntimeCapabilities,
-    private readonly opts: GilmokHarnessOptions,
+    private readonly opts: AgbrteHarnessOptions,
   ) {
     this.tools = opts.tools ?? DEFAULT_TOOLS;
     // A rehydrated seed is conversation, not tool mechanics — it replays as
@@ -262,7 +271,7 @@ class GilmokHarnessHandle implements AgentHandle {
 
   get events(): AsyncIterable<RuntimeEvent> {
     this.stream ??= {
-      [Symbol.asyncIterator]: async function* (this: GilmokHarnessHandle) {
+      [Symbol.asyncIterator]: async function* (this: AgbrteHarnessHandle) {
         while (true) {
           while (this.queue.length > 0) yield this.queue.shift() as RuntimeEvent;
           if (this.closed) return;

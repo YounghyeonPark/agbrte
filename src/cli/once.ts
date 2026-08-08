@@ -1,7 +1,7 @@
 /**
  * One turn, no prompt, an exit code (DESIGN.md §6.4).
  *
- * `gilmok attach` needs a person at a terminal. This is the other half of "works
+ * `agbrte attach` needs a person at a terminal. This is the other half of "works
  * without a GUI": cron, CI, a git hook, a shell script — places with no TTY and
  * nobody to answer a question. The difference is not cosmetic. An interactive
  * client that merely *tolerates* a pipe still stops at the first permission
@@ -21,11 +21,11 @@
  *    what to pass, not a prompt.
  *
  * The session is still owned by the host and still logged, so a scripted run is
- * inspectable afterwards with `gilmok ls` and readable in the app.
+ * inspectable afterwards with `agbrte ls` and readable in the app.
  */
 
 import type { HostConnection } from '@main/host/hostConnection.js';
-import { stopDisposition, type AgentId, type GilmokEvent, type PermissionRequest, type SessionId, type StopReason } from '@shared/types/index.js';
+import { stopDisposition, type AgentId, type AgbrteEvent, type PermissionRequest, type SessionId, type StopReason } from '@shared/types/index.js';
 import { c, preview } from './format.js';
 
 export interface OnceOptions {
@@ -108,10 +108,10 @@ export async function once(connection: HostConnection, opts: OnceOptions): Promi
     });
   };
 
-  let stop: GilmokEvent | null = null;
+  let stop: AgbrteEvent | null = null;
   const onEvent = (id: unknown, event: unknown): void => {
     if (id !== session.sessionId) return;
-    const e = event as GilmokEvent;
+    const e = event as AgbrteEvent;
     if (e.type === 'agent.stopped') stop = e;
     if (opts.verbose) {
       process.stderr.write(`${c.dim(e.type)} ${c.dim(preview(bodyOf(e), 100))}\n`);
@@ -134,7 +134,7 @@ export async function once(connection: HostConnection, opts: OnceOptions): Promi
 
   process.stderr.write(c.dim(`session ${session.sessionId}\n`));
 
-  const ended = stop as GilmokEvent | null;
+  const ended = stop as AgbrteEvent | null;
   const reason: StopReason =
     ended !== null && ended.type === 'agent.stopped' ? ended.stop : { kind: 'end_turn' };
 
@@ -181,7 +181,7 @@ export function exitCodeFor(stop: StopReason): 0 | 1 | 2 {
 }
 
 /** The part of an event worth one line of a verbose log. */
-function bodyOf(event: GilmokEvent): unknown {
+function bodyOf(event: AgbrteEvent): unknown {
   switch (event.type) {
     case 'agent.text':
       return event.text;

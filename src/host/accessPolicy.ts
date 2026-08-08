@@ -35,7 +35,7 @@ import type { AccessRole } from '@shared/types/index.js';
 import { workspaceLayout } from '@main/store/layout.js';
 
 export interface AccessRule {
-  /** Glob against the client label, e.g. `gilmok-app@phone-*`. `*` matches any run. */
+  /** Glob against the client label, e.g. `agbrte-app@phone-*`. `*` matches any run. */
   client: string;
   role: AccessRole;
 }

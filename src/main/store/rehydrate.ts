@@ -9,7 +9,7 @@
  * and agent resumed after a quota window reset hours later (R9) — because none
  * of them may depend on runtime-owned state.
  *
- * It is also the in-session compactor (§3.7): `GilmokHarness` compacts by calling
+ * It is also the in-session compactor (§3.7): `AgbrteHarness` compacts by calling
  * the same function. Keeping it one code path is what stops the durable path
  * from rotting, since every ordinary turn exercises it.
  *
@@ -24,7 +24,7 @@
 
 import type {
   ContentBlock,
-  GilmokEvent,
+  AgbrteEvent,
   NormalizedTurn,
   SessionProjection,
 } from '@shared/types/index.js';
@@ -91,7 +91,7 @@ function blockText(block: ContentBlock): string {
 }
 
 /** Reconstruct conversational turns from the durable log. */
-function turnsFrom(events: readonly GilmokEvent[]): NormalizedTurn[] {
+function turnsFrom(events: readonly AgbrteEvent[]): NormalizedTurn[] {
   const turns: NormalizedTurn[] = [];
   for (const ev of events) {
     if (ev.type === 'user.turn') {

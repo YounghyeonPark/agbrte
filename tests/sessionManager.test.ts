@@ -18,7 +18,7 @@ let root: string;
 let instanceId: InstanceId;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'gilmok-sm-'));
+  root = await mkdtemp(join(tmpdir(), 'agbrte-sm-'));
   instanceId = (await openWorkspace(root)).instanceId;
 });
 

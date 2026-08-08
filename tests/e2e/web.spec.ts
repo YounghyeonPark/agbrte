@@ -46,7 +46,7 @@ test('serves the app and drives a session over a socket', async ({ page }) => {
 
     // A CSP violation or a missing shim shows up here and nowhere else.
     expect(
-      errors.filter((e) => /Content Security|gilmok is undefined|is not a function/i.test(e)),
+      errors.filter((e) => /Content Security|agbrte is undefined|is not a function/i.test(e)),
     ).toEqual([]);
   } finally {
     await web.stop();

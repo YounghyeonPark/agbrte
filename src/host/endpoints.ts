@@ -4,7 +4,7 @@
  *
  * ## Why a registry rather than one endpoint
  *
- * The first version read a single `GILMOK_MODEL_BASE_URL` and built one endpoint
+ * The first version read a single `AGBRTE_MODEL_BASE_URL` and built one endpoint
  * at startup. That encodes "this server has one model", which stops being true
  * the moment a machine has a local Ollama and a hosted API, or two GPUs serving
  * different weights. The types anticipated this all along — `AuthMode` is
@@ -20,7 +20,7 @@
  * so anything exported there simply is not present. A file the host reads for
  * itself works identically however it was started.
  *
- * `~/.gilmok/` and not `.devagents/`, because `.devagents/` lives inside the
+ * `~/.agbrte/` and not `.devagents/`, because `.devagents/` lives inside the
  * user's git repository and a credential put there is a credential that gets
  * committed.
  *
@@ -95,7 +95,37 @@ interface Entry {
 }
 
 export function endpointsPath(): string {
+  return join(homedir(), '.agbrte', 'endpoints.json');
+}
+
+/**
+ * Where this file lived when the project was called Gilmok.
+ *
+ * Read only when the current path has nothing, and never written. A rename is
+ * our problem rather than the user's, and the failure it prevents is not a
+ * missing feature: a host that finds no endpoints file falls back to the default
+ * local Ollama and sends turns somewhere the user did not configure. That is the
+ * silent misroute `EndpointsInvalid` exists to prevent, arriving through a
+ * renamed directory instead of a typo.
+ *
+ * Deletable once no install predates the rename. Deliberately without an expiry
+ * date, because a machine nobody has opened in a year is exactly the one that
+ * still needs it.
+ */
+export function legacyEndpointsPath(): string {
   return join(homedir(), '.gilmok', 'endpoints.json');
+}
+
+/** `null` for a file that is not there; anything else still throws. */
+async function readIfPresent(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw new EndpointsInvalid(path, (err as Error).message);
+    }
+    return null;
+  }
 }
 
 /**
@@ -109,20 +139,27 @@ function fallback(): Entry {
     id: 'local',
     label: 'local model',
     provider: 'local',
-    baseUrl: process.env['GILMOK_MODEL_BASE_URL'] ?? 'http://127.0.0.1:11434/v1',
+    baseUrl: process.env['AGBRTE_MODEL_BASE_URL'] ?? 'http://127.0.0.1:11434/v1',
   };
 }
 
-export async function loadEndpoints(path = endpointsPath()): Promise<EndpointRegistry> {
+export async function loadEndpoints(
+  path = endpointsPath(),
+  /**
+   * Defaulted from `path` rather than unconditionally, so a caller naming a file
+   * — a test, a `--endpoints` flag — means *that* file. Otherwise a temp path
+   * that happens to be empty would quietly pick up whatever is in the developer's
+   * own home directory.
+   */
+  legacy: string | null = path === endpointsPath() ? legacyEndpointsPath() : null,
+): Promise<EndpointRegistry> {
   let entries: Entry[];
   let fallbackId: string;
 
-  let text: string | null;
-  try {
-    text = await readFile(path, 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new EndpointsInvalid(path, (err as Error).message);
-    text = null;
+  let text = await readIfPresent(path);
+  if (text === null && legacy !== null) {
+    text = await readIfPresent(legacy);
+    if (text !== null) path = legacy; // so a parse error names the file actually read
   }
 
   if (text === null) {

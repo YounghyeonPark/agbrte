@@ -8,7 +8,7 @@ let dir: string;
 let store: BlobStore;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'gilmok-blobs-'));
+  dir = await mkdtemp(join(tmpdir(), 'agbrte-blobs-'));
   store = new BlobStore(join(dir, 'attachments'));
 });
 
@@ -85,7 +85,7 @@ describe('BlobStore', () => {
 
   it('survives being moved, because nothing is path-linked', async () => {
     const { sha256 } = await store.put(PNG, 'image/png');
-    const moved = await mkdtemp(join(tmpdir(), 'gilmok-moved-'));
+    const moved = await mkdtemp(join(tmpdir(), 'agbrte-moved-'));
     try {
       // Simulate the workspace folder moving: same bytes, different location.
       const relocated = new BlobStore(join(moved, 'attachments'));

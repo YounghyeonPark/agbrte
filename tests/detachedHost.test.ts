@@ -21,7 +21,7 @@ import { openWorkspace } from '@main/store/identity.js';
 import { hostSocketPath } from '@shared/host/socketChannel.js';
 import type { HostConnection } from '@main/host/hostConnection.js';
 
-const HOST_BUNDLE = resolve(import.meta.dirname, '../dist/main/gilmokHost.js');
+const HOST_BUNDLE = resolve(import.meta.dirname, '../dist/main/agbrteHost.js');
 
 let root: string;
 let open: HostConnection[] = [];
@@ -39,7 +39,7 @@ async function stopHost(connection: HostConnection): Promise<void> {
 }
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'gilmok-detached-'));
+  root = await mkdtemp(join(tmpdir(), 'agbrte-detached-'));
   open = [];
 });
 

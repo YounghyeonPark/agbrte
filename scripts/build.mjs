@@ -9,7 +9,7 @@
  * Two output formats, deliberately:
  *  - main as ESM, matching `"type": "module"`.
  *  - **preload as CommonJS.** A sandboxed preload is not an ES module; loading
- *    one produces an empty `window.gilmok` with no error, which presents as "the
+ *    one produces an empty `window.agbrte` with no error, which presents as "the
  *    app opened and every button does nothing".
  */
 
@@ -68,12 +68,12 @@ const builds = [
 // `npm i -g` installs this and nothing else executable.
 builds.push({
   ...shared,
-  entryPoints: [resolve(root, 'src/cli/gilmok.ts')],
-  outfile: resolve(root, 'dist/cli/gilmok.js'),
+  entryPoints: [resolve(root, 'src/cli/agbrte.ts')],
+  outfile: resolve(root, 'dist/cli/agbrte.js'),
   format: 'esm',
   // Node, not Electron: this must run on a server that has never seen a GUI.
   target: 'node22',
-  define: { __GILMOK_VERSION__: JSON.stringify(pkgVersion) },
+  define: { __AGBRTE_VERSION__: JSON.stringify(pkgVersion) },
   banner: {
     js: [
       // Present so `npm i -g` produces something executable on POSIX. npm writes
@@ -84,7 +84,7 @@ builds.push({
   },
 });
 
-// The browser's `window.gilmok`. Built for the browser, not Node: it is injected
+// The browser's `window.agbrte`. Built for the browser, not Node: it is injected
 // ahead of the renderer's own bundle and must exist before that bundle boots.
 builds.push({
   ...shared,
@@ -102,7 +102,7 @@ builds.push({
 builds.push({
   ...shared,
   entryPoints: [resolve(root, 'src/host/hostMain.ts')],
-  outfile: resolve(root, 'dist/main/gilmokHost.js'),
+  outfile: resolve(root, 'dist/main/agbrteHost.js'),
   format: 'esm',
   banner: {
     js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",

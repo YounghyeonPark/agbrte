@@ -42,20 +42,20 @@ export function parse(argv: string[]): Parsed {
   }
 
   const KNOWN = new Set(['attach', 'run', 'ls', 'serve', 'stop', 'web']);
-  // `gilmok /srv/api` and `gilmok attach /srv/api` both work: a first argument that
+  // `agbrte /srv/api` and `agbrte attach /srv/api` both work: a first argument that
   // is not a command is a path. Requiring the verb would make the common case
   // the long one.
   const command = positional[0] !== undefined && KNOWN.has(positional[0]) ? positional[0] : 'attach';
   const after = command === positional[0] ? positional.slice(1) : positional;
 
-  // `gilmok run "prompt"` with no path means the current directory, so `run` has
+  // `agbrte run "prompt"` with no path means the current directory, so `run` has
   // to tell a path from a prompt. Two signals, both deliberate:
   //
   //  - it exists on disk, or
   //  - it is written as a path — `.`, `./x`, `/x`, `~`, `C:\x`
   //
   // Counting words was the first attempt and was wrong: shells split unquoted
-  // arguments, so `gilmok run add a test` arrived as three of them and "add"
+  // arguments, so `agbrte run add a test` arrived as three of them and "add"
   // became the workspace. Everything else is prompt, because for `run` a prompt
   // is the argument that must always work unquoted.
   const first = after[0];

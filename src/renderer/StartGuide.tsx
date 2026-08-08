@@ -5,7 +5,7 @@
  *
  * The temptation with an empty state is to list everything the app can do, and
  * the result is a brochure nobody reads because six equal bullets rank nothing.
- * Gilmok has exactly one unusual property — **a session lives on the host, not in
+ * Agbrte has exactly one unusual property — **a session lives on the host, not in
  * this window** — and closing the app mid-run, driving the same session from a
  * second machine, and resuming after a restart are not three features to learn
  * but three consequences of that one fact. Said that way it is one thing to
@@ -104,7 +104,7 @@ export function StartGuide({ hasHosts, onAttachLocal, onAttachRemote }: StartGui
         <p className="text-muted text-[11px] leading-relaxed">
           A server needs no setup beyond ssh access — an alias from your <code>~/.ssh/config</code>,
           or <code>user@hostname</code>, which works with no config at all. The first attach installs
-          a private Node under <code>~/.gilmok</code> on that machine: nothing system-wide, no sudo.
+          a private Node under <code>~/.agbrte</code> on that machine: nothing system-wide, no sudo.
         </p>
       )}
 

@@ -23,7 +23,7 @@ let dir: string;
 const file = (): string => join(dir, 'endpoints.json');
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'gilmok-endpoints-'));
+  dir = await mkdtemp(join(tmpdir(), 'agbrte-endpoints-'));
 });
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -35,6 +35,45 @@ const write = (body: unknown): Promise<void> =>
 describe('with no file', () => {
   it('still offers a local endpoint, so an unconfigured machine works', async () => {
     const registry = await loadEndpoints(join(dir, 'nothing-here.json'));
+    expect(registry.list()).toHaveLength(1);
+    expect(registry.resolve().auth.kind).toBe('none');
+  });
+});
+
+describe('the file this had before the rename', () => {
+  /**
+   * `~/.gilmok/endpoints.json` is read when `~/.agbrte/` has nothing.
+   *
+   * Not a nicety. A host that finds no endpoints file falls back to the default
+   * local model, so losing this file across the rename does not produce an
+   * error — it produces turns quietly going somewhere the user never configured,
+   * which is the failure the rest of this module exists to prevent.
+   */
+  it('is read when the current one is not there', async () => {
+    const legacy = join(dir, 'legacy.json');
+    await writeFile(
+      legacy,
+      JSON.stringify({ endpoints: [{ id: 'kept', baseUrl: 'https://kept.example/v1' }] }),
+      'utf8',
+    );
+    const registry = await loadEndpoints(join(dir, 'absent.json'), legacy);
+    expect(registry.list().map((e) => e.id)).toEqual(['kept']);
+  });
+
+  it('is ignored once the current one exists', async () => {
+    const legacy = join(dir, 'legacy.json');
+    await writeFile(legacy, JSON.stringify({ endpoints: [{ id: 'old', baseUrl: 'https://old/v1' }] }), 'utf8');
+    await write({ endpoints: [{ id: 'current', baseUrl: 'https://current/v1' }] });
+
+    // Reading both and merging would resurrect an endpoint the user deleted.
+    const registry = await loadEndpoints(file(), legacy);
+    expect(registry.list().map((e) => e.id)).toEqual(['current']);
+  });
+
+  it('is not consulted for a path the caller named', async () => {
+    // A `--endpoints` flag, or a test naming a file, means *that* file. Falling
+    // back to a real home directory would make every such call non-hermetic.
+    const registry = await loadEndpoints(join(dir, 'absent.json'));
     expect(registry.list()).toHaveLength(1);
     expect(registry.resolve().auth.kind).toBe('none');
   });

@@ -50,7 +50,7 @@ export type PolicyScope =
 /**
  * How strong a runtime's permission gate actually is (§3.10). Safety-critical:
  * `all-or-nothing` may only run under worktree or container isolation, checked
- * at agent creation (§9). Declaring this wrongly means Gilmok tells the user an
+ * at agent creation (§9). Declaring this wrongly means Agbrte tells the user an
  * agent is contained when it is not.
  */
 export type PermissionFidelity =

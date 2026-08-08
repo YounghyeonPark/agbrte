@@ -26,12 +26,12 @@ import {
   type Actor,
   type EventBody,
   type EventOrigin,
-  type GilmokEvent,
+  type AgbrteEvent,
 } from '@shared/types/index.js';
 import { PRIVATE_DIR_MODE } from './layout.js';
 
 export interface ParseResult {
-  events: GilmokEvent[];
+  events: AgbrteEvent[];
   /**
    * Bytes consumed — always ends on a newline, so a caller can persist this
    * offset and resume exactly. Never includes a partial trailing line.
@@ -57,13 +57,13 @@ export function parseWholeLines(buf: Buffer): ParseResult {
   const consumed = lastNewline + 1;
   const text = buf.subarray(0, consumed).toString('utf8');
 
-  const events: GilmokEvent[] = [];
+  const events: AgbrteEvent[] = [];
   let skipped = 0;
 
   for (const line of text.split('\n')) {
     if (line.length === 0) continue;
     try {
-      events.push(JSON.parse(line) as GilmokEvent);
+      events.push(JSON.parse(line) as AgbrteEvent);
     } catch {
       skipped += 1;
     }
@@ -80,7 +80,7 @@ export class LineAccumulator {
   private consumedTotal = 0;
   private skippedTotal = 0;
 
-  push(chunk: Buffer): GilmokEvent[] {
+  push(chunk: Buffer): AgbrteEvent[] {
     const buf = this.remainder.length === 0 ? chunk : Buffer.concat([this.remainder, chunk]);
     const { events, consumed, skipped } = parseWholeLines(buf);
     this.remainder = buf.subarray(consumed);
@@ -105,7 +105,7 @@ export class LineAccumulator {
 }
 
 export interface AppendMeta {
-  agentId?: GilmokEvent['agentId'];
+  agentId?: AgbrteEvent['agentId'];
   origin?: EventOrigin;
   clockSkewMs?: number;
   /** Set only for events a person caused. See `EventEnvelope.actor`. */
@@ -193,7 +193,7 @@ export class EventLog {
    * Append one record. Serialized as a single write so a crash can only ever
    * produce a partial *trailing* line, which `open()` and readers both handle.
    */
-  async append(body: EventBody, meta: AppendMeta = {}): Promise<GilmokEvent> {
+  async append(body: EventBody, meta: AppendMeta = {}): Promise<AgbrteEvent> {
     const now = meta.now ?? (() => new Date());
     const event = {
       id: newEventId(),
@@ -204,7 +204,7 @@ export class EventLog {
       ...(meta.actor !== undefined ? { actor: meta.actor } : {}),
       ...(meta.origin !== undefined ? { origin: meta.origin } : {}),
       ...body,
-    } as GilmokEvent;
+    } as AgbrteEvent;
 
     const line = `${JSON.stringify(event)}\n`;
     await appendFile(this.path, line, 'utf8');
@@ -215,14 +215,14 @@ export class EventLog {
   }
 
   /** Read every complete record. */
-  async readAll(): Promise<{ events: GilmokEvent[]; skipped: number }> {
+  async readAll(): Promise<{ events: AgbrteEvent[]; skipped: number }> {
     return this.readFrom(0);
   }
 
   /** Read complete records from a byte offset — the mirror's resume path. */
-  async readFrom(offset: number): Promise<{ events: GilmokEvent[]; skipped: number }> {
+  async readFrom(offset: number): Promise<{ events: AgbrteEvent[]; skipped: number }> {
     const acc = new LineAccumulator();
-    const events: GilmokEvent[] = [];
+    const events: AgbrteEvent[] = [];
 
     await new Promise<void>((resolveRead, rejectRead) => {
       const stream = createReadStream(this.path, { start: offset });

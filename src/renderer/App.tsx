@@ -29,7 +29,7 @@ import { AttachHost } from './AttachHost.js';
 import { Dashboard } from './Dashboard.js';
 import { StartGuide } from './StartGuide.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
-import { useGilmok } from './store.js';
+import { useAgbrte } from './store.js';
 import { Composer, EventRow, PermissionPrompt, Transcript, summarize } from './Transcript.js';
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
 import type { Session, SessionState } from '../shared/types/index.js';
@@ -59,7 +59,7 @@ export function stateTone(state: SessionState): string {
 export const LABEL = 'text-[10px] uppercase tracking-wider';
 
 export function App(): JSX.Element {
-  const store = useGilmok();
+  const store = useAgbrte();
   const [attaching, setAttaching] = useState<false | 'local' | 'remote'>(false);
   // Toggled open even with a session showing, because a guide you can only
   // reach from an empty window is unreachable exactly when it is wanted.
@@ -81,13 +81,13 @@ export function App(): JSX.Element {
   useEffect(() => {
     void store.boot();
 
-    const offEvents = window.gilmok.on.events((b) => useGilmok.getState().applyBatch(b));
-    const offSession = window.gilmok.on.session((s) => useGilmok.getState().applySession(s));
-    const offPermission = window.gilmok.on.permission((r) => useGilmok.getState().applyPermission(r));
-    const offResolved = window.gilmok.on.permissionResolved((r) =>
-      useGilmok.getState().applyPermissionResolved(r),
+    const offEvents = window.agbrte.on.events((b) => useAgbrte.getState().applyBatch(b));
+    const offSession = window.agbrte.on.session((s) => useAgbrte.getState().applySession(s));
+    const offPermission = window.agbrte.on.permission((r) => useAgbrte.getState().applyPermission(r));
+    const offResolved = window.agbrte.on.permissionResolved((r) =>
+      useAgbrte.getState().applyPermissionResolved(r),
     );
-    const offHosts = window.gilmok.on.hosts((h) => useGilmok.getState().applyHosts(h));
+    const offHosts = window.agbrte.on.hosts((h) => useAgbrte.getState().applyHosts(h));
 
     // Without these the listeners accumulate on every remount and events render
     // twice — a duplication bug, not a crash, which is why it is easy to miss.
@@ -124,7 +124,7 @@ export function App(): JSX.Element {
         }`}
       >
         <header className="border-line flex items-center justify-between border-b p-3.5">
-          <h1 className="text-base tracking-wide">Gilmok</h1>
+          <h1 className="text-base tracking-wide">Agbrte</h1>
           <div className="flex gap-1.5">
             <button
               className="btn px-2 md:hidden"
@@ -137,7 +137,7 @@ export function App(): JSX.Element {
             <button
               className="btn px-2"
               data-testid="show-guide"
-              title="How Gilmok is used"
+              title="How Agbrte is used"
               aria-pressed={guide}
               onClick={() => setGuide((open) => !open)}
             >
@@ -304,7 +304,7 @@ function HostGroup({
   unloaded: Array<{ sessionId: string; title: string }>;
   activeId: string | null;
 }): JSX.Element {
-  const store = useGilmok();
+  const store = useAgbrte();
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState('');
 
@@ -544,7 +544,7 @@ function AgentPicker({
             />
           </label>
 
-          {/* Only when the runtime is GilmokHarness. A wrapped harness brings its
+          {/* Only when the runtime is AgbrteHarness. A wrapped harness brings its
               own model, and offering a field it ignores invites a silent no-op. */}
           {selected?.requiresModel === true && (
             <label className="text-muted grid gap-1 text-xs">

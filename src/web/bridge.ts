@@ -1,5 +1,5 @@
 /**
- * `window.gilmok`, over a WebSocket (DESIGN.md §7, §17 Q13).
+ * `window.agbrte`, over a WebSocket (DESIGN.md §7, §17 Q13).
  *
  * The preload's counterpart. Electron's version forwards each method to
  * `ipcRenderer.invoke`; this one forwards to a socket. Both are the same shape
@@ -19,7 +19,7 @@
  * losing the work.
  */
 
-import type { GilmokApi } from '../shared/ipc/contract.js';
+import type { AgbrteApi } from '../shared/ipc/contract.js';
 import { CH, PUSH } from '../shared/ipc/contract.js';
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
@@ -37,7 +37,7 @@ function connect(): {
   let backoff = 250;
 
   const open = (): void => {
-    const url = new URL('/__gilmok/socket', location.href);
+    const url = new URL('/__agbrte/socket', location.href);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const next = new WebSocket(url);
     socket = next;
@@ -106,7 +106,7 @@ const call =
   (...args: unknown[]): Promise<never> =>
     link.call(channel, args) as Promise<never>;
 
-const api: GilmokApi = {
+const api: AgbrteApi = {
   hosts: {
     list: call(CH.hostsList),
     add: call(CH.hostsAdd),
@@ -143,4 +143,4 @@ const api: GilmokApi = {
   },
 };
 
-(globalThis as unknown as { gilmok: GilmokApi }).gilmok = api;
+(globalThis as unknown as { agbrte: AgbrteApi }).agbrte = api;

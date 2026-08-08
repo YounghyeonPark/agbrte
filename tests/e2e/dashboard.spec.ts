@@ -21,7 +21,7 @@ test('shows every session, with what needs a human first', async ({ page }) => {
     for (const title of titles) {
       execFileSync(
         process.execPath,
-        [resolve('dist/cli/gilmok.js'), 'run', web.repo, '--runtime', 'echo', '--title', title, `work on ${title}`],
+        [resolve('dist/cli/agbrte.js'), 'run', web.repo, '--runtime', 'echo', '--title', title, `work on ${title}`],
         { stdio: 'ignore' },
       );
     }

@@ -18,7 +18,7 @@ import type {
 export interface RuntimeDescriptor {
   id: string;
   label: string;
-  /** `true` for GilmokHarness, which needs a ModelProvider to drive (§3.7). */
+  /** `true` for AgbrteHarness, which needs a ModelProvider to drive (§3.7). */
   requiresModel: boolean;
 }
 
@@ -70,24 +70,49 @@ export class RuntimeRegistry {
   private readonly runtimes = new Map<string, AgentRuntime>();
   private readonly descriptors = new Map<string, RuntimeDescriptor>();
   private readonly capCache = new Map<string, RuntimeCapabilities>();
+  /** Retired id → the id that replaced it. Resolved, never listed. */
+  private readonly aliases = new Map<string, string>();
 
   register(runtime: AgentRuntime, descriptor: Omit<RuntimeDescriptor, 'id'>): void {
     this.runtimes.set(runtime.id, runtime);
     this.descriptors.set(runtime.id, { id: runtime.id, ...descriptor });
   }
 
+  /**
+   * Answer to an id a runtime used to have.
+   *
+   * `AgentSpec.runtimeId` is written into `session.json` and into the event log,
+   * so it is not a name we get to change — it is data already on disk. Renaming
+   * `gilmok-harness` to `agbrte-harness` without this would make every session
+   * created before the rename unresumable, failing with `no runtime registered`
+   * against a log that is otherwise perfectly intact. §5.4's rule that the log
+   * is truth cuts this way too: the code adapts to what was written, not the
+   * reverse.
+   *
+   * Deliberately absent from `list()` and `describe()`'s own id: an alias is a
+   * way in for old data, not a runtime anyone may choose.
+   */
+  alias(retiredId: string, currentId: string): void {
+    this.aliases.set(retiredId, currentId);
+  }
+
+  private resolveId(id: string): string {
+    const target = this.aliases.get(id);
+    return target !== undefined && this.runtimes.has(target) ? target : id;
+  }
+
   has(id: string): boolean {
-    return this.runtimes.has(id);
+    return this.runtimes.has(this.resolveId(id));
   }
 
   get(id: string): AgentRuntime {
-    const rt = this.runtimes.get(id);
+    const rt = this.runtimes.get(this.resolveId(id));
     if (!rt) throw new UnknownRuntimeError(id);
     return rt;
   }
 
   describe(id: string): RuntimeDescriptor {
-    const d = this.descriptors.get(id);
+    const d = this.descriptors.get(this.resolveId(id));
     if (!d) throw new UnknownRuntimeError(id);
     return d;
   }

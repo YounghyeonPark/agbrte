@@ -28,7 +28,7 @@ import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
-import type { AgentId, GilmokEvent, SessionId } from '@shared/types/index.js';
+import type { AgentId, AgbrteEvent, SessionId } from '@shared/types/index.js';
 
 const DONE: EchoStep[] = [
   { kind: 'text', text: 'ok' },
@@ -40,7 +40,7 @@ const RUNTIMES = [{ id: 'echo', label: 'Echo', version: '1', requiresModel: fals
 let roots: string[] = [];
 
 async function makeRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'gilmok-reconnect-'));
+  const root = await mkdtemp(join(tmpdir(), 'agbrte-reconnect-'));
   roots.push(root);
   return root;
 }
@@ -153,8 +153,8 @@ describe('a dropped link', () => {
     const session = await r.fleet.createSession(r.instanceId, { title: 's', goal: 'g' });
     const agent = await r.fleet.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
 
-    const seen: GilmokEvent[] = [];
-    r.fleet.on('event', (_i: unknown, _s: unknown, e: unknown) => seen.push(e as GilmokEvent));
+    const seen: AgbrteEvent[] = [];
+    r.fleet.on('event', (_i: unknown, _s: unknown, e: unknown) => seen.push(e as AgbrteEvent));
 
     r.unplug();
     await until(() => r.fleet.hosts()[0]?.link === 'reconnecting');
@@ -182,8 +182,8 @@ describe('a dropped link', () => {
     const session = await r.fleet.createSession(r.instanceId, { title: 's', goal: 'g' });
     const agent = await r.fleet.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
 
-    const seen: GilmokEvent[] = [];
-    r.fleet.on('event', (_i: unknown, _s: unknown, e: unknown) => seen.push(e as GilmokEvent));
+    const seen: AgbrteEvent[] = [];
+    r.fleet.on('event', (_i: unknown, _s: unknown, e: unknown) => seen.push(e as AgbrteEvent));
 
     // A turn *before* the cut, so catch-up has history it has already delivered.
     await r.fleet.send(session.sessionId, agent.agentId as AgentId, 'first');

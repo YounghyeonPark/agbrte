@@ -13,7 +13,7 @@
 import { describe, expect, it } from 'vitest';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { ClaudeAgentSdkRuntime } from '@main/runtime/runtimes/claudeAgentSdk.js';
-import { GilmokHarnessRuntime } from '@main/runtime/runtimes/gilmokHarness.js';
+import { AgbrteHarnessRuntime } from '@main/runtime/runtimes/agbrteHarness.js';
 import { CliStdioRuntime } from '@main/runtime/runtimes/cliStdio.js';
 import { CLAUDE_CODE_MANIFEST } from '@main/runtime/cli/manifests.js';
 import type { CliAgentManifest } from '@main/runtime/cli/manifest.js';
@@ -158,7 +158,7 @@ const resultSuccess = (): SDKMessage =>
 
 // -------------------------------------------------------------- the contract
 
-// ------------------------------------------- provider stub, for GilmokHarness
+// ------------------------------------------- provider stub, for AgbrteHarness
 
 const STUB_CAPS: RuntimeCapabilities = {
   nativeResume: false,
@@ -237,7 +237,7 @@ interface Candidate {
   /** A runtime that performs one gated tool call before finishing. */
   makeGated: () => AgentRuntime;
   expectsResumeToken: string | null;
-  /** GilmokHarness needs a model on the spec; wrapped harnesses must not have one. */
+  /** AgbrteHarness needs a model on the spec; wrapped harnesses must not have one. */
   specOverride?: Partial<AgentSpec>;
 }
 
@@ -279,14 +279,14 @@ const CANDIDATES: Candidate[] = [
   {
     // The provider branch: our own loop over a raw endpoint (§3.7). Included
     // here because a contract validated against one branch is not validated.
-    name: 'gilmok-harness',
+    name: 'agbrte-harness',
     make: () =>
-      new GilmokHarnessRuntime({
+      new AgbrteHarnessRuntime({
         provider: stubProvider([{ content: [{ type: 'text', text: 'hello' }] }]),
         endpointFor: () => STUB_ENDPOINT,
       }),
     makeGated: () =>
-      new GilmokHarnessRuntime({
+      new AgbrteHarnessRuntime({
         provider: stubProvider([
           {
             toolCalls: [{ id: 'c1', name: 'read', args: { file_path: 'a.ts' } }],

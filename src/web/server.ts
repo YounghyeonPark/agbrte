@@ -3,7 +3,7 @@
  *
  * ## Why this is small
  *
- * The renderer only ever talks to `window.gilmok`, a single typed surface
+ * The renderer only ever talks to `window.agbrte`, a single typed surface
  * (§7's `contextIsolation` rule made that a requirement, not a preference). So a
  * browser needs exactly two things: that surface implemented over a socket, and
  * the built renderer served to it. Not one line of UI changes, and there is no
@@ -66,8 +66,8 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon',
 };
 
-/** Injected before the app bundle, so `window.gilmok` exists when it boots. */
-const SHIM = '/__gilmok/bridge.js';
+/** Injected before the app bundle, so `window.agbrte` exists when it boots. */
+const SHIM = '/__agbrte/bridge.js';
 
 export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer> {
   const rendererDir = resolve(opts.rendererDir);
@@ -82,7 +82,7 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
 
   // Attached to the same server rather than a second port: one address to
   // reach, one address to reason about.
-  const wss = new WebSocketServer({ server: http, path: '/__gilmok/socket' });
+  const wss = new WebSocketServer({ server: http, path: '/__agbrte/socket' });
 
   wss.on('connection', (socket: WebSocket) => {
     // A fresh API per connection, so each browser is its own client of the host
@@ -150,7 +150,7 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
  * The page, with two edits made on the way out.
  *
  * The shim goes in ahead of the app's own bundle, because the app reads
- * `window.gilmok` while it boots and one loaded after would be too late.
+ * `window.agbrte` while it boots and one loaded after would be too late.
  *
  * And the CSP gains this request's own `ws://` origin. The built policy names
  * `ws://localhost:*`, which is right for Electron and wrong for a phone reaching

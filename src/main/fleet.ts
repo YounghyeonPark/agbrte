@@ -36,7 +36,7 @@ import type {
   HostLocation,
   InstanceId,
   LineageId,
-  GilmokEvent,
+  AgbrteEvent,
   PermissionDecision,
   PermissionRequest,
   Session,
@@ -130,7 +130,7 @@ export class AttachRefused extends Error {
 /**
  * Events, re-emitted from the owning host:
  *
- *   'event'      (instanceId, sessionId, GilmokEvent)
+ *   'event'      (instanceId, sessionId, AgbrteEvent)
  *   'session'    (instanceId, Session)
  *   'permission' (instanceId, PermissionRequest)
  *   'permission-resolved' (instanceId, PermissionResolved)
@@ -233,7 +233,7 @@ export class Fleet extends EventEmitter {
   private wire(entry: Entry, connection: HostConnection): void {
     const { instanceId } = entry;
 
-    const onEvent = (sessionId: string, event: GilmokEvent): void => {
+    const onEvent = (sessionId: string, event: AgbrteEvent): void => {
       this.owners.set(sessionId as SessionId, instanceId);
       // Dropped rather than re-emitted if we already have it. Catch-up and the
       // live push overlap by construction: the host starts pushing the moment we
@@ -544,7 +544,7 @@ export class Fleet extends EventEmitter {
     return this.ownerOf(sessionId).connection.interrupt(sessionId, agentId);
   }
 
-  async events(sessionId: SessionId, fromSeq = 0): Promise<GilmokEvent[]> {
+  async events(sessionId: SessionId, fromSeq = 0): Promise<AgbrteEvent[]> {
     return this.ownerOf(sessionId).connection.events(sessionId, fromSeq);
   }
 

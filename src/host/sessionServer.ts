@@ -63,7 +63,7 @@ export interface SessionHostOptions {
    * Named for the *fact* rather than for one cause, because it had one cause and
    * that was the bug: it fired on the idle timer only, so a client asking the
    * host to shut down got an acknowledgement while the process stayed up holding
-   * its socket — still accepting connections, still answering. `gilmok stop`
+   * its socket — still accepting connections, still answering. `agbrte stop`
    * reported success and left a host behind, and the next client to compute that
    * socket found the zombie rather than starting a replacement.
    */

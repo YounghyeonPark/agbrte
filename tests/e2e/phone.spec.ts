@@ -56,7 +56,7 @@ test('opens a session full-screen, and comes back to the dashboard', async ({ pa
     // clicking a session into existence would make it about the picker.
     execFileSync(
       process.execPath,
-      [resolve('dist/cli/gilmok.js'), 'run', web.repo, '--runtime', 'echo', '--title', 'on a phone', 'go'],
+      [resolve('dist/cli/agbrte.js'), 'run', web.repo, '--runtime', 'echo', '--title', 'on a phone', 'go'],
       { stdio: 'ignore' },
     );
 

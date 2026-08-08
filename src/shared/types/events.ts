@@ -223,7 +223,7 @@ export type EventBody =
    */
   | { type: 'session.unparked'; reason: 'quota-window-reset'; parkedFor: string };
 
-export type GilmokEvent = EventEnvelope & EventBody;
+export type AgbrteEvent = EventEnvelope & EventBody;
 
 /** Event types this build understands. Unknown types are skipped, not fatal. */
 export function isKnownEventType(type: string): boolean {

@@ -19,7 +19,7 @@
  * One monotonic pair — highest forwarded, highest acked — cannot drift.
  */
 
-import type { GilmokEvent } from '@shared/types/index.js';
+import type { AgbrteEvent } from '@shared/types/index.js';
 import {
   BACKPRESSURE_WATERMARK,
   BATCH_MAX_EVENTS,
@@ -39,7 +39,7 @@ export interface EventBridgeOptions {
 
 interface Channel {
   instanceId: string;
-  queue: GilmokEvent[];
+  queue: AgbrteEvent[];
   timer: unknown;
   /** Highest seq handed to the renderer. */
   forwardedSeq: number;
@@ -66,7 +66,7 @@ export class EventBridge {
     this.clearTimer = opts.clearTimer ?? ((h) => clearTimeout(h as NodeJS.Timeout));
   }
 
-  push(instanceId: string, sessionId: string, event: GilmokEvent): void {
+  push(instanceId: string, sessionId: string, event: AgbrteEvent): void {
     const ch = this.channelFor(sessionId);
     // Recorded per channel so a flush knows which host to attribute, including a
     // gap-only flush that carries no events to read it from.

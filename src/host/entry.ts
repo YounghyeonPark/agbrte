@@ -22,7 +22,11 @@ import type { HostMessage, HostCommand, HostSideChannel } from '@shared/host/pro
 import { AgentHostServer } from './server.js';
 import { loadEndpoints, type EndpointRegistry } from './endpoints.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
-import { GilmokHarnessRuntime } from '@main/runtime/runtimes/gilmokHarness.js';
+import {
+  AgbrteHarnessRuntime,
+  AGBRTE_HARNESS_RUNTIME_ID,
+  RETIRED_HARNESS_RUNTIME_ID,
+} from '@main/runtime/runtimes/agbrteHarness.js';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { CliStdioRuntime, detectCli } from '@main/runtime/runtimes/cliStdio.js';
 import { CLI_MANIFESTS } from '@main/runtime/cli/manifests.js';
@@ -120,14 +124,15 @@ export async function buildHostRegistry(endpoints: EndpointRegistry): Promise<Ru
   const registry = new RuntimeRegistry();
 
   registry.register(
-    new GilmokHarnessRuntime({
+    new AgbrteHarnessRuntime({
       // The credential lookup lives with the provider, which is the only place a
       // request is actually made. The endpoint it resolves carries no secret.
       provider: new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) }),
       endpointFor: (endpointId) => endpoints.resolve(endpointId),
     }),
-    { label: 'Gilmok harness', requiresModel: true },
+    { label: 'Agbrte harness', requiresModel: true },
   );
+  registry.alias(RETIRED_HARNESS_RUNTIME_ID, AGBRTE_HARNESS_RUNTIME_ID);
 
   registry.register(new EchoRuntime(), { label: 'Echo (no model)', requiresModel: false });
 

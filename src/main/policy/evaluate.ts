@@ -142,7 +142,7 @@ export function isInsideWorkspace(workspaceRoot: string, candidate: string): boo
  * a shell command cannot be complete: `S=sudo; $S id`, `eval`, base64, and any
  * other indirection defeat it, and no amount of pattern work closes that. The
  * actual protection §13 specifies is that the host runs as the connecting user,
- * never root, and Gilmok never invokes `sudo` itself. This check exists to stop
+ * never root, and Agbrte never invokes `sudo` itself. This check exists to stop
  * the obvious case loudly, and its incompleteness is why it must not be the only
  * thing standing between an agent and root.
  */

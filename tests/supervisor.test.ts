@@ -26,7 +26,7 @@ let root: string;
 let store: SessionStore;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'gilmok-sup-'));
+  root = await mkdtemp(join(tmpdir(), 'agbrte-sup-'));
   const { instanceId } = await openWorkspace(root);
   store = await SessionStore.create(root, {
     sessionId: newSessionId(),

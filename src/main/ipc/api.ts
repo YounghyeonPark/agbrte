@@ -1,5 +1,5 @@
 /**
- * The API behind `window.gilmok`, with no transport (DESIGN.md §7).
+ * The API behind `window.agbrte`, with no transport (DESIGN.md §7).
  *
  * Split from `register.ts` for one concrete reason: that file imports `electron`,
  * and an ESM import is evaluated when the module loads, not when it is used. A
@@ -33,7 +33,7 @@ import {
 import type {
   AgentId,
   InstanceId,
-  GilmokEvent,
+  AgbrteEvent,
   PermissionDecision,
   PermissionRequest,
   Session,
@@ -61,7 +61,7 @@ export interface IpcDeps {
 }
 
 /** The transport-free API: a channel map, an ack sink, and its teardown. */
-export interface GilmokApiHost {
+export interface AgbrteApiHost {
   handlers: Map<string, (...args: unknown[]) => Promise<unknown>>;
   ack(sessionId: string, seq: number): void;
   dispose(): void;
@@ -120,7 +120,7 @@ function toInfo(host: AttachedHost): HostInfo {
   };
 }
 
-export function createApi(deps: IpcDeps): GilmokApiHost {
+export function createApi(deps: IpcDeps): AgbrteApiHost {
   const { fleet } = deps;
 
   // ------------------------------------------------------------- push channels
@@ -131,7 +131,7 @@ export function createApi(deps: IpcDeps): GilmokApiHost {
     send: (batch: EventBatch) => broadcast(PUSH.events, batch),
   });
 
-  const onEvent = (instanceId: string, sessionId: string, event: GilmokEvent): void =>
+  const onEvent = (instanceId: string, sessionId: string, event: AgbrteEvent): void =>
     bridge.push(instanceId, sessionId, event);
   const onSession = (_instanceId: string, session: Session): void =>
     broadcast(PUSH.session, session);

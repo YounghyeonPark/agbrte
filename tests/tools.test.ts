@@ -27,7 +27,7 @@ let root: string;
 let ctx: ToolContext;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'gilmok-tools-'));
+  root = await mkdtemp(join(tmpdir(), 'agbrte-tools-'));
   ctx = { workspaceRoot: root, signal: new AbortController().signal };
   await mkdir(join(root, 'src'), { recursive: true });
   await writeFile(join(root, 'src', 'a.ts'), 'export const a = 1;\nconst secret = 2;\n', 'utf8');
@@ -224,7 +224,7 @@ describe('bash', () => {
 });
 
 describe('the suite', () => {
-  it('exposes the tools GilmokHarness offers, resolvable case-insensitively', () => {
+  it('exposes the tools AgbrteHarness offers, resolvable case-insensitively', () => {
     expect(DEFAULT_TOOLS.map((t) => t.name)).toEqual([
       'read',
       'write',

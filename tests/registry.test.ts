@@ -37,6 +37,41 @@ describe('RuntimeRegistry', () => {
     expect(() => r.get('nope')).toThrow(UnknownRuntimeError);
   });
 
+  describe('an id a runtime used to have', () => {
+    /**
+     * `runtimeId` is written into `session.json` and the event log, so renaming
+     * a runtime does not rename what is already on disk. Without an alias, every
+     * session created before the project was renamed from Gilmok fails to resume
+     * with `no runtime registered` — against a log that is entirely intact.
+     */
+    it('resolves to the runtime that replaced it', async () => {
+      const r = registryWith(new EchoRuntime({ id: 'agbrte-harness' }));
+      r.alias('gilmok-harness', 'agbrte-harness');
+
+      expect(r.has('gilmok-harness')).toBe(true);
+      expect(r.get('gilmok-harness').id).toBe('agbrte-harness');
+      const admitted = await r.admit(spec({ runtimeId: 'gilmok-harness' }), 'shared');
+      expect(admitted.ok).toBe(true);
+    });
+
+    it('is not offered as something to choose', () => {
+      const r = registryWith(new EchoRuntime({ id: 'agbrte-harness' }));
+      r.alias('gilmok-harness', 'agbrte-harness');
+      // A way in for old data, not a second runtime in the picker.
+      expect(r.list().map((d) => d.id)).toEqual(['agbrte-harness']);
+      expect(r.describe('gilmok-harness').id).toBe('agbrte-harness');
+    });
+
+    it('stays unknown when nothing replaced it', () => {
+      const r = new RuntimeRegistry();
+      r.alias('gilmok-harness', 'agbrte-harness');
+      // An alias pointing at a runtime this host does not offer must not turn a
+      // clear "not registered" into a confusing one.
+      expect(r.has('gilmok-harness')).toBe(false);
+      expect(() => r.get('gilmok-harness')).toThrow(UnknownRuntimeError);
+    });
+  });
+
   it('caches capabilities per model, not per runtime', async () => {
     let calls = 0;
     class Counting extends EchoRuntime {

@@ -8,7 +8,7 @@ let dir: string;
 let logPath: string;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'gilmok-log-'));
+  dir = await mkdtemp(join(tmpdir(), 'agbrte-log-'));
   logPath = join(dir, 'events.jsonl');
 });
 

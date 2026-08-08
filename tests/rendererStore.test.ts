@@ -13,7 +13,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { useGilmok } from '../src/renderer/store.js';
+import { useAgbrte } from '../src/renderer/store.js';
 import type { PermissionRequest } from '@shared/types/index.js';
 
 const request = (requestId: string): PermissionRequest =>
@@ -22,12 +22,12 @@ const request = (requestId: string): PermissionRequest =>
 const BOB = { id: 'uid:1001', via: 'peer-credential', label: 'bob@desk' } as const;
 
 beforeEach(() => {
-  useGilmok.setState({ pending: [], notice: null });
+  useAgbrte.setState({ pending: [], notice: null });
 });
 
 describe('a prompt settled elsewhere', () => {
   it('comes off this screen', () => {
-    const store = useGilmok.getState();
+    const store = useAgbrte.getState();
     store.applyPermission(request('r1'));
     store.applyPermission(request('r2'));
 
@@ -40,11 +40,11 @@ describe('a prompt settled elsewhere', () => {
     });
 
     // Only that one. Another open question is not collateral.
-    expect(useGilmok.getState().pending.map((p) => p.requestId)).toEqual(['r2']);
+    expect(useAgbrte.getState().pending.map((p) => p.requestId)).toEqual(['r2']);
   });
 
   it('says who answered, because a prompt vanishing alone reads as a bug', () => {
-    const store = useGilmok.getState();
+    const store = useAgbrte.getState();
     store.applyPermission(request('r1'));
     store.applyPermissionResolved({
       requestId: 'r1',
@@ -54,14 +54,14 @@ describe('a prompt settled elsewhere', () => {
       actor: BOB,
     });
 
-    const notice = useGilmok.getState().notice ?? '';
+    const notice = useAgbrte.getState().notice ?? '';
     expect(notice).toContain('bob@desk');
     // The verb matters: "denied" and "allowed" prompt different next actions.
     expect(notice).toContain('denied');
   });
 
   it('explains a withdrawal without naming anyone', () => {
-    const store = useGilmok.getState();
+    const store = useAgbrte.getState();
     store.applyPermission(request('r1'));
     store.applyPermissionResolved({
       requestId: 'r1',
@@ -70,7 +70,7 @@ describe('a prompt settled elsewhere', () => {
       reason: 'the agent that asked is no longer running',
     });
 
-    const notice = useGilmok.getState().notice ?? '';
+    const notice = useAgbrte.getState().notice ?? '';
     // Nobody decided, so nobody is named. Attributing it would invent a
     // decision that was never made.
     expect(notice).toContain('withdrawn');
@@ -79,7 +79,7 @@ describe('a prompt settled elsewhere', () => {
   });
 
   it('says nothing about a prompt this client never saw', () => {
-    const store = useGilmok.getState();
+    const store = useAgbrte.getState();
     store.applyPermissionResolved({
       requestId: 'never-seen',
       sessionId: 's1' as never,
@@ -90,6 +90,6 @@ describe('a prompt settled elsewhere', () => {
 
     // A device that was not showing the question does not need to be told about
     // its ending — a notice for something you never saw reads as a fault.
-    expect(useGilmok.getState().notice).toBeNull();
+    expect(useAgbrte.getState().notice).toBeNull();
   });
 });

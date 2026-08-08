@@ -40,12 +40,12 @@ export interface LaunchedApp {
  * Launch the built app against a given workspace.
  *
  * `userDataDir` is per-launch so tests never touch the developer's real profile,
- * and `GILMOK_WORKSPACE_ROOT` pins the workspace instead of letting main fall back
+ * and `AGBRTE_WORKSPACE_ROOT` pins the workspace instead of letting main fall back
  * to that profile directory.
  */
 export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
   if (workspaces.length === 0) throw new Error('launch needs at least one workspace');
-  const userDataDir = await mkdtemp(join(tmpdir(), 'gilmok-e2e-profile-'));
+  const userDataDir = await mkdtemp(join(tmpdir(), 'agbrte-e2e-profile-'));
 
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -56,12 +56,12 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
   delete env['ELECTRON_RUN_AS_NODE'];
   // Several roots, delimiter-separated, so the app attaches several hosts at
   // once — which is how the multi-host view gets exercised (§8).
-  env['GILMOK_WORKSPACE_ROOT'] = workspaces.join(delimiter);
+  env['AGBRTE_WORKSPACE_ROOT'] = workspaces.join(delimiter);
   // Hosts are detached now, so they outlive the app a test just closed. A short
   // linger stops a suite run from leaving one process per temp workspace behind
   // — the production default is minutes, which is right for a person and wrong
   // for a test that makes a dozen throwaway workspaces.
-  env['GILMOK_HOST_LINGER_MS'] = '3000';
+  env['AGBRTE_HOST_LINGER_MS'] = '3000';
 
   const app = await electron.launch({
     executablePath: ELECTRON,
@@ -89,12 +89,12 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
 
 /** A temp directory that is a real git repository. */
 export async function makeRepo(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'gilmok-e2e-repo-'));
+  const dir = await mkdtemp(join(tmpdir(), 'agbrte-e2e-repo-'));
   // A real repo, because "edits a real repo" is the acceptance criterion and a
   // bare temp folder would not prove the workspace machinery works on one.
   execFileSync('git', ['init', '-q'], { cwd: dir });
-  execFileSync('git', ['config', 'user.email', 'e2e@gilmok.test'], { cwd: dir });
-  execFileSync('git', ['config', 'user.name', 'gilmok e2e'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 'e2e@agbrte.test'], { cwd: dir });
+  execFileSync('git', ['config', 'user.name', 'agbrte e2e'], { cwd: dir });
   return dir;
 }
 
@@ -145,7 +145,7 @@ export async function warmModel(model: string): Promise<void> {
 }
 
 /**
- * A `gilmok web` server on a free port, with its own throwaway workspace.
+ * A `agbrte web` server on a free port, with its own throwaway workspace.
  *
  * Shared because the phone spec needs the same thing in a different file:
  * Playwright will not let a describe block change the browser engine, so
@@ -169,7 +169,7 @@ export async function serveWebFixture(): Promise<{
   const url = `http://127.0.0.1:${port}/`;
   const server = spawn(
     process.execPath,
-    [resolve('dist/cli/gilmok.js'), 'web', repo, '--port', String(port)],
+    [resolve('dist/cli/agbrte.js'), 'web', repo, '--port', String(port)],
     { stdio: 'ignore' },
   );
 

@@ -94,12 +94,12 @@ export function spawnAgentHost(opts: {
   modelBaseUrl?: string;
 }): SpawnedHost {
   const child = utilityProcess.fork(opts.entry, [], {
-    serviceName: 'gilmok-agent-host',
+    serviceName: 'agbrte-agent-host',
     stdio: 'inherit',
     env: {
       ...process.env,
-      GILMOK_WORKSPACE_ROOT: opts.workspaceRoot,
-      ...(opts.modelBaseUrl !== undefined ? { GILMOK_MODEL_BASE_URL: opts.modelBaseUrl } : {}),
+      AGBRTE_WORKSPACE_ROOT: opts.workspaceRoot,
+      ...(opts.modelBaseUrl !== undefined ? { AGBRTE_MODEL_BASE_URL: opts.modelBaseUrl } : {}),
     },
   });
 

@@ -1,5 +1,5 @@
 /**
- * `GilmokHarness` — our own agent loop (DESIGN.md §3.7).
+ * `AgbrteHarness` — our own agent loop (DESIGN.md §3.7).
  *
  * Driven by a scripted `ModelProvider`, so the loop, the gate, tool dispatch,
  * and the failure taxonomy are all exercised without a model or a network.
@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GilmokHarnessRuntime, degradeSchema } from '@main/runtime/runtimes/gilmokHarness.js';
+import { AgbrteHarnessRuntime, degradeSchema } from '@main/runtime/runtimes/agbrteHarness.js';
 import {
   newAgentId,
   type AgentSpec,
@@ -95,7 +95,7 @@ class StubProvider implements ModelProvider {
 let root: string;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'gilmok-harness-'));
+  root = await mkdtemp(join(tmpdir(), 'agbrte-harness-'));
   await writeFile(join(root, 'target.ts'), 'const value = 1;\n', 'utf8');
 });
 
@@ -109,7 +109,7 @@ function spec(over: Partial<AgentSpec> = {}): AgentSpec {
   return {
     agentId: newAgentId(),
     role: 'worker',
-    runtimeId: 'gilmok-harness',
+    runtimeId: 'agbrte-harness',
     model: { providerId: 'stub', modelId: 'stub-model' },
     auth: { kind: 'none' },
     toolPolicy: POLICY,
@@ -143,7 +143,7 @@ async function run(
   overrides: Partial<AgentSpec> = {},
   maxIterations?: number,
 ): Promise<RuntimeEvent[]> {
-  const runtime = new GilmokHarnessRuntime({
+  const runtime = new AgbrteHarnessRuntime({
     provider,
     endpointFor: () => ENDPOINT,
     ...(maxIterations !== undefined ? { maxIterations } : {}),
@@ -158,9 +158,9 @@ async function run(
   return collected;
 }
 
-describe('GilmokHarness — basics', () => {
+describe('AgbrteHarness — basics', () => {
   it('reports capabilities from the provider but owns the gate', async () => {
-    const runtime = new GilmokHarnessRuntime({
+    const runtime = new AgbrteHarnessRuntime({
       provider: new StubProvider([{}], { permissionFidelity: 'all-or-nothing', subagents: true }),
       endpointFor: () => ENDPOINT,
     });
@@ -171,7 +171,7 @@ describe('GilmokHarness — basics', () => {
   });
 
   it('refuses a spec with no model', async () => {
-    const runtime = new GilmokHarnessRuntime({ provider: new StubProvider([{}]), endpointFor: () => ENDPOINT });
+    const runtime = new AgbrteHarnessRuntime({ provider: new StubProvider([{}]), endpointFor: () => ENDPOINT });
     // Omitted, not set to undefined: `exactOptionalPropertyTypes` treats those
     // as different, and the runtime must reject the genuinely absent case.
     const { model: _model, ...withoutModel } = spec();
@@ -181,7 +181,7 @@ describe('GilmokHarness — basics', () => {
   });
 
   it('reports no resume token — there is no provider-side session', async () => {
-    const runtime = new GilmokHarnessRuntime({ provider: new StubProvider([{}]), endpointFor: () => ENDPOINT });
+    const runtime = new AgbrteHarnessRuntime({ provider: new StubProvider([{}]), endpointFor: () => ENDPOINT });
     const handle = await runtime.start(spec(), context());
     expect(handle.resumeToken()).toBeNull();
   });
@@ -201,7 +201,7 @@ describe('GilmokHarness — basics', () => {
   });
 });
 
-describe('GilmokHarness — the gate', () => {
+describe('AgbrteHarness — the gate', () => {
   const toolThenDone = () =>
     new StubProvider([
       {
@@ -279,7 +279,7 @@ describe('GilmokHarness — the gate', () => {
   });
 });
 
-describe('GilmokHarness — loop control', () => {
+describe('AgbrteHarness — loop control', () => {
   it('stops at the iteration cap instead of looping forever', async () => {
     // A provider that always asks for another tool call.
     const provider = new StubProvider([
@@ -330,10 +330,10 @@ describe('GilmokHarness — loop control', () => {
   });
 });
 
-describe('GilmokHarness — context assembly', () => {
+describe('AgbrteHarness — context assembly', () => {
   it('replays a rehydrated seed as ordinary conversation', async () => {
     const provider = new StubProvider([{}]);
-    const runtime = new GilmokHarnessRuntime({ provider, endpointFor: () => ENDPOINT });
+    const runtime = new AgbrteHarnessRuntime({ provider, endpointFor: () => ENDPOINT });
     const handle = await runtime.start(spec(), {
       ...context(),
       seedHistory: [

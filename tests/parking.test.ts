@@ -77,7 +77,7 @@ function manager(runtime: EchoRuntime, now: () => Date): SessionManager {
 const wake = (m: SessionManager): void => (m as unknown as { sweepParked: () => void }).sweepParked();
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'gilmok-park-'));
+  root = await mkdtemp(join(tmpdir(), 'agbrte-park-'));
   instanceId = (await openWorkspace(root)).instanceId;
   managers = [];
 });

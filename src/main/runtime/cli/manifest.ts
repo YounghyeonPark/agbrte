@@ -75,7 +75,7 @@ export interface CliAgentManifest {
      *
      * These CLIs take `-m <model>` and choosing one is legitimate, but
      * `RuntimeDescriptor.requiresModel` is a boolean answering a three-valued
-     * question — required for GilmokHarness, *optional* here, meaningless for
+     * question — required for AgbrteHarness, *optional* here, meaningless for
      * echo — and admission rejects a spec carrying a model whenever
      * `requiresModel` is false. Shipping the field now would mean shipping code
      * that admission guarantees never runs. Recorded in §3.12 as the follow-up
@@ -101,7 +101,7 @@ export interface CliAgentManifest {
   /**
    * Canonical tool name → this CLI's own name.
    *
-   * The gilmok-side names are lowercase; every one of these CLIs capitalizes.
+   * The agbrte-side names are lowercase; every one of these CLIs capitalizes.
    * The claude-agent-sdk adapter learned this the expensive way — deny rules
    * emitted as `bash` matched nothing, and deny rules were the only protection
    * on the paths its callback skipped.

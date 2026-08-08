@@ -30,7 +30,7 @@ let instanceId: InstanceId;
 let lineageId: string;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'gilmok-host-'));
+  root = await mkdtemp(join(tmpdir(), 'agbrte-host-'));
   const identity = await openWorkspace(root);
   instanceId = identity.instanceId;
   lineageId = identity.lineageId;

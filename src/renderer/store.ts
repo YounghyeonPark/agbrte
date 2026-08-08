@@ -21,7 +21,7 @@ import type {
   SshHostInfo,
 } from '../shared/ipc/contract.js';
 import type {
-  GilmokEvent,
+  AgbrteEvent,
   PermissionRequest,
   PermissionResolved,
   Session,
@@ -30,7 +30,7 @@ import type {
 /** Events retained in memory. Chosen to comfortably exceed a screenful. */
 const WINDOW = 400;
 
-export interface GilmokState {
+export interface AgbrteState {
   /** Every attached host. Several at once is the normal case (§8). */
   hosts: HostInfo[];
   /** Runtimes per host, keyed by instanceId — hosts need not agree. */
@@ -39,7 +39,7 @@ export interface GilmokState {
   onDisk: Array<{ instanceId: string; sessionId: string; title: string; goal: string }>;
   activeId: string | null;
   active: Session | null;
-  events: GilmokEvent[];
+  events: AgbrteEvent[];
   /** Set when a gap was detected and a refetch is in flight. */
   refetching: boolean;
   pending: PermissionRequest[];
@@ -78,7 +78,7 @@ export interface GilmokState {
   dismissNotice(): void;
 }
 
-const gilmok = () => window.gilmok;
+const agbrte = () => window.agbrte;
 
 /** Anything thrown by an IPC call becomes visible rather than swallowed. */
 async function guard<T>(set: SetState, fn: () => Promise<T>): Promise<T | undefined> {
@@ -93,7 +93,7 @@ async function guard<T>(set: SetState, fn: () => Promise<T>): Promise<T | undefi
   }
 }
 
-type SetState = (partial: Partial<GilmokState>) => void;
+type SetState = (partial: Partial<AgbrteState>) => void;
 
 function applySnapshot(set: SetState, snapshot: SessionSnapshot): void {
   set({
@@ -105,7 +105,7 @@ function applySnapshot(set: SetState, snapshot: SessionSnapshot): void {
   });
 }
 
-export const useGilmok = create<GilmokState>((set, get) => ({
+export const useAgbrte = create<AgbrteState>((set, get) => ({
   hosts: [],
   sshHosts: [],
   runtimesByHost: {},
@@ -124,10 +124,10 @@ export const useGilmok = create<GilmokState>((set, get) => ({
   async boot() {
     await guard(set, async () => {
       const [hosts, sessions, onDisk, pending] = await Promise.all([
-        gilmok().hosts.list(),
-        gilmok().sessions.list(),
-        gilmok().sessions.listOnDisk(),
-        gilmok().permissions.pending(),
+        agbrte().hosts.list(),
+        agbrte().sessions.list(),
+        agbrte().sessions.listOnDisk(),
+        agbrte().permissions.pending(),
       ]);
       set({ hosts, sessions, onDisk, pending });
       await get().applyHosts(hosts);
@@ -135,7 +135,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
   },
 
   async addHost() {
-    const host = await guard(set, () => gilmok().hosts.add());
+    const host = await guard(set, () => agbrte().hosts.add());
     // Null means the picker was cancelled, which is not a failure.
     if (host === undefined || host === null) return;
     await get().boot();
@@ -145,14 +145,14 @@ export const useGilmok = create<GilmokState>((set, get) => ({
     // Failing to read a config is not a reason to block the panel — the user can
     // still type an alias that `ssh` knows about from somewhere else.
     try {
-      set({ sshHosts: await gilmok().hosts.sshHosts() });
+      set({ sshHosts: await agbrte().hosts.sshHosts() });
     } catch {
       set({ sshHosts: [] });
     }
   },
 
   async addRemoteHost(alias, workspaceRoot) {
-    const host = await guard(set, () => gilmok().hosts.addRemote(alias, workspaceRoot));
+    const host = await guard(set, () => agbrte().hosts.addRemote(alias, workspaceRoot));
     if (host === undefined) return false;
     await get().boot();
     return true;
@@ -161,7 +161,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
   async shutdownHost(instanceId) {
     let stopped = false;
     await guard(set, async () => {
-      const result = await gilmok().hosts.shutdown(instanceId);
+      const result = await agbrte().hosts.shutdown(instanceId);
       stopped = result.stopped;
       if (!stopped) {
         // Surfaced as an error banner rather than swallowed: the user pressed
@@ -176,7 +176,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
 
   async removeHost(instanceId) {
     await guard(set, async () => {
-      await gilmok().hosts.remove(instanceId);
+      await agbrte().hosts.remove(instanceId);
       // Anything open on that host is gone with it; drop the selection rather
       // than leave a pane pointing at a session nothing can answer for.
       const active = get().active;
@@ -189,7 +189,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
 
   async createSession(instanceId, title, goal) {
     const session = await guard(set, () =>
-      gilmok().sessions.create({ instanceId, title, goal }),
+      agbrte().sessions.create({ instanceId, title, goal }),
     );
     if (!session) return;
     set({ sessions: [...get().sessions, session] });
@@ -206,10 +206,10 @@ export const useGilmok = create<GilmokState>((set, get) => ({
         const owner =
           instanceId ?? get().onDisk.find((s) => s.sessionId === sessionId)?.instanceId;
         if (owner === undefined) throw new Error('no host is known to own that session');
-        await gilmok().sessions.resume(owner, sessionId);
+        await agbrte().sessions.resume(owner, sessionId);
       }
-      applySnapshot(set, await gilmok().sessions.snapshot(sessionId));
-      set({ sessions: await gilmok().sessions.list() });
+      applySnapshot(set, await agbrte().sessions.snapshot(sessionId));
+      set({ sessions: await agbrte().sessions.list() });
     });
   },
 
@@ -225,7 +225,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
     const sessionId = get().activeId;
     if (sessionId === null) return;
     await guard(set, async () => {
-      await gilmok().sessions.addAgent({
+      await agbrte().sessions.addAgent({
         sessionId,
         role: 'lead',
         runtimeId,
@@ -239,7 +239,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
             }
           : {}),
       });
-      applySnapshot(set, await gilmok().sessions.snapshot(sessionId));
+      applySnapshot(set, await agbrte().sessions.snapshot(sessionId));
     });
   },
 
@@ -253,24 +253,24 @@ export const useGilmok = create<GilmokState>((set, get) => ({
     // unreadable. Failures still surface.
     try {
       set({ error: null });
-      await gilmok().sessions.send({ sessionId: activeId, agentId, text });
+      await agbrte().sessions.send({ sessionId: activeId, agentId, text });
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) });
     } finally {
-      applySnapshot(set, await gilmok().sessions.snapshot(activeId));
-      set({ sessions: await gilmok().sessions.list() });
+      applySnapshot(set, await agbrte().sessions.snapshot(activeId));
+      set({ sessions: await agbrte().sessions.list() });
     }
   },
 
   async interrupt() {
     const sessionId = get().activeId;
     if (sessionId === null) return;
-    await guard(set, () => gilmok().sessions.interrupt(sessionId));
+    await guard(set, () => agbrte().sessions.interrupt(sessionId));
   },
 
   async respond(requestId, allow) {
     await guard(set, async () => {
-      const outcome = await gilmok().permissions.respond(
+      const outcome = await agbrte().permissions.respond(
         requestId,
         allow ? { result: 'allow', scope: 'once' } : { result: 'deny', reason: 'denied by user' },
       );
@@ -294,7 +294,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
       // refetch from where our window starts.
       set({ refetching: true });
       const from = events.at(-1)?.seq ?? 0;
-      void gilmok()
+      void agbrte()
         .sessions.since(batch.sessionId, from)
         .then((missed) => {
           const merged = [...events, ...missed, ...batch.events];
@@ -309,7 +309,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
 
     // Ack the highest seq we now hold, which is what lets main resume
     // forwarding if it had paused.
-    if (batch.lastSeq >= 0) gilmok().ack(batch.sessionId, batch.lastSeq);
+    if (batch.lastSeq >= 0) agbrte().ack(batch.sessionId, batch.lastSeq);
   },
 
   applySession(session) {
@@ -344,7 +344,7 @@ export const useGilmok = create<GilmokState>((set, get) => ({
     // Runtimes are per host and fetched lazily: a host that has not finished
     // handshaking reports none, and asking again after it does is cheap.
     void Promise.all(
-      hosts.map(async (h) => [h.instanceId, await gilmok().hosts.runtimes(h.instanceId)] as const),
+      hosts.map(async (h) => [h.instanceId, await agbrte().hosts.runtimes(h.instanceId)] as const),
     ).then((pairs) => set({ runtimesByHost: Object.fromEntries(pairs) }));
   },
 
@@ -364,9 +364,9 @@ export const useGilmok = create<GilmokState>((set, get) => ({
  * *after* our last seq risks missing one if the window boundary moved — so
  * overlap is expected and must not render twice.
  */
-function dedupe(events: GilmokEvent[]): GilmokEvent[] {
+function dedupe(events: AgbrteEvent[]): AgbrteEvent[] {
   const seen = new Set<number>();
-  const out: GilmokEvent[] = [];
+  const out: AgbrteEvent[] = [];
   for (const event of events) {
     if (seen.has(event.seq)) continue;
     seen.add(event.seq);

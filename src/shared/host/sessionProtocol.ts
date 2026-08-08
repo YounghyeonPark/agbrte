@@ -33,7 +33,7 @@ import type {
   AgentRecord,
   InstanceId,
   LineageId,
-  GilmokEvent,
+  AgbrteEvent,
   PermissionDecision,
   PermissionRequest,
   PermissionResolved,
@@ -129,7 +129,7 @@ export type SessionMessage =
   /** Reply to `hello`, and the only place a role is granted. */
   | { t: 'welcome'; id: RequestId; identity: HostIdentity; role: AccessRole }
   // pushes
-  | { t: 'push.event'; sessionId: string; event: GilmokEvent }
+  | { t: 'push.event'; sessionId: string; event: AgbrteEvent }
   | { t: 'push.session'; session: Session }
   | { t: 'push.permission'; request: PermissionRequest }
   /**
@@ -154,7 +154,7 @@ export type HostSideSessionChannel = HostChannel<SessionMessage, SessionCommand>
 export type AddAgentResult = AgentRecord;
 
 /** `session.events` reply. */
-export type EventsResult = GilmokEvent[];
+export type EventsResult = AgbrteEvent[];
 
 /** `session.projection` reply. */
 export type ProjectionResult = SessionProjection;

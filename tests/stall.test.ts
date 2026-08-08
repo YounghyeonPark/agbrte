@@ -53,7 +53,7 @@ function manager(script: EchoStep[], opts: { stallAfterMs?: number; now?: () => 
 }
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'gilmok-stall-'));
+  root = await mkdtemp(join(tmpdir(), 'agbrte-stall-'));
   instanceId = (await openWorkspace(root)).instanceId;
   managers = [];
 });

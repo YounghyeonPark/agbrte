@@ -9,19 +9,19 @@
 import { describe, expect, it } from 'vitest';
 import { EventBridge } from '@main/ipc/eventBridge.js';
 import type { EventBatch } from '@shared/ipc/contract.js';
-import type { GilmokEvent } from '@shared/types/index.js';
+import type { AgbrteEvent } from '@shared/types/index.js';
 
 /** Every batch is attributed to a host (§8); only this test's identity matters. */
 const HOST = 'instance-a';
 
 /** A minimal event; only `seq` matters to the bridge. */
-function event(seq: number): GilmokEvent {
+function event(seq: number): AgbrteEvent {
   return {
     seq,
     at: '2026-07-30T00:00:00.000Z',
     type: 'agent.text',
     text: `#${seq}`,
-  } as GilmokEvent;
+  } as AgbrteEvent;
 }
 
 interface Harness {

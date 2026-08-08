@@ -7,12 +7,12 @@
  *
  * Channel strings live **here and nowhere else**. The renderer never sees
  * `ipcRenderer`, never names a channel, and cannot reach a channel that isn't
- * on `GilmokApi` — §7's `contextIsolation: true`, `nodeIntegration: false`,
+ * on `AgbrteApi` — §7's `contextIsolation: true`, `nodeIntegration: false`,
  * `sandbox: true` are only as good as the surface exposed through them.
  *
  * ## Scope
  *
- * This is a **subset** of §7's `GilmokApi`, not the whole thing. `capture`,
+ * This is a **subset** of §7's `AgbrteApi`, not the whole thing. `capture`,
  * `speech`, hierarchy, and model management are deliberately absent rather than
  * present and throwing: an API that exists and fails is worse than one that
  * isn't there, because the renderer cannot feature-detect against a method that
@@ -29,7 +29,7 @@
 import type {
   AgentRecord,
   AgentRole,
-  GilmokEvent,
+  AgbrteEvent,
   PermissionDecision,
   PermissionRequest,
   PermissionResolved,
@@ -97,7 +97,7 @@ export interface RuntimeInfo {
   id: string;
   version: string;
   toolVersion?: string;
-  /** Whether this runtime needs a `model`, i.e. whether it is GilmokHarness. */
+  /** Whether this runtime needs a `model`, i.e. whether it is AgbrteHarness. */
   requiresModel: boolean;
 }
 
@@ -135,7 +135,7 @@ export interface EventBatch {
   /** The host that produced these. */
   instanceId: string;
   sessionId: string;
-  events: GilmokEvent[];
+  events: AgbrteEvent[];
   firstSeq: number;
   lastSeq: number;
   /** True when main is withholding events because the renderer is behind. */
@@ -147,7 +147,7 @@ export interface SessionSnapshot {
   session: Session;
   projection: SessionProjection;
   /** A bounded window of the tail, never the whole transcript (§7). */
-  recent: GilmokEvent[];
+  recent: AgbrteEvent[];
   /** `seq` the window starts at, so the renderer knows what it is missing. */
   windowFromSeq: number;
   /**
@@ -162,7 +162,7 @@ export interface SessionSnapshot {
 
 // ----------------------------------------------------------------- the surface
 
-export interface GilmokApi {
+export interface AgbrteApi {
   hosts: {
     /** Every attached host. Several may be attached at once (§8). */
     list(): Promise<HostInfo[]>;
@@ -208,7 +208,7 @@ export interface GilmokApi {
     send(r: SendRequest): Promise<void>;
     interrupt(sessionId: string, agentId?: string): Promise<void>;
     /** Events since `fromSeq`, for filling a gap the renderer detected. */
-    since(sessionId: string, fromSeq: number): Promise<GilmokEvent[]>;
+    since(sessionId: string, fromSeq: number): Promise<AgbrteEvent[]>;
   };
   permissions: {
     pending(): Promise<PermissionRequest[]>;
@@ -254,34 +254,34 @@ export interface GilmokApi {
  * devtools console is at least legible in a log.
  */
 export const CH = {
-  hostsList: 'gilmok:hosts.list',
-  hostsAdd: 'gilmok:hosts.add',
-  hostsRemove: 'gilmok:hosts.remove',
-  hostsShutdown: 'gilmok:hosts.shutdown',
-  hostsRuntimes: 'gilmok:hosts.runtimes',
-  hostsSsh: 'gilmok:hosts.ssh',
-  hostsAddRemote: 'gilmok:hosts.addRemote',
-  sessionsList: 'gilmok:sessions.list',
-  sessionsCreate: 'gilmok:sessions.create',
-  sessionsListOnDisk: 'gilmok:sessions.listOnDisk',
-  sessionsResume: 'gilmok:sessions.resume',
-  sessionsSnapshot: 'gilmok:sessions.snapshot',
-  sessionsAddAgent: 'gilmok:sessions.addAgent',
-  sessionsSend: 'gilmok:sessions.send',
-  sessionsInterrupt: 'gilmok:sessions.interrupt',
-  sessionsSince: 'gilmok:sessions.since',
-  permissionsPending: 'gilmok:permissions.pending',
-  permissionsRespond: 'gilmok:permissions.respond',
-  ack: 'gilmok:ack',
+  hostsList: 'agbrte:hosts.list',
+  hostsAdd: 'agbrte:hosts.add',
+  hostsRemove: 'agbrte:hosts.remove',
+  hostsShutdown: 'agbrte:hosts.shutdown',
+  hostsRuntimes: 'agbrte:hosts.runtimes',
+  hostsSsh: 'agbrte:hosts.ssh',
+  hostsAddRemote: 'agbrte:hosts.addRemote',
+  sessionsList: 'agbrte:sessions.list',
+  sessionsCreate: 'agbrte:sessions.create',
+  sessionsListOnDisk: 'agbrte:sessions.listOnDisk',
+  sessionsResume: 'agbrte:sessions.resume',
+  sessionsSnapshot: 'agbrte:sessions.snapshot',
+  sessionsAddAgent: 'agbrte:sessions.addAgent',
+  sessionsSend: 'agbrte:sessions.send',
+  sessionsInterrupt: 'agbrte:sessions.interrupt',
+  sessionsSince: 'agbrte:sessions.since',
+  permissionsPending: 'agbrte:permissions.pending',
+  permissionsRespond: 'agbrte:permissions.respond',
+  ack: 'agbrte:ack',
 } as const;
 
 /** Push channels, main → renderer. */
 export const PUSH = {
-  events: 'gilmok:push.events',
-  session: 'gilmok:push.session',
-  permission: 'gilmok:push.permission',
-  permissionResolved: 'gilmok:push.permissionResolved',
-  hosts: 'gilmok:push.hosts',
+  events: 'agbrte:push.events',
+  session: 'agbrte:push.session',
+  permission: 'agbrte:push.permission',
+  permissionResolved: 'agbrte:push.permissionResolved',
+  hosts: 'agbrte:push.hosts',
 } as const;
 
 /** §7's batch limits, shared so main and any test agree on one number. */

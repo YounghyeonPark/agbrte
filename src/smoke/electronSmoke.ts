@@ -58,7 +58,7 @@ function report(line: string): void {
 }
 
 function flush(): void {
-  const out = process.env['GILMOK_SMOKE_OUT'];
+  const out = process.env['AGBRTE_SMOKE_OUT'];
   const text = `${lines.join('\n')}\n`;
   if (out !== undefined) writeFileSync(out, text, 'utf8');
   writeSync(2, text); // harmless where it works, e.g. a POSIX terminal
@@ -83,7 +83,7 @@ async function evaluate<T>(win: BrowserWindow, expression: string): Promise<T> {
 }
 
 async function main(): Promise<number> {
-  const root = await mkdtemp(join(tmpdir(), 'gilmok-smoke-'));
+  const root = await mkdtemp(join(tmpdir(), 'agbrte-smoke-'));
 
   try {
     // An in-process session host over a memory channel: these checks are about
@@ -144,7 +144,7 @@ async function main(): Promise<number> {
     //    shows, rather than as a silent no-op in a click handler.
     const surface = await evaluate<string[]>(
       win,
-      'Object.keys(window.gilmok ?? {}).sort()',
+      'Object.keys(window.agbrte ?? {}).sort()',
     );
     record(
       'preload exposes the api',
@@ -165,7 +165,7 @@ async function main(): Promise<number> {
     //    workspace, because several can be attached at once (§8).
     const listed = await evaluate<Array<{ root: string; instanceId: string }>>(
       win,
-      'window.gilmok.hosts.list()',
+      'window.agbrte.hosts.list()',
     );
     record('invoke returns main state', listed[0]?.root === root, listed);
     record(
@@ -178,7 +178,7 @@ async function main(): Promise<number> {
     //    reaches the real SessionManager rather than a stub.
     const created = await evaluate<{ sessionId: string; title: string; state: string }>(
       win,
-      `window.gilmok.sessions.create({ instanceId: ${JSON.stringify(host.instanceId)}, title: 'Smoke', goal: 'prove the wiring' })`,
+      `window.agbrte.sessions.create({ instanceId: ${JSON.stringify(host.instanceId)}, title: 'Smoke', goal: 'prove the wiring' })`,
     );
     record('create passes arguments through', created.title === 'Smoke', created);
     record('new session starts in planning', created.state === 'planning', created.state);
@@ -191,11 +191,11 @@ async function main(): Promise<number> {
       `(async () => {
          const types = [];
          let batches = 0;
-         const off = window.gilmok.on.events((b) => { batches += 1; for (const e of b.events) types.push(e.type); });
-         const agent = await window.gilmok.sessions.addAgent({
+         const off = window.agbrte.on.events((b) => { batches += 1; for (const e of b.events) types.push(e.type); });
+         const agent = await window.agbrte.sessions.addAgent({
            sessionId: ${JSON.stringify(created.sessionId)}, role: 'lead', runtimeId: 'echo',
          });
-         await window.gilmok.sessions.send({
+         await window.agbrte.sessions.send({
            sessionId: ${JSON.stringify(created.sessionId)}, agentId: agent.agentId, text: 'hello',
          });
          // The bridge batches on a 50ms timer, so allow it to fire.
@@ -215,7 +215,7 @@ async function main(): Promise<number> {
     const snapshot = await evaluate<{ recent: number; state: string; agents: number }>(
       win,
       `(async () => {
-         const s = await window.gilmok.sessions.snapshot(${JSON.stringify(created.sessionId)});
+         const s = await window.agbrte.sessions.snapshot(${JSON.stringify(created.sessionId)});
          return { recent: s.recent.length, state: s.projection.state, agents: s.projection.agents.length };
        })()`,
     );
@@ -227,7 +227,7 @@ async function main(): Promise<number> {
     //    Electron's opaque "Error invoking remote method".
     const failure = await evaluate<string>(
       win,
-      `window.gilmok.sessions.resume(${JSON.stringify(host.instanceId)}, 'session_does_not_exist').then(() => 'no error', (e) => e.message)`,
+      `window.agbrte.sessions.resume(${JSON.stringify(host.instanceId)}, 'session_does_not_exist').then(() => 'no error', (e) => e.message)`,
     );
     record('errors keep their message', failure !== 'no error' && failure.length > 0, failure);
 

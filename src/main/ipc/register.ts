@@ -10,7 +10,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron';
 import { CH } from '@shared/ipc/contract.js';
 import { createApi, type IpcDeps } from './api.js';
 
-export type { IpcDeps, GilmokApiHost } from './api.js';
+export type { IpcDeps, AgbrteApiHost } from './api.js';
 export { createApi } from './api.js';
 
 /**

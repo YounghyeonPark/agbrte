@@ -1,8 +1,8 @@
-Gilmok
+Agbrte
 Copyright 2026 Younghyeon Park <ypark.dev@gmail.com>
 
-This product includes software developed as part of the Gilmok project
-(https://github.com/YounghyeonPark/gilmok), licensed under the Apache License,
+This product includes software developed as part of the Agbrte project
+(https://github.com/YounghyeonPark/agbrte), licensed under the Apache License,
 Version 2.0.
 
 --------------------------------------------------------------------------------
@@ -16,7 +16,7 @@ this project's licence. It is a build-time dependency of the optional
 `claude-agent-sdk` runtime adapter.
 
 It is deliberately absent from everything this project distributes. The bundles
-carried by `dist/install-gilmok.sh` — the CLI, the session host, and the agent
+carried by `dist/install-agbrte.sh` — the CLI, the session host, and the agent
 host — contain no Anthropic code, and a test enforces that so it cannot start
 shipping by accident. Anyone wanting that adapter installs the SDK themselves and
 accepts Anthropic's terms directly, which is the only arrangement this project's

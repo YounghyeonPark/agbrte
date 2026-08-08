@@ -73,7 +73,7 @@ export interface ContentSupport {
   video: boolean;
 }
 
-/** One conversation turn in Gilmok's canonical form. */
+/** One conversation turn in Agbrte's canonical form. */
 export interface NormalizedTurn {
   role: 'user' | 'assistant' | 'system';
   content: ContentBlock[];

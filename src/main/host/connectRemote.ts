@@ -42,7 +42,7 @@ export interface RemoteConnectOptions {
    * How this client names itself to the host.
    *
    * Settable because the workspace's access policy matches on it: a rule
-   * pinning `gilmok-app@phone-*` to read-only can never fire if every client
+   * pinning `agbrte-app@phone-*` to read-only can never fire if every client
    * arrives under the same hardcoded name. Defaults to naming the machine
    * being reached, which is what a single-device user sees.
    */
@@ -117,7 +117,7 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
     const channel = await connect<SessionCommand, SessionMessage>({ port }, 10_000);
     const connection = new HostConnection({
       channel,
-      client: opts.client ?? `gilmok-app@${opts.alias}`,
+      client: opts.client ?? `agbrte-app@${opts.alias}`,
       onClose: () => forward.close(),
     });
     return { connection, close: () => forward.close() };

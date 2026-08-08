@@ -11,7 +11,7 @@ import {
   emptyProjection,
   type AttentionReason,
   type ChecklistItem,
-  type GilmokEvent,
+  type AgbrteEvent,
   type SessionId,
   type SessionProjection,
   type SessionState,
@@ -38,7 +38,7 @@ export interface ReduceOptions {
 
 export function reduceEvents(
   sessionId: SessionId,
-  events: readonly GilmokEvent[],
+  events: readonly AgbrteEvent[],
   base?: SessionProjection,
   opts: ReduceOptions = {},
 ): SessionProjection {

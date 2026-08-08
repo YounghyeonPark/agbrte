@@ -1,7 +1,7 @@
 /**
  * Build a single self-contained installer.
  *
- * `dist/install-gilmok.sh` carries the three bundles that *are* Gilmok on a machine
+ * `dist/install-agbrte.sh` carries the three bundles that *are* Agbrte on a machine
  * with no display — the CLI, the session host, and the agent host — so installing
  * needs no git, no npm, no registry, no checkout and no build on the target. One
  * file goes over, one command runs it.
@@ -26,8 +26,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** What a headless machine needs, and nothing else. Electron's own files stay out. */
 const PAYLOAD = {
-  'cli/gilmok.js': 'dist/cli/gilmok.js',
-  'main/gilmokHost.js': 'dist/main/gilmokHost.js',
+  'cli/agbrte.js': 'dist/cli/agbrte.js',
+  'main/agbrteHost.js': 'dist/main/agbrteHost.js',
   'main/agentHost.js': 'dist/main/agentHost.js',
   'web/bridge.js': 'dist/web/bridge.js',
 };
@@ -36,7 +36,7 @@ const PAYLOAD = {
  * Directories carried whole, because their contents are hashed at build time.
  *
  * The renderer's bundle is `index-C-IOJcA3.js` today and something else after the
- * next edit, so it cannot be listed by name. Included at all because `gilmok web`
+ * next edit, so it cannot be listed by name. Included at all because `agbrte web`
  * serves it, and a server install that could not serve the UI would make the one
  * command a phone needs the one command that does not work there.
  */
@@ -101,19 +101,27 @@ for (const [prefix, from] of Object.entries(PAYLOAD_DIRS)) {
 
 const payload = gzipSync(Buffer.from(JSON.stringify(files)), { level: 9 }).toString('base64');
 
-const template = readFileSync(resolve(root, 'scripts/installer.template.sh'), 'utf8');
+// Normalized before anything looks at it, not just before it is written out.
+// `.gitattributes` keeps the committed file LF, but an editor on Windows can
+// still leave CRLF in the working tree — and then the anchor below matches
+// nothing and the build fails with "could not find the anchor", which points at
+// this line rather than at the invisible thing that actually changed.
+const template = readFileSync(resolve(root, 'scripts/installer.template.sh'), 'utf8').replace(
+  /\r\n/g,
+  '\n',
+);
 const version = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version;
 
 // Assigned before `set -eu` would matter and before anything reads it. Single
 // quotes are safe without escaping because base64's alphabet cannot contain one.
 const script = template.replace(
   '\nset -eu\n',
-  `\nset -eu\n\nGILMOK_PACKAGED_VERSION=${version}\nPAYLOAD='${payload}'\n`,
+  `\nset -eu\n\nAGBRTE_PACKAGED_VERSION=${version}\nPAYLOAD='${payload}'\n`,
 );
 if (script === template) throw new Error('could not find the anchor to insert the payload after');
 
 mkdirSync(resolve(root, 'dist'), { recursive: true });
-const out = resolve(root, 'dist/install-gilmok.sh');
+const out = resolve(root, 'dist/install-agbrte.sh');
 // LF regardless of platform. Authored on Windows, run on a server: a CRLF here
 // makes `sh` report `set: Illegal option -`, which names neither the file's
 // problem nor the line with it.
@@ -122,9 +130,9 @@ chmodSync(out, 0o755);
 
 const kb = (n) => `${Math.round(n / 1024)} KB`;
 process.stdout.write(
-  `\n  dist/install-gilmok.sh  ${kb(script.length)}  (${Object.keys(files).length} bundles, ${kb(
+  `\n  dist/install-agbrte.sh  ${kb(script.length)}  (${Object.keys(files).length} bundles, ${kb(
     Object.values(files).reduce((n, f) => n + f.length, 0),
   )} uncompressed)\n\n` +
-    `  scp dist/install-gilmok.sh <server>:\n` +
-    `  ssh <server> 'sh install-gilmok.sh'\n\n`,
+    `  scp dist/install-agbrte.sh <server>:\n` +
+    `  ssh <server> 'sh install-agbrte.sh'\n\n`,
 );

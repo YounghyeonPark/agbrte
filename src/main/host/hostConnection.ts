@@ -25,7 +25,7 @@ import type {
   AccessRole,
   AgentId,
   AgentRecord,
-  GilmokEvent,
+  AgbrteEvent,
   PermissionDecision,
   PermissionRequest,
   Session,
@@ -65,7 +65,7 @@ export interface HostConnectionOptions {
 /**
  * Events, re-emitted from the host:
  *
- *   'event'      (sessionId, GilmokEvent)
+ *   'event'      (sessionId, AgbrteEvent)
  *   'session'    (Session)
  *   'permission' (PermissionRequest)
  *   'permission-resolved' (PermissionResolved)
@@ -103,7 +103,7 @@ export class HostConnection extends EventEmitter {
       t: 'hello',
       id: this.mintId(),
       role: opts.role ?? 'read-write',
-      client: opts.client ?? 'gilmok-app',
+      client: opts.client ?? 'agbrte-app',
     });
   }
 
@@ -248,7 +248,7 @@ export class HostConnection extends EventEmitter {
     });
   }
 
-  events(sessionId: SessionId, fromSeq = 0): Promise<GilmokEvent[]> {
+  events(sessionId: SessionId, fromSeq = 0): Promise<AgbrteEvent[]> {
     return this.call({ t: 'session.events', sessionId, fromSeq });
   }
 
