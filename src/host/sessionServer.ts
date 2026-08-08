@@ -278,6 +278,17 @@ export class SessionHostServer {
           // own badge would be told about the same thing forever.
           return manager.markInboxRead();
 
+        case 'session.respondSplit':
+          // Write access, because approving one creates a session and spends
+          // budget — the two things a read-only client must not be able to do.
+          this.requireWrite(client, 'answer a split proposal');
+          return manager.respondSplit(
+            command.sessionId as SessionId,
+            command.proposalId,
+            command.decision,
+            client.actor,
+          );
+
         case 'permission.pending':
           return manager.pendingPermissions();
 

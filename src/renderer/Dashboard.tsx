@@ -189,6 +189,21 @@ function Card({
         </span>
       </div>
 
+      {/* Where it actually is (§4.3).
+
+          A blockage that bubbled up from a descendant is shown with the path to
+          it, because "something below this needs you" is not something you can
+          act on — a child three levels down is the easiest thing in the system
+          to lose, and telling you only that it exists loses it differently. */}
+      {attention?.from !== undefined && (
+        <span
+          data-testid="card-attention-path"
+          className={`${LABEL} truncate-line text-state-paused`}
+        >
+          in {attention.from.path.join(' › ')}
+        </span>
+      )}
+
       {session.agents.length > 0 && (
         <span className="text-muted truncate-line text-[11px]">
           {session.agents.map((a) => a.spec.runtimeId).join(', ')}

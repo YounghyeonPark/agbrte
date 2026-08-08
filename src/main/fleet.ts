@@ -531,6 +531,15 @@ export class Fleet extends EventEmitter {
     return perHost.flat().sort(byAttentionThenRecency);
   }
 
+  /** Answer a split proposal on whichever host owns the session (§4.3). */
+  async respondSplit(
+    sessionId: SessionId,
+    proposalId: string,
+    decision: { approved: boolean; reason?: string },
+  ): Promise<Session | null> {
+    return this.ownerOf(sessionId).connection.respondSplit(sessionId, proposalId, decision);
+  }
+
   async listOnDisk(): Promise<
     Array<{ instanceId: InstanceId; sessionId: string; title: string; goal: string }>
   > {

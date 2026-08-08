@@ -403,6 +403,7 @@ export class SessionManager extends EventEmitter {
       tree: { rootSessionId: sessionId, depth: 0, ancestry: [] },
       children: [],
       peerSessionIds: [],
+      pendingSplits: [],
     };
 
     // Live forwarding for the UI (§7). Wired here rather than from the IPC
@@ -955,6 +956,7 @@ export class SessionManager extends EventEmitter {
       requestPermission: (ask) => this.decide(live, spec, ask),
       sendMessage: (message) => void this.deliver(live, spec.agentId, message),
       peers: live.session.agents.map((a) => a.agentId),
+      proposeSplit: (proposal) => void this.proposeSplit(live.session.sessionId, proposal, spec.agentId),
     };
   }
 
@@ -1663,6 +1665,7 @@ export class SessionManager extends EventEmitter {
     const full: SplitProposal = { ...proposal, proposalId: uuidv7() };
 
     live.pendingSplits.set(full.proposalId, full);
+    live.session.pendingSplits = [...live.pendingSplits.values()];
     await live.store.append(
       { type: 'session.split_proposed', proposal: full },
       { ...(agentId !== undefined ? { agentId } : {}) },
@@ -1690,6 +1693,7 @@ export class SessionManager extends EventEmitter {
     // Cleared first: `spawnChild` can refuse on a limit, and a proposal left
     // pending after it was answered would ask the same question forever.
     live.pendingSplits.delete(proposalId);
+    live.session.pendingSplits = [...live.pendingSplits.values()];
     await live.store.append(
       {
         type: 'session.split_decided',
@@ -1895,6 +1899,7 @@ export class SessionManager extends EventEmitter {
       tree: { rootSessionId: sessionId, depth: 0, ancestry: [] },
       children: projection.children,
       peerSessionIds: [],
+      pendingSplits: [],
     };
 
     const live: LiveSession = {

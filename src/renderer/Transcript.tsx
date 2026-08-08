@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react';
-import type { AgbrteEvent } from '../shared/types/index.js';
+import type { AgbrteEvent, SplitProposal } from '../shared/types/index.js';
 
 const META_ROW = 'text-muted flex items-baseline gap-2 text-xs';
 const CODE = 'text-accent rounded bg-[#202029] px-1.5 py-px font-mono text-[11px]';
@@ -164,6 +164,74 @@ export function PermissionPrompt({
           onClick={() => onDecide(false)}
         >
           Deny
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A split an agent wants, waiting for a person (DESIGN.md §4.3).
+ *
+ * Deliberately not shaped like the permission prompt above, although both are
+ * "an agent is asking". A permission decision is a reflex — you recognise the
+ * command or you do not. Approving a split is a **judgement**: it creates a
+ * session, reserves budget out of this one, and commits to a seam. §4.3 keeps
+ * it user-approved precisely because getting it wrong produces a tree that is
+ * harder to salvage than one overlong session, so everything needed to judge it
+ * is on screen rather than a click away.
+ *
+ * `outOfScope` is shown as prominently as the scope. It is the field that stops
+ * the child re-deriving this session's context, and a reviewer who cannot see
+ * the exclusions is approving half a proposal.
+ */
+export function SplitPrompt({
+  proposal,
+  onDecide,
+}: {
+  proposal: SplitProposal;
+  onDecide: (approved: boolean) => void;
+}): JSX.Element {
+  return (
+    <div
+      role="alertdialog"
+      aria-label={`Split proposed: ${proposal.title}`}
+      data-testid="split-prompt"
+      data-proposal={proposal.proposalId}
+      className="border-accent mx-4.5 grid gap-2 rounded-lg border bg-[#16202a] px-3.5 py-3"
+    >
+      <div className="grid gap-0.5">
+        <strong data-testid="split-title">Split off: {proposal.title}</strong>
+        {/* The reason, because someone asked to approve with no stated why can
+            only say yes. */}
+        <span className="text-muted text-[11px]">{proposal.why}</span>
+      </div>
+
+      <dl className="grid gap-1 text-[11px]">
+        <div className="flex gap-2">
+          <dt className="text-muted w-20 shrink-0">Scope</dt>
+          <dd data-testid="split-scope">{proposal.scope}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-muted w-20 shrink-0">Not this</dt>
+          <dd data-testid="split-out-of-scope">{proposal.outOfScope.join(' · ')}</dd>
+        </div>
+        <div className="flex gap-2">
+          <dt className="text-muted w-20 shrink-0">Budget</dt>
+          {/* Reserved out of this session at spawn, so the number is what this
+              session gives up rather than what the child might use. */}
+          <dd data-testid="split-budget">
+            {proposal.tokenCeiling.toLocaleString()} tokens, reserved from this session
+          </dd>
+        </div>
+      </dl>
+
+      <div className="flex shrink-0 justify-end gap-2">
+        <button className="btn" data-testid="split-approve" onClick={() => onDecide(true)}>
+          Split it off
+        </button>
+        <button className="btn" data-testid="split-decline" onClick={() => onDecide(false)}>
+          Keep it here
         </button>
       </div>
     </div>

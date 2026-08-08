@@ -242,6 +242,10 @@ export class HostClient {
         this.contexts.get(message.handleId)?.sendMessage?.(message.message);
         return;
 
+      case 'proposeSplit':
+        this.contexts.get(message.handleId)?.proposeSplit?.(message.proposal);
+        return;
+
       case 'ask': {
         const ctx = this.contexts.get(message.handleId);
         if (!ctx) {

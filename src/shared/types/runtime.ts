@@ -11,6 +11,12 @@
 import type { AgentId } from './ids.js';
 import type { ContentSupport, NormalizedTurn } from './content.js';
 import type { PermissionAsk, PermissionDecision, PermissionFidelity, ToolPolicy } from './policy.js';
+// Type-only, and circular with `session.ts` — which already imports from here.
+// `SplitProposal` is a session concept and belongs there; `RuntimeContext` is
+// the surface an adapter sees and belongs here. A type-only cycle costs nothing
+// at runtime, and moving either type to break it would put it somewhere it does
+// not describe.
+import type { SplitProposal } from './session.js';
 
 export type AgentRole = 'lead' | 'worker' | 'reviewer' | 'custom';
 
@@ -204,6 +210,16 @@ export interface RuntimeContext {
    * waiting on each other is a deadlock with a token bill.
    */
   sendMessage?(message: OutboundMessage): void;
+  /**
+   * Ask to split this session's scope into a child (§4.3).
+   *
+   * Optional for the same reason `sendMessage` is: an adapter running its own
+   * tools has no way to call it. Fire-and-forget — the proposal goes to a person
+   * and the answer arrives, if it arrives, as a new session rather than as a
+   * return value. An agent that blocked waiting for approval would hold a model
+   * connection open across a human decision.
+   */
+  proposeSplit?(proposal: Omit<SplitProposal, 'proposalId'>): void;
   /**
    * Who else is in this session (§4.2).
    *

@@ -21,6 +21,8 @@ import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
+import { proposeSplitTool } from '@main/tools/index.js';
+import { WorkspaceLeases } from '@main/tools/leases.js';
 import type { InstanceId, Session, SessionBudget } from '@shared/types/index.js';
 
 let root: string;
@@ -160,6 +162,57 @@ describe('approving', () => {
     await expect(
       m.respondSplit(session.sessionId, p.proposalId, { approved: true }),
     ).rejects.toThrow(/no pending split/);
+  });
+});
+
+describe('the tool an agent calls', () => {
+  it('asks rather than splitting', async () => {
+    const proposed: unknown[] = [];
+    const result = await proposeSplitTool.run(
+      {
+        title: 'port the parser',
+        scope: 'port it',
+        out_of_scope: ['the CLI'],
+        why: 'compacted twice and still growing',
+        token_ceiling: 20_000,
+      },
+      {
+        workspaceRoot: '/tmp/ws',
+        signal: new AbortController().signal,
+        agentId: 'a' as never,
+        leases: new WorkspaceLeases(),
+        proposeSplit: (p) => proposed.push(p),
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(proposed).toHaveLength(1);
+    // Nothing is created by calling it. §4.3 keeps approval with a person.
+    expect(result.content).toMatch(/A person decides/);
+  });
+
+  it('refuses a proposal that cannot say what it leaves behind', async () => {
+    const result = await proposeSplitTool.run(
+      {
+        title: 't',
+        scope: 's',
+        out_of_scope: [],
+        why: 'w',
+        token_ceiling: 1_000,
+      },
+      {
+        workspaceRoot: '/tmp/ws',
+        signal: new AbortController().signal,
+        agentId: 'a' as never,
+        leases: new WorkspaceLeases(),
+        proposeSplit: () => undefined,
+      },
+    );
+
+    // The field that stops a child re-deriving the parent's context. A proposal
+    // that cannot name its exclusions has not thought about the seam.
+    expect(result.ok).toBe(false);
+    expect(result.summary).toMatch(/out_of_scope/);
   });
 });
 

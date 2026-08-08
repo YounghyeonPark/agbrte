@@ -23,7 +23,12 @@ import { readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { globMatch, isInsideWorkspace } from '../policy/evaluate.js';
 import type { WorkspaceLeases } from './leases.js';
-import type { AgentId, AgentMessage, OutboundMessage } from '@shared/types/index.js';
+import type {
+  AgentId,
+  AgentMessage,
+  OutboundMessage,
+  SplitProposal,
+} from '@shared/types/index.js';
 
 export interface ToolContext {
   workspaceRoot: string;
@@ -52,6 +57,8 @@ export interface ToolContext {
    * sent something.
    */
   sendMessage?: (message: OutboundMessage) => void;
+  /** Ask to split this session, subject to a person agreeing (§4.3). */
+  proposeSplit?: (proposal: Omit<SplitProposal, 'proposalId'>) => void;
   /** Who else is here, so a bad address is refused rather than dropped. */
   roster?: AgentId[];
 }
@@ -442,6 +449,84 @@ export const messageTool: ToolDefinition = {
   },
 };
 
+/**
+ * Ask for this session's scope to be split into a child (DESIGN.md §4.3).
+ *
+ * The tool §4.3 names, and it splits nothing — it asks. Approval belongs to a
+ * person, because "a decomposition mistake made autonomously produces a tree of
+ * subtly mis-scoped children that is harder to salvage than a single overlong
+ * session".
+ *
+ * `out_of_scope` is required, and it is the field doing the work. Without it a
+ * child reads widely to re-derive context it was never given — exactly the cost
+ * the split was meant to avoid — so a proposal that cannot name what it leaves
+ * behind has not thought about the seam.
+ */
+export const proposeSplitTool: ToolDefinition = {
+  name: 'propose_split',
+  description:
+    'Propose splitting part of this session into a child session with its own budget and log. ' +
+    'A person approves or declines; nothing is created by calling this.',
+  schema: {
+    type: 'object',
+    properties: {
+      title: { type: 'string' },
+      scope: { type: 'string', description: "The child's narrow goal" },
+      out_of_scope: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'What the child must not touch, so it does not re-derive this context',
+      },
+      why: { type: 'string', description: 'What about this session makes a split right' },
+      token_ceiling: { type: 'number', description: "Reserved from this session's budget" },
+      summary_max_tokens: { type: 'number', description: "Ceiling on the child's returned summary" },
+    },
+    required: ['title', 'scope', 'out_of_scope', 'why', 'token_ceiling'],
+    additionalProperties: false,
+  },
+  async run(args, ctx) {
+    if (ctx.proposeSplit === undefined) {
+      return fail('this session cannot be split from here');
+    }
+    const title = args['title'];
+    const scope = args['scope'];
+    const why = args['why'];
+    const outOfScope = args['out_of_scope'];
+    const ceiling = args['token_ceiling'];
+    if (typeof title !== 'string' || typeof scope !== 'string' || typeof why !== 'string') {
+      return fail('title, scope and why must be strings');
+    }
+    if (!Array.isArray(outOfScope) || outOfScope.length === 0) {
+      return fail(
+        'out_of_scope must list at least one thing the child will not touch — without it the ' +
+          'child reads widely to re-derive context, which is the cost the split was meant to avoid',
+      );
+    }
+    if (typeof ceiling !== 'number' || ceiling <= 0) return fail('token_ceiling must be positive');
+
+    const summaryMax = args['summary_max_tokens'];
+    ctx.proposeSplit({
+      title,
+      scope,
+      why,
+      outOfScope: outOfScope.map(String),
+      tokenCeiling: ceiling,
+      contract: {
+        summaryMaxTokens: typeof summaryMax === 'number' && summaryMax > 0 ? summaryMax : 1_000,
+        artifacts: [],
+      },
+    });
+
+    return {
+      ok: true,
+      summary: `proposed splitting off: ${title}`,
+      content:
+        'Proposed. A person decides — carry on with what you can do here, and the child will ' +
+        'appear as its own session if they agree.',
+    };
+  },
+};
+
 export const DEFAULT_TOOLS: ToolDefinition[] = [
   readTool,
   writeTool,
@@ -450,6 +535,7 @@ export const DEFAULT_TOOLS: ToolDefinition[] = [
   grepTool,
   bashTool,
   messageTool,
+  proposeSplitTool,
 ];
 
 /**

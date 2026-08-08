@@ -30,6 +30,7 @@ import type {
   PermissionDecision,
   AgentId,
   OutboundMessage,
+  SplitProposal,
   ProgressSignal,
   RuntimeEvent,
   UserTurn,
@@ -103,6 +104,8 @@ export type HostMessage =
    * loops is what makes it an event in the log.
    */
   | { t: 'message'; handleId: HandleId; message: OutboundMessage }
+  /** An agent asking to split its session (§4.3). One-way, like `message`. */
+  | { t: 'proposeSplit'; handleId: HandleId; proposal: Omit<SplitProposal, 'proposalId'> }
   /**
    * Pushed whenever the host's view of a resume token changes.
    *

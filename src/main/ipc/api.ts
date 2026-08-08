@@ -252,6 +252,12 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     fleet.createSession(r.instanceId as InstanceId, { title: r.title, goal: r.goal }),
   );
 
+  handle(
+    CH.sessionsRespondSplit,
+    (sessionId: string, proposalId: string, decision: { approved: boolean; reason?: string }) =>
+      fleet.respondSplit(sessionId as SessionId, proposalId, decision),
+  );
+
   handle(CH.sessionsListOnDisk, () => fleet.listOnDisk());
 
   handle(CH.sessionsResume, (instanceId: string, sessionId: string) =>

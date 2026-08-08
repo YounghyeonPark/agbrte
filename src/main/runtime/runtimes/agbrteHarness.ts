@@ -247,6 +247,9 @@ class AgbrteHarnessHandle implements AgentHandle {
           ? { sendMessage: this.ctx.sendMessage.bind(this.ctx) }
           : {}),
         ...(this.ctx.peers !== undefined ? { roster: this.ctx.peers } : {}),
+        ...(this.ctx.proposeSplit !== undefined
+          ? { proposeSplit: this.ctx.proposeSplit.bind(this.ctx) }
+          : {}),
       });
       this.finishTool(call, result.ok, result.summary, result.content);
     } catch (err) {

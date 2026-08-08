@@ -216,6 +216,18 @@ export interface AgbrteApi {
   sessions: {
     list(): Promise<Session[]>;
     create(r: CreateSessionRequest): Promise<Session>;
+    /**
+     * Approve or decline a split an agent proposed (§4.3).
+     *
+     * Returns the child when approved, `null` when declined — a decline is an
+     * ordinary answer and not an error, since "this is the wrong seam" is a
+     * judgement the user is entitled to make.
+     */
+    respondSplit(
+      sessionId: string,
+      proposalId: string,
+      decision: { approved: boolean; reason?: string },
+    ): Promise<Session | null>;
     /** Sessions on disk across every attached host, not yet loaded. */
     listOnDisk(): Promise<
       Array<{ instanceId: string; sessionId: string; title: string; goal: string }>
@@ -281,6 +293,7 @@ export const CH = {
   hostsRuntimes: 'agbrte:hosts.runtimes',
   hostsConformance: 'agbrte:hosts.conformance',
   inboxList: 'agbrte:inbox.list',
+  sessionsRespondSplit: 'agbrte:sessions.respondSplit',
   inboxMarkRead: 'agbrte:inbox.markRead',
   hostsSsh: 'agbrte:hosts.ssh',
   hostsAddRemote: 'agbrte:hosts.addRemote',

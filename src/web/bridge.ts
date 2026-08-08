@@ -124,6 +124,7 @@ const api: AgbrteApi = {
   sessions: {
     list: call(CH.sessionsList),
     create: call(CH.sessionsCreate),
+    respondSplit: call(CH.sessionsRespondSplit),
     listOnDisk: call(CH.sessionsListOnDisk),
     resume: call(CH.sessionsResume),
     snapshot: call(CH.sessionsSnapshot),

@@ -885,7 +885,15 @@ It refuses rather than degrades in four cases, all for the same reason: §4.3 ke
 - **An over-ceiling result is stored and pointed at, not refused.** `checkResult` returns a verdict rather than throwing precisely so this is possible: work done well and described at length should not be discarded for the length. What the child does not get is a larger injection.
 - **The result lands on the parent's log**, because that is who it is for. The child's own transcript keeps the detail, and a person may drill into it — but that is a human reading, not context entering a model.
 
-**Still absent:** automatic split *signals* (§4.3 lists compaction count, checklist size, tokens per completed item — none are measured yet, so a proposal is an agent's judgement rather than a triggered one), and the UI for approving a proposal. `respondSplit` exists and nothing in the renderer calls it.
+**The `propose_split` tool and the approval UI are built**, which is what makes the rest of this section reachable from a running session rather than only from a test.
+
+- **The tool asks and creates nothing.** It reaches the owner of the log through `RuntimeContext`, like the message bus, so an agent cannot propose without the call appearing in the transcript.
+- **`out_of_scope` is required by the tool, not only by the brief builder.** A proposal that cannot name what it leaves behind has not thought about the seam, and refusing at the point of proposing says so while the agent still has the context to fix it.
+- **The prompt is shaped differently from the permission prompt, deliberately.** A permission decision is a reflex — you recognise the command or you do not. Approving a split is a judgement: it creates a session, reserves budget out of this one, and commits to a seam. Scope, exclusions, budget and the stated `why` are all on screen, because §4.3's reason for keeping this user-approved only holds if the user can actually judge it.
+- **Split prompts render below permission prompts.** A tool call is blocking a turn right now; a proposal is a decision about what to do next, and the thing already waiting should be answered first.
+- **A bubbled blockage shows its breadcrumb on the card**, since "something below this needs you" is not something anyone can act on.
+
+**Still absent:** automatic split *signals*. §4.3 lists compaction count, checklist size and tokens per completed checklist item as the measurable triggers; none of them are measured, so a proposal is an agent's judgement rather than something the system noticed.
 
 **Results flow up by reference; only a bounded summary is injected.** A child returns a structured summary within `summaryMaxTokens`, plus artifact refs and checklist outcomes. If its result exceeds the ceiling, the child **writes an artifact and returns a pointer** — it does not get to negotiate a larger injection. The parent may drill into a child's full log in the UI, but that is a human reading a transcript, not context entering a model.
 
@@ -1805,7 +1813,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
-| 6 | Multi-agent + hierarchy | 6th | leases, message bus, worktrees, spawn, roll-up, bubbling, proposals and results done; per-agent panes and the approval UI remain |
+| 6 | Multi-agent + hierarchy | 6th | leases, message bus, worktrees, spawn, roll-up, bubbling, proposals, results and the approval UI done; per-agent panes remain |
 | 7 | Multimodal | 7th | not started |
 | 8 | Breadth + polish | 8th | not started |
 

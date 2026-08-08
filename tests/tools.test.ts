@@ -242,6 +242,7 @@ describe('the suite', () => {
       'grep',
       'bash',
       'message',
+      'propose_split',
     ]);
     expect(toolByName(DEFAULT_TOOLS, 'READ')).toBe(readTool);
     expect(toolByName(DEFAULT_TOOLS, 'nope')).toBeUndefined();

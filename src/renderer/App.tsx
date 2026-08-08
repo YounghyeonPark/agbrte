@@ -32,7 +32,7 @@ import { Inbox } from './Inbox.js';
 import { StartGuide } from './StartGuide.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import { useAgbrte } from './store.js';
-import { Composer, EventRow, PermissionPrompt, Transcript, summarize } from './Transcript.js';
+import { Composer, EventRow, PermissionPrompt, SplitPrompt, Transcript, summarize } from './Transcript.js';
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
 import type { MatrixCell, Session, SessionState } from '../shared/types/index.js';
 
@@ -295,6 +295,17 @@ export function App(): JSX.Element {
                     tool={p.tool}
                     args={summarize(p.args)}
                     onDecide={(allow) => void store.respond(p.requestId, allow)}
+                  />
+                ))}
+                {/* Below the permission prompts on purpose. A tool call is
+                    blocking a turn right now; a split proposal is a decision
+                    about what to do next, and the thing already waiting should
+                    be answered first (§4.3). */}
+                {active.pendingSplits.map((p) => (
+                  <SplitPrompt
+                    key={p.proposalId}
+                    proposal={p}
+                    onDecide={(approved) => void store.respondSplit(p.proposalId, approved)}
                   />
                 ))}
                 <Composer

@@ -263,6 +263,14 @@ export class HostConnection extends EventEmitter {
     return this.call({ t: 'session.queueDepth', sessionId });
   }
 
+  respondSplit(
+    sessionId: SessionId,
+    proposalId: string,
+    decision: { approved: boolean; reason?: string },
+  ): Promise<Session | null> {
+    return this.call({ t: 'session.respondSplit', sessionId, proposalId, decision });
+  }
+
   inbox(limit?: number): Promise<InboxEntry[]> {
     return this.call({ t: 'inbox.list', ...(limit !== undefined ? { limit } : {}) });
   }

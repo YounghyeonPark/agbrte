@@ -107,7 +107,7 @@ describe('delivery through the session', () => {
   });
   afterEach(async () => {
     for (const m of managers.splice(0)) m.dispose();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const QUIET: EchoStep[] = [{ kind: 'stop', stop: { kind: 'end_turn' } }];
@@ -211,6 +211,15 @@ describe('delivery through the session', () => {
   });
 });
 
+/** Wait for a fact rather than for a duration. */
+async function until(what: () => boolean, ms = 5_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!what()) {
+    if (Date.now() > deadline) throw new Error('condition never became true');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 describe('two agents talking in circles', () => {
   let root: string;
   let instanceId: InstanceId;
@@ -222,7 +231,7 @@ describe('two agents talking in circles', () => {
   });
   afterEach(async () => {
     for (const m of managers.splice(0)) m.dispose();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   function manager(): SessionManager {
@@ -256,15 +265,34 @@ describe('two agents talking in circles', () => {
 
     // Ping-pong, with nobody watching. Without a ceiling this is a conversation
     // with a bill attached.
-    for (let i = 0; i < 12; i += 1) {
-      await deliver(m, session.sessionId, i % 2 === 0 ? a : b, i % 2 === 0 ? b : a);
-      await new Promise((r) => setTimeout(r, 5));
+    const refused = async (): Promise<number> =>
+      (await m.events(session.sessionId)).filter(
+        (e) =>
+          e.type === 'session.state' &&
+          /hops without a person/.test(String((e as unknown as { reason?: string }).reason)),
+      ).length;
+
+    // Driven until the ceiling actually bites rather than for a fixed number of
+    // milliseconds: a sleep encodes a guess about how long a turn takes, and the
+    // guess is wrong on a loaded machine.
+    const deadline = Date.now() + 5_000;
+    while ((await refused()) === 0) {
+      if (Date.now() > deadline) throw new Error('the hop ceiling never refused anything');
+      for (let i = 0; i < 4; i += 1) {
+        await deliver(m, session.sessionId, i % 2 === 0 ? a : b, i % 2 === 0 ? b : a);
+      }
+      await new Promise((r) => setTimeout(r, 10));
     }
 
-    const events = await m.events(session.sessionId);
-    const refusals = events.filter(
-      (e) => e.type === 'session.state' && /hops without a person/.test(String((e as unknown as { reason?: string }).reason)),
+    // Let the turns this started finish before the fixture is torn down. A
+    // `void send` still holds the log open, and on Windows removing a directory
+    // out from under an open handle fails the test for a reason that has nothing
+    // to do with what it was checking.
+    await until(() =>
+      [a, b].every(() => m.get(session.sessionId).state !== 'working'),
     );
+
+    const refusals = { length: await refused() };
     // Refused, and recorded — a roster that keeps hitting the ceiling should be
     // visible rather than merely slow.
     expect(refusals.length).toBeGreaterThan(0);

@@ -60,6 +60,21 @@ const split = (title: string, ceiling = 10_000) => ({
   tokenCeiling: ceiling,
 });
 
+/**
+ * Wait for a condition instead of for a duration.
+ *
+ * A fixed sleep encodes a guess about how long an async turn takes, and the
+ * guess is wrong on a loaded machine — which shows up as a test that fails
+ * occasionally and proves nothing when it passes.
+ */
+async function until(what: () => boolean, ms = 2_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!what()) {
+    if (Date.now() > deadline) throw new Error('condition never became true');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 /** Reach a live session, which is where roll-up lands. */
 const liveOf = (m: SessionManager, id: string): { session: Session } =>
   (m as unknown as { sessions: Map<string, { session: Session }> }).sessions.get(id)!;
@@ -112,7 +127,7 @@ describe('a blockage travels to where someone is looking', () => {
     // A prompt nobody answers, three levels down.
     const agent = await m.addAgent(deep.sessionId, { role: 'worker', runtimeId: 'echo', policy: ASKS });
     void m.send(deep.sessionId, agent.agentId, { content: [{ type: 'text', text: 'go' }] });
-    await new Promise((r) => setTimeout(r, 60));
+    await until(() => liveOf(m, rootSession.sessionId).session.needsAttention?.from !== undefined);
 
     const at = liveOf(m, rootSession.sessionId).session.needsAttention;
     expect(at?.reason).toBe('needs_permission');
@@ -130,7 +145,7 @@ describe('a blockage travels to where someone is looking', () => {
 
     const agent = await m.addAgent(deep.sessionId, { role: 'worker', runtimeId: 'echo', policy: ASKS });
     void m.send(deep.sessionId, agent.agentId, { content: [{ type: 'text', text: 'go' }] });
-    await new Promise((r) => setTimeout(r, 60));
+    await until(() => liveOf(m, mid.sessionId).session.needsAttention?.from !== undefined);
 
     // The middle session relayed it. Re-attributing to the relay would send the
     // user to a session with nothing to answer.
@@ -144,11 +159,15 @@ describe('a blockage travels to where someone is looking', () => {
     const parent = await m.createSession({ title: 'p', goal: 'g', budget: BUDGET });
     const child = await m.spawnChild(parent.sessionId, split('child', 20_000));
 
+    // Sequenced rather than raced: each prompt is waited for, so the assertion
+    // is about precedence and not about which turn happened to win.
     const below = await m.addAgent(child.sessionId, { role: 'worker', runtimeId: 'echo', policy: ASKS });
     void m.send(child.sessionId, below.agentId, { content: [{ type: 'text', text: 'go' }] });
+    await until(() => liveOf(m, parent.sessionId).session.needsAttention?.from !== undefined);
+
     const here = await m.addAgent(parent.sessionId, { role: 'lead', runtimeId: 'echo', policy: ASKS });
     void m.send(parent.sessionId, here.agentId, { content: [{ type: 'text', text: 'go' }] });
-    await new Promise((r) => setTimeout(r, 60));
+    await until(() => liveOf(m, parent.sessionId).session.state === 'awaiting_permission');
 
     // The thing in front of you is the thing you can answer.
     expect(liveOf(m, parent.sessionId).session.needsAttention?.from).toBeUndefined();
@@ -161,11 +180,20 @@ describe('a blockage travels to where someone is looking', () => {
 
     const agent = await m.addAgent(child.sessionId, { role: 'worker', runtimeId: 'echo', policy: ASKS });
     const turn = m.send(child.sessionId, agent.agentId, { content: [{ type: 'text', text: 'go' }] });
-    await new Promise((r) => setTimeout(r, 60));
+
+    // Waited on the prompt itself, which is the thing this test then answers.
+    // Waiting on the bubbled attention instead left a window where the summons
+    // had arrived and the request had not, and the answer went to nobody.
+    let pending = (await m.pendingPermissions())[0];
+    const deadline = Date.now() + 2_000;
+    while (pending === undefined) {
+      if (Date.now() > deadline) throw new Error('no permission was ever requested');
+      await new Promise((r) => setTimeout(r, 5));
+      pending = (await m.pendingPermissions())[0];
+    }
     expect(liveOf(m, parent.sessionId).session.needsAttention?.from).toBeDefined();
 
-    const [pending] = await m.pendingPermissions();
-    await m.respondPermission(pending!.requestId, { result: 'allow', scope: 'once' });
+    await m.respondPermission(pending.requestId, { result: 'allow', scope: 'once' });
     await turn;
 
     // A summons left standing after it was answered is how the rail stops being

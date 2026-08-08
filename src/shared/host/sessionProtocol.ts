@@ -126,6 +126,14 @@ export type SessionCommand =
    */
   | { t: 'inbox.list'; id: RequestId; limit?: number }
   | { t: 'inbox.markRead'; id: RequestId }
+  /** Approve or decline a split an agent proposed (§4.3). */
+  | {
+      t: 'session.respondSplit';
+      id: RequestId;
+      sessionId: string;
+      proposalId: string;
+      decision: { approved: boolean; reason?: string };
+    }
   | { t: 'permission.pending'; id: RequestId }
   | { t: 'permission.respond'; id: RequestId; requestId: string; decision: PermissionDecision }
   /**

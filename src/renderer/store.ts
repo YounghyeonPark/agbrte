@@ -76,6 +76,8 @@ export interface AgbrteState {
   send(text: string): Promise<void>;
   interrupt(): Promise<void>;
   respond(requestId: string, allow: boolean): Promise<void>;
+  /** Answer a split an agent proposed on the open session (§4.3). */
+  respondSplit(proposalId: string, approved: boolean): Promise<void>;
   applyBatch(batch: EventBatch): void;
   applySession(session: Session): void;
   applyPermission(request: PermissionRequest): void;
@@ -276,6 +278,17 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     const sessionId = get().activeId;
     if (sessionId === null) return;
     await guard(set, () => agbrte().sessions.interrupt(sessionId));
+  },
+
+  async respondSplit(proposalId, approved) {
+    const session = get().active;
+    if (session === null) return;
+    await guard(set, async () => {
+      // The pushed session carries the updated `pendingSplits`, so the prompt
+      // clears from the same place it appeared rather than being removed here
+      // and possibly disagreeing with the host.
+      await agbrte().sessions.respondSplit(session.sessionId, proposalId, { approved });
+    });
   },
 
   async respond(requestId, allow) {

@@ -188,6 +188,7 @@ export class AgentHostServer {
       // owner of the log, which is the only party that cannot be wrong about
       // either — nothing between here and there can forge attribution (§13).
       sendMessage: (message) => this.channel.post({ t: 'message', handleId, message }),
+      proposeSplit: (proposal) => this.channel.post({ t: 'proposeSplit', handleId, proposal }),
       requestPermission: (ask) =>
         new Promise<PermissionDecision>((resolve) => {
           const askId = `${handleId}:${(this.nextAskId += 1)}`;

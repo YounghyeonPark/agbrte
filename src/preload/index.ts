@@ -64,6 +64,11 @@ const api: AgbrteApi = {
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),
     create: (r: CreateSessionRequest) => ipcRenderer.invoke(CH.sessionsCreate, r),
+    respondSplit: (
+      sessionId: string,
+      proposalId: string,
+      decision: { approved: boolean; reason?: string },
+    ) => ipcRenderer.invoke(CH.sessionsRespondSplit, sessionId, proposalId, decision),
     listOnDisk: () => ipcRenderer.invoke(CH.sessionsListOnDisk),
     resume: (instanceId: string, sessionId: string) =>
       ipcRenderer.invoke(CH.sessionsResume, instanceId, sessionId),

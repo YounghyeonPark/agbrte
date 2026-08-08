@@ -294,6 +294,15 @@ export interface Session {
   children: ChildRef[];
   /** Genuinely unrelated work run alongside — not a parent/child relationship. */
   peerSessionIds: SessionId[];
+  /**
+   * Splits proposed here and not yet answered (§4.3).
+   *
+   * On the session rather than fetched separately, because it is the *reason*
+   * `needsAttention` says `split_proposed` — and a rail that says a session is
+   * blocked while the thing blocking it lives behind another round trip is a
+   * rail you cannot act on. The detail travels with the summons.
+   */
+  pendingSplits: SplitProposal[];
 }
 
 /**
