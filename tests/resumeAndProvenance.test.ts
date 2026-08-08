@@ -148,10 +148,16 @@ describe('provenance (§5.1)', () => {
 
     // Every permission decision names an agentId; this is what makes that
     // identifier meaningful after a restart (§13).
+    //
+    // `isolation` reads `shared` although `worktree` was asked for: this
+    // workspace is not a git repository, so §9's fallback applies. The log
+    // records what the agent *got* rather than what was requested — a
+    // transcript claiming `worktree` for an agent that ran in the shared tree
+    // would misdescribe every decision made underneath it.
     expect(resolved).toMatchObject({
       role: 'reviewer',
       runtimeId: 'echo',
-      isolation: 'worktree',
+      isolation: 'shared',
       permissionFidelity: 'precomputed-allowlist',
     });
   });

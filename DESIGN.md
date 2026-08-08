@@ -1486,7 +1486,17 @@ Collapsing them would tell an agent to wait for a lease that is already free, wh
 - **Leases are released when a turn ends; the read ledger is not.** They look like one operation and are not. An agent's turns are one continuous piece of work, so a file read last turn and edited this turn must still be checked against what it saw — clearing the ledger there would turn every cross-turn edit from `stale` into `unread`, which is permitted, quietly removing the protection exactly where a long job needs it. Releasing the *leases* is what keeps the TTL a crash backstop rather than the normal path.
 - **The lease is held for a short window after the write, not just during it.** A lease released the instant a write returns leaves the read-modify-write gap unprotected, and that gap is where clobbering actually happens.
 
-**Not built:** `worktree` isolation, which is the other half of this section, and the merge surfacing that goes with it. Until it exists, an `all-or-nothing` runtime remains inadmissible everywhere — §3.10's rule refuses it in `shared`, and the only alternative the type offers is not yet implemented.
+**`worktree` is built too, and building it closed a live hole.** Admission already accepted `worktree` for an `all-or-nothing` runtime — and nothing cut one, so `workspacePath` stayed the workspace root and the agent ran in the very tree §3.10 exists to keep it out of. The decision said contained, the filesystem said otherwise, and only the decision was visible anywhere.
+
+- **The fallback is resolved *before* admission**, which is what makes §9's rule above enforceable rather than decorative. A non-git workspace downgrades to `shared`, admission then runs against what the agent actually gets, and an `all-or-nothing` runtime is refused there by name. Deciding after admission reproduces exactly the hole described.
+- **A downgrade is announced.** An agent that asked for its own checkout and did not get one is working under different rules than its configuration reads.
+- **The log records what the agent got, not what it asked for.** A transcript claiming `worktree` for an agent that ran in the shared tree would misdescribe every decision made underneath it.
+- **Checkouts live under `.devagents/worktrees/`** — Agbrte's bookkeeping, in the directory git is already told to ignore. Beside the workspace they would litter the user's parent folder with directories they did not create.
+- **Nothing is merged automatically.** An unmerged branch becomes one checklist item, idempotent by id so a five-turn agent contributes one line rather than five, and only when the branch actually has commits. An automatic `git merge` either conflicts at an inconvenient moment or, worse, does not — and lands work nobody reviewed.
+- **Removing a checkout keeps its branch.** An agent stopping is not its output being accepted, and deleting the branch would discard work nobody looked at.
+- **"git is missing" and "this is not a repository" are separate answers**, because they need different fixes and a combined message sends the user after the wrong one.
+
+**Still not built:** container isolation, so "or container" in the table above remains unreachable and `worktree` is the only home for an `all-or-nothing` agent. Merge *conflict* handling is likewise absent — the checklist item says a merge is owed, and performing it is the user's.
 
 **Lease authority sits with whoever is adjacent to the filesystem:** main's local `AgentHost` for local workspaces, the remote host for remote ones — never the app across a network link, because a lease you can't enforce during a disconnect isn't a lease.
 

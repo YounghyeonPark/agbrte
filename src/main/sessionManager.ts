@@ -53,6 +53,13 @@ import { rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
 import { entriesFrom, merge, ReadMarker } from './inbox.js';
+import {
+  createWorktree,
+  hasCommits,
+  removeWorktree,
+  worktreeSupport,
+  type Worktree,
+} from './worktree.js';
 import type { Isolation, RoleRequirements, RuntimeRegistry } from './runtime/registry.js';
 import { defaultPolicyForTarget, evaluatePolicy } from './policy/evaluate.js';
 
@@ -152,6 +159,8 @@ interface LiveSession {
    * exists to wait for.
    */
   hops: Map<AgentId, number>;
+  /** Per-agent checkouts under `worktree` isolation (§9). */
+  worktrees: Map<AgentId, Worktree>;
 }
 
 export interface SessionManagerDeps {
@@ -275,6 +284,28 @@ export class SessionManager extends EventEmitter {
     clearInterval(this.sweeper);
   }
 
+  /**
+   * Remove the checkouts this manager cut, keeping their branches (§9).
+   *
+   * Separate from `dispose` because it touches the filesystem and can fail,
+   * and because the two answer different questions: `dispose` stops timers so a
+   * process can exit, while this tidies up disk. A caller that wants a clean
+   * shutdown asks for both; a test that only wants its timers back does not have
+   * to wait on git.
+   *
+   * The **branches survive**. Removing a checkout is housekeeping; removing a
+   * branch would delete work nobody accepted, and a session ending is not the
+   * same as its output being merged.
+   */
+  async releaseWorktrees(): Promise<void> {
+    for (const live of this.sessions.values()) {
+      for (const [agentId, worktree] of live.worktrees) {
+        await removeWorktree(this.deps.workspaceRoot, worktree);
+        live.worktrees.delete(agentId);
+      }
+    }
+  }
+
   async createSession(input: CreateSessionInput, actor?: Actor): Promise<Session> {
     const sessionId = newSessionId();
     const createdAt = this.now().toISOString();
@@ -327,6 +358,7 @@ export class SessionManager extends EventEmitter {
       lastEventAt: this.now().getTime(),
       waitingOnQuota: new Set<AgentId>(),
       hops: new Map<AgentId, number>(),
+      worktrees: new Map<AgentId, Worktree>(),
     });
 
     this.emit('session', session);
@@ -350,7 +382,7 @@ export class SessionManager extends EventEmitter {
    */
   async addAgent(sessionId: SessionId, input: NewAgentInput, actor?: Actor): Promise<AgentRecord> {
     const live = this.live(sessionId);
-    const isolation = input.isolation ?? 'shared';
+    const requested = input.isolation ?? 'shared';
 
     const spec: AgentSpec = {
       agentId: newAgentId(),
@@ -367,8 +399,40 @@ export class SessionManager extends EventEmitter {
       ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
     };
 
+    /**
+     * What isolation this agent will actually get (§9).
+     *
+     * > Non-git workspaces fall back to `shared` with leases (and therefore
+     * > cannot host an `all-or-nothing` agent at all).
+     *
+     * Resolved *before* admission, and that ordering is the whole point. The
+     * fallback is not a quiet downgrade: admission then runs against what the
+     * agent really gets, so §3.10's rule refuses an `all-or-nothing` runtime
+     * here — with the missing capability named — rather than admitting it as
+     * "contained" and handing it the workspace root. Deciding after admission
+     * would produce exactly that: a decision that said isolated and a filesystem
+     * that was not.
+     */
+    let isolation = requested;
+    let downgraded: string | null = null;
+    if (requested === 'worktree') {
+      const support = await worktreeSupport(this.deps.workspaceRoot);
+      if (!support.ok) {
+        isolation = 'shared';
+        downgraded = support.reason;
+      }
+    }
+
     const admission = await this.deps.registry.admit(spec, isolation, input.requirements ?? {});
     if (!admission.ok) throw new AdmissionRefused(admission.failures);
+
+    // Cut after admission, so a configuration that was going to be refused
+    // anyway does not leave a branch behind.
+    if (isolation === 'worktree') {
+      const worktree = await createWorktree(this.deps.workspaceRoot, spec.agentId);
+      live.worktrees.set(spec.agentId, worktree);
+      spec.workspacePath = worktree.path;
+    }
 
     const record: AgentRecord = {
       agentId: spec.agentId,
@@ -384,6 +448,17 @@ export class SessionManager extends EventEmitter {
 
     live.session.agents.push(record);
     live.specs.set(spec.agentId, spec);
+
+    // Said out loud. An agent that asked for its own checkout and did not get
+    // one is working under different rules than its configuration reads, and a
+    // downgrade nobody was told about is how that becomes a surprise later.
+    if (downgraded !== null) {
+      this.emit('progress', live.session.sessionId, {
+        kind: 'phase',
+        detail: `${spec.agentId} asked for worktree isolation and is running shared: ${downgraded}`,
+        at: this.now().toISOString(),
+      });
+    }
 
     // Durable, so a reloaded log can resolve this agentId to its runtime, model,
     // isolation, and gate strength — which every logged decision references.
@@ -570,6 +645,8 @@ export class SessionManager extends EventEmitter {
         live.parked = { resetsAt, agentId, turn, ...(actor !== undefined ? { actor } : {}) };
       }
     }
+
+    await this.surfaceMerge(live, agentId);
 
     await this.setState(live, outcome.nextState, stopReasonSummary(outcome.stop));
     await live.store.maybeCheckpoint();
@@ -855,6 +932,36 @@ export class SessionManager extends EventEmitter {
     // would put a name on a turn they never sent.
     void this.send(live.session.sessionId, stamped.to, { content: stamped.content }).catch(
       () => undefined,
+    );
+  }
+
+  /**
+   * Put an unmerged branch on the checklist (§9).
+   *
+   * Never merged automatically. A worktree is a branch and the merge is the
+   * user's call: an automatic `git merge` either conflicts at an inconvenient
+   * moment or, worse, does not — and lands work nobody reviewed. A visible
+   * unfinished item is the honest shape for "this agent produced something you
+   * have not accepted yet".
+   *
+   * Idempotent by item id, so a five-turn agent contributes one line rather than
+   * five. Re-appended each turn on purpose: the text carries the commit state,
+   * and an item that stopped being true after the first turn would be worse than
+   * no item at all.
+   */
+  private async surfaceMerge(live: LiveSession, agentId: AgentId): Promise<void> {
+    const worktree = live.worktrees.get(agentId);
+    if (worktree === undefined) return;
+    if (!(await hasCommits(this.deps.workspaceRoot, worktree))) return;
+
+    await live.store.append(
+      {
+        type: 'checklist.updated',
+        itemId: `merge:${worktree.branch}`,
+        state: 'todo',
+        text: `merge ${worktree.branch} into ${worktree.base}`,
+      },
+      { agentId },
     );
   }
 
@@ -1267,6 +1374,7 @@ export class SessionManager extends EventEmitter {
       lastEventAt: this.now().getTime(),
       waitingOnQuota: new Set<AgentId>(),
       hops: new Map<AgentId, number>(),
+      worktrees: new Map<AgentId, Worktree>(),
       policy: defaultPolicyForTarget(target.kind),
       handles: new Map(),
       specs: new Map(),

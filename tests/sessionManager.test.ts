@@ -85,15 +85,42 @@ describe('SessionManager — admission', () => {
     expect(sm.get(session.sessionId).agents).toHaveLength(0);
   });
 
-  it('admits the same runtime under worktree isolation', async () => {
+  it('still refuses it where a worktree cannot actually be provided', async () => {
+    /**
+     * §9: "Non-git workspaces fall back to `shared` with leases (and therefore
+     * cannot host an `all-or-nothing` agent at all)."
+     *
+     * This test used to assert that *asking* for `worktree` was enough — and it
+     * was, because nothing cut one. Admission recorded `worktree` and the agent
+     * received the workspace root, which is precisely the arrangement §3.10
+     * exists to prevent: a decision that said contained and a filesystem that
+     * said otherwise, with only the decision visible.
+     *
+     * The fallback is now resolved before admission, so the rule is applied to
+     * what the agent will actually get. These temp workspaces are not git
+     * repositories, which is the case being described.
+     */
     const sm = manager(undefined, { permissionFidelity: 'all-or-nothing' });
+    const session = await sm.createSession({ title: 's', goal: 'g' });
+
+    await expect(
+      sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo', isolation: 'worktree' }),
+    ).rejects.toThrow(AdmissionRefused);
+    expect(sm.get(session.sessionId).agents).toHaveLength(0);
+  });
+
+  it('downgrades a gated agent to shared rather than refusing it', async () => {
+    // The other half of the same rule. A runtime we can gate per call loses
+    // nothing it needs by working the shared tree under leases, so asking for a
+    // worktree where none is possible is a preference and not a requirement.
+    const sm = manager();
     const session = await sm.createSession({ title: 's', goal: 'g' });
     const agent = await sm.addAgent(session.sessionId, {
       role: 'worker',
       runtimeId: 'echo',
       isolation: 'worktree',
     });
-    expect(agent.isolation).toBe('worktree');
+    expect(agent.isolation).toBe('shared');
   });
 
   it('names the missing capability when refusing', async () => {
