@@ -120,6 +120,14 @@ interface LiveSession {
    * append is the honest signal that something is still happening.
    */
   lastEventAt: number;
+  /**
+   * The turn to run again once the quota window resets.
+   *
+   * Held rather than reconstructed from the log: the turn is what the person
+   * asked for and it did not complete, so resuming means running *that*, not
+   * something inferred later from a transcript.
+   */
+  parked?: { resetsAt: number; agentId: AgentId; turn: UserTurn; actor?: Actor };
 }
 
 export interface SessionManagerDeps {
@@ -168,25 +176,36 @@ export class SessionManager extends EventEmitter {
   private readonly draining = new Set<AgentId>();
   private readonly now: () => Date;
 
-  private readonly sweeper: NodeJS.Timeout | null;
+  private readonly sweeper: NodeJS.Timeout;
 
   constructor(private readonly deps: SessionManagerDeps) {
     super();
     this.now = deps.now ?? (() => new Date());
 
+    // One timer for every session and both jobs, rather than one each: each
+    // check is a comparison against a number, and N timers would be N wakeups
+    // to do what a single pass does. Swept at a fraction of the stall threshold
+    // so a reported `since` is not off by a whole interval.
+    //
+    // Started regardless of `stallAfterMs`. Gating it on that was a bug: waking
+    // a parked session and noticing silence are unrelated jobs that happened to
+    // share a timer, so turning stall detection off also stopped every quota
+    // window from ever resuming. `sweepStalled` disables itself instead.
     const after = deps.stallAfterMs ?? DEFAULT_STALL_AFTER_MS;
-    // One timer for every session rather than one each: the check is a
-    // comparison against a number, and N timers would be N wakeups to do work a
-    // single pass does. Swept at a fraction of the threshold so the reported
-    // `since` is not off by a whole interval.
-    this.sweeper = after > 0 ? setInterval(() => this.sweepStalled(), Math.max(1_000, after / 5)) : null;
+    this.sweeper = setInterval(
+      () => {
+        this.sweepStalled();
+        this.sweepParked();
+      },
+      Math.max(1_000, (after > 0 ? after : DEFAULT_STALL_AFTER_MS) / 5),
+    );
     // Never hold the process open just to notice silence.
-    this.sweeper?.unref?.();
+    this.sweeper.unref?.();
   }
 
   /** Stop the stall sweeper. Sessions are unaffected; they live in the log. */
   dispose(): void {
-    if (this.sweeper !== null) clearInterval(this.sweeper);
+    clearInterval(this.sweeper);
   }
 
   async createSession(input: CreateSessionInput, actor?: Actor): Promise<Session> {
@@ -437,6 +456,16 @@ export class SessionManager extends EventEmitter {
     // parked agents are what make many concurrent sessions affordable (§8).
     live.handles.delete(agentId);
     live.aborts.delete(agentId);
+
+    // Parked with everything needed to pick it up again. A window that reports
+    // no `resetsAt` is not parked: waking at a time nobody named would be a
+    // guess, and this waits for a person instead.
+    if (outcome.stop.kind === 'quota_exhausted' && outcome.stop.resetsAt !== undefined) {
+      const resetsAt = Date.parse(outcome.stop.resetsAt);
+      if (Number.isFinite(resetsAt)) {
+        live.parked = { resetsAt, agentId, turn, ...(actor !== undefined ? { actor } : {}) };
+      }
+    }
 
     await this.setState(live, outcome.nextState, stopReasonSummary(outcome.stop));
     await live.store.maybeCheckpoint();
@@ -879,6 +908,48 @@ export class SessionManager extends EventEmitter {
    * design, which is a different thing with its own reason, and calling that
    * stalled would flag every session anybody ever left overnight.
    */
+  /**
+   * Put parked sessions back to work once their window has reset.
+   *
+   * The turn is re-sent rather than the session merely being unpaused. §15's
+   * criterion is that a quota-exhausted agent "parks and resumes on its own at
+   * reset", and returning it to `awaiting_input` would mean the work only
+   * continues if a human happens to notice and retype it — which is the thing
+   * parking exists to avoid.
+   *
+   * Re-running a turn can repeat side effects it already had. That is the same
+   * bargain the supervisor already makes for `rate_limited`, on a longer clock,
+   * and the alternative is worse: work abandoned in the middle because nobody
+   * was watching at 4am. The repeat is announced in the log so a transcript
+   * showing the same turn twice explains itself.
+   */
+  private sweepParked(): void {
+    const now = this.now().getTime();
+
+    for (const live of this.sessions.values()) {
+      const parked = live.parked;
+      if (parked === undefined || now < parked.resetsAt) continue;
+
+      // Cleared first: `send` runs the turn, and a park still set would be
+      // waiting to fire again on the very next sweep.
+      delete live.parked;
+
+      void (async () => {
+        try {
+          await live.store.append({
+            type: 'session.unparked',
+            reason: 'quota-window-reset',
+            parkedFor: new Date(parked.resetsAt).toISOString(),
+          });
+          await this.send(live.session.sessionId, parked.agentId, parked.turn, parked.actor);
+        } catch {
+          // A failed resume leaves the session where the failure put it. Parking
+          // again on a window that has already reset would spin.
+        }
+      })();
+    }
+  }
+
   private sweepStalled(): void {
     const after = this.deps.stallAfterMs ?? DEFAULT_STALL_AFTER_MS;
     if (after <= 0) return;

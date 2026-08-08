@@ -1262,6 +1262,12 @@ Making that true required splitting `register.ts`. An ESM `import ... from 'elec
 
 One browser detail worth recording: the built CSP names `ws://localhost:*`, which is right for Electron and wrong for a phone reaching a tailnet address. `connect-src 'self'` is supposed to cover a same-origin WebSocket and browsers have disagreed about that for years — Safari being precisely the browser this has to work in. The served page therefore takes the origin from the request's own `Host` header, which is correct whether the phone arrives by IP or by MagicDNS name.
 
+**A spent quota window parks the session and then picks the work back up.** Half of this already worked — `stateForStop` sends `quota_exhausted` to `awaiting_quota` and the attention map calls it out — and the missing half was coming back: nothing read `resetsAt`, so a parked session sat until a human noticed and retyped, which is exactly what parking exists to avoid. §4.1 is why it is `awaiting_quota` and not `failed`: the `awaiting_*` states mean *paused, holding all state, will resume*, and a wait treated as a failure discards the work.
+
+The **turn** is re-sent rather than the session merely unpaused, because §15's criterion is that the agent "resumes on its own at reset" and returning it to `awaiting_input` means the work continues only if somebody happens to be watching. That can repeat side effects the turn already had — the same bargain the supervisor already makes for `rate_limited`, on a longer clock, and better than work abandoned mid-way because nobody was awake. `session.unparked` announces it, because the transcript then contains the same turn twice and would otherwise read as a double-send by the user. The repeat carries the original actor: the person asked once, and attributing the second send to them would claim they pressed something at 4am.
+
+**A window with no `resetsAt` is not parked at all.** Waking at a time nobody named would be a guess, so that one waits for a person.
+
 **A session that goes quiet mid-turn is flagged as a suspicion, never as a verdict.** A hung agent and a busy one both report `working`, which is the one thing the dashboard exists to tell apart. So silence past a threshold sets `needsAttention: 'stalled'` and **leaves the state alone**: the agent may simply be slow, and moving it to a paused or failed state would assert something untrue about work still in flight and have to be undone the moment it spoke. `needsAttention` exists precisely to say "a person should look" without claiming what happened, and the card says *quiet — may be stuck* rather than *stalled*.
 
 It clears on the **first** append, not at the end of a turn: a long generation that goes quiet and resumes was never stuck, and a warning still up after the thing it warned about resolved is how a signal stops being read. The clock is `lastEventAt`, not `updatedAt` — the latter moves only when an agent is added or the state changes, so a session mid-turn can go silent for an hour without touching it. Paused sessions are exempt: waiting for a human is not being stuck, and flagging it would light up everything anyone left overnight.
@@ -1648,7 +1654,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built |
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | validation satisfied early; **breadth** remains |
-| 4 | Multi-session + dashboard | 5th | dashboard, Needs-you rail, stall detection done; quota, parking, notifications remain |
+| 4 | Multi-session + dashboard | 5th | dashboard, Needs-you rail, stall detection, parking done; QuotaScheduler and notifications remain |
 | 6 | Multi-agent + hierarchy | 6th | not started |
 | 7 | Multimodal | 7th | not started |
 | 8 | Breadth + polish | 8th | not started |

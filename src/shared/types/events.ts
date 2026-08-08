@@ -209,7 +209,19 @@ export type EventBody =
    * workspace-relative and this is precisely a fact about the workspace's own
    * absolute location, which is the one thing that encoding would erase.
    */
-  | { type: 'workspace.relocated'; from: string; to: string };
+  | { type: 'workspace.relocated'; from: string; to: string }
+  /**
+   * A parked session picked its work back up when its quota window reset.
+   *
+   * Recorded because the turn that follows is a *repeat* of one already in the
+   * transcript, and two identical turns with nothing between them reads as a
+   * double-send by the user. This is the line that says the machine did it, and
+   * why.
+   *
+   * Not an `actor` on the repeated turn: the person asked once. Attributing the
+   * second send to them would claim they pressed something at 4am.
+   */
+  | { type: 'session.unparked'; reason: 'quota-window-reset'; parkedFor: string };
 
 export type GilmokEvent = EventEnvelope & EventBody;
 
@@ -245,4 +257,5 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'agent.compacted',
   'agent.interrupted',
   'workspace.relocated',
+  'session.unparked',
 ]);
