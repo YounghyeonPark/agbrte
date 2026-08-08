@@ -45,6 +45,7 @@ import {
   type Session,
   type SessionBudget,
   type SessionState,
+  type SplitProposal,
   type ToolPolicy,
   type UserTurn,
   type AgentId,
@@ -57,7 +58,7 @@ import { rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
 import { entriesFrom, merge, ReadMarker } from './inbox.js';
-import { buildBrief, reserveForChild } from './store/brief.js';
+import { buildBrief, checkResult, reserveForChild } from './store/brief.js';
 import {
   createWorktree,
   hasCommits,
@@ -216,6 +217,17 @@ interface LiveSession {
   hops: Map<AgentId, number>;
   /** Per-agent checkouts under `worktree` isolation (§9). */
   worktrees: Map<AgentId, Worktree>;
+  /**
+   * Splits an agent has asked for and nobody has answered (§4.3).
+   *
+   * Held rather than derived from state, because a pending proposal outlives
+   * every state transition underneath it: the session goes on being
+   * `awaiting_input` between turns, and an attention computed from state alone
+   * would drop the question the moment anything else happened.
+   */
+  pendingSplits: Map<string, SplitProposal>;
+  /** What this session owes its parent, from the brief it was spawned with. */
+  contract?: ResultContract;
 }
 
 export interface SessionManagerDeps {
@@ -415,6 +427,7 @@ export class SessionManager extends EventEmitter {
       waitingOnQuota: new Set<AgentId>(),
       hops: new Map<AgentId, number>(),
       worktrees: new Map<AgentId, Worktree>(),
+      pendingSplits: new Map<string, SplitProposal>(),
     });
 
     this.emit('session', session);
@@ -1190,7 +1203,10 @@ export class SessionManager extends EventEmitter {
      */
     const settled = to === 'done' || to === 'awaiting_input';
     live.session.state = settled && this.hasActiveChildren(live) ? 'awaiting_children' : to;
-    live.session.needsAttention = attentionFor(live.session.state, this.now().toISOString());
+    // Through `ownAttention`, not `attentionFor` directly: a pending split
+    // proposal has to survive the states underneath it. Deriving from state
+    // alone dropped the question the moment the next turn ended.
+    live.session.needsAttention = this.ownAttention(live);
     this.touch(live);
     this.rollUp(live);
 
@@ -1421,6 +1437,9 @@ export class SessionManager extends EventEmitter {
       ancestry: [...parent.session.tree.ancestry, parentSessionId],
     };
     live.session.budget = reserved.child;
+    // Kept so the child can be held to it when it reports back, without having
+    // to re-read a brief to find out what shape its own answer must take.
+    live.contract = input.contract;
 
     // Durable on the child, so a session resumed in three weeks still knows why
     // it exists (§4.3: "the brief is durable, not an opening prompt").
@@ -1514,7 +1533,7 @@ export class SessionManager extends EventEmitter {
    * thing you can answer.
    */
   private recomputeAttention(parent: LiveSession): void {
-    const own = attentionFor(parent.session.state, parent.session.needsAttention?.since ?? this.now().toISOString());
+    const own = this.ownAttention(parent);
     if (own !== null) {
       parent.session.needsAttention = own;
       this.touch(parent);
@@ -1602,6 +1621,165 @@ export class SessionManager extends EventEmitter {
 
     live.session.children = [];
     await this.setState(live, 'failed', 'cancelled by the user');
+  }
+
+/**
+   * What this session is blocked on itself, ignoring anything beneath it.
+   *
+   * A pending split outranks the state-derived answer, because it *is* the
+   * blockage: the session sits in an ordinary state between turns while the
+   * question it asked goes unanswered, and an attention computed from state
+   * alone would forget it the moment anything else happened.
+   */
+  private ownAttention(live: LiveSession): Session['needsAttention'] {
+    if (live.pendingSplits.size > 0) {
+      return { reason: 'split_proposed', since: live.session.needsAttention?.since ?? this.now().toISOString() };
+    }
+    return attentionFor(live.session.state, live.session.needsAttention?.since ?? this.now().toISOString());
+  }
+
+  /**
+   * An agent asks to split; a person decides (§4.3).
+   *
+   * > Automatic splitting is policy-gated and off by default: it multiplies
+   * > cost, and a decomposition mistake made autonomously produces a tree of
+   * > subtly mis-scoped children that is harder to salvage than a single
+   * > overlong session.
+   *
+   * So this only ever *records* and *asks*. Nothing here creates a session —
+   * that is `spawnChild`, and it runs when somebody says yes.
+   *
+   * Logged when proposed rather than when approved, so the transcript shows
+   * what was suggested and declined as well as what happened. A record of only
+   * the approved splits hides every decomposition the user thought was wrong,
+   * which is the more interesting half when a session goes badly.
+   */
+  async proposeSplit(
+    sessionId: SessionId,
+    proposal: Omit<SplitProposal, 'proposalId'>,
+    agentId?: AgentId,
+  ): Promise<SplitProposal> {
+    const live = this.live(sessionId);
+    const full: SplitProposal = { ...proposal, proposalId: uuidv7() };
+
+    live.pendingSplits.set(full.proposalId, full);
+    await live.store.append(
+      { type: 'session.split_proposed', proposal: full },
+      { ...(agentId !== undefined ? { agentId } : {}) },
+    );
+
+    live.session.needsAttention = this.ownAttention(live);
+    this.touch(live);
+    // Up to the root, like any other blockage: a proposal three levels down is
+    // as easy to lose as a permission prompt.
+    this.rollUp(live);
+    return full;
+  }
+
+  /** Answer a proposal. Approval spawns; refusal is recorded and is not a failure. */
+  async respondSplit(
+    sessionId: SessionId,
+    proposalId: string,
+    decision: { approved: boolean; reason?: string },
+    actor?: Actor,
+  ): Promise<Session | null> {
+    const live = this.live(sessionId);
+    const proposal = live.pendingSplits.get(proposalId);
+    if (proposal === undefined) throw new Error(`no pending split ${proposalId}`);
+
+    // Cleared first: `spawnChild` can refuse on a limit, and a proposal left
+    // pending after it was answered would ask the same question forever.
+    live.pendingSplits.delete(proposalId);
+    await live.store.append(
+      {
+        type: 'session.split_decided',
+        proposalId,
+        approved: decision.approved,
+        ...(decision.reason !== undefined ? { reason: decision.reason } : {}),
+      },
+      { ...(actor !== undefined ? { actor } : {}) },
+    );
+
+    live.session.needsAttention = this.ownAttention(live);
+    this.touch(live);
+    this.rollUp(live);
+
+    if (!decision.approved) return null;
+    return this.spawnChild(
+      sessionId,
+      {
+        title: proposal.title,
+        scope: proposal.scope,
+        outOfScope: proposal.outOfScope,
+        contract: proposal.contract,
+        tokenCeiling: proposal.tokenCeiling,
+      },
+      actor,
+    );
+  }
+
+  /**
+   * A child hands its result up, within the ceiling it agreed to (§4.3).
+   *
+   * > The failure mode to prevent: a child returns its transcript, the parent's
+   * > context explodes, and you have reproduced the original problem one level
+   * > up.
+   *
+   * An over-ceiling summary is **not** refused, and that is deliberate:
+   * `checkResult` returns a verdict rather than throwing so an oversized answer
+   * becomes an artifact plus a pointer instead of a failed child. Work that was
+   * done well and described at length should not be thrown away for the length.
+   * What the child does not get is a larger injection.
+   *
+   * The result lands on the **parent's** log, because that is who it is for. The
+   * child's own transcript already holds the detail, and a person may drill into
+   * it — but that is a human reading, not context entering a model.
+   */
+  async reportResult(
+    sessionId: SessionId,
+    result: { summary: string; artifactIds?: string[] },
+    agentId?: AgentId,
+  ): Promise<{ summary: string; truncated: boolean }> {
+    const live = this.live(sessionId);
+    const parentId = live.session.tree.parentSessionId;
+    if (parentId === undefined) throw new Error('this session has no parent to report to');
+
+    const contract = live.contract ?? { summaryMaxTokens: 1_000, artifacts: [] };
+    const artifactIds = result.artifactIds ?? [];
+    const verdict = checkResult(
+      contract,
+      result.summary,
+      live.session.artifacts.map((a) => ({ kind: a.kind })),
+    );
+
+    let summary = result.summary;
+    let truncated = false;
+    if (verdict.estimatedTokens > contract.summaryMaxTokens) {
+      // Written where it can be read in full, and referenced by a line that
+      // fits. The child does not get to negotiate a larger injection.
+      const stored = await live.store.attach(Buffer.from(result.summary, 'utf8'), 'text/markdown');
+      await live.store.append({ type: 'artifact.created', artifactId: stored.sha256, kind: 'result-summary' });
+      artifactIds.push(stored.sha256);
+      summary =
+        `${result.summary.slice(0, 400)}… [full result stored as artifact ${stored.sha256.slice(0, 12)}; ` +
+        `${verdict.estimatedTokens} tokens exceeds the agreed ceiling of ${contract.summaryMaxTokens}]`;
+      truncated = true;
+    }
+
+    const parent = this.sessions.get(parentId as SessionId);
+    if (parent !== undefined) {
+      await parent.store.append({
+        type: 'session.child_result',
+        childSessionId: sessionId,
+        summary,
+        artifactIds,
+      });
+      this.emit('session', parent.session);
+    }
+
+    await this.setState(live, 'done', 'reported its result to its parent');
+    void agentId;
+    return { summary, truncated };
   }
 
   /** Current derived state, folded from the log (§5.1). */
@@ -1726,6 +1904,7 @@ export class SessionManager extends EventEmitter {
       waitingOnQuota: new Set<AgentId>(),
       hops: new Map<AgentId, number>(),
       worktrees: new Map<AgentId, Worktree>(),
+      pendingSplits: new Map<string, SplitProposal>(),
       policy: defaultPolicyForTarget(target.kind),
       handles: new Map(),
       specs: new Map(),

@@ -21,7 +21,7 @@ import type { EncodedPath } from './paths.js';
 import type { PermissionDecision, PolicyRule } from './policy.js';
 import type { AgentMessage, ModelRef, RuntimeCapabilities, StopReason } from './runtime.js';
 import type { PermissionFidelity } from './policy.js';
-import type { Actor, ChildRef, SessionBrief, SessionState } from './session.js';
+import type { Actor, ChildRef, SessionBrief, SessionState, SplitProposal } from './session.js';
 
 /** Provenance stamped on every event that came from a model or adapter. */
 export interface EventOrigin {
@@ -157,6 +157,16 @@ export type EventBody =
   | { type: 'session.spawned_child'; child: ChildRef }
   | { type: 'session.brief_received'; brief: SessionBrief; parentSessionId: SessionId }
   | { type: 'session.child_result'; childSessionId: SessionId; summary: string; artifactIds: string[] }
+  /**
+   * An agent asked to split, and is waiting for a person (§4.3).
+   *
+   * Logged when proposed rather than when approved, so a transcript shows what
+   * was suggested and declined as well as what happened. A record of only the
+   * approved splits would hide every decomposition the user thought was wrong,
+   * which is the more interesting half when a session goes badly.
+   */
+  | { type: 'session.split_proposed'; proposal: SplitProposal }
+  | { type: 'session.split_decided'; proposalId: string; approved: boolean; reason?: string }
   | { type: 'session.orphaned'; formerParentSessionId: SessionId }
   // adapter/agent lifecycle
   /**
@@ -260,6 +270,8 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'session.spawned_child',
   'session.brief_received',
   'session.child_result',
+  'session.split_proposed',
+  'session.split_decided',
   'session.orphaned',
   'agent.created',
   'agent.started',

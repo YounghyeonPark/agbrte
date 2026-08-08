@@ -316,6 +316,29 @@ export function byAttentionThenRecency(a: Session, b: Session): number {
   return b.updatedAt.localeCompare(a.updatedAt);
 }
 
+/**
+ * A split an agent wants, and a person has not yet agreed to (§4.3).
+ *
+ * > The parent agent proposes via a `propose_split` tool and **the user
+ * > approves.** Automatic splitting is policy-gated and off by default: it
+ * > multiplies cost, and a decomposition mistake made autonomously produces a
+ * > tree of subtly mis-scoped children that is harder to salvage than a single
+ * > overlong session.
+ *
+ * Carries `why` because the approval is a judgement, not a formality. A user
+ * asked to approve a split with no stated reason can only say yes.
+ */
+export interface SplitProposal {
+  proposalId: string;
+  title: string;
+  scope: string;
+  outOfScope: string[];
+  contract: ResultContract;
+  tokenCeiling: number;
+  /** What in this session's state made a split the right move. */
+  why: string;
+}
+
 /** Limits that keep trees from exploding (§4.3). */
 export const TREE_LIMITS = {
   maxDepth: 3,

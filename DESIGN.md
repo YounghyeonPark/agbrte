@@ -872,7 +872,20 @@ It refuses rather than degrades in four cases, all for the same reason: §4.3 ke
 
 **Within one host only.** A tree spanning two workspaces has an edge no single `SessionManager` can see across, and this is the open question already named above: the fleet, or the host owning the root, has to carry it. Bubbling as far as one manager reaches is honest; the alternative would put a rail on screen that silently omits half a tree.
 
-**Still absent:** split *proposals* — the `propose_split` tool and its approval flow — and the result path back up (`session.child_result` is folded by the reducer but nothing produces one).
+**Proposals and the result path are built, which completes the tree.**
+
+`proposeSplit()` only ever records and asks — nothing there creates a session, because §4.3's reason for keeping splits user-approved is that an autonomous decomposition mistake is harder to salvage than one overlong session. The proposal carries a `why`, since a user asked to approve a split with no stated reason can only say yes.
+
+- **The proposal survives the states underneath it.** A pending split is held on the session rather than derived from its state: the session goes on being `awaiting_input` between turns, and an attention computed from state alone dropped the question the moment the next turn ended. Found by the test written for it.
+- **A refused proposal is logged as fully as an approved one.** A record of only the splits that happened hides every decomposition the user thought was wrong — the more interesting half when a session goes badly.
+- **The proposal is cleared before the spawn is attempted**, so a split refused on a limit does not leave the same question being asked forever.
+
+`reportResult()` closes the loop §4.3 opens with "the failure mode to prevent: a child returns its transcript, the parent's context explodes, and you have reproduced the original problem one level up".
+
+- **An over-ceiling result is stored and pointed at, not refused.** `checkResult` returns a verdict rather than throwing precisely so this is possible: work done well and described at length should not be discarded for the length. What the child does not get is a larger injection.
+- **The result lands on the parent's log**, because that is who it is for. The child's own transcript keeps the detail, and a person may drill into it — but that is a human reading, not context entering a model.
+
+**Still absent:** automatic split *signals* (§4.3 lists compaction count, checklist size, tokens per completed item — none are measured yet, so a proposal is an agent's judgement rather than a triggered one), and the UI for approving a proposal. `respondSplit` exists and nothing in the renderer calls it.
 
 **Results flow up by reference; only a bounded summary is injected.** A child returns a structured summary within `summaryMaxTokens`, plus artifact refs and checklist outcomes. If its result exceeds the ceiling, the child **writes an artifact and returns a pointer** — it does not get to negotiate a larger injection. The parent may drill into a child's full log in the UI, but that is a human reading a transcript, not context entering a model.
 
@@ -1792,7 +1805,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
-| 6 | Multi-agent + hierarchy | 6th | not started |
+| 6 | Multi-agent + hierarchy | 6th | leases, message bus, worktrees, spawn, roll-up, bubbling, proposals and results done; per-agent panes and the approval UI remain |
 | 7 | Multimodal | 7th | not started |
 | 8 | Breadth + polish | 8th | not started |
 
