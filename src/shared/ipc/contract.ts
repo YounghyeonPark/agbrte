@@ -68,6 +68,14 @@ export interface HostInfo {
   /** Why nothing can run here. Sessions still load and read. */
   unavailableReason?: string;
   /**
+   * Where this workspace was before it moved (§5.3).
+   *
+   * Shown because a move changes behaviour with no other visible cause: agents
+   * that resumed natively yesterday rehydrate today. Without saying so, the app
+   * would be quietly different for a reason the user cannot see.
+   */
+  movedFrom?: string;
+  /**
    * Whether the app can currently reach this host.
    *
    * `reconnecting` is not `gone`. The sessions are still on the other side and

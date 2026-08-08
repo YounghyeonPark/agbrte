@@ -78,6 +78,14 @@ export interface AttachedHost {
   available: string[];
   /** Models it can reach, credentials already stripped. */
   endpoints: Array<{ id: string; label: string; provider: string; authenticated: boolean }>;
+  /**
+   * Where this workspace was, when the host found it somewhere else (§5.3).
+   *
+   * Naturally transient: the host records the new location once, so the next
+   * host to start reports nothing. That is the right lifetime — a move is news
+   * exactly once.
+   */
+  movedFrom?: string;
   /** What this client was granted. May be less than it asked for. */
   role: AccessRole;
   /** The owning process, so a client can say which one it is talking to. */
@@ -189,6 +197,7 @@ export class Fleet extends EventEmitter {
       available: this.deps.runtimes
         .filter((r) => identity.runtimes.includes(r.id))
         .map((r) => r.id),
+      ...(identity.movedFrom !== undefined ? { movedFrom: identity.movedFrom } : {}),
       endpoints: (identity.endpoints ?? []).map((e) => ({
         id: e.id,
         label: e.label,
@@ -597,6 +606,7 @@ function snapshot(entry: Entry): AttachedHost {
     target: entry.target,
     available: [...entry.available],
     endpoints: entry.endpoints.map((e) => ({ ...e })),
+    ...(entry.movedFrom !== undefined ? { movedFrom: entry.movedFrom } : {}),
     role: entry.role,
     pid: entry.pid,
     link: entry.link,

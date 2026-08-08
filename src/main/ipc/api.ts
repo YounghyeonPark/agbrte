@@ -112,6 +112,7 @@ function toInfo(host: AttachedHost): HostInfo {
     label: labelFor(host),
     available: host.available,
     endpoints: host.endpoints,
+    ...(host.movedFrom !== undefined ? { movedFrom: host.movedFrom } : {}),
     link: host.link,
     ...(host.unavailableReason !== undefined
       ? { unavailableReason: host.unavailableReason }

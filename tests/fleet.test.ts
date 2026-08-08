@@ -461,3 +461,46 @@ describe('stopping a host', () => {
     expect(fleet.hosts()).toHaveLength(0);
   });
 });
+
+describe('a host that found its workspace somewhere else', () => {
+  it('carries the previous location to clients', async () => {
+    const root = await makeRoot();
+    const moved = `${root}-moved`;
+    roots.push(moved);
+
+    // Built by hand rather than by moving a folder: what is under test here is
+    // that the fleet *carries* what the host reports, and the detection itself
+    // has its own suite against real directory moves.
+    const fleet = new Fleet({
+      runtimes: RUNTIMES,
+      connect: async () => {
+        const identity = await openWorkspace(moved);
+        const registry = new RuntimeRegistry();
+        registry.register(new EchoRuntime({ script: DONE }), { label: 'Echo', requiresModel: false });
+        const server = new SessionHostServer({
+          manager: new SessionManager({
+            registry,
+            workspaceRoot: moved,
+            instanceId: identity.instanceId,
+          }),
+          identity: {
+            instanceId: identity.instanceId,
+            lineageId: identity.lineageId,
+            workspaceRoot: moved,
+            runtimes: ['echo'],
+            movedFrom: root,
+          },
+        });
+        const pair = memoryChannelPair<SessionCommand, SessionMessage>();
+        server.accept(pair.host);
+        return new HostConnection({ channel: pair.main });
+      },
+    });
+    fleets.push(fleet);
+
+    const host = await fleet.attach({ target: { kind: 'local' }, workspaceRoot: moved });
+    // Without this the app is quietly different — agents resume from the log
+    // instead of a vendor token — for a reason nothing on screen explains.
+    expect(host.movedFrom).toBe(root);
+  });
+});

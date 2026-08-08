@@ -1634,7 +1634,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 |---|---|---|---|
 | 1 | Skeleton | 1st | **done**, verified end to end |
 | 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built |
-| 2 | Persistence hardening | 3rd | detection now done; **relocate UI** and content-addressed attachments remain |
+| 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | validation satisfied early; **breadth** remains |
 | 4 | Multi-session + dashboard | 5th | not started |
 | 6 | Multi-agent + hierarchy | 6th | not started |

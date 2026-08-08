@@ -327,6 +327,20 @@ function HostGroup({
         </p>
       )}
 
+      {host.movedFrom !== undefined && (
+        /* Informational, not a warning. Nothing is wrong — the sessions are
+           intact and this is the folder they are in now. It is said at all
+           because a move changes how agents resume, and a behaviour change
+           with no visible cause is the thing worth avoiding. */
+        <p
+          data-testid="host-moved"
+          className="text-muted mx-1.5 mb-1 text-[11px]"
+          title={`was ${host.movedFrom}`}
+        >
+          moved here — agents resume from the log rather than a vendor's token
+        </p>
+      )}
+
       {host.unavailableReason !== undefined && (
         <p
           data-testid="host-unavailable"
