@@ -1,0 +1,40 @@
+{
+  "ranAt": "2026-08-08T14:22:24.270Z",
+  "results": [
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "chunked-framing",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "non-protocol-output",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "truncated-run",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "missing-binary",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "denial-then-grant",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    }
+  ]
+}

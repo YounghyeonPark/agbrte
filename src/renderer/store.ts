@@ -22,6 +22,7 @@ import type {
 } from '../shared/ipc/contract.js';
 import type {
   AgbrteEvent,
+  MatrixCell,
   PermissionRequest,
   PermissionResolved,
   Session,
@@ -35,6 +36,8 @@ export interface AgbrteState {
   hosts: HostInfo[];
   /** Runtimes per host, keyed by instanceId — hosts need not agree. */
   runtimesByHost: Record<string, RuntimeInfo[]>;
+  /** The support matrix per host (§3.13). Empty until a host has answered. */
+  conformanceByHost: Record<string, MatrixCell[]>;
   sessions: Session[];
   onDisk: Array<{ instanceId: string; sessionId: string; title: string; goal: string }>;
   activeId: string | null;
@@ -109,6 +112,7 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
   hosts: [],
   sshHosts: [],
   runtimesByHost: {},
+  conformanceByHost: {},
   sessions: [],
   onDisk: [],
   activeId: null,
@@ -346,6 +350,17 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     void Promise.all(
       hosts.map(async (h) => [h.instanceId, await agbrte().hosts.runtimes(h.instanceId)] as const),
     ).then((pairs) => set({ runtimesByHost: Object.fromEntries(pairs) }));
+
+    // Separately, and allowed to fail on its own. Building the matrix probes
+    // every runtime on that host, so it is slower than listing them — and a
+    // picker that waited for it would be unusable on a host whose model endpoint
+    // is down.
+    void Promise.all(
+      hosts.map(
+        async (h) =>
+          [h.instanceId, await agbrte().hosts.conformance(h.instanceId).catch(() => [])] as const,
+      ),
+    ).then((pairs) => set({ conformanceByHost: Object.fromEntries(pairs) }));
   },
 
   dismissNotice() {

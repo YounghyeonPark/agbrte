@@ -21,6 +21,7 @@ import { describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
+  ADAPTER_VERSION,
   CliStdioRuntime,
   designatedArg,
   resumeInstruction,
@@ -43,8 +44,37 @@ import {
   type RuntimeEvent,
   type ToolPolicy,
 } from '@shared/types/index.js';
+import { recorderFor, scenario } from './support/conformance.js';
 
 const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fakeCli.mjs');
+
+const recorder = recorderFor('cli-stdio');
+
+/**
+ * Record a scenario the shared contract does not cover.
+ *
+ * These belong here rather than in the contract suite because they are not
+ * things every adapter owes — nothing about `echo` has pipe framing. They are
+ * still rows in the matrix, since "this adapter reassembles a split record" is
+ * exactly what someone choosing a CLI runtime wants to know, and a matrix that
+ * only carried the universal scenarios would have nothing to say about the
+ * failure modes specific to a text protocol.
+ *
+ * Evidence is `real-subprocess` for all of them: every one drives the fixture
+ * over real pipes.
+ */
+function cliScenario(scenarioId: string, body: () => Promise<void>): Promise<void> {
+  return scenario(
+    recorder,
+    {
+      runtimeId: 'cli:claude-code',
+      scenarioId,
+      adapterVersion: ADAPTER_VERSION,
+      evidence: 'real-subprocess',
+    },
+    body,
+  );
+}
 const EMPTY_POLICY: ToolPolicy = { rules: [], defaultAction: 'ask' };
 
 function spec(over: Partial<AgentSpec> = {}): AgentSpec {
@@ -135,53 +165,58 @@ describe('driving an actual process', () => {
     expect(events.at(-1)).toEqual({ type: 'stopped', stop: { kind: 'end_turn' } });
   });
 
-  it('reads a record that arrived in pieces', async () => {
-    // The pipe hands over whatever was buffered. Treating a chunk as a line
-    // works on every short test and loses the middle of real output.
-    const events = await runTurn(fixtureManifest('split'));
-    expect(events).toContainEqual({ type: 'text', text: 'chunked across writes' });
-  });
+  it('reads a record that arrived in pieces', async () =>
+    cliScenario('chunked-framing', async () => {
+      // The pipe hands over whatever was buffered. Treating a chunk as a line
+      // works on every short test and loses the middle of real output.
+      const events = await runTurn(fixtureManifest('split'));
+      expect(events).toContainEqual({ type: 'text', text: 'chunked across writes' });
+    }));
 
-  it('ignores the things a CLI prints that are not its protocol', async () => {
-    // An npm notice is not a failed turn.
-    const events = await runTurn(fixtureManifest('noise'));
-    expect(events).toContainEqual({ type: 'text', text: 'hello' });
-    expect(events.at(-1)).toEqual({ type: 'stopped', stop: { kind: 'end_turn' } });
-  });
+  it('ignores the things a CLI prints that are not its protocol', async () =>
+    cliScenario('non-protocol-output', async () => {
+      // An npm notice is not a failed turn.
+      const events = await runTurn(fixtureManifest('noise'));
+      expect(events).toContainEqual({ type: 'text', text: 'hello' });
+      expect(events.at(-1)).toEqual({ type: 'stopped', stop: { kind: 'end_turn' } });
+    }));
 
-  it('calls a truncated run a transport failure, not a success', async () => {
-    const events = await runTurn(fixtureManifest('crash'));
-    // It said something and then died. Reporting `end_turn` would mean the
-    // session moves on believing the work was finished.
-    expect(events).toContainEqual({ type: 'text', text: 'got partway' });
-    expect(events.at(-1)).toEqual({ type: 'stopped', stop: { kind: 'transport' } });
-  });
+  it('calls a truncated run a transport failure, not a success', async () =>
+    cliScenario('truncated-run', async () => {
+      const events = await runTurn(fixtureManifest('crash'));
+      // It said something and then died. Reporting `end_turn` would mean the
+      // session moves on believing the work was finished.
+      expect(events).toContainEqual({ type: 'text', text: 'got partway' });
+      expect(events.at(-1)).toEqual({ type: 'stopped', stop: { kind: 'transport' } });
+    }));
 
-  it('does not retry a CLI that is not installed', async () => {
-    const events = await runTurn(fixtureManifest('missing'));
-    const last = events.at(-1);
-    // `transport` is retryable, so mapping this there would spend the whole
-    // attempt budget on a binary that will never appear.
-    expect(last).toMatchObject({ type: 'stopped', stop: { kind: 'misconfigured' } });
-  });
+  it('does not retry a CLI that is not installed', async () =>
+    cliScenario('missing-binary', async () => {
+      const events = await runTurn(fixtureManifest('missing'));
+      const last = events.at(-1);
+      // `transport` is retryable, so mapping this there would spend the whole
+      // attempt budget on a binary that will never appear.
+      expect(last).toMatchObject({ type: 'stopped', stop: { kind: 'misconfigured' } });
+    }));
 });
 
 describe('deny, ask, grant, resume', () => {
-  it('asks about a call the CLI refused and finishes the turn in a second process', async () => {
-    const ctx = context();
-    const events = await runTurn(fixtureManifest('deny-once'), ctx);
+  it('asks about a call the CLI refused and finishes the turn in a second process', async () =>
+    cliScenario('denial-then-grant', async () => {
+      const ctx = context();
+      const events = await runTurn(fixtureManifest('deny-once'), ctx);
 
-    // The gate was consulted about a call that did not run.
-    expect(ctx.asked).toEqual([{ tool: 'Read', args: { file_path: 'a.ts' } }]);
-    // A second process really started, carrying the session forward.
-    expect(events).toContainEqual({ type: 'text', text: 'resumed' });
-    // And the tool succeeded there, which only happens if the grant reached the
-    // new process's allowlist.
-    expect(events.filter((e) => e.type === 'tool_result').at(-1)).toMatchObject({ ok: true });
-    // One turn, one stop — however many processes it took.
-    expect(events.filter((e) => e.type === 'stopped')).toHaveLength(1);
-    expect(events.at(-1)).toEqual({ type: 'stopped', stop: { kind: 'end_turn' } });
-  });
+      // The gate was consulted about a call that did not run.
+      expect(ctx.asked).toEqual([{ tool: 'Read', args: { file_path: 'a.ts' } }]);
+      // A second process really started, carrying the session forward.
+      expect(events).toContainEqual({ type: 'text', text: 'resumed' });
+      // And the tool succeeded there, which only happens if the grant reached
+      // the new process's allowlist.
+      expect(events.filter((e) => e.type === 'tool_result').at(-1)).toMatchObject({ ok: true });
+      // One turn, one stop — however many processes it took.
+      expect(events.filter((e) => e.type === 'stopped')).toHaveLength(1);
+      expect(events.at(-1)).toEqual({ type: 'stopped', stop: { kind: 'end_turn' } });
+    }));
 
   it('stops at the denial when the user says no', async () => {
     const ctx = context(() => ({ result: 'deny', reason: 'not that file' }));

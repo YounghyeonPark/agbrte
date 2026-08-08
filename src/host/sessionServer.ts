@@ -27,9 +27,12 @@
 
 import {
   AccessDenied,
+  newAgentId,
   type AccessRole,
   type Actor,
   type AgentId,
+  type AgentSpec,
+  type RuntimeCapabilities,
   type SessionId,
 } from '@shared/types/index.js';
 import {
@@ -263,6 +266,9 @@ export class SessionHostServer {
           );
         }
 
+        case 'runtime.capabilities':
+          return probeCapabilities(manager, this.opts.identity, command.runtimeId);
+
         case 'permission.pending':
           return manager.pendingPermissions();
 
@@ -353,5 +359,56 @@ export class SessionHostServer {
   /** Test and diagnostic view. */
   get clientCount(): number {
     return this.clients.size;
+  }
+}
+
+/**
+ * Ask a runtime what it declares, with no session to ask through.
+ *
+ * `capabilities(spec)` takes a spec because capabilities belong to
+ * adapter + model + installed version rather than to the adapter alone (§3.2),
+ * so one has to be invented: an empty policy, no limits, this workspace.
+ *
+ * **A runtime that needs a model is not probed at all**, which is the whole
+ * subtlety here. `AgbrteHarness` answers by *making real requests* — §3.3 is
+ * explicit that these endpoints' self-reports cannot be trusted — so a probe
+ * carrying a placeholder model id is not a cheap metadata read. The first
+ * version invented one, and every host attach then fired a live request at a
+ * model that does not exist, behind a two-minute timeout: the end-to-end suite
+ * went from one minute to nine and a permission test timed out waiting. It was
+ * also the wrong question, since the answer belongs to whichever model the user
+ * is about to choose and not to a name we made up.
+ *
+ * So it returns `null` and the matrix says the adapter could not be asked, which
+ * is exactly true: nothing can be declared about a model nobody has picked yet.
+ *
+ * **`null` rather than an error on every other failure too.** A CLI uninstalled
+ * since the host started, a probe that throws: not reasons to fail the caller. A
+ * table that refuses to render because one adapter is unreachable is less useful
+ * than one with a gap in it.
+ */
+async function probeCapabilities(
+  manager: SessionManager,
+  identity: Omit<HostIdentity, 'protocol' | 'pid'>,
+  runtimeId: string,
+): Promise<RuntimeCapabilities | null> {
+  const registry = manager.registry;
+  if (!registry.has(runtimeId)) return null;
+  if (registry.describe(runtimeId).requiresModel) return null;
+
+  const spec: AgentSpec = {
+    agentId: newAgentId(),
+    role: 'worker',
+    runtimeId,
+    auth: { kind: 'none' },
+    toolPolicy: { rules: [], defaultAction: 'ask' },
+    limits: {},
+    workspacePath: identity.workspaceRoot,
+  };
+
+  try {
+    return await registry.resolveCapabilities(spec);
+  } catch {
+    return null;
   }
 }

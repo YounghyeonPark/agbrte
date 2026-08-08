@@ -178,6 +178,17 @@ export class SessionManager extends EventEmitter {
 
   private readonly sweeper: NodeJS.Timeout;
 
+  /**
+   * The runtimes this manager can admit.
+   *
+   * Exposed because the host answers "what can this adapter do here" without a
+   * session existing to ask it through, and reaching into `deps` from the server
+   * would make the registry a shared mutable it does not own.
+   */
+  get registry(): RuntimeRegistry {
+    return this.deps.registry;
+  }
+
   constructor(private readonly deps: SessionManagerDeps) {
     super();
     this.now = deps.now ?? (() => new Date());

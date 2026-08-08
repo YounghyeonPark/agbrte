@@ -110,6 +110,14 @@ export type SessionCommand =
   | { t: 'session.events'; id: RequestId; sessionId: string; fromSeq: number }
   | { t: 'session.projection'; id: RequestId; sessionId: string }
   | { t: 'session.queueDepth'; id: RequestId; sessionId: string }
+  /**
+   * What one runtime declares it can do, on this host.
+   *
+   * Asked without a session, because §3.13's matrix is consulted *before*
+   * choosing a runtime — and capabilities belong to adapter + model + installed
+   * version, so only the machine that has the adapter can answer (§3.2).
+   */
+  | { t: 'runtime.capabilities'; id: RequestId; runtimeId: string }
   | { t: 'permission.pending'; id: RequestId }
   | { t: 'permission.respond'; id: RequestId; requestId: string; decision: PermissionDecision }
   /**

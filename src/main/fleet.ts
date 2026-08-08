@@ -39,6 +39,7 @@ import type {
   AgbrteEvent,
   PermissionDecision,
   PermissionRequest,
+  RuntimeCapabilities,
   Session,
   SessionId,
   SessionProjection,
@@ -446,6 +447,27 @@ export class Fleet extends EventEmitter {
 
   hosts(): AttachedHost[] {
     return [...this.entries.values()].map(snapshot);
+  }
+
+  /**
+   * What one runtime on one host declares it can do.
+   *
+   * Per host, not per runtime id, because the same adapter answers differently
+   * on different machines — a CLI at a different version, an endpoint that is up
+   * here and down there. Asking the host is the only way to get the answer for
+   * *that* machine (§3.2).
+   *
+   *  when it could not be asked, which the matrix renders as a gap rather
+   * than as an absence of capability.
+   */
+  async capabilitiesOn(instanceId: InstanceId, runtimeId: string): Promise<RuntimeCapabilities | null> {
+    const entry = this.entries.get(instanceId);
+    if (!entry) return null;
+    try {
+      return await entry.connection.capabilities(runtimeId);
+    } catch {
+      return null;
+    }
   }
 
   runtimesOn(instanceId: InstanceId): FleetRuntime[] {

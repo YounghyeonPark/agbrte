@@ -27,12 +27,13 @@
 import { useEffect, useMemo, useState, type JSX } from 'react';
 import { AttachHost } from './AttachHost.js';
 import { Dashboard } from './Dashboard.js';
+import { SupportMatrix } from './SupportMatrix.js';
 import { StartGuide } from './StartGuide.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import { useAgbrte } from './store.js';
 import { Composer, EventRow, PermissionPrompt, Transcript, summarize } from './Transcript.js';
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
-import type { Session, SessionState } from '../shared/types/index.js';
+import type { MatrixCell, Session, SessionState } from '../shared/types/index.js';
 
 /** Session-state colour, by what the state *means* (§4.1). */
 export function stateTone(state: SessionState): string {
@@ -75,7 +76,7 @@ export function App(): JSX.Element {
    * something worth seeing.
    */
   const [pane, setPane] = useState<'main' | 'hosts'>('main');
-  const { hosts, runtimesByHost, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
+  const { hosts, runtimesByHost, conformanceByHost, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
     store;
 
   useEffect(() => {
@@ -101,6 +102,7 @@ export function App(): JSX.Element {
   }, []);
 
   const runtimesHere = active === null ? [] : (runtimesByHost[active.instanceId] ?? []);
+  const conformanceHere = active === null ? [] : (conformanceByHost[active.instanceId] ?? []);
 
   return (
     /*
@@ -263,6 +265,7 @@ export function App(): JSX.Element {
             {active.agents.length === 0 ? (
               <AgentPicker
                 runtimes={runtimesHere}
+                conformance={conformanceHere}
                 endpoints={hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []}
                 onAdd={store.addAgent}
                 busy={busy}
@@ -502,11 +505,14 @@ function SessionHeader({
 
 function AgentPicker({
   runtimes,
+  conformance,
   endpoints,
   onAdd,
   busy,
 }: {
   runtimes: RuntimeInfo[];
+  /** The support matrix for this host, so the choice is informed (§3.13). */
+  conformance: MatrixCell[];
   endpoints: HostInfo['endpoints'];
   onAdd: (runtimeId: string, modelId: string | null, endpointId?: string) => Promise<void>;
   busy: boolean;
@@ -543,6 +549,11 @@ function AgentPicker({
               options={runtimes.map((r) => ({ value: r.id, label: `${r.id} (${r.version})` }))}
             />
           </label>
+
+          {/* §3.13: choosing a runtime shows what it can actually do here. Beside
+              the picker rather than on a settings page, because this is the one
+              moment the answer changes a decision. */}
+          <SupportMatrix cells={conformance} runtimeId={runtimeId} />
 
           {/* Only when the runtime is AgbrteHarness. A wrapped harness brings its
               own model, and offering a field it ignores invites a silent no-op. */}

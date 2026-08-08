@@ -123,6 +123,9 @@ async function main(): Promise<number> {
     const ipc = registerIpc({
       fleet,
       runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false }],
+      // No report in a smoke run, so the matrix degrades to declared/not-run --
+      // which is precisely what it should say when nothing has been run.
+      loadConformance: async () => null,
     });
 
     const host = await fleet.attach({ target: { kind: 'local' }, workspaceRoot: root });

@@ -653,6 +653,27 @@ Downgrade is a declared pipeline driven by capabilities, not scattered condition
 | uninstalled binary is not retried | ✔ CLI adapter | `misconfigured`, not `transport` — retrying cannot install a CLI |
 | two parallel calls · tool error recovered · nested schema after degradation · image input · 200-message context with compaction · interrupt mid-stream · refusal · rate-limit backoff · **quota exhaustion and scheduled resume** · context-overflow recovery · malformed args repaired · cost/usage accuracy | ✘ not yet run | Phase 3 (§15), and most need real endpoints or the schema degrader, neither of which exists |
 
+**Built.** The matrix ships, beside the runtime picker — the moment the question is actually being asked — showing the column for the runtime about to be chosen rather than the whole grid, because a 24-row table across five runtimes is a document and what is needed there is an answer.
+
+Six cell states, because three were not enough to stay honest:
+
+| State | Means | Why it is its own state |
+|---|---|---|
+| `verified` | a scenario ran and passed | carries its `evidence`: scripted fixture, in-process, real subprocess, live endpoint |
+| `failed` | a scenario ran and failed | louder than an absence, deliberately |
+| `stale` | a result exists, for a **different build** of this adapter | a report records one moment; an adapter edited since has not been checked, however green the file |
+| `declared` | the adapter claims it; nothing has checked | the state this whole section exists to keep separate from `verified` |
+| `unsupported` | the adapter says it cannot | an answer, not a gap — showing it as a hole makes an honest declaration look like missing work |
+| `not-run` | no scenario, or the adapter could not be asked | the gaps, which are the point |
+
+**The catalogue carries scenarios nobody has written.** A matrix built only from tests that exist shows a wall of green and answers the wrong question. Carrying the whole intended set — including everything in the "not yet run" row above — shows how much of it is actually covered, which is what someone choosing a runtime is really asking.
+
+**Coverage counts only `verified`.** Counting declarations would make the runtime that claims everything and proves nothing the best-covered one on the screen.
+
+**The tests write the report.** Each producer writes its own fragment under `conformance/`, because vitest runs test files in separate workers and one shared collector would keep only the last writer's rows. A fragment is replaced rather than merged, so a scenario deleted from the suite disappears from the matrix instead of leaving its last green cell up forever. Evidence is passed per assertion, not per suite: the same adapter proves one scenario against a real subprocess and another against a scripted response, and averaging those into one colour is the collapse this section forbids.
+
+**A runtime that needs a model is not probed, and this cost an evening.** Asking an adapter what it declares needs a spec, so the host invents one — and the first version invented a placeholder *model id* too, so that `AgbrteHarness` could be asked. But that adapter answers by making **real requests** (§3.3: these endpoints' self-reports cannot be trusted), so every host attach fired a live call at a model that does not exist, behind a two-minute timeout. The end-to-end suite went from one minute to nine and a permission test timed out waiting. It was also the wrong question: the answer belongs to whichever model the user is about to choose. It now returns nothing and the matrix says the adapter could not be asked, which is exactly true.
+
 Results publish as a **support matrix in the app**, so choosing a runtime shows what it can actually do here. An adapter that can't pass a scenario declares the capability `false` and the orchestrator routes around it — a configuration fact, not a runtime surprise. The matrix must distinguish *verified*, *declared*, and *not run*: a green cell earned by a scripted fixture is not the same claim as one earned against a live endpoint, and collapsing them would reintroduce exactly the confidence this table exists to remove.
 
 ---
@@ -1685,7 +1706,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 1 | Skeleton | 1st | **done**, verified end to end |
 | 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built |
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
-| 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` landed; a second real provider and the UI matrix remain |
+| 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | dashboard, Needs-you rail, stall detection, parking, notifications done; QuotaScheduler remains |
 | 6 | Multi-agent + hierarchy | 6th | not started |
 | 7 | Multimodal | 7th | not started |
@@ -1695,7 +1716,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 
 Building Phases 2, 3, and 4 against a local-only assumption invites rework, because each of them touches state that a server-authoritative topology relocates: relocation resolution becomes a question about the server's filesystem, quota scheduling spans clients, and the dashboard reads a mirror rather than a local log. Second, **device independence is a headline requirement and Phase 5 is where it lives** — the log already being the source of truth means a second device is a new windowed projection rather than a sync protocol, but only once the log is authoritative somewhere central. Third, computer use and multimodal both get materially safer afterwards: an agent driving a virtual display on an expendable server is a bounded blast radius, which is the only honest answer to `click(x, y)` being outside what §13 can gate.
 
-**This does not contradict Phase 3's "deliberately early" argument**, which is worth being precise about because it reads like it should. That argument is that an abstraction validated against one implementation is not validated, and it has already been satisfied: four runtimes run the contract suite — `echo`, the Claude SDK adapter, `AgbrteHarness` over a raw provider, and the same adapter reached through the agent-host protocol. What remains in Phase 3 is *breadth* — a second real provider and the conformance matrix in the UI — not validation. The installed-CLI branch has since landed, which is the piece of that breadth that needed no credentials to be real. Breadth can follow the substrate; validation could not.
+**This does not contradict Phase 3's "deliberately early" argument**, which is worth being precise about because it reads like it should. That argument is that an abstraction validated against one implementation is not validated, and it has already been satisfied: four runtimes run the contract suite — `echo`, the Claude SDK adapter, `AgbrteHarness` over a raw provider, and the same adapter reached through the agent-host protocol. What remains in Phase 3 is *breadth* — a second real provider — not validation. The installed-CLI branch and the support matrix have since landed; both are the pieces of that breadth that needed no credentials to be real. Breadth can follow the substrate; validation could not.
 
 **Not in any phase: computer use / GUI control.** §12 is capture as *input* — you show the agent something, or the host screenshots a URL the agent serves. Nothing actuates a mouse or keyboard, and that is a scope decision rather than an omission. Three things must land before it is even expressible: tool results must carry content blocks instead of a `string` (a screenshot cannot be returned today), the tool model needs a notion of a provider-defined built-in tool that we do not author a schema for, and a frame must carry its coordinate space so downscaling cannot silently misplace every click. All three are in §16.
 

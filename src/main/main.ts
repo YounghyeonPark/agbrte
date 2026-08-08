@@ -14,6 +14,7 @@
  * designed behaviour; the single-workspace shape this replaced was a limitation.
  */
 
+import { loadReport } from './conformance.js';
 import { app, BrowserWindow, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { delimiter, dirname, join } from 'node:path';
@@ -165,7 +166,12 @@ app.whenReady().then(async () => {
       .catch(() => undefined);
   });
 
-  ipc = registerIpc({ fleet, runtimes: HOST_RUNTIMES });
+  ipc = registerIpc({
+    fleet,
+    runtimes: HOST_RUNTIMES,
+    // Beside the app, so a build ships the report that describes that build.
+    loadConformance: () => loadReport(join(app.getAppPath(), 'conformance')),
+  });
 
   for (const root of roots) {
     try {

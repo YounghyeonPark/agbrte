@@ -40,6 +40,8 @@ import type {
   SessionId,
 } from '@shared/types/index.js';
 import { basename } from 'node:path';
+import { buildMatrix } from '@main/conformance.js';
+import type { ConformanceReport, MatrixCell } from '@shared/types/index.js';
 import { readSshHosts } from '../host/sshConfig.js';
 import type { AttachedHost, Fleet, FleetRuntime } from '../fleet.js';
 import { EventBridge } from './eventBridge.js';
@@ -48,6 +50,15 @@ export interface IpcDeps {
   fleet: Fleet;
   /** Runtime metadata, for describing what a host offers. */
   runtimes: FleetRuntime[];
+  /**
+   * The conformance report that shipped with this build (§3.13).
+   *
+   * A function rather than a value so a rebuilt report is picked up without a
+   * restart, and injectable so a test does not need one on disk. Returning
+   * `null` is ordinary: it means nothing has been run here, which the matrix
+   * renders honestly rather than treating as an error.
+   */
+  loadConformance: () => Promise<ConformanceReport | null>;
   /** How a push reaches clients. Electron sends to windows; the web sends to a socket. */
   broadcast: (channel: string, payload: unknown) => void;
   /**
@@ -213,6 +224,24 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
       requiresModel: r.requiresModel,
     })),
   );
+
+  handle(CH.hostsConformance, async (instanceId: string): Promise<MatrixCell[]> => {
+    const offered = fleet.runtimesOn(instanceId as InstanceId);
+    const runtimes = await Promise.all(
+      offered.map(async (r) => {
+        // Asked per runtime and allowed to come back empty. A host whose model
+        // endpoint is down still has a matrix worth reading; it just cannot say
+        // what its harness declares.
+        const caps = await fleet.capabilitiesOn(instanceId as InstanceId, r.id);
+        return {
+          runtimeId: r.id,
+          adapterVersion: r.version,
+          ...(caps !== null ? { capabilities: caps } : {}),
+        };
+      }),
+    );
+    return buildMatrix(runtimes, await deps.loadConformance());
+  });
 
   handle(CH.sessionsList, () => fleet.list());
 

@@ -1,0 +1,250 @@
+{
+  "ranAt": "2026-08-08T14:22:24.043Z",
+  "results": [
+    {
+      "runtimeId": "echo",
+      "scenarioId": "stream-before-send",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "echo",
+      "scenarioId": "explicit-stop",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "echo",
+      "scenarioId": "usage-reported",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "echo",
+      "scenarioId": "stream-once",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "echo",
+      "scenarioId": "gate-before-execute",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "echo",
+      "scenarioId": "resume-token-consistent",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "echo",
+      "scenarioId": "capabilities-per-spec",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "claude-agent-sdk",
+      "scenarioId": "stream-before-send",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "claude-agent-sdk",
+      "scenarioId": "explicit-stop",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "claude-agent-sdk",
+      "scenarioId": "usage-reported",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "claude-agent-sdk",
+      "scenarioId": "stream-once",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "claude-agent-sdk",
+      "scenarioId": "gate-before-execute",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "claude-agent-sdk",
+      "scenarioId": "resume-token-consistent",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "claude-agent-sdk",
+      "scenarioId": "capabilities-per-spec",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "agbrte-harness",
+      "scenarioId": "stream-before-send",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "agbrte-harness",
+      "scenarioId": "explicit-stop",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "agbrte-harness",
+      "scenarioId": "usage-reported",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "agbrte-harness",
+      "scenarioId": "stream-once",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "agbrte-harness",
+      "scenarioId": "gate-before-execute",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "agbrte-harness",
+      "scenarioId": "resume-token-consistent",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "agbrte-harness",
+      "scenarioId": "capabilities-per-spec",
+      "adapterVersion": "0.0.1",
+      "evidence": "scripted-fixture",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "stream-before-send",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "explicit-stop",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "usage-reported",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "stream-once",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "gate-before-execute",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "resume-token-consistent",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "capabilities-per-spec",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "agent-host",
+      "scenarioId": "stream-before-send",
+      "adapterVersion": "0.0.1",
+      "evidence": "in-process",
+      "ok": true
+    },
+    {
+      "runtimeId": "agent-host",
+      "scenarioId": "explicit-stop",
+      "adapterVersion": "0.0.1",
+      "evidence": "in-process",
+      "ok": true
+    },
+    {
+      "runtimeId": "agent-host",
+      "scenarioId": "usage-reported",
+      "adapterVersion": "0.0.1",
+      "evidence": "in-process",
+      "ok": true
+    },
+    {
+      "runtimeId": "agent-host",
+      "scenarioId": "stream-once",
+      "adapterVersion": "0.0.1",
+      "evidence": "in-process",
+      "ok": true
+    },
+    {
+      "runtimeId": "agent-host",
+      "scenarioId": "gate-before-execute",
+      "adapterVersion": "0.0.1",
+      "evidence": "in-process",
+      "ok": true
+    },
+    {
+      "runtimeId": "agent-host",
+      "scenarioId": "resume-token-consistent",
+      "adapterVersion": "0.0.1",
+      "evidence": "in-process",
+      "ok": true
+    },
+    {
+      "runtimeId": "agent-host",
+      "scenarioId": "capabilities-per-spec",
+      "adapterVersion": "0.0.1",
+      "evidence": "in-process",
+      "ok": true
+    }
+  ]
+}

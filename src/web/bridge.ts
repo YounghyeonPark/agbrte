@@ -115,6 +115,7 @@ const api: AgbrteApi = {
     remove: call(CH.hostsRemove),
     shutdown: call(CH.hostsShutdown),
     runtimes: call(CH.hostsRuntimes),
+    conformance: call(CH.hostsConformance),
   },
   sessions: {
     list: call(CH.sessionsList),

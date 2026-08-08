@@ -26,6 +26,7 @@
  * the previous single-workspace shape was the limitation.
  */
 
+import type { MatrixCell } from '../types/index.js';
 import type {
   AgentRecord,
   AgentRole,
@@ -192,6 +193,14 @@ export interface AgbrteApi {
     shutdown(instanceId: string): Promise<{ stopped: boolean; reason?: string }>;
     /** Runtimes offered by one host — they need not be the same everywhere. */
     runtimes(instanceId: string): Promise<RuntimeInfo[]>;
+    /**
+     * The support matrix for this host's runtimes (§3.13).
+     *
+     * Per host for the same reason `runtimes` is: the same adapter answers
+     * differently on different machines, and the question the matrix exists to
+     * answer is "what can this do *here*".
+     */
+    conformance(instanceId: string): Promise<MatrixCell[]>;
   };
   sessions: {
     list(): Promise<Session[]>;
@@ -259,6 +268,7 @@ export const CH = {
   hostsRemove: 'agbrte:hosts.remove',
   hostsShutdown: 'agbrte:hosts.shutdown',
   hostsRuntimes: 'agbrte:hosts.runtimes',
+  hostsConformance: 'agbrte:hosts.conformance',
   hostsSsh: 'agbrte:hosts.ssh',
   hostsAddRemote: 'agbrte:hosts.addRemote',
   sessionsList: 'agbrte:sessions.list',

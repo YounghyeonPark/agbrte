@@ -23,7 +23,7 @@ import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
-import type { InstanceId, SessionId } from '@shared/types/index.js';
+import type { AgentSpec, InstanceId, SessionId } from '@shared/types/index.js';
 
 let root: string;
 let instanceId: InstanceId;
@@ -174,6 +174,64 @@ describe('the host owns the session', () => {
     // With several clients the backlog may not be yours, so it has to be pushed
     // rather than inferred from your own sends.
     expect(depths.length).toBeGreaterThan(0);
+  });
+});
+
+describe('asking a runtime what it declares', () => {
+  it('answers without a session, because the answer informs the choice', async () => {
+    const c = rig().connect();
+    await expect(c.capabilities('echo')).resolves.toMatchObject({ permissionFidelity: 'callback' });
+  });
+
+  it('says nothing about a runtime it does not have', async () => {
+    const c = rig().connect();
+    // Null, not a throw: a matrix must not fail to render because this host does
+    // not offer something another host does.
+    await expect(c.capabilities('not-here')).resolves.toBeNull();
+  });
+
+  it('never probes a runtime that needs a model', async () => {
+    /**
+     * The regression this exists for.
+     *
+     * `AgbrteHarness` answers `capabilities()` by making **real requests** —
+     * §3.3 is explicit that these endpoints' self-reports cannot be trusted. The
+     * first version of this probe invented a placeholder model id so it could
+     * ask anyway, and every host attach then fired a live request at a model
+     * that does not exist, behind a two-minute timeout: the end-to-end suite
+     * went from one minute to nine and a permission test timed out waiting.
+     *
+     * The answer belongs to whichever model the user is about to choose, so
+     * before they have chosen there is nothing truthful to say.
+     */
+    let asked = 0;
+    class Counting extends EchoRuntime {
+      override async capabilities(s: AgentSpec): ReturnType<EchoRuntime['capabilities']> {
+        asked += 1;
+        return super.capabilities(s);
+      }
+    }
+    const registry = new RuntimeRegistry();
+    registry.register(new Counting({ id: 'needs-model' }), {
+      label: 'Harness',
+      requiresModel: true,
+    });
+    const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
+    const server = new SessionHostServer({
+      manager,
+      identity: {
+        instanceId,
+        lineageId: lineageId as never,
+        workspaceRoot: root,
+        runtimes: ['needs-model'],
+      },
+    });
+    const pair = memoryChannelPair<SessionCommand, SessionMessage>();
+    server.accept(pair.host);
+
+    const c = new HostConnection({ channel: pair.main });
+    await expect(c.capabilities('needs-model')).resolves.toBeNull();
+    expect(asked).toBe(0);
   });
 });
 

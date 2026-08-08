@@ -38,6 +38,8 @@ import {
   type ToolPolicy,
 } from '@shared/types/index.js';
 import type { Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { recorderFor, scenario } from './support/conformance.js';
+import type { Evidence } from '@shared/types/index.js';
 
 const POLICY: ToolPolicy = { rules: [], defaultAction: 'ask' };
 
@@ -232,6 +234,21 @@ function fixtureCliManifest(mode: string): CliAgentManifest {
 
 interface Candidate {
   name: string;
+  /**
+   * The id this adapter carries in a real registry, so a recorded result lines
+   * up with the runtime the app is actually holding. Not the display name: the
+   * matrix joins on ids, and a mismatch there silently produces a column of
+   * `not-run` beside a suite that passed.
+   */
+  runtimeId: string;
+  /**
+   * What is on the other end when this candidate passes.
+   *
+   * §3.13: "a green cell earned by a scripted fixture is not the same claim as
+   * one earned against a live endpoint". Recorded per candidate because that is
+   * the level at which it actually differs.
+   */
+  evidence: Evidence;
   /** A runtime whose turn yields text, then usage, then a clean end_turn. */
   make: () => AgentRuntime;
   /** A runtime that performs one gated tool call before finishing. */
@@ -244,6 +261,8 @@ interface Candidate {
 const CANDIDATES: Candidate[] = [
   {
     name: 'echo',
+    runtimeId: 'echo',
+    evidence: 'scripted-fixture',
     make: () =>
       new EchoRuntime({
         script: [
@@ -263,6 +282,8 @@ const CANDIDATES: Candidate[] = [
   },
   {
     name: 'claude-agent-sdk',
+    runtimeId: 'claude-agent-sdk',
+    evidence: 'scripted-fixture',
     make: () =>
       new ClaudeAgentSdkRuntime({
         queryFn: fakeQuery([assistantText('hello'), resultSuccess()]),
@@ -280,6 +301,8 @@ const CANDIDATES: Candidate[] = [
     // The provider branch: our own loop over a raw endpoint (§3.7). Included
     // here because a contract validated against one branch is not validated.
     name: 'agbrte-harness',
+    runtimeId: 'agbrte-harness',
+    evidence: 'scripted-fixture',
     make: () =>
       new AgbrteHarnessRuntime({
         provider: stubProvider([{ content: [{ type: 'text', text: 'hello' }] }]),
@@ -311,6 +334,10 @@ const CANDIDATES: Candidate[] = [
      * differently.
      */
     name: 'agent-cli-stdio (a real subprocess)',
+    runtimeId: 'cli:claude-code',
+    // A real OS process over real pipes — the strongest evidence available
+    // without a vendor binary installed.
+    evidence: 'real-subprocess',
     make: () => new CliStdioRuntime({ manifest: fixtureCliManifest('plain') }),
     makeGated: () => new CliStdioRuntime({ manifest: fixtureCliManifest('deny-once') }),
     // The CLI prints a session id, which is a cache and never truth (§5.4).
@@ -331,6 +358,11 @@ const CANDIDATES: Candidate[] = [
      * not a faithful `AgentRuntime`, it fails here rather than in the app.
      */
     name: 'agent-host (echo over the control protocol)',
+    // Not a runtime any host offers, so it earns no column. Recorded anyway: the
+    // rows are what would prove a regression in the transport, and dropping them
+    // because nothing displays them is how a suite quietly stops being read.
+    runtimeId: 'agent-host',
+    evidence: 'in-process',
     make: () =>
       hostBacked(
         new EchoRuntime({
@@ -354,79 +386,120 @@ const CANDIDATES: Candidate[] = [
   },
 ];
 
+const recorder = recorderFor('runtime-contract');
+
+/**
+ * Run one contract scenario and record what it proved.
+ *
+ * The version comes off the live adapter rather than a constant, because the
+ * matrix uses it to tell a verified cell from a stale one: a result stamped with
+ * a version nobody is running is not evidence about the adapter in the app.
+ */
+function contract(
+  candidate: Candidate,
+  runtime: AgentRuntime,
+  scenarioId: string,
+  body: () => Promise<void>,
+): Promise<void> {
+  return scenario(
+    recorder,
+    {
+      runtimeId: candidate.runtimeId,
+      scenarioId,
+      adapterVersion: runtime.version,
+      evidence: candidate.evidence,
+    },
+    body,
+  );
+}
+
 for (const candidate of CANDIDATES) {
   describe(`runtime contract: ${candidate.name}`, () => {
     it('delivers events when subscribed BEFORE the first send', async () => {
       // The host is stream-first, so this is the only ordering that matters —
       // and the ordering that a lazily-created stream silently fails.
       const runtime = candidate.make();
-      const handle = await runtime.start(spec(candidate.specOverride), context());
+      await contract(candidate, runtime, 'stream-before-send', async () => {
+        const handle = await runtime.start(spec(candidate.specOverride), context());
 
-      const drained = drain(handle.events); // subscribe first
-      await handle.send({ content: [{ type: 'text', text: 'hi' }] });
-      const events = await drained;
+        const drained = drain(handle.events); // subscribe first
+        await handle.send({ content: [{ type: 'text', text: 'hi' }] });
+        const events = await drained;
 
-      expect(events.length).toBeGreaterThan(0);
-      expect(events.some((e) => e.type === 'text')).toBe(true);
+        expect(events.length).toBeGreaterThan(0);
+        expect(events.some((e) => e.type === 'text')).toBe(true);
+      });
     });
 
     it('ends the turn with an explicit stop, not an implicit failure', async () => {
       const runtime = candidate.make();
-      const handle = await runtime.start(spec(candidate.specOverride), context());
-      const drained = drain(handle.events);
-      await handle.send({ content: [{ type: 'text', text: 'hi' }] });
+      await contract(candidate, runtime, 'explicit-stop', async () => {
+        const handle = await runtime.start(spec(candidate.specOverride), context());
+        const drained = drain(handle.events);
+        await handle.send({ content: [{ type: 'text', text: 'hi' }] });
 
-      const last = (await drained).at(-1);
-      expect(last).toEqual({ type: 'stopped', stop: { kind: 'end_turn' } });
+        const last = (await drained).at(-1);
+        expect(last).toEqual({ type: 'stopped', stop: { kind: 'end_turn' } });
+      });
     });
 
     it('reports usage for the turn', async () => {
       const runtime = candidate.make();
-      const handle = await runtime.start(spec(candidate.specOverride), context());
-      const drained = drain(handle.events);
-      await handle.send({ content: [{ type: 'text', text: 'hi' }] });
+      await contract(candidate, runtime, 'usage-reported', async () => {
+        const handle = await runtime.start(spec(candidate.specOverride), context());
+        const drained = drain(handle.events);
+        await handle.send({ content: [{ type: 'text', text: 'hi' }] });
 
-      const usage = (await drained).find((e) => e.type === 'usage');
-      expect(usage).toMatchObject({ type: 'usage', inputTokens: 12, outputTokens: 7 });
+        const usage = (await drained).find((e) => e.type === 'usage');
+        expect(usage).toMatchObject({ type: 'usage', inputTokens: 12, outputTokens: 7 });
+      });
     });
 
     it('returns the same stream on repeated access', async () => {
       const runtime = candidate.make();
-      const handle = await runtime.start(spec(candidate.specOverride), context());
-      // A second consumer would race the first for events.
-      expect(handle.events).toBe(handle.events);
+      await contract(candidate, runtime, 'stream-once', async () => {
+        const handle = await runtime.start(spec(candidate.specOverride), context());
+        // A second consumer would race the first for events.
+        expect(handle.events).toBe(handle.events);
+      });
     });
 
     it('routes a tool call through the permission gate before executing', async () => {
       const runtime = candidate.makeGated();
-      const ctx = context();
-      const handle = await runtime.start(spec(candidate.specOverride), ctx);
-      const drained = drain(handle.events);
-      await handle.send({ content: [{ type: 'text', text: 'go' }] });
-      await drained;
+      await contract(candidate, runtime, 'gate-before-execute', async () => {
+        const ctx = context();
+        const handle = await runtime.start(spec(candidate.specOverride), ctx);
+        const drained = drain(handle.events);
+        await handle.send({ content: [{ type: 'text', text: 'go' }] });
+        await drained;
 
-      expect(ctx.asked.map((t) => t.toLowerCase())).toContain('read');
+        expect(ctx.asked.map((t) => t.toLowerCase())).toContain('read');
+      });
     });
 
     it('reports a resume token consistent with its declared capability', async () => {
       const runtime = candidate.make();
-      const caps = await runtime.capabilities(spec(candidate.specOverride));
-      const handle = await runtime.start(spec(candidate.specOverride), context());
-      const drained = drain(handle.events);
-      await handle.send({ content: [{ type: 'text', text: 'hi' }] });
-      await drained;
+      await contract(candidate, runtime, 'resume-token-consistent', async () => {
+        const caps = await runtime.capabilities(spec(candidate.specOverride));
+        const handle = await runtime.start(spec(candidate.specOverride), context());
+        const drained = drain(handle.events);
+        await handle.send({ content: [{ type: 'text', text: 'hi' }] });
+        await drained;
 
-      const token = handle.resumeToken();
-      expect(token).toBe(candidate.expectsResumeToken);
-      // An adapter must not claim native resume and then supply nothing.
-      if (caps.nativeResume) expect(token).not.toBeNull();
+        const token = handle.resumeToken();
+        expect(token).toBe(candidate.expectsResumeToken);
+        // An adapter must not claim native resume and then supply nothing.
+        if (caps.nativeResume) expect(token).not.toBeNull();
+      });
     });
 
     it('declares capabilities as a function of the spec', async () => {
       const runtime = candidate.make();
-      await expect(runtime.capabilities(spec(candidate.specOverride))).resolves.toMatchObject({
-        permissionFidelity: expect.any(String) as unknown as string,
-        contextWindow: expect.any(Number) as unknown as number,
+      await contract(candidate, runtime, 'capabilities-per-spec', async () => {
+        await expect(runtime.capabilities(spec(candidate.specOverride))).resolves.toMatchObject({
+          permissionFidelity: expect.any(String) as unknown as string,
+          contextWindow: expect.any(Number) as unknown as number,
+        });
       });
     });
   });

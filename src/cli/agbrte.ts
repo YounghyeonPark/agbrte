@@ -29,8 +29,9 @@
  * when someone is on a server at a terminal.
  */
 
+import { loadReport } from '@main/conformance.js';
 import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connectOrSpawnHost } from '@main/host/connectOrSpawn.js';
 import type { HostConnection } from '@main/host/hostConnection.js';
@@ -187,7 +188,14 @@ async function main(): Promise<number> {
 
     const bind = value('--bind') ?? '127.0.0.1';
     const server = await serveWeb({
-      api: { fleet, runtimes: [] },
+      api: {
+        fleet,
+        runtimes: [],
+        // The web client serves the same matrix the desktop app does. The report
+        // sits beside the installed app rather than inside any workspace: it
+        // describes the build, not the folder being worked in.
+        loadConformance: () => loadReport(join(resolve(here, '..', '..'), 'conformance')),
+      },
       rendererDir: resolve(here, '../renderer'),
       port: Number(value('--port') ?? 7717),
       host: bind,

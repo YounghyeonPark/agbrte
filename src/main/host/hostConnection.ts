@@ -28,6 +28,7 @@ import type {
   AgbrteEvent,
   PermissionDecision,
   PermissionRequest,
+  RuntimeCapabilities,
   Session,
   SessionId,
   SessionProjection,
@@ -258,6 +259,11 @@ export class HostConnection extends EventEmitter {
 
   queueDepth(sessionId: SessionId): Promise<number> {
     return this.call({ t: 'session.queueDepth', sessionId });
+  }
+
+  /** What a runtime declares, or `null` where it could not be asked. */
+  capabilities(runtimeId: string): Promise<RuntimeCapabilities | null> {
+    return this.call({ t: 'runtime.capabilities', runtimeId });
   }
 
   pendingPermissions(): Promise<PermissionRequest[]> {
