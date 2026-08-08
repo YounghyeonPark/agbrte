@@ -1281,7 +1281,7 @@ Outstanding work is tracked as `forwardedSeq − ackedSeq`, one monotonic pair. 
 
 | Process | Where | Count | Responsibility |
 |---|---|---|---|
-| Main | local | 1 | orchestration, mirroring, notifications, ModelGateway, QuotaScheduler |
+| Main | local | 1 | orchestration, mirroring, notifications, ModelGateway (the QuotaScheduler moved to the session host — see §8's note on why) |
 | Renderer | local | 1/window | UI only |
 | `AgentHost` (local) | local `utilityProcess` | 1 per local workspace | agent loops + tools for local sessions |
 | `TransportManager` | local `utilityProcess` | 1 | connections, tails, forwards, uploads |
@@ -1431,6 +1431,18 @@ Workers are separate processes because loops are long, CPU-bursty, and prone to 
 | per-host concurrency cap | machine resources (RAM, CPU) | one host |
 | `QuotaScheduler` token bucket | a shared credential's allowance | one `quotaGroup`, across every machine |
 | `maxOpenDescendants` + budget reservation | cost and sprawl of one work tree | one session tree (§4.3) |
+
+**Built, and narrower than the paragraph below suggests.** What it adds is not throttling — it is that *the first agent to learn a window is spent tells the rest*. Parking already handles a spent window after it is hit (§4.1); what it could not do is stop the other seven agents from each sending a request whose only outcome is discovering the same fact.
+
+- **The group comes from `AuthMode`, not from configuration.** `vendor-cli-session` uses its `quotaGroup`, `api-key` uses its endpoint id — the credential *is* the allowance, and two agents sharing a key share its limit whether or not anyone remembered to say so. `auth: none` gets **no group and never waits**: a local model draws on nobody's allowance, and throttling an Ollama on the same machine would be pure harm.
+- **Unthrottled until a provider says otherwise.** §17's third open question settles this: usage from the vendor's own app or another device is invisible to us, so a bucket sized from a guessed limit is wrong in whichever direction it guessed, and wrong quietly. A `rate_limited` sets a small interval and doubles it; three consecutive successes halve it back. That is "sized from observed limits" taken literally, and the alternative — ship a number — slows down a local setup for nothing while still not respecting a real limit.
+- **A window with no `resetsAt` is not held.** Holding until a time nobody named would block the group forever; those sessions park and wait for a person, which is the same rule the parked-session sweeper already follows.
+- **A transport failure is not evidence.** Only `quota_exhausted` and `rate_limited` change the pace. Treating a dropped connection as a rate limit would throttle a credential for a network blip.
+- **A session queued on a credential is not stalled.** Both sit in `working` emitting nothing, so the stall sweeper skips agents waiting on quota — a warning that fires on something working exactly as designed is how a warning stops being read (§10). The wait is reported as a progress signal instead, so the silence is explained rather than merely excused.
+
+**It lives in the session host, not in main**, which contradicts §8's process table below — that row is wrong and this is the correction. Turns start in the host, so a scheduler above it could not gate one sent by the CLI, by a second client, or by the host's own sweeper waking a parked session at reset; §13's rule that a bypassable gate is not a gate applies here too. The cost is real and worth naming: **a credential group spanning two hosts is scheduled by each of them separately.** That is the same blind spot §17 already admits for the vendor's own app, arriving from another direction, and it is not solved.
+
+**Not built:** the `quotas()` API surface sketched in §11 and any UI for it. The scheduler can report its groups; nothing displays them yet.
 
 The **QuotaScheduler** matters because every agent with the same `quotaGroup` (§3.11) draws on one allowance whether they're on one machine or five; eight agents scheduled independently against a single seat allowance or a 1,000-request daily cap will burn the window in minutes. Each group gets a token-bucket throttle sized from observed limits, and agents queue on it independently of the host cap. When a group is exhausted its agents go to `awaiting_quota` with a scheduled wake at `resetsAt` rather than failing.
 
@@ -1707,7 +1719,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built |
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
-| 4 | Multi-session + dashboard | 5th | dashboard, Needs-you rail, stall detection, parking, notifications done; QuotaScheduler remains |
+| 4 | Multi-session + dashboard | 5th | **done** except the inbox — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler |
 | 6 | Multi-agent + hierarchy | 6th | not started |
 | 7 | Multimodal | 7th | not started |
 | 8 | Breadth + polish | 8th | not started |

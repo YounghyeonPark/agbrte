@@ -48,6 +48,7 @@ import { SessionStore, type SessionMeta } from './store/sessionStore.js';
 import { workspaceLayout } from './store/layout.js';
 import { rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
+import { groupFor, QuotaScheduler } from './quota.js';
 import type { Isolation, RoleRequirements, RuntimeRegistry } from './runtime/registry.js';
 import { defaultPolicyForTarget, evaluatePolicy } from './policy/evaluate.js';
 
@@ -128,6 +129,15 @@ interface LiveSession {
    * something inferred later from a transcript.
    */
   parked?: { resetsAt: number; agentId: AgentId; turn: UserTurn; actor?: Actor };
+  /**
+   * Agents queued behind a shared credential rather than doing anything (§8).
+   *
+   * Held because a session waiting for a quota slot is indistinguishable from a
+   * hung one — both sit in `working` emitting nothing — and the stall detector
+   * would flag it. A warning that fires on something working exactly as designed
+   * is how a warning stops being read (§10).
+   */
+  waitingOnQuota: Set<AgentId>;
 }
 
 export interface SessionManagerDeps {
@@ -144,6 +154,15 @@ export interface SessionManagerDeps {
    * that normally emits text as it goes is genuinely unusual.
    */
   stallAfterMs?: number;
+  /**
+   * Shared-credential scheduling (§8).
+   *
+   * Here rather than in main because this is where turns start: a scheduler
+   * above the host could not gate a turn sent by the CLI, by a second client, or
+   * by this manager's own parked-session sweeper waking at reset. §13's rule
+   * that a bypassable gate is not a gate applies to this one too.
+   */
+  quota?: QuotaScheduler;
   /**
    * Set when this workspace was opened somewhere other than where it last was.
    *
@@ -189,6 +208,9 @@ export class SessionManager extends EventEmitter {
     return this.deps.registry;
   }
 
+  /** Shared with nothing by default: one host, its own view of each credential. */
+  private readonly quota: QuotaScheduler;
+
   constructor(private readonly deps: SessionManagerDeps) {
     super();
     this.now = deps.now ?? (() => new Date());
@@ -202,6 +224,7 @@ export class SessionManager extends EventEmitter {
     // a parked session and noticing silence are unrelated jobs that happened to
     // share a timer, so turning stall detection off also stopped every quota
     // window from ever resuming. `sweepStalled` disables itself instead.
+    this.quota = deps.quota ?? new QuotaScheduler();
     const after = deps.stallAfterMs ?? DEFAULT_STALL_AFTER_MS;
     this.sweeper = setInterval(
       () => {
@@ -269,6 +292,7 @@ export class SessionManager extends EventEmitter {
       specs: new Map(),
       aborts: new Map(),
       lastEventAt: this.now().getTime(),
+      waitingOnQuota: new Set<AgentId>(),
     });
 
     this.emit('session', session);
@@ -454,9 +478,39 @@ export class SessionManager extends EventEmitter {
     await this.setState(live, 'working');
 
     record.status = 'running';
+
+    /**
+     * Queue behind whatever else shares this credential (§8).
+     *
+     * After the turn is logged and the session is `working`, so the transcript
+     * shows what was asked and the UI shows something happening — a wait that
+     * looked like nothing at all would be worse than the wait.
+     *
+     * Immediate for a local model, and for any credential nothing has complained
+     * about yet, which is every credential until a provider says otherwise.
+     */
+    const group = groupFor(spec.auth);
+    live.waitingOnQuota.add(agentId);
+    try {
+      await this.quota.acquire(group, (ms) =>
+        this.contextFor(live, spec).reportProgress({
+          kind: 'phase',
+          detail: `waiting ${Math.round(ms / 1000)}s for the shared credential`,
+          at: this.now().toISOString(),
+        }),
+      );
+    } finally {
+      live.waitingOnQuota.delete(agentId);
+    }
+
     const pumped = pumpAgent(handle, live.store, { origin: this.originFor(spec), agentId });
     await handle.send(turn);
     const outcome = await pumped;
+
+    // What one agent learned about the credential, before the others send. This
+    // is the entire reason a group exists: eight agents on one allowance should
+    // not each spend a request discovering the same spent window.
+    this.quota.observe(group, outcome.stop);
 
     record.resumeToken = outcome.resumeToken;
     record.lastEventSeq = live.store.nextSeq - 1;
@@ -969,6 +1023,10 @@ export class SessionManager extends EventEmitter {
     for (const live of this.sessions.values()) {
       if (live.session.state !== 'working') continue;
       if (live.session.needsAttention !== null) continue;
+      // Queued behind a shared credential is not stuck. It is the scheduler
+      // doing exactly what it exists to do, and flagging it would teach the user
+      // to ignore the one signal that means something.
+      if (live.waitingOnQuota.size > 0) continue;
       if (now - live.lastEventAt < after) continue;
 
       live.session.needsAttention = {
@@ -1082,6 +1140,7 @@ export class SessionManager extends EventEmitter {
       session,
       store,
       lastEventAt: this.now().getTime(),
+      waitingOnQuota: new Set<AgentId>(),
       policy: defaultPolicyForTarget(target.kind),
       handles: new Map(),
       specs: new Map(),
