@@ -22,10 +22,28 @@ import { spawn } from 'node:child_process';
 import { readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { globMatch, isInsideWorkspace } from '../policy/evaluate.js';
+import type { WorkspaceLeases } from './leases.js';
+import type { AgentId } from '@shared/types/index.js';
 
 export interface ToolContext {
   workspaceRoot: string;
   signal: AbortSignal;
+  /**
+   * Who is calling. Leases are held by agents, not by sessions (§9).
+   *
+   * Required rather than optional, because a guard that can be omitted is a
+   * guard that will be: a call site that forgets it would silently get the old
+   * unarbitrated behaviour back with nothing failing.
+   */
+  agentId: AgentId;
+  /**
+   * The workspace's lease table.
+   *
+   * One per workspace, held by the process adjacent to its filesystem — which is
+   * what makes it cover contention between *sessions* as well as between agents
+   * in one session (§9).
+   */
+  leases: WorkspaceLeases;
 }
 
 export interface ToolResult {
@@ -117,6 +135,9 @@ export const readTool: ToolDefinition = {
     if ('error' in c) return fail(c.error);
     try {
       const text = await readFile(c.path, 'utf8');
+      // Recorded so a later write can tell "I am changing what I read" from "I
+      // am overwriting someone else's work" (§9).
+      ctx.leases.noteRead(c.path, ctx.agentId, text);
       const numbered = text
         .split('\n')
         .map((line, i) => `${i + 1}\t${line}`)
@@ -149,9 +170,14 @@ export const writeTool: ToolDefinition = {
     if ('error' in c) return fail(c.error);
     const content = args['content'];
     if (typeof content !== 'string') return fail('content must be a string');
+    const blocked = await guardWrite(ctx, c.path);
+    if (blocked !== null) return fail(blocked);
     try {
       await mkdir(dirname(c.path), { recursive: true });
       await writeFile(c.path, content, 'utf8');
+      // The agent now knows what is there, so its next edit is not stale
+      // against its own write.
+      ctx.leases.noteRead(c.path, ctx.agentId, content);
       const rel = toPosixRel(ctx.workspaceRoot, c.path);
       return { ok: true, summary: `wrote ${rel} (${content.length} chars)`, content: `Wrote ${rel}.` };
     } catch (err) {
@@ -182,6 +208,8 @@ export const editTool: ToolDefinition = {
     if (typeof oldStr !== 'string' || typeof newStr !== 'string') {
       return fail('old_string and new_string must be strings');
     }
+    const blocked = await guardWrite(ctx, c.path);
+    if (blocked !== null) return fail(blocked);
     try {
       const text = await readFile(c.path, 'utf8');
       const occurrences = text.split(oldStr).length - 1;
@@ -189,7 +217,9 @@ export const editTool: ToolDefinition = {
       // edit should be told, not have one of several matches picked for it.
       if (occurrences === 0) return fail('old_string not found');
       if (occurrences > 1) return fail(`old_string appears ${occurrences} times; make it unique`);
-      await writeFile(c.path, text.replace(oldStr, newStr), 'utf8');
+      const updated = text.replace(oldStr, newStr);
+      await writeFile(c.path, updated, 'utf8');
+      ctx.leases.noteRead(c.path, ctx.agentId, updated);
       const rel = toPosixRel(ctx.workspaceRoot, c.path);
       return { ok: true, summary: `edited ${rel}`, content: `Edited ${rel}.` };
     } catch (err) {
@@ -336,6 +366,45 @@ export const DEFAULT_TOOLS: ToolDefinition[] = [
   grepTool,
   bashTool,
 ];
+
+/**
+ * Whether this agent may write this path right now, or why not.
+ *
+ * Returns a sentence for the model rather than throwing, because both refusals
+ * are things an agent can act on — and a tool error it can read is worth more
+ * than an exception it cannot.
+ *
+ * **Staleness is only checked against what this agent actually read.** A file it
+ * never opened has nothing to be stale about, and demanding a read first would
+ * break every legitimate case of generating a file from scratch. The clobber
+ * that rule might have caught — two agents blind-writing the same path — is
+ * prevented by the lease instead, which is the mechanism that does not depend on
+ * either of them having been careful.
+ */
+async function guardWrite(ctx: ToolContext, path: string): Promise<string | null> {
+  const claim = ctx.leases.acquire(path, ctx.agentId);
+  if (!claim.ok) {
+    return (
+      `${toPosixRel(ctx.workspaceRoot, path)} is being written by another agent ` +
+      `(${claim.heldBy}) until ${claim.until}. Work on something else and come back to it.`
+    );
+  }
+
+  let current: string;
+  try {
+    current = await readFile(path, 'utf8');
+  } catch {
+    // Absent, or not text. Nothing to be stale against; the write itself will
+    // report anything genuinely wrong with the path.
+    return null;
+  }
+
+  if (ctx.leases.freshness(path, ctx.agentId, current).state !== 'stale') return null;
+  return (
+    `${toPosixRel(ctx.workspaceRoot, path)} has changed since you read it. ` +
+    `Read it again before writing, or your change will discard someone else's.`
+  );
+}
 
 export function toolByName(tools: ToolDefinition[], name: string): ToolDefinition | undefined {
   return tools.find((t) => t.name.toLowerCase() === name.toLowerCase());

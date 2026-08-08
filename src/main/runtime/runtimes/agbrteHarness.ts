@@ -36,6 +36,7 @@ import {
   type UserTurn,
 } from '@shared/types/index.js';
 import { DEFAULT_TOOLS, toolByName, type ToolDefinition } from '../../tools/index.js';
+import { WorkspaceLeases } from '../../tools/leases.js';
 
 export const AGBRTE_HARNESS_RUNTIME_ID = 'agbrte-harness';
 
@@ -61,6 +62,16 @@ export interface AgbrteHarnessOptions {
    */
   endpointFor: (endpointId?: string) => ModelEndpoint;
   tools?: ToolDefinition[];
+  /**
+   * The workspace's lease table (§9).
+   *
+   * Injected rather than created here, because it must be shared by everything
+   * that writes this workspace — leases are keyed by path and scoped to the
+   * workspace, and two tables would mean two agents each believing they hold the
+   * same file. Defaults to a private one so a single-runtime setup and every
+   * test still get arbitration rather than none.
+   */
+  leases?: WorkspaceLeases;
   /** Hard ceiling on provider round trips per turn. */
   maxIterations?: number;
 }
@@ -102,6 +113,7 @@ class AgbrteHarnessHandle implements AgentHandle {
   private readonly queue: RuntimeEvent[] = [];
   private readonly messages: ProviderMessage[] = [];
   private readonly tools: ToolDefinition[];
+  private readonly leases: WorkspaceLeases;
   private closed = false;
   private waiter: (() => void) | null = null;
   private stream: AsyncIterable<RuntimeEvent> | null = null;
@@ -113,6 +125,7 @@ class AgbrteHarnessHandle implements AgentHandle {
     private readonly opts: AgbrteHarnessOptions,
   ) {
     this.tools = opts.tools ?? DEFAULT_TOOLS;
+    this.leases = opts.leases ?? new WorkspaceLeases();
     // A rehydrated seed is conversation, not tool mechanics — it replays as
     // ordinary turns (§5.4).
     for (const turn of ctx.seedHistory ?? []) {
@@ -225,6 +238,8 @@ class AgbrteHarnessHandle implements AgentHandle {
       const result = await tool.run((call.args ?? {}) as Record<string, unknown>, {
         workspaceRoot: this.spec.workspacePath,
         signal: this.ctx.abortSignal,
+        agentId: this.spec.agentId,
+        leases: this.leases,
       });
       this.finishTool(call, result.ok, result.summary, result.content);
     } catch (err) {
@@ -291,6 +306,12 @@ class AgbrteHarnessHandle implements AgentHandle {
 
   private close(): void {
     this.closed = true;
+    // Files go back when the turn ends, not when the TTL runs out. The expiry
+    // exists for an agent that crashed holding something; one that merely
+    // finished should not keep a sibling out of a file for another thirty
+    // seconds. What it *read* is kept — `releaseHeld` explains why those are not
+    // one operation.
+    this.leases.releaseHeld(this.spec.agentId);
     this.wake();
   }
 

@@ -1457,6 +1457,25 @@ The **tree limit** is different again: a work tree can be well within every mach
 - **`shared`** (default) — agents work the workspace directly under an advisory **file lease**: exclusive, time-bounded, required before write; a write to a file modified since the agent last read it is rejected with a stale-read error the agent can recover from.
 - **`worktree`** — the agent gets a `git worktree` on its own branch. Truly parallel writes; costs setup time, disk, and an explicit merge, surfaced as a checklist item.
 
+**Built, for `shared` isolation.** The table lives in the agent host — one process per workspace, adjacent to its filesystem — and is created at the wiring site rather than inside a runtime, so the sharing is visible where someone might otherwise add a second one.
+
+Two rejections, kept apart on purpose:
+
+| | Means | What the agent does about it |
+|---|---|---|
+| **contended** | another agent holds the lease | wait, or work elsewhere — the message names the holder and the expiry |
+| **stale** | nobody holds it, but the file changed since *this* agent read it | read it again |
+
+Collapsing them would tell an agent to wait for a lease that is already free, which is advice it cannot act on.
+
+- **Staleness is checked by content hash, not mtime.** Filesystem timestamp granularity is coarse enough on Windows that two writes in the same tick are indistinguishable, and "the check passed because the clock did not move" would make the whole mechanism decorative.
+- **Only against what that agent actually read.** A file it never opened has nothing to be stale about, and demanding a read first would break generating a file from scratch — most of what a worker does. The clobber that rule might have caught, two agents blind-writing one path, is prevented by the lease instead, which does not depend on either of them having been careful.
+- **An agent is never stale against its own write.** The ledger is updated on write as well as on read; without that, every multi-step edit fails on its second step.
+- **Leases are released when a turn ends; the read ledger is not.** They look like one operation and are not. An agent's turns are one continuous piece of work, so a file read last turn and edited this turn must still be checked against what it saw — clearing the ledger there would turn every cross-turn edit from `stale` into `unread`, which is permitted, quietly removing the protection exactly where a long job needs it. Releasing the *leases* is what keeps the TTL a crash backstop rather than the normal path.
+- **The lease is held for a short window after the write, not just during it.** A lease released the instant a write returns leaves the read-modify-write gap unprotected, and that gap is where clobbering actually happens.
+
+**Not built:** `worktree` isolation, which is the other half of this section, and the merge surfacing that goes with it. Until it exists, an `all-or-nothing` runtime remains inadmissible everywhere — §3.10's rule refuses it in `shared`, and the only alternative the type offers is not yet implemented.
+
 **Lease authority sits with whoever is adjacent to the filesystem:** main's local `AgentHost` for local workspaces, the remote host for remote ones — never the app across a network link, because a lease you can't enforce during a disconnect isn't a lease.
 
 **Leases are scoped to the workspace, not the session** — which is what makes them cover contention between *sessions* as well as between agents. Two children of one tree working the same repo (§4.3) contend through the same lease table as two agents in one session, with no additional mechanism. Anyone tempted to key leases by `sessionId` should note that it would silently reintroduce cross-session clobbering the moment hierarchy is used.

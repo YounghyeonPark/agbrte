@@ -30,6 +30,7 @@ import {
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { CliStdioRuntime, detectCli } from '@main/runtime/runtimes/cliStdio.js';
 import { CLI_MANIFESTS } from '@main/runtime/cli/manifests.js';
+import { WorkspaceLeases } from '@main/tools/leases.js';
 import {
   OpenAiCompatibleProvider,
   OPENAI_COMPATIBLE_PROVIDER_ID,
@@ -123,8 +124,24 @@ class ForkChannel implements HostSideChannel {
 export async function buildHostRegistry(endpoints: EndpointRegistry): Promise<RuntimeRegistry> {
   const registry = new RuntimeRegistry();
 
+  /**
+   * One table for the whole workspace (§9).
+   *
+   * Created here rather than inside a runtime so the sharing is visible at the
+   * wiring site: leases are keyed by path and scoped to the *workspace*, so two
+   * tables would let two agents each believe they hold the same file. This
+   * process is one per workspace and adjacent to its filesystem, which is
+   * exactly where §9 says lease authority belongs.
+   *
+   * It covers contention between sessions as well as within one, with no extra
+   * mechanism — the property that stops hierarchy reintroducing cross-session
+   * clobbering the moment it is used.
+   */
+  const leases = new WorkspaceLeases();
+
   registry.register(
     new AgbrteHarnessRuntime({
+      leases,
       // The credential lookup lives with the provider, which is the only place a
       // request is actually made. The endpoint it resolves carries no secret.
       provider: new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) }),

@@ -22,13 +22,22 @@ import {
   writeTool,
   type ToolContext,
 } from '@main/tools/index.js';
+import { WorkspaceLeases } from '@main/tools/leases.js';
+import type { AgentId } from '@shared/types/index.js';
 
 let root: string;
 let ctx: ToolContext;
+let leases: WorkspaceLeases;
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'agbrte-tools-'));
-  ctx = { workspaceRoot: root, signal: new AbortController().signal };
+  leases = new WorkspaceLeases();
+  ctx = {
+    workspaceRoot: root,
+    signal: new AbortController().signal,
+    agentId: 'agent-a' as AgentId,
+    leases,
+  };
   await mkdir(join(root, 'src'), { recursive: true });
   await writeFile(join(root, 'src', 'a.ts'), 'export const a = 1;\nconst secret = 2;\n', 'utf8');
   await writeFile(join(root, 'src', 'b.ts'), 'export const b = 2;\n', 'utf8');
