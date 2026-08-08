@@ -469,6 +469,12 @@ export type PermissionFidelity =
 | `precomputed-allowlist` | installed CLIs in headless mode (§3.12) | policy compiled to rules up front; `ask` becomes deny, then **deny → ask user → grant → resume** | none, but fidelity is badged in the UI |
 | `all-or-nothing` | runtimes offering only a bypass flag | none | **may only run with `isolation: 'worktree'` or a container — never `shared`.** Refused at creation otherwise. |
 
+**Displayed, now.** A roster strip above the transcript carries each agent's role, model or runtime, auth kind, and a gate badge in words rather than colour — `gated per call`, `allowlist only`, `sandbox only`. It renders only when a session has more than one agent, on the same rule the dashboard uses for its host badge: a label that is always present and always the same teaches people to stop reading labels.
+
+**Per-agent panes are a filter over the unified timeline, not columns.** The timeline stays the truth — one log, one order — and selecting an agent narrows the view to it. Permanent side-by-side columns would lose the interleaving, and the interleaving is usually the thing you are trying to understand when a roster misbehaves. Rows in the unified view carry the agent that produced them; rows nobody is attributed with, and agents no longer in the roster, are left unlabelled rather than guessed at.
+
+Building it exposed a bug that had been invisible while sessions had one agent: the composer always addressed `agents[0]`, so in a roster every turn went to the lead however carefully a worker had been selected. It now addresses whoever the pane is focused on.
+
 That last row is a hard rule, enforced at agent creation rather than discovered at runtime: if we cannot gate the calls, we constrain what the process can reach. **Fidelity is displayed per agent** — a `AgbrteHarness` agent and a wrapped-CLI agent do not enforce identical policy, and the UI must never imply they do.
 
 **Known narrowing: "or a container" is not expressible yet.** `Isolation` is `'shared' | 'worktree'` in code, because no container transport exists to enforce a third value (§6.1 lists the target kinds; §9 has the enforcement table). The rule therefore admits an `all-or-nothing` runtime under `worktree` only. That fails *closed* — the refusal is stricter than the design allows, never looser — so it is a coverage gap, not a hole, and deliberately left until a container target can actually be enforced. Adding `'container'` to the type before then would let the UI badge an agent as contained by something nobody implemented, which §13 treats as worse than having no containment at all.
@@ -1813,7 +1819,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
-| 6 | Multi-agent + hierarchy | 6th | leases, message bus, worktrees, spawn, roll-up, bubbling, proposals, results and the approval UI done; per-agent panes remain |
+| 6 | Multi-agent + hierarchy | 6th | **done** except tree-aware notification coalescing — leases, message bus, worktrees, spawn, roll-up, bubbling, proposals, results, approval UI, per-agent panes |
 | 7 | Multimodal | 7th | not started |
 | 8 | Breadth + polish | 8th | not started |
 

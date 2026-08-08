@@ -29,6 +29,8 @@ import { AttachHost } from './AttachHost.js';
 import { Dashboard } from './Dashboard.js';
 import { SupportMatrix } from './SupportMatrix.js';
 import { Inbox } from './Inbox.js';
+import { Roster } from './Roster.js';
+import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import { useAgbrte } from './store.js';
@@ -77,6 +79,13 @@ export function App(): JSX.Element {
    * something worth seeing.
    */
   const [pane, setPane] = useState<'main' | 'hosts'>('main');
+  /**
+   * Which agent's pane is open, or `null` for the unified timeline (§4.2).
+   *
+   * Local to the view, not to the session: it is a way of *looking*, and two
+   * devices attached to one session should not fight over what each is reading.
+   */
+  const [focusedAgent, setFocusedAgent] = useState<string | null>(null);
   const { hosts, runtimesByHost, conformanceByHost, inbox, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
     store;
 
@@ -288,7 +297,26 @@ export function App(): JSX.Element {
               />
             ) : (
               <>
-                <Transcript events={events} renderRow={(e) => <EventRow key={e.seq} event={e} />} />
+                {/* §13: a heterogeneous roster is gated heterogeneously, and the
+                    UI must never imply otherwise. */}
+                <Roster
+                  agents={active.agents}
+                  selected={focusedAgent}
+                  onSelect={setFocusedAgent}
+                />
+                <Transcript
+                  events={
+                    focusedAgent === null
+                      ? events
+                      : /* Filtered rather than re-fetched: the unified timeline is
+                           the truth and a pane is a view of it, so switching back
+                           cannot show something different from what was there. */
+                        events.filter((e) => e.agentId === focusedAgent)
+                  }
+                  renderRow={(e) => (
+                    <EventRow key={e.seq} event={e} by={agentLabel(active.agents, e.agentId)} />
+                  )}
+                />
                 {pending.map((p) => (
                   <PermissionPrompt
                     key={p.requestId}
@@ -309,7 +337,7 @@ export function App(): JSX.Element {
                   />
                 ))}
                 <Composer
-                  onSend={(t) => void store.send(t)}
+                  onSend={(t) => void store.send(t, focusedAgent ?? undefined)}
                   disabled={active.state === 'working'}
                   queued={queued}
                 />

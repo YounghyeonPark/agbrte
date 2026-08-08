@@ -44,7 +44,27 @@ export function Transcript({
   );
 }
 
-export function EventRow({ event }: { event: AgbrteEvent }): JSX.Element | null {
+export function EventRow({
+  event,
+  by,
+}: {
+  event: AgbrteEvent;
+  /**
+   * Which agent produced this, when the roster has more than one (§4.2).
+   *
+   * `null` for a single-agent session, where every row would carry the same
+   * label — noise that teaches people to stop reading labels that do mean
+   * something.
+   */
+  by?: string | null;
+}): JSX.Element | null {
+  const who =
+    by == null ? null : (
+      <span data-testid="row-agent-label" className="text-muted shrink-0 text-[10px] uppercase tracking-wider">
+        {by}
+      </span>
+    );
+
   switch (event.type) {
     case 'user.turn':
       return (
@@ -70,6 +90,7 @@ export function EventRow({ event }: { event: AgbrteEvent }): JSX.Element | null 
           data-testid="row-agent"
           className="bg-panel border-line max-w-[82%] rounded-[10px_10px_10px_2px] border px-3 py-2"
         >
+          {who}
           <p className="wrap-anywhere">{event.text}</p>
         </div>
       );
@@ -77,6 +98,7 @@ export function EventRow({ event }: { event: AgbrteEvent }): JSX.Element | null 
     case 'agent.tool_use':
       return (
         <div data-testid="row-tool" className={META_ROW}>
+          {who}
           <code className={CODE}>{event.tool}</code>
           <span className="truncate-line font-mono text-[11px]">{summarize(event.args)}</span>
         </div>

@@ -73,7 +73,8 @@ export interface AgbrteState {
   /** Deselect, so a narrow screen can show the list again. */
   closeSession(): void;
   addAgent(runtimeId: string, modelId: string | null, endpointId?: string): Promise<void>;
-  send(text: string): Promise<void>;
+  /** `to` addresses one agent in a roster; absent means the first (§4.2). */
+  send(text: string, to?: string): Promise<void>;
   interrupt(): Promise<void>;
   respond(requestId: string, allow: boolean): Promise<void>;
   /** Answer a split an agent proposed on the open session (§4.3). */
@@ -255,9 +256,16 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     });
   },
 
-  async send(text) {
+  async send(text, to) {
     const { activeId, active } = get();
-    const agentId = active?.agents[0]?.agentId;
+    /**
+     * Whoever the pane is focused on, else the first agent (§4.2).
+     *
+     * Always addressing `agents[0]` was fine while a session had one agent and
+     * silently wrong the moment it had a roster: every turn went to the lead
+     * however carefully you had selected a worker to talk to.
+     */
+    const agentId = to ?? active?.agents[0]?.agentId;
     if (activeId === null || agentId === undefined) return;
 
     // Not wrapped in `busy`: a turn can run for minutes, and blocking the whole
