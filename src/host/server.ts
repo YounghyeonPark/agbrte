@@ -171,14 +171,23 @@ export class AgentHostServer {
   private contextFor(
     handleId: HandleId,
     spec: AgentSpec,
-    ctx: { seedHistory?: RuntimeContext['seedHistory']; modelEgress?: RuntimeContext['modelEgress'] },
+    ctx: {
+      seedHistory?: RuntimeContext['seedHistory'];
+      modelEgress?: RuntimeContext['modelEgress'];
+      peers?: RuntimeContext['peers'];
+    },
     abort: AbortController,
   ): RuntimeContext {
     return {
       ...(ctx.seedHistory !== undefined ? { seedHistory: ctx.seedHistory } : {}),
       ...(ctx.modelEgress !== undefined ? { modelEgress: ctx.modelEgress } : {}),
+      ...(ctx.peers !== undefined ? { peers: ctx.peers } : {}),
       abortSignal: abort.signal,
       reportProgress: (progress) => this.channel.post({ t: 'progress', handleId, progress }),
+      // Forwarded verbatim. The sender and the hop count are stamped by the
+      // owner of the log, which is the only party that cannot be wrong about
+      // either — nothing between here and there can forge attribution (§13).
+      sendMessage: (message) => this.channel.post({ t: 'message', handleId, message }),
       requestPermission: (ask) =>
         new Promise<PermissionDecision>((resolve) => {
           const askId = `${handleId}:${(this.nextAskId += 1)}`;

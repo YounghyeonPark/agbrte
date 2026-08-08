@@ -240,6 +240,13 @@ class AgbrteHarnessHandle implements AgentHandle {
         signal: this.ctx.abortSignal,
         agentId: this.spec.agentId,
         leases: this.leases,
+        // Only where the host actually supplied a way to send. A single-agent
+        // session has neither, and the tool says so rather than reporting a
+        // message nobody will ever receive.
+        ...(this.ctx.sendMessage !== undefined
+          ? { sendMessage: this.ctx.sendMessage.bind(this.ctx) }
+          : {}),
+        ...(this.ctx.peers !== undefined ? { roster: this.ctx.peers } : {}),
       });
       this.finishTool(call, result.ok, result.summary, result.content);
     } catch (err) {

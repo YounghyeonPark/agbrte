@@ -23,7 +23,7 @@ import { readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { globMatch, isInsideWorkspace } from '../policy/evaluate.js';
 import type { WorkspaceLeases } from './leases.js';
-import type { AgentId } from '@shared/types/index.js';
+import type { AgentId, AgentMessage, OutboundMessage } from '@shared/types/index.js';
 
 export interface ToolContext {
   workspaceRoot: string;
@@ -44,6 +44,16 @@ export interface ToolContext {
    * in one session (§9).
    */
   leases: WorkspaceLeases;
+  /**
+   * Address another agent in this session (§4.2).
+   *
+   * Absent when there is nowhere to send — a single-agent session, or an adapter
+   * whose tools are its own. The tool says so rather than pretending to have
+   * sent something.
+   */
+  sendMessage?: (message: OutboundMessage) => void;
+  /** Who else is here, so a bad address is refused rather than dropped. */
+  roster?: AgentId[];
 }
 
 export interface ToolResult {
@@ -358,6 +368,80 @@ export const bashTool: ToolDefinition = {
 };
 
 /** The suite AgbrteHarness offers by default. */
+const MESSAGE_KINDS = ['task', 'report', 'question', 'answer', 'review'] as const;
+
+/**
+ * One agent addressing another, through the session (§4.2).
+ *
+ * The only way a roster coordinates. Every message is an event in the log, so
+ * agent-to-agent traffic is auditable and replayable rather than happening in a
+ * channel the transcript cannot see.
+ *
+ * Not a reply-waiting call. The sender's turn continues immediately: a lead that
+ * blocked until its worker answered would hold a model connection open for the
+ * length of somebody else's work, and two agents each waiting on the other is a
+ * deadlock that bills by the token.
+ */
+export const messageTool: ToolDefinition = {
+  name: 'message',
+  description:
+    'Send a message to another agent in this session, or to "session" to leave a note for everyone. ' +
+    'Returns immediately — the recipient works on it in its own turn.',
+  schema: {
+    type: 'object',
+    properties: {
+      to: { type: 'string', description: 'An agent id in this session, or "session" to broadcast' },
+      kind: { type: 'string', enum: [...MESSAGE_KINDS] },
+      text: { type: 'string' },
+    },
+    required: ['to', 'kind', 'text'],
+    additionalProperties: false,
+  },
+  async run(args, ctx) {
+    if (ctx.sendMessage === undefined) {
+      return fail('there is no one to message: this session has a single agent');
+    }
+    const to = args['to'];
+    const kind = args['kind'];
+    const text = args['text'];
+    if (typeof to !== 'string' || typeof text !== 'string') return fail('to and text must be strings');
+    if (typeof kind !== 'string' || !MESSAGE_KINDS.includes(kind as (typeof MESSAGE_KINDS)[number])) {
+      return fail(`kind must be one of ${MESSAGE_KINDS.join(', ')}`);
+    }
+
+    if (to !== 'session') {
+      // Refused rather than dropped. A message to an id that does not exist
+      // would otherwise look sent, and the sender would wait for an answer that
+      // was never going to come.
+      const roster = ctx.roster ?? [];
+      if (!roster.includes(to as AgentId)) {
+        const others = roster.filter((id) => id !== ctx.agentId);
+        return fail(
+          others.length === 0
+            ? `no agent "${to}" in this session, and there is nobody else here`
+            : `no agent "${to}" in this session. Present: ${others.join(', ')}`,
+        );
+      }
+      if (to === ctx.agentId) return fail('an agent cannot message itself');
+    }
+
+    ctx.sendMessage({
+      to: to === 'session' ? 'session' : (to as AgentId),
+      kind: kind as AgentMessage['kind'],
+      content: [{ type: 'text', text }],
+    });
+
+    return {
+      ok: true,
+      summary: `${kind} → ${to}`,
+      content:
+        to === 'session'
+          ? 'Left for everyone in the session. Nobody was woken; it will be read in context.'
+          : `Sent to ${to}. It will work on this in its own turn; carry on with yours.`,
+    };
+  },
+};
+
 export const DEFAULT_TOOLS: ToolDefinition[] = [
   readTool,
   writeTool,
@@ -365,6 +449,7 @@ export const DEFAULT_TOOLS: ToolDefinition[] = [
   globTool,
   grepTool,
   bashTool,
+  messageTool,
 ];
 
 /**

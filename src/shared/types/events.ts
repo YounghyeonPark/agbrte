@@ -19,7 +19,7 @@ import type { AgentId, EventId, SessionId, Sha256 } from './ids.js';
 import type { ContentBlock, DowngradeNote } from './content.js';
 import type { EncodedPath } from './paths.js';
 import type { PermissionDecision, PolicyRule } from './policy.js';
-import type { ModelRef, RuntimeCapabilities, StopReason } from './runtime.js';
+import type { AgentMessage, ModelRef, RuntimeCapabilities, StopReason } from './runtime.js';
 import type { PermissionFidelity } from './policy.js';
 import type { Actor, ChildRef, SessionBrief, SessionState } from './session.js';
 
@@ -82,6 +82,15 @@ export type EventBody =
       path?: EncodedPath;
     }
   | { type: 'agent.stopped'; stop: StopReason }
+  /**
+   * One agent addressing another (§4.2).
+   *
+   * In the log rather than passed in memory, so agent-to-agent traffic is
+   * auditable and replayable — the same reason everything else here is. A roster
+   * whose coordination happened off the record would make a transcript that
+   * shows the work but not the reasoning that directed it.
+   */
+  | { type: 'agent.message'; message: AgentMessage }
   /**
    * §13 requires *every* decision be logged, not only the prompted ones. An
    * earlier version returned early for policy `allow` and `deny` without
@@ -258,4 +267,5 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'agent.interrupted',
   'workspace.relocated',
   'session.unparked',
+  'agent.message',
 ]);

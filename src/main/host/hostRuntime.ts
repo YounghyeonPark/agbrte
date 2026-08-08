@@ -235,6 +235,13 @@ export class HostClient {
         this.contexts.get(message.handleId)?.reportProgress(message.progress);
         return;
 
+      case 'message':
+        // Dropped when the handle is gone rather than queued. A message from an
+        // agent that has already stopped describes a turn nobody is running, and
+        // delivering it would start work on the strength of a dead sender.
+        this.contexts.get(message.handleId)?.sendMessage?.(message.message);
+        return;
+
       case 'ask': {
         const ctx = this.contexts.get(message.handleId);
         if (!ctx) {
@@ -378,6 +385,7 @@ export class HostBackedRuntime implements AgentRuntime {
 
     const serializable = {
       ...(ctx.seedHistory !== undefined ? { seedHistory: ctx.seedHistory } : {}),
+      ...(ctx.peers !== undefined ? { peers: ctx.peers } : {}),
       ...(ctx.modelEgress !== undefined ? { modelEgress: ctx.modelEgress } : {}),
     };
 

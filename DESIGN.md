@@ -759,6 +759,18 @@ type AgentMessage = { from: string; to: string | 'session';
 
 Every message is an event in the log, so agent-to-agent traffic is auditable and replayable — and because it carries normalized `ContentBlock`s, a Claude-backed lead messaging an Ollama-backed worker needs no translation beyond that worker's declared downgrades.
 
+**Built, as a tool rather than an API.** An agent sends by calling `message`, which means the send passes the permission gate like every other call and appears in the transcript as one. A bus reachable some other way would be the one thing in the system an agent could do without the gate seeing it.
+
+- **`from` and `hops` cannot be set by the sender.** What crosses the adapter boundary is an `OutboundMessage` with neither. The sender is stamped by the owner of the log — the only party that cannot be wrong about it — and stamping it in the agent host instead was the first version, which merely moved the forgery one process closer. This is §13's rule about the log saying who did what, applied to the one place an agent can write to it.
+- **Sending never waits.** A lead that blocked until its worker replied would hold a model connection open for the length of somebody else's work, and two agents each waiting on the other is a deadlock that bills by the token.
+- **A message to a named agent starts a turn; a broadcast does not.** `to: 'session'` is recorded and read in context. Delivering it as a turn would mean one message waking every agent in the roster, which is how a roster of six becomes a fork bomb.
+- **The woken turn has no `actor`.** Nobody pressed anything, and §5.1 already treats an absent actor as "no person acted" — attributing it to whoever happens to be attached would put a name on a turn they never sent.
+- **Bounded at eight hops without a person.** A lead asks a worker, the worker asks back, and with no ceiling that is a conversation with a bill attached and nobody watching. A human turn clears the count for the whole session, because a person in the loop is exactly what the ceiling is waiting for.
+- **Everything is logged, including what was refused.** A message past the ceiling, and one addressed to an agent that is not there, are both recorded and neither is delivered. A log of only the successful coordination would answer the wrong question, since what a misbehaving roster *tried* to say is usually the interesting part.
+- **The roster is carried, not discovered.** An adapter holds a spec, not a session, so `RuntimeContext.peers` is a snapshot taken at start. An agent added mid-turn is addressable from the next one — the alternative is a list that changes under a model between deciding who to ask and asking.
+
+**Only `AgbrteHarness` can send.** The bus is our tool, and an adapter running its own tools — the SDK library, an installed CLI — has no way to call it. That is why `sendMessage` is optional on `RuntimeContext` rather than required: declaring it mandatory would put a method on those adapters that nothing could ever invoke. A roster mixing branches can therefore be addressed *by* a harness agent but cannot reply through the bus, which is a real limit and not a temporary one — it ends when those adapters can be given a tool of ours, not before.
+
 ### 4.3 Session hierarchy and scope-driven splitting
 
 #### Four ways to decompose — choosing wrong is the mistake

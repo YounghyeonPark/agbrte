@@ -28,6 +28,8 @@ import type {
   NormalizedTurn,
   PermissionAsk,
   PermissionDecision,
+  AgentId,
+  OutboundMessage,
   ProgressSignal,
   RuntimeEvent,
   UserTurn,
@@ -42,6 +44,8 @@ export type HandleId = string;
 export interface HostContext {
   seedHistory?: NormalizedTurn[];
   modelEgress?: { baseUrl: string; token: string };
+  /** The session's roster at start, so an adapter's tools can address it (§4.2). */
+  peers?: AgentId[];
 }
 
 // -------------------------------------------------------------- main → host
@@ -91,6 +95,14 @@ export type HostMessage =
   | { t: 'closed'; handleId: HandleId }
   | { t: 'ask'; askId: RequestId; handleId: HandleId; ask: PermissionAsk }
   | { t: 'progress'; handleId: HandleId; progress: ProgressSignal }
+  /**
+   * An agent addressing another (§4.2).
+   *
+   * One-way, like `progress` and unlike `ask`: nothing is awaited, so there is
+   * no reply to correlate. Routing it through the owner rather than between
+   * loops is what makes it an event in the log.
+   */
+  | { t: 'message'; handleId: HandleId; message: OutboundMessage }
   /**
    * Pushed whenever the host's view of a resume token changes.
    *

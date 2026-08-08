@@ -21,9 +21,11 @@ import {
   newAgentId,
   newSessionId,
   uuidv7,
+  type OutboundMessage,
   type PermissionAsk,
   type PolicyRule,
   type AgentHandle,
+  type AgentMessage,
   type AgentRecord,
   type AgentRole,
   type AgentRuntime,
@@ -140,6 +142,16 @@ interface LiveSession {
    * is how a warning stops being read (§10).
    */
   waitingOnQuota: Set<AgentId>;
+  /**
+   * How deep the current exchange is, per agent (§4.2).
+   *
+   * A lead asks a worker, the worker asks back, and without a ceiling that is a
+   * conversation with a bill attached and nobody watching. Held per agent
+   * because the depth belongs to the turn being run, and cleared whenever a
+   * *person* sends a turn — a human in the loop is exactly the thing the ceiling
+   * exists to wait for.
+   */
+  hops: Map<AgentId, number>;
 }
 
 export interface SessionManagerDeps {
@@ -188,6 +200,16 @@ const DEFAULT_STALL_AFTER_MS = 5 * 60 * 1_000;
  * is still in range — that being the case the inbox exists for.
  */
 const INBOX_EVENT_WINDOW = 500;
+
+/**
+ * How many agent-to-agent hops may pass without a person.
+ *
+ * Generous enough for a real exchange — a lead briefing two workers, each
+ * reporting back, a reviewer commenting — and small enough that a pair talking
+ * in circles stops before it becomes expensive. The refusal is recorded, so a
+ * roster that keeps hitting it is visible rather than merely slow.
+ */
+const MAX_MESSAGE_HOPS = 8;
 
 export class SessionManager extends EventEmitter {
   private readonly sessions = new Map<SessionId, LiveSession>();
@@ -304,6 +326,7 @@ export class SessionManager extends EventEmitter {
       aborts: new Map(),
       lastEventAt: this.now().getTime(),
       waitingOnQuota: new Set<AgentId>(),
+      hops: new Map<AgentId, number>(),
     });
 
     this.emit('session', session);
@@ -413,6 +436,11 @@ export class SessionManager extends EventEmitter {
    * zero or one, and a crash already costs the running turn.
    */
   async send(sessionId: SessionId, agentId: AgentId, turn: UserTurn, actor?: Actor): Promise<void> {
+    // A person in the loop is what the hop ceiling is waiting for, so their turn
+    // clears it for the whole session rather than only for the agent they
+    // addressed — the exchange they interrupted is over.
+    if (actor !== undefined) this.live(sessionId).hops.clear();
+
     // Validate before queueing, so a bad target fails at the call rather than
     // silently much later when the queue drains to it.
     const live = this.live(sessionId);
@@ -779,7 +807,55 @@ export class SessionManager extends EventEmitter {
       abortSignal: controller.signal,
       reportProgress: (p) => this.emit('progress', live.session.sessionId, p),
       requestPermission: (ask) => this.decide(live, spec, ask),
+      sendMessage: (message) => void this.deliver(live, spec.agentId, message),
+      peers: live.session.agents.map((a) => a.agentId),
     };
+  }
+
+  /**
+   * Record one agent addressing another, and wake the recipient (§4.2).
+   *
+   * The log entry is written **whatever happens next** — including when the
+   * message is refused for depth, and including a broadcast that wakes nobody.
+   * Recording only the delivered ones would make the transcript a record of
+   * successful coordination rather than of coordination, and the interesting
+   * question when a roster misbehaves is usually what it *tried* to say.
+   */
+  private async deliver(live: LiveSession, from: AgentId, message: OutboundMessage): Promise<void> {
+    const hops = (live.hops.get(from) ?? 0) + 1;
+    const stamped: AgentMessage = { ...message, from, hops };
+
+    await live.store.append({ type: 'agent.message', message: stamped }, { agentId: from });
+    live.lastEventAt = this.now().getTime();
+
+    if (hops > MAX_MESSAGE_HOPS) {
+      await live.store.append(
+        {
+          type: 'session.state',
+          from: live.session.state,
+          to: live.session.state,
+          reason: `message from ${from} not delivered: ${MAX_MESSAGE_HOPS} hops without a person`,
+        },
+        { agentId: from },
+      );
+      return;
+    }
+
+    // A broadcast is readable by anyone and wakes no one. Delivering it as a
+    // turn would mean one message starting a turn per agent in the roster,
+    // which is how a roster of six becomes a fork bomb.
+    if (stamped.to === 'session') return;
+
+    const recipient = live.session.agents.find((a) => a.agentId === stamped.to);
+    if (recipient === undefined) return;
+
+    live.hops.set(stamped.to, hops);
+    // No actor: nobody pressed anything. §5.1 treats an absent actor as "no
+    // person acted", and attributing this to whoever happens to be attached
+    // would put a name on a turn they never sent.
+    void this.send(live.session.sessionId, stamped.to, { content: stamped.content }).catch(
+      () => undefined,
+    );
   }
 
   /** Provenance for events attributable to an agent (§5.1). */
@@ -1190,6 +1266,7 @@ export class SessionManager extends EventEmitter {
       store,
       lastEventAt: this.now().getTime(),
       waitingOnQuota: new Set<AgentId>(),
+      hops: new Map<AgentId, number>(),
       policy: defaultPolicyForTarget(target.kind),
       handles: new Map(),
       specs: new Map(),

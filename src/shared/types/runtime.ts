@@ -190,9 +190,76 @@ export interface RuntimeContext {
   /** The host stamps session identity and mints the request id (§13). */
   requestPermission(ask: PermissionAsk): Promise<PermissionDecision>;
   reportProgress(p: ProgressSignal): void;
+  /**
+   * Address another agent in this session (§4.2).
+   *
+   * Optional, and honestly so: an adapter that runs its **own** tools — the SDK
+   * library, an installed CLI — has no way to call this, because the tool that
+   * would is ours and it is not in their suite. Declaring it required would put
+   * a method on those adapters that nothing could ever invoke.
+   *
+   * Fire-and-forget by design. The sender's turn does not wait for the
+   * recipient's: a lead that blocked until its worker replied would hold a model
+   * connection open for the length of somebody else's work, and two agents
+   * waiting on each other is a deadlock with a token bill.
+   */
+  sendMessage?(message: OutboundMessage): void;
+  /**
+   * Who else is in this session (§4.2).
+   *
+   * Carried rather than discoverable, because an adapter has no way to ask: it
+   * holds a spec, not a session. Without it a `message` tool can only refuse an
+   * unknown address after the fact, and cannot tell the model who is available
+   * to address in the first place — which is the difference between a roster and
+   * a guessing game.
+   *
+   * A snapshot at start. An agent added mid-turn is not addressable until the
+   * next one, which is honest: the alternative is a list that changes under a
+   * model between deciding who to ask and asking.
+   */
+  peers?: AgentId[];
   /** Single egress endpoint; the gateway routes by provider. Absent unless auth is api-key. */
   modelEgress?: { baseUrl: string; token: string };
   abortSignal: AbortSignal;
+}
+
+/**
+ * One agent addressing another, through the session (DESIGN.md §4.2).
+ *
+ * Carries normalized `ContentBlock`s rather than a provider's own message shape,
+ * which is what lets a Claude-backed lead message an Ollama-backed worker with
+ * no translation beyond that worker's declared downgrades.
+ *
+ * `to: 'session'` is a broadcast: recorded in the transcript and readable by
+ * anyone, but it starts no turn. Delivering a broadcast as a turn would mean one
+ * message waking every agent in the roster, which is how a roster of six becomes
+ * a fork bomb.
+ */
+/**
+ * What an adapter is allowed to say.
+ *
+ * `from` and `hops` are absent on purpose: the sender is stamped by the owner
+ * of the log, which is the only party that cannot be wrong about it, and the hop
+ * count is the ceiling's own bookkeeping. An adapter able to set either could
+ * forge attribution in a log whose value is that it says who did what, or reset
+ * the bound that stops two agents talking in circles.
+ */
+export type OutboundMessage = Omit<AgentMessage, 'from' | 'hops'>;
+
+export interface AgentMessage {
+  from: AgentId;
+  to: AgentId | 'session';
+  kind: 'task' | 'report' | 'question' | 'answer' | 'review';
+  content: NormalizedTurn['content'];
+  /**
+   * How many messages deep this exchange is.
+   *
+   * A lead asks a worker, the worker asks back, and without a bound that is a
+   * conversation with a bill attached and no one watching. Incremented on every
+   * hop and refused past a ceiling; reset whenever a *person* sends a turn,
+   * because a human in the loop is the thing the ceiling exists to wait for.
+   */
+  hops: number;
 }
 
 export interface UserTurn {

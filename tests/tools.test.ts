@@ -241,6 +241,7 @@ describe('the suite', () => {
       'glob',
       'grep',
       'bash',
+      'message',
     ]);
     expect(toolByName(DEFAULT_TOOLS, 'READ')).toBe(readTool);
     expect(toolByName(DEFAULT_TOOLS, 'nope')).toBeUndefined();
