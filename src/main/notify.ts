@@ -17,6 +17,23 @@
  * finishes again is two notifications, because it is two events. A session
  * pushed forty times while `awaiting_input` is one.
  *
+ * ## Coalesced per tree, not per session
+ *
+ * §11 is explicit and gives the reason: "A parent with twelve children must
+ * produce `subtree_complete — 12 of 12 done`, not twelve notifications.
+ * Per-session coalescing alone would make hierarchy unusable, since splitting is
+ * exactly what multiplies completion events."
+ *
+ * So the unit is the **root**: one pending notification per tree, and a newer
+ * trigger replaces an older one. A single session is a tree of one, which is why
+ * this costs nothing before anybody splits anything.
+ *
+ * And **blocking beats finishing**. If any descendant needs a person, that
+ * outranks a completion elsewhere in the tree — there is one slot, and the
+ * actionable thing should have it. A tree that announced "3 of 5 done" while a
+ * child sat waiting on a permission prompt would be using its one chance to say
+ * the less useful of the two true things.
+ *
  * ## Silent while you are looking
  *
  * If a window has focus, the same information is already on screen — the
@@ -33,7 +50,23 @@
  * otherwise by silently doing nothing there would be worse than saying so.
  */
 
-import type { Session, SessionState } from '@shared/types/index.js';
+import type { Session } from '@shared/types/index.js';
+
+/**
+ * How much a trigger deserves the tree's one slot.
+ *
+ * Ordered by what a person can *do* about it, not by severity. A blocked
+ * descendant is waiting on them; a failure wants a decision; a finish is news.
+ * §11: "the actionable thing wins the one available slot".
+ */
+const RANK: Readonly<Record<string, number>> = {
+  needs_permission: 5,
+  needs_credentials: 5,
+  split_proposed: 4,
+  failed: 3,
+  stalled: 2,
+  quota_exhausted: 1,
+};
 
 /** What a state change is worth interrupting someone for. */
 function headline(session: Session): string | null {
@@ -75,8 +108,15 @@ export interface NotifierDeps {
 }
 
 export class Notifier {
-  /** The last state announced per session, so a repeat says nothing. */
-  private readonly announced = new Map<string, SessionState>();
+  /**
+   * The last thing announced per **root**, so a repeat says nothing.
+   *
+   * Keyed by root rather than by session: that is the whole of §11's tree rule.
+   * Twelve children finishing is one event about one tree, not twelve events.
+   */
+  private readonly announced = new Map<string, string>();
+  /** Every session seen, so a tree can be assessed from any push into it. */
+  private readonly seen = new Map<string, Session>();
 
   constructor(private readonly deps: NotifierDeps) {}
 
@@ -84,41 +124,111 @@ export class Notifier {
    * Consider a session for a notification.
    *
    * Called on every `session` push, which is often — the filtering is the point,
-   * not an optimisation.
+   * not an optimisation. What is assessed is the *tree* the session belongs to,
+   * because that is the unit a person cares about.
    */
   consider(session: Session): void {
-    const previous = this.announced.get(session.sessionId);
-    if (previous === session.state) return;
+    this.seen.set(session.sessionId, session);
 
-    // Recorded before deciding whether to show, so a state seen while focused
+    const rootId = session.tree.rootSessionId;
+    const summary = this.assess(rootId);
+    /**
+     * Empty string for "nothing to say", never `undefined`.
+     *
+     * `undefined` already means "this tree has never been assessed", and
+     * collapsing the two made the first push compare equal to itself and return
+     * before recording — so the *second* push also looked like a first sight and
+     * nothing was ever announced.
+     */
+    const key = summary?.key ?? '';
+    const previous = this.announced.get(rootId);
+    if (previous === key) return;
+
+    // Recorded before deciding whether to show, so something seen while focused
     // does not fire later when focus is lost. You were told, by the screen.
-    this.announced.set(session.sessionId, session.state);
+    this.announced.set(rootId, key);
 
     // A first sight is not a transition. Attaching a host surfaces every session
     // it already had, and announcing those would greet you with a notification
-    // per session on every launch.
+    // per tree on every launch.
     if (previous === undefined) return;
-
-    const what = headline(session);
-    if (what === null) return;
+    if (summary === null) return;
     if (this.deps.supported?.() === false) return;
     if (this.deps.focused()) return;
 
     const show = this.deps.show ?? defaultShow;
-    show(session.title, `${session.title} ${what}`);
+    show(summary.title, summary.body);
+  }
+
+  /**
+   * The one thing worth saying about a tree right now, or `null`.
+   *
+   * Returns a `key` as well as the words: the key is what coalescing compares,
+   * and it has to change exactly when the *situation* does. Comparing the
+   * rendered text would work by accident and break the moment two different
+   * situations happened to read the same.
+   */
+  private assess(rootId: string): { key: string; title: string; body: string } | null {
+    const tree = [...this.seen.values()].filter((s) => s.tree.rootSessionId === rootId);
+    if (tree.length === 0) return null;
+    const root = tree.find((s) => s.sessionId === rootId) ?? tree[0]!;
+
+    // Blocking beats finishing. One slot, and the actionable thing gets it.
+    let blocked: Session | null = null;
+    let best = 0;
+    for (const session of tree) {
+      const reason = session.needsAttention?.reason;
+      if (reason === undefined) continue;
+      const rank = RANK[reason] ?? 0;
+      // `needs_input` is not in RANK and so scores 0: every turn ends there, and
+      // a toast per turn is the exact noise this whole file exists to prevent.
+      if (rank > best) {
+        best = rank;
+        blocked = session;
+      }
+    }
+
+    if (blocked !== null) {
+      const what = headline(blocked);
+      if (what !== null) {
+        const where = blocked.sessionId === rootId ? '' : ` (${blocked.title})`;
+        return {
+          key: `block:${blocked.sessionId}:${blocked.needsAttention?.reason ?? ''}`,
+          title: root.title,
+          body: `${root.title}${where} ${what}`,
+        };
+      }
+    }
+
+    const finished = tree.filter((s) => s.state === 'done' || s.state === 'failed');
+    if (finished.length < tree.length) return null;
+
+    // §11's `subtree_complete`: a root and all its descendants finished. The
+    // count is the point — "12 of 12" is what makes one line stand in for twelve
+    // notifications rather than hiding eleven of them.
+    const failed = finished.filter((s) => s.state === 'failed').length;
+    return {
+      key: `complete:${tree.length}:${failed}`,
+      title: root.title,
+      body:
+        tree.length === 1
+          ? `${root.title} ${failed === 1 ? 'failed' : 'finished'}`
+          : `${root.title} — ${tree.length} of ${tree.length} done` +
+            (failed > 0 ? `, ${failed} failed` : ''),
+    };
   }
 
   /** A session that is gone can be forgotten; its id will not come back. */
   forget(sessionId: string): void {
+    this.seen.delete(sessionId);
     this.announced.delete(sessionId);
   }
 
   /** Drop sessions that are no longer listed, so the map cannot grow forever. */
   prune(sessions: Session[]): void {
     const live = new Set<string>(sessions.map((s) => s.sessionId));
-    for (const id of [...this.announced.keys()]) {
-      if (!live.has(id)) this.announced.delete(id);
-    }
+    for (const id of [...this.seen.keys()]) if (!live.has(id)) this.seen.delete(id);
+    for (const id of [...this.announced.keys()]) if (!live.has(id)) this.announced.delete(id);
   }
 }
 

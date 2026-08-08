@@ -1620,6 +1620,12 @@ type NotifyTrigger =
 ```
 
 - **Coalesce per tree, not per session.** One pending OS notification per *root*; a newer trigger replaces an older one. A parent with twelve children must produce `subtree_complete — 12 of 12 done`, not twelve notifications. Per-session coalescing alone would make hierarchy unusable, since splitting is exactly what multiplies completion events.
+
+**Built.** The notifier keys by root rather than by session, so a single session is a tree of one and this costs nothing before anybody splits anything. A tree says nothing while any part of it is still working — a root that finished ahead of its child has not finished the work — and the count goes into the line, because `12 of 12 done` is what lets one notification stand in for twelve rather than hide eleven. Failures are counted separately: `2 of 2 done` alone would report a tree that half failed as a clean finish.
+
+**Blocking beats finishing, and it is ranked.** A blocked descendant outranks a completion anywhere in the tree, and among blockages the order is by what a person can *do* about it — a permission prompt or a missing credential first, then a split awaiting approval, then a failure, a stall, and a spent quota window last. The blocked session is named, since the root is not where the answer has to be given. `needs_input` is absent from that ranking on purpose: every turn ends there, and a toast per turn multiplied by the size of a tree is precisely the noise the mechanism exists to prevent.
+
+One bug found in the writing, recorded because it was invisible from outside: the coalescing key used `undefined` both for "this tree has never been assessed" and for "there is nothing to say", so the first push compared equal to itself, returned before recording, and made the *second* push look like a first sight as well. Nothing was ever announced. It is an empty string now.
 - **Blocking beats finishing.** If any descendant needs attention, that trigger outranks a completion elsewhere in the tree — the actionable thing wins the one available slot.
 - **Suppress when focused** — visible focused session gets an in-app toast only.
 - **Actionable** — `Open`, `Approve`, `Dismiss` where the OS supports it.
@@ -1819,7 +1825,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
-| 6 | Multi-agent + hierarchy | 6th | **done** except tree-aware notification coalescing — leases, message bus, worktrees, spawn, roll-up, bubbling, proposals, results, approval UI, per-agent panes |
+| 6 | Multi-agent + hierarchy | 6th | **done** |
 | 7 | Multimodal | 7th | not started |
 | 8 | Breadth + polish | 8th | not started |
 

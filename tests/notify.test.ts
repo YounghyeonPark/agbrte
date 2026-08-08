@@ -123,6 +123,90 @@ describe('while you are looking', () => {
   });
 });
 
+describe('a tree, not twelve sessions', () => {
+  /** A child of `root`, so the notifier sees one tree rather than several. */
+  function child(id: string, state: SessionState, extra: Partial<Session> = {}): Session {
+    return session(state, {
+      sessionId: id as never,
+      title: id,
+      tree: { rootSessionId: 's1' as never, parentSessionId: 's1' as never, depth: 1, ancestry: ['s1' as never] },
+      ...extra,
+    });
+  }
+
+  it('says one thing about twelve children finishing', () => {
+    const r = rig();
+    r.notifier.consider(session('working'));
+    for (let i = 0; i < 12; i += 1) r.notifier.consider(child(`c${i}`, 'working'));
+
+    // Everything completes.
+    r.notifier.consider(session('done'));
+    for (let i = 0; i < 12; i += 1) r.notifier.consider(child(`c${i}`, 'done'));
+
+    // §11: "A parent with twelve children must produce `subtree_complete — 12 of
+    // 12 done`, not twelve notifications. Per-session coalescing alone would make
+    // hierarchy unusable, since splitting is exactly what multiplies completion
+    // events."
+    expect(r.shown).toHaveLength(1);
+    expect(r.shown[0]).toContain('13 of 13 done');
+  });
+
+  it('says nothing while any of the tree is still working', () => {
+    const r = rig();
+    r.notifier.consider(session('working'));
+    r.notifier.consider(child('c1', 'working'));
+    r.notifier.consider(session('done'));
+
+    // A root that finished ahead of its child has not finished the work.
+    expect(r.shown).toEqual([]);
+  });
+
+  it('lets a blocked descendant outrank a completion', () => {
+    const r = rig();
+    r.notifier.consider(session('working'));
+    r.notifier.consider(child('c1', 'working'));
+    r.notifier.consider(session('done'));
+    r.notifier.consider(
+      child('c1', 'awaiting_permission', {
+        needsAttention: { reason: 'needs_permission', since: '2026-01-01T00:00:00Z' },
+      }),
+    );
+
+    // §11: the actionable thing wins the one available slot. A tree announcing
+    // progress while a child waits on a prompt would spend its one chance on the
+    // less useful of two true things.
+    expect(r.shown).toHaveLength(1);
+    expect(r.shown[0]).toContain('is asking permission');
+    // Named, because the root is not where the answer has to be given.
+    expect(r.shown[0]).toContain('c1');
+  });
+
+  it('still says nothing about a child merely waiting for input', () => {
+    const r = rig();
+    r.notifier.consider(session('working'));
+    r.notifier.consider(child('c1', 'working'));
+    r.notifier.consider(
+      child('c1', 'awaiting_input', {
+        needsAttention: { reason: 'needs_input', since: '2026-01-01T00:00:00Z' },
+      }),
+    );
+    // Every turn ends there. A toast per turn per child is the noise this whole
+    // file exists to prevent, multiplied by the size of the tree.
+    expect(r.shown).toEqual([]);
+  });
+
+  it('counts a failure without hiding it in the total', () => {
+    const r = rig();
+    r.notifier.consider(session('working'));
+    r.notifier.consider(child('c1', 'working'));
+    r.notifier.consider(session('done'));
+    r.notifier.consider(child('c1', 'failed'));
+
+    // "2 of 2 done" alone would report a tree that half failed as a clean finish.
+    expect(r.shown[0]).toContain('1 failed');
+  });
+});
+
 describe('where the platform cannot', () => {
   it('does nothing rather than pretending', () => {
     const shown: string[] = [];
