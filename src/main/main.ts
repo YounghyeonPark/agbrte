@@ -18,6 +18,7 @@ import { app, BrowserWindow, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { delimiter, dirname, join } from 'node:path';
 import { registerIpc } from './ipc/register.js';
+import { Notifier } from './notify.js';
 import { Fleet, type FleetRuntime } from './fleet.js';
 import { connectOrSpawnHost } from './host/connectOrSpawn.js';
 import { connectRemoteHost } from './host/connectRemote.js';
@@ -147,6 +148,23 @@ app.whenReady().then(async () => {
 
   // Registered before attaching, so the window can render a host that failed to
   // come up rather than waiting on it.
+  // Subscribed here rather than inside the IPC layer: a notification is not a
+  // message to a renderer, it is what happens when no renderer is being looked
+  // at. Wiring it there would have made it fire once per window.
+  const notifier = new Notifier({
+    focused: () => BrowserWindow.getAllWindows().some((w) => w.isFocused()),
+  });
+  const attached = fleet;
+  attached.on('session', (_instanceId: unknown, session: unknown) =>
+    notifier.consider(session as Parameters<Notifier['consider']>[0]),
+  );
+  attached.on('detached', () => {
+    void attached
+      .list()
+      .then((sessions) => notifier.prune(sessions))
+      .catch(() => undefined);
+  });
+
   ipc = registerIpc({ fleet, runtimes: HOST_RUNTIMES });
 
   for (const root of roots) {
