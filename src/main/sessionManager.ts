@@ -17,6 +17,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   byAttentionThenRecency,
+  TREE_LIMITS,
   isPaused,
   newAgentId,
   newSessionId,
@@ -24,6 +25,7 @@ import {
   type OutboundMessage,
   type PermissionAsk,
   type PolicyRule,
+  type ResultContract,
   type AgentHandle,
   type AgentMessage,
   type AgentRecord,
@@ -31,6 +33,7 @@ import {
   type AgentRuntime,
   type AgentSpec,
   type AttentionReason,
+  type ChildRef,
   type EventOrigin,
   type ExecutionTarget,
   type InboxEntry,
@@ -40,6 +43,7 @@ import {
   type PermissionRequest,
   type RuntimeContext,
   type Session,
+  type SessionBudget,
   type SessionState,
   type ToolPolicy,
   type UserTurn,
@@ -53,6 +57,7 @@ import { rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
 import { entriesFrom, merge, ReadMarker } from './inbox.js';
+import { buildBrief, reserveForChild } from './store/brief.js';
 import {
   createWorktree,
   hasCommits,
@@ -68,6 +73,17 @@ export interface CreateSessionInput {
   goal: string;
   target?: ExecutionTarget;
   policy?: ToolPolicy;
+  /**
+   * What this session is allowed to spend (§4.3).
+   *
+   * Absent by default, and absent means unbudgeted rather than zero — most
+   * sessions are a person working, and imposing a ceiling nobody chose would
+   * stop turns for a reason the user never set. A tree, though, cannot be
+   * carved out of nothing: `spawnChild` refuses on a parent with no budget,
+   * because inventing one would put a number nobody agreed to at the root of a
+   * subtree.
+   */
+  budget?: SessionBudget;
 }
 
 export interface NewAgentInput {
@@ -80,6 +96,30 @@ export interface NewAgentInput {
   isolation?: Isolation;
   limits?: AgentSpec['limits'];
   requirements?: RoleRequirements;
+}
+
+/** What a split needs beyond the brief itself (§4.3). */
+export interface SpawnChildInput {
+  title: string;
+  /** The child's narrow goal. Becomes its `goal`, and the brief's `scope`. */
+  scope: string;
+  /** Required: without it the child reads widely to re-derive context (§4.3). */
+  outOfScope: string[];
+  contract: ResultContract;
+  acceptance?: string[];
+  /** Carved out of the parent's remainder at spawn, never at spend time. */
+  tokenCeiling: number;
+  memoryRefs?: string[];
+  verbatimTurns?: number;
+  /** A child may run somewhere else entirely — that is half the point (§4.3). */
+  target?: ExecutionTarget;
+}
+
+export class SplitRefused extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'SplitRefused';
+  }
 }
 
 export class AdmissionRefused extends Error {
@@ -331,6 +371,7 @@ export class SessionManager extends EventEmitter {
       checklist: [],
       artifacts: [],
       needsAttention: null,
+      ...(input.budget !== undefined ? { budget: input.budget } : {}),
       // A session created directly is a root of its own tree (§4.3).
       tree: { rootSessionId: sessionId, depth: 0, ancestry: [] },
       children: [],
@@ -1251,6 +1292,135 @@ export class SessionManager extends EventEmitter {
   /** Tail the durable log for a session — the renderer's subscription source. */
   async events(sessionId: SessionId, fromSeq = 0): Promise<AgbrteEvent[]> {
     return this.live(sessionId).store.readEvents(fromSeq);
+  }
+
+/**
+   * Split a session's scope into a child that owns its own log (§4.3).
+   *
+   * The expensive form of decomposition, and deliberately so: a new log, its own
+   * plan, its own agents, its own budget. §4.3's decision rule is that this is
+   * for when *the task* does not fit — where compacting would discard specifics
+   * the remaining work still needs — not for when the transcript is merely long.
+   *
+   * ## Everything here is a refusal before it is an action
+   *
+   * §4.3 keeps splits user-approved because "a decomposition mistake made
+   * autonomously produces a tree of subtly mis-scoped children that is harder to
+   * salvage than a single overlong session". The same reasoning applies to every
+   * check below: a child spawned past a limit, or on a budget its parent cannot
+   * cover, is worse than a spawn that did not happen — the first costs money and
+   * attention before anyone notices, the second says why immediately.
+   *
+   * `buildBrief` supplies its own refusals (empty scope, empty `outOfScope`, no
+   * summary ceiling, a brief over its own ceiling). This adds the ones that are
+   * about the *tree* rather than the brief.
+   *
+   * ## The edge is written on both ends
+   *
+   * The parent records `session.spawned_child`, the child records
+   * `session.brief_received`. Either log alone can reconstruct the relationship,
+   * which is what makes a child in another workspace — the case §4.3 is built
+   * for — self-contained rather than a dangling reference.
+   */
+  async spawnChild(
+    parentSessionId: SessionId,
+    input: SpawnChildInput,
+    actor?: Actor,
+  ): Promise<Session> {
+    const parent = this.live(parentSessionId);
+
+    // Depth first, because it is the cheapest thing to be wrong about and the
+    // one that says the decomposition itself is off (§4.3: "deeper trees are
+    // unmanageable and almost always signal bad decomposition, not deep work").
+    const depth = parent.session.tree.depth + 1;
+    if (depth > TREE_LIMITS.maxDepth) {
+      throw new SplitRefused(
+        `maxDepth is ${TREE_LIMITS.maxDepth} and this child would sit at ${depth}; ` +
+          `a tree this deep is usually a sign the split is wrong rather than deep work`,
+      );
+    }
+    if (parent.session.children.length >= TREE_LIMITS.maxChildrenPerSession) {
+      throw new SplitRefused(
+        `this session already has ${parent.session.children.length} children, ` +
+          `which is the limit that keeps a tree node reviewable by a human`,
+      );
+    }
+
+    const budget = parent.session.budget;
+    if (budget === undefined) {
+      // A parent with no ceiling cannot carve one out, and inventing one would
+      // put a number nobody agreed to at the root of a subtree.
+      throw new SplitRefused('this session has no budget, so nothing can be reserved for a child');
+    }
+
+    // Taken *before* the child exists. §4.3's claim that "a tree cannot outspend
+    // what its root was granted" only holds if the reservation happens at spawn
+    // rather than being checked when the child spends — by then the money is
+    // gone and the check is a report.
+    const reserved = reserveForChild(budget, input.tokenCeiling);
+
+    const built = await buildBrief(parent.store, {
+      scope: input.scope,
+      outOfScope: input.outOfScope,
+      contract: input.contract,
+      acceptance: input.acceptance ?? [],
+      budget: reserved.child,
+      ...(input.memoryRefs !== undefined ? { memoryRefs: input.memoryRefs } : {}),
+      ...(input.verbatimTurns !== undefined ? { verbatimTurns: input.verbatimTurns } : {}),
+    });
+
+    const child = await this.createSession(
+      {
+        title: input.title,
+        goal: input.scope,
+        ...(input.target !== undefined ? { target: input.target } : {}),
+      },
+      actor,
+    );
+
+    const live = this.live(child.sessionId);
+    live.session.tree = {
+      rootSessionId: parent.session.tree.rootSessionId,
+      parentSessionId,
+      depth,
+      // Root-first, and carrying the parent: this is what a breadcrumb renders
+      // from and what stops a cycle being createable at all.
+      ancestry: [...parent.session.tree.ancestry, parentSessionId],
+    };
+    live.session.budget = reserved.child;
+
+    // Durable on the child, so a session resumed in three weeks still knows why
+    // it exists (§4.3: "the brief is durable, not an opening prompt").
+    await live.store.append(
+      { type: 'session.brief_received', brief: built.brief, parentSessionId },
+      { ...(actor !== undefined ? { actor } : {}) },
+    );
+
+    const ref: ChildRef = {
+      sessionId: child.sessionId,
+      instanceId: child.instanceId,
+      target: child.target,
+      title: child.title,
+      contract: input.contract,
+      lastKnown: {
+        state: live.session.state,
+        checklistDone: 0,
+        checklistTotal: 0,
+        updatedAt: live.session.updatedAt,
+        cost: 0,
+      },
+    };
+
+    parent.session.budget = reserved.parent;
+    parent.session.children.push(ref);
+    await parent.store.append(
+      { type: 'session.spawned_child', child: ref },
+      { ...(actor !== undefined ? { actor } : {}) },
+    );
+
+    this.emit('session', parent.session);
+    this.emit('session', live.session);
+    return live.session;
   }
 
   /** Current derived state, folded from the log (§5.1). */

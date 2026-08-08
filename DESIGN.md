@@ -854,7 +854,15 @@ It refuses rather than degrades in four cases, all for the same reason: §4.3 ke
 
 `checkResult()` returns a verdict rather than throwing, so an over-ceiling summary becomes an artifact plus a pointer instead of a failed child. `reserveForChild()` takes the reservation **at spawn** and mutates the parent's remainder, which is what makes "a tree cannot outspend what its root was granted" true rather than aspirational — siblings already reserved reduce what the next child can take.
 
-**Still absent: the orchestration.** `spawnChildren`, split proposals, result roll-up, and `needsAttention` bubbling are Phase 6. The vocabulary is complete — `TreePosition`, `ChildRef`, `SessionBrief`, `ResultContract`, `SessionBudget`, five child events, and a reducer that folds all of them — but nothing spawns a child yet.
+**`spawnChild()` is built**, and like the brief builder it is mostly refusals — for the same reason §4.3 keeps splits user-approved: a child spawned past a limit, or on a budget its parent cannot cover, costs money and attention before anyone notices, while a refused spawn says why immediately.
+
+- **Depth is checked first**, being the cheapest thing to be wrong about and the one that says the decomposition itself is off rather than the work being deep.
+- **The reservation is taken before the child exists.** Checking at spend time would make "a tree cannot outspend what its root was granted" a report rather than a rule — by then the money is gone. Siblings that already reserved genuinely reduce what the next child can take.
+- **A parent with no budget cannot split.** Inventing a ceiling would put a number nobody agreed to at the root of a subtree, and every descendant would inherit it. A root session may now be given a budget at creation; absent still means *unbudgeted* rather than zero, since most sessions are a person working and a ceiling nobody chose would stop turns for a reason nobody set.
+- **A refused split leaves nothing behind** — no reservation, no half-written edge, no child. A parent that lost budget to children which were never created would be the worst of both outcomes.
+- **The edge is written on both logs**: the parent's `session.spawned_child` and the child's `session.brief_received`. Either alone reconstructs the relationship, which is what makes a child in another workspace self-contained rather than a dangling reference.
+
+**Still absent:** split *proposals* — the `propose_split` tool and its approval flow — result roll-up, `awaiting_children`, and `needsAttention` bubbling.
 
 **Results flow up by reference; only a bounded summary is injected.** A child returns a structured summary within `summaryMaxTokens`, plus artifact refs and checklist outcomes. If its result exceeds the ceiling, the child **writes an artifact and returns a pointer** — it does not get to negotiate a larger injection. The parent may drill into a child's full log in the UI, but that is a human reading a transcript, not context entering a model.
 
