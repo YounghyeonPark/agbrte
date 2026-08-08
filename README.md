@@ -4,13 +4,19 @@ An agent-based development workbench. Multiple sessions, multiple agents per
 session, any model behind a pluggable adapter, running on your machine or on a
 server — and agent memory that survives the workspace folder being moved.
 
-**Status: Phase 1 complete, Phase 5 (remote execution) in progress.** A text
-session edits a real repository and its transcript survives an app restart,
-verified end to end. Remote workspaces, hosts that outlive the app, and several
-clients on one session all work and are exercised against a real server. Not yet
-built: the dashboard, multi-agent, multimodal, and a web client — see
-[DESIGN.md §15](DESIGN.md) for what each phase covers and what is deliberately
-unfinished.
+**Status: phases 1, 2 and 5 done; 3 and 4 nearly.** A text session edits a real
+repository and its transcript survives an app restart. Remote workspaces, hosts
+that outlive the app, and several clients on one session are exercised against a
+real server — including a phone, over a browser, on a tailnet. There is a
+dashboard with a Needs-you rail, stall detection, quota parking that resumes on
+its own, notifications, a CLI for headless machines, and a one-file installer.
+Four runtime shapes run the same conformance suite, including the agent CLI you
+already have installed.
+
+**Not built yet:** multi-agent and hierarchy (phase 6), multimodal (phase 7), the
+`QuotaScheduler`, a second cloud provider, and the conformance matrix in the UI.
+[DESIGN.md §15](DESIGN.md) says what each phase covers and what is deliberately
+unfinished; where something is only partly true, it says which part.
 
 ## The one idea
 
