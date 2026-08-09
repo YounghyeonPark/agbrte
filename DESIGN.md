@@ -1703,6 +1703,18 @@ Rectangle, arrow, freehand, text label, blackout, crop. Annotations are stored a
 
 The flattened image is sent with a generated text block describing the annotations (`"Red arrow at (412, 208) labeled 'this button does nothing'"`). This materially improves how reliably a model attends to what you pointed at — and for weaker vision models it's often the only part that lands, which is a good reason to always send both.
 
+**The vector model and the description are built**; flattening itself is injected, like every other operation that touches pixels.
+
+- **An arrow is described by its tip.** Leading with the tail points a model at where the hand started rather than at what was meant, which is a confidently wrong answer about a picture the model can also see.
+- **Position is given in words as well as pixels.** "upper right" survives a resize and a model that reasons poorly about numbers; `(1100, 100)` survives neither.
+- **Coordinates are described as sent, not as drawn.** §12.2 downscales per agent, so annotations are rescaled with the image before the sentence is generated — otherwise the text points at the wrong part of the image the model is looking at.
+- **Nothing drawn means nothing said.** An "the user annotated this image" line on every ordinary paste is noise in the one place this section depends on being read.
+- **Blackouts and crops are described too.** A model shown a black rectangle and told nothing may conclude the interface has a black rectangle in it; one shown a crop may reason about the whole screen it thinks it is seeing.
+
+**Where §12.1 and §12.3 meet, and it is a real conflict.** This section says annotations are flattened *at send time*; §12.1 says the unredacted frame is never written to disk. Deferring a blackout as a vector op breaks the second outright — the frame with the secret in it sits in the blob store the whole time, indexed and pushable. So a **blackout is its own annotation kind**, split out and routed through `redactAndStore` before the bytes are written, while everything else stays editable. Distinguishing it by colour instead would be a heuristic where this section names a tool, and getting that heuristic wrong means either a highlight burned irreversibly into the stored blob or a secret quietly left in it.
+
+**The limit that follows, stated rather than papered over:** §12.1's guarantee holds only for a blackout drawn *before* the first store. Blacking out an image already on disk produces a new redacted blob and cannot unwrite the old one. The annotator must therefore offer redaction at capture; anything later is a second-best the sentence in §12.1 does not cover.
+
 ### 12.4 Voice
 
 ```ts
@@ -1847,7 +1859,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
 | 6 | Multi-agent + hierarchy | 6th | **done** |
-| 7 | Multimodal | 7th | image fitting and the redaction pipeline done; capture, annotation and voice remain |
+| 7 | Multimodal | 7th | image fitting, redaction, and the annotation model and descriptions done; capture surfaces, flattening and voice remain |
 | 8 | Breadth + polish | 8th | not started |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow.
