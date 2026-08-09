@@ -193,6 +193,18 @@ scp dist/install-agbrte.sh server:
 ssh server 'sh install-agbrte.sh'
 ```
 
+`npm run package`, not `npm run build`. Building refreshes the bundles and
+leaves `dist/install-agbrte.sh` untouched beside them, so a `scp` after a build
+ships whatever was last packaged — silently, since the installer succeeds and
+the server simply runs old code. Package before you send.
+
+**Upgrading a running host means killing it**, whenever the session protocol
+version changed. `agbrte stop` asks the host politely, and it asks in the new
+protocol — which the old host refuses at handshake with `host speaks v1, this
+app speaks v2`. The tool that would shut it down is the one that can no longer
+talk to it. Killing is safe: the log is the truth and every session reopens from
+it. `pkill -f agbrteHost`, then start what you were running again.
+
 **Nothing needs to be on that machine** — no git, no npm, no registry, no
 checkout, no build. The installer carries the three bundles that are Agbrte on a
 headless machine (~280 KB), and downloads a private Node 22 only if the machine
