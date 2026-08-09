@@ -20,7 +20,7 @@ import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
-import type { AgentId, InstanceId, Session } from '@shared/types/index.js';
+import type { AgentId, InstanceId, Session, SessionId } from '@shared/types/index.js';
 
 let root: string;
 let instanceId: InstanceId;
@@ -72,13 +72,54 @@ async function working(m: SessionManager): Promise<{ session: Session; agentId: 
   return { session, agentId: agent.agentId };
 }
 
+/**
+ * Wait for the session to actually be running, rather than for 50ms and a hope.
+ *
+ * Every one of these was a fixed sleep, and the last assertion in this file
+ * flaked because of it. `send` is deliberately not awaited — the turn never
+ * finishes — so the test raced the session reaching `working`, and 50ms was
+ * usually but not always enough. The same fix `messageBus`, `reconnect` and
+ * `treeRollup` already carry; this file was missed because its sleeps looked
+ * like setup rather than synchronisation, which is what a fixed sleep always
+ * looks like.
+ */
+async function until(what: () => Promise<boolean>, ms = 5_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (await what()) return;
+    if (Date.now() > deadline) throw new Error('condition never held');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+const isWorking = (m: SessionManager, id: SessionId) => async (): Promise<boolean> =>
+  (await m.get(id)).state === 'working';
+
+/** Live handles for a session — private, like `sweepStalled` above. */
+const handleCount = (m: SessionManager, id: SessionId): number =>
+  (m as unknown as { sessions: Map<string, { handles: Map<unknown, unknown> }> }).sessions.get(id)
+    ?.handles.size ?? 0;
+
+/**
+ * Wait until the session is `working` **with nothing running**.
+ *
+ * A stronger condition than `working`, and the one the stuck-turn behaviour is
+ * actually defined on: `interrupt` resolves a session only when the handle map
+ * is empty, because that is what "the agent went away mid-turn" means. Waiting
+ * on `working` alone raced the handle being removed — the assertion passed when
+ * the drain won and failed when it did not, which is why it flaked roughly one
+ * run in five rather than always.
+ */
+const isStuck = (m: SessionManager, id: SessionId) => async (): Promise<boolean> =>
+  (await m.get(id)).state === 'working' && handleCount(m, id) === 0;
+
 describe('a session that has gone quiet', () => {
   it('is flagged, without being moved out of `working`', async () => {
     const time = clock();
     const m = manager(SILENT, { stallAfterMs: 60_000, now: time.now });
     const { session, agentId } = await working(m);
     void m.send(session.sessionId, agentId, { content: [{ type: 'text', text: 'go' }] });
-    await new Promise((r) => setTimeout(r, 50));
+    await until(isWorking(m, session.sessionId));
 
     time.advance(61_000);
     sweep(m);
@@ -95,7 +136,7 @@ describe('a session that has gone quiet', () => {
     const m = manager(SILENT, { stallAfterMs: 60_000, now: time.now });
     const { session, agentId } = await working(m);
     void m.send(session.sessionId, agentId, { content: [{ type: 'text', text: 'go' }] });
-    await new Promise((r) => setTimeout(r, 50));
+    await until(isWorking(m, session.sessionId));
 
     time.advance(30_000);
     sweep(m);
@@ -108,7 +149,9 @@ describe('a session that has gone quiet', () => {
     const m = manager(SILENT, { stallAfterMs: 60_000, now: time.now });
     const { session, agentId } = await working(m);
     void m.send(session.sessionId, agentId, { content: [{ type: 'text', text: 'go' }] });
-    await new Promise((r) => setTimeout(r, 50));
+    // The stronger wait, because the last assertion is about a session that is
+    // `working` with nothing running — see `isStuck`.
+    await until(isStuck(m, session.sessionId));
 
     time.advance(61_000);
     sweep(m);
@@ -154,7 +197,7 @@ describe('a session that has gone quiet', () => {
     const m = manager(SILENT, { stallAfterMs: 60_000, now: time.now });
     const { session, agentId } = await working(m);
     void m.send(session.sessionId, agentId, { content: [{ type: 'text', text: 'go' }] });
-    await new Promise((r) => setTimeout(r, 50));
+    await until(isWorking(m, session.sessionId));
 
     time.advance(61_000);
     sweep(m);
@@ -173,7 +216,7 @@ describe('a session that has gone quiet', () => {
     const m = manager(SILENT, { stallAfterMs: 0, now: time.now });
     const { session, agentId } = await working(m);
     void m.send(session.sessionId, agentId, { content: [{ type: 'text', text: 'go' }] });
-    await new Promise((r) => setTimeout(r, 50));
+    await until(isWorking(m, session.sessionId));
 
     time.advance(60 * 60_000);
     sweep(m);

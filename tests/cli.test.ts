@@ -14,6 +14,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -234,5 +236,74 @@ describe('terminal output', () => {
 
   it('flattens newlines so one event stays one line', () => {
     expect(preview('a\n\n  b')).toBe('a b');
+  });
+});
+
+describe('asking what is here must not make something be here', () => {
+  /**
+   * Found on a server, not in a test. I ran `agbrte ls` in a home directory to
+   * see what was running, and it created `~/.devagents` and started a host —
+   * because every verb went through `open`, and opening a workspace creates
+   * one. For a command whose whole job is to report, that is a side effect
+   * nobody asked for, landing in whatever directory the user was standing in.
+   *
+   * Driven as a subprocess against the built CLI rather than by calling a
+   * predicate, because the bug was never in the predicate. It was in which
+   * commands run before it — the same shape as the `interrupt` verb that
+   * dispatched as a folder name because it was in one list and not the other.
+   */
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'agbrte-ls-'));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const cli = (args: string[]): Promise<{ code: number; out: string }> =>
+    new Promise((resolve) => {
+      const child = spawn(process.execPath, [join(process.cwd(), 'dist/cli/agbrte.js'), ...args], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      child.stdout.on('data', (b: Buffer) => (out += b.toString()));
+      child.stderr.on('data', (b: Buffer) => (out += b.toString()));
+      child.on('close', (code) => resolve({ code: code ?? -1, out }));
+    });
+
+  it('reports an empty directory without creating a workspace in it', async () => {
+    const { code, out } = await cli(['ls', dir]);
+
+    expect(code).toBe(0);
+    expect(out).toMatch(/no agbrte workspace/i);
+    // The whole point. A `.devagents` here would be a directory the user did
+    // not ask for, in a directory they may not have meant to be in.
+    expect(existsSync(join(dir, '.devagents'))).toBe(false);
+  });
+
+  it('guards only ls, because every other verb is "do something here"', async () => {
+    /**
+     * The opposite failure, and the more likely one to be introduced later:
+     * a guard that stops `run` from creating the workspace it is about to work
+     * in. `run`, `attach` and `serve` are all instructions rather than
+     * questions, and creating the workspace is the right first step for each.
+     *
+     * Checked by the side effect rather than the exit code — this `run` has no
+     * model to reach and is expected to fail, and what matters is that it got
+     * far enough to make the workspace.
+     */
+    await cli(['run', dir, 'hello']);
+    expect(existsSync(join(dir, '.devagents'))).toBe(true);
+  });
+
+  it('still lists a real workspace', async () => {
+    // The guard must not turn `ls` into a command that never works. A workspace
+    // that exists is listed as before.
+    await openWorkspace(dir);
+    const { code, out } = await cli(['ls', dir]);
+
+    expect(code).toBe(0);
+    expect(out).not.toMatch(/no agbrte workspace/i);
   });
 });

@@ -114,6 +114,11 @@ function findHostEntry(): string {
  * The label carries the machine because that is what a rule wants to match on:
  * "the laptop watches, the desk machine drives" is a sentence about devices.
  */
+/** Whether this directory is already a workspace, without making it one. */
+function hasWorkspace(path: string): boolean {
+  return existsSync(join(path, '.devagents'));
+}
+
 async function open(path: string): Promise<HostConnection> {
   const connection = await connectOrSpawnHost({
     workspaceRoot: path,
@@ -220,6 +225,28 @@ async function main(): Promise<number> {
       process.on('SIGINT', stop);
       process.on('SIGTERM', stop);
     });
+    return 0;
+  }
+
+  /**
+   * Asking what is here must not make something be here.
+   *
+   * Found by running `agbrte ls` on a server's home directory to see what was
+   * running: it created `~/.devagents` and started a host, because every verb
+   * went through `open` and opening a workspace creates one. For a command
+   * whose entire job is to report, that is a side effect nobody asked for — and
+   * it lands in whatever directory the user happened to be standing in.
+   *
+   * Only `ls` is guarded. `run`, `attach` and `serve` are all "do something
+   * here", and creating the workspace is the right first step for each of them.
+   */
+  if (command === 'ls' && !hasWorkspace(path)) {
+    process.stdout.write(
+      `${c.dim(`no agbrte workspace at ${path}`)}
+` +
+        c.dim(`start one with:  agbrte run ${path} "..."
+`),
+    );
     return 0;
   }
 
