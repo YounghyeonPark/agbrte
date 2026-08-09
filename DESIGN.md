@@ -1672,6 +1672,16 @@ Platform notes: macOS needs Screen Recording permission — check `systemPrefere
 
 **Redaction.** Screenshots leak tokens, customer data, and credentials — and with remote sessions and third-party providers that leak crosses a network onto someone else's disk. The annotator offers blackout rectangles, and an optional pre-pass blurs regions matched by local OCR (`sk-`, `Bearer `, `AKIA`, `-----BEGIN`). **Redaction is applied to the stored blob, not just the view** — the unredacted frame is never written to disk and therefore can never be uploaded. Rectangles are recorded in `provenance` for audit.
 
+**Built as an ordering guarantee rather than a discipline.** `redactAndStore` takes the frame, the rectangles and the store, paints, and hands only the result on; the unredacted bytes exist as a parameter and a local and there is no path from there to disk. A pipeline that wrote first and painted after would already have lost — the original would be in the content-addressed index and §6.7 would push it to a remote host on request, and nothing done afterwards makes that untrue.
+
+**It fails closed, which is the opposite of how §12.2 resolves the same missing dependency, and the difference is the point.** Painting needs a decoder and there is not always one. An image that cannot be *resized* degrades to a text note, because the cost of not sending it is a worse answer. An image that cannot be *redacted* is refused, because the cost of storing it is a credential on someone else's disk — and a fallback that stored the original while reporting the rectangles would be worse than having no redaction feature at all.
+
+**"Looked and found nothing" is distinct from "could not look."** The result carries `scanned`, so an unscanned frame cannot be read as a clean one. A failed OCR sweep reports unscanned rather than empty, for the same reason.
+
+**The marker list stays short.** §12.1 names four prefixes and the implementation adds none. A scanner that tries to be clever about secrets in general produces false positives, then a user who learns to ignore them, then a false sense that the sweep is a guarantee rather than a helper for the person doing the redacting.
+
+**Not built:** OCR and the painter themselves, both injected — the first is a native model, the second needs an image decoder. Without them the explicit-rectangle path still works and the sweep honestly reports that it did not run.
+
 ### 12.2 Images in
 
 Paste and drag-drop. **Downscaling is driven by the receiving agent's capabilities**, not a constant: `imageMaxLongEdge` and `imageMaxCount` come from §3.3, and a model with `input.image: false` gets the declared text-plus-`file_ref` downgrade. Per-image token cost is shown from that agent's pricing — or marked unknown under an opaque allowance — so attaching four 4K screenshots per turn is visible rather than mysterious.
@@ -1837,7 +1847,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
 | 6 | Multi-agent + hierarchy | 6th | **done** |
-| 7 | Multimodal | 7th | capability-driven image fitting done; capture, annotation, redaction and voice remain |
+| 7 | Multimodal | 7th | image fitting and the redaction pipeline done; capture, annotation and voice remain |
 | 8 | Breadth + polish | 8th | not started |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow.
