@@ -10,7 +10,9 @@
  * is chosen, never where the work is done.
  */
 
-import { BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { join } from 'node:path';
+import { ClipStore } from '../voice/clips.js';
 import { CH } from '@shared/ipc/contract.js';
 import { createApi, type IpcDeps } from './api.js';
 import { electronScreenBackend } from '../capture/electron.js';
@@ -37,6 +39,10 @@ export function registerIpc(deps: Omit<IpcDeps, 'broadcast' | 'pickFolder'>): {
     // so rather than pretending it might (§12.1).
     screen: electronScreenBackend(),
     selectRegion,
+    // Under `userData`, because a dictated clip belongs to this installation and
+    // not to any workspace: §12.4 keeps it on the machine that recorded it, and
+    // a workspace can be a folder on a shared disk.
+    clips: new ClipStore(join(app.getPath('userData'), 'voice')),
     broadcast: (channel, payload) => {
       for (const win of windows()) win.webContents.send(channel, payload);
     },

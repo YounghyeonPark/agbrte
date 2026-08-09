@@ -72,6 +72,13 @@ const api: AgbrteApi = {
     commit: (r: CaptureCommitDto) => ipcRenderer.invoke(CH.captureCommit, r),
     discard: (pendingId: string) => ipcRenderer.invoke(CH.captureDiscard, pendingId),
   },
+  voice: {
+    status: () => ipcRenderer.invoke(CH.voiceStatus),
+    transcribe: (r: { wavBase64: string; sessionId: string; locale?: string }) =>
+      ipcRenderer.invoke(CH.voiceTranscribe, r),
+    clips: (sessionId?: string) => ipcRenderer.invoke(CH.voiceClips, sessionId),
+    forget: (sha256: string) => ipcRenderer.invoke(CH.voiceForget, sha256),
+  },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),
     create: (r: CreateSessionRequest) => ipcRenderer.invoke(CH.sessionsCreate, r),

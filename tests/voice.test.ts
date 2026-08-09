@@ -10,7 +10,12 @@
  * produced one yet — the same shape as redaction holding by not working.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ClipStore } from '@main/voice/clips.js';
+import { downsample, encodeWav, SAMPLE_RATE, toPcm16 } from '@shared/audio/wav.js';
 import { fitContent } from '@main/content/fit.js';
 import { DEFAULT_ECHO_CAPABILITIES } from '@main/runtime/runtimes/echo.js';
 import {
@@ -304,5 +309,161 @@ describe('reading a clip’s length from its own header', () => {
     // absent one, because the wrong one is displayed as a fact.
     expect(wavDurationMs(Buffer.from('not a wav at all'))).toBeNull();
     expect(isWav(Buffer.from('not a wav at all'))).toBe(false);
+  });
+});
+
+describe('writing a WAV the engine will accept', () => {
+  /**
+   * `MediaRecorder` gives webm/Opus and whisper.cpp takes 16-bit PCM. Rather
+   * than convert (a second native dependency) or send it and hope (whisper
+   * transcribes noise confidently), the recorder writes the header itself — so
+   * the header is worth checking against the parser that will read it.
+   */
+  it('round-trips through the duration reader that will parse it', async () => {
+    // The property that matters: this encoder and `wavDurationMs` agree. A byte
+    // rate written wrong here is a duration confidently wrong everywhere it is
+    // displayed.
+    const oneSecond = new Int16Array(SAMPLE_RATE);
+    const wav = Buffer.from(encodeWav(oneSecond));
+
+    expect(isWav(wav)).toBe(true);
+    expect(wavDurationMs(wav)).toBe(1000);
+  });
+
+  it('is accepted by the transcriber, which refuses anything else', async () => {
+    const exec = (async (_bin: string, args: string[]) => {
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(`${args[args.indexOf('-of') + 1]!}.txt`, 'ok');
+      return { stdout: '', stderr: '' };
+    }) as never;
+
+    const wav = Buffer.from(encodeWav(new Int16Array(1600)));
+    await expect(
+      transcribe(wav, { bin: 'w', model: 'm' }, { exec }),
+    ).resolves.toMatchObject({ text: 'ok' });
+  });
+
+  it('declares the size of everything after the field, not the file', async () => {
+    // A length that counts the whole file is accepted by most players and
+    // truncates in some parsers, which is the worst kind of wrong.
+    const wav = Buffer.from(encodeWav(new Int16Array(100)));
+    expect(wav.readUInt32LE(4)).toBe(wav.length - 8);
+  });
+
+  it('clamps a hot microphone instead of wrapping it', () => {
+    /**
+     * A gain set too high delivers values outside ±1. Letting those wrap turns a
+     * loud syllable into full-scale noise of the *opposite sign*, which whisper
+     * hears as a click and sometimes transcribes as a word.
+     */
+    const pcm = toPcm16(new Float32Array([2, -2, 1, -1, 0]));
+
+    expect(pcm[0]).toBe(32767);
+    expect(pcm[1]).toBe(-32768);
+    // And full scale in each direction is the edge, not one past it: scaling
+    // both by 32768 overflows a positive sample to -32768.
+    expect(pcm[2]).toBe(32767);
+    expect(pcm[3]).toBe(-32768);
+    expect(pcm[4]).toBe(0);
+  });
+
+  it('averages when downsampling rather than dropping samples', () => {
+    // Decimation aliases, and aliased speech makes a transcript subtly wrong
+    // rather than obviously broken — the harder failure to notice.
+    const input = new Float32Array([0, 1, 0, 1, 0, 1, 0, 1]);
+    const out = downsample(input, 32_000, 16_000);
+
+    expect(out.length).toBe(4);
+    // Every output is the mean of its pair, so a signal alternating at the
+    // Nyquist limit flattens instead of becoming a phantom tone.
+    expect([...out]).toEqual([0.5, 0.5, 0.5, 0.5]);
+  });
+
+  it('leaves an already-correct rate alone', () => {
+    const input = new Float32Array([0.1, 0.2, 0.3]);
+    expect(downsample(input, SAMPLE_RATE, SAMPLE_RATE)).toBe(input);
+  });
+});
+
+describe('a clip stays on the machine that recorded it', () => {
+  /**
+   * The decision §12.4 left open, taken: "audio never traverses the transport"
+   * read at its strongest, because loosening it later is easy and a clip already
+   * copied to a shared build box cannot be un-copied.
+   *
+   * Which makes this store the attachment. Nothing about the audio reaches the
+   * session log — `SessionManager` records *fitted* content, which §5.4 replays
+   * on resume, so a clip in the log would be replayed at a model every time a
+   * session rehydrated.
+   */
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = join(await mkdtemp(join(tmpdir(), 'agbrte-clips-')), 'clips');
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const wav = (n: number): Buffer => Buffer.from(encodeWav(new Int16Array(n)));
+
+  it('keeps the recording beside its transcript', async () => {
+    const store = new ClipStore(dir);
+    const clip = await store.put(wav(1600), {
+      transcript: 'run the tests',
+      durationMs: 100,
+      sessionId: 's1',
+    });
+
+    expect((await store.read(clip.sha256))?.equals(wav(1600))).toBe(true);
+    expect((await store.list())[0]?.transcript).toBe('run the tests');
+  });
+
+  it('reports nothing rather than failing on a client nobody dictated on', async () => {
+    expect(await new ClipStore(dir).list()).toEqual([]);
+  });
+
+  it('shows a session’s own clips', async () => {
+    const store = new ClipStore(dir);
+    await store.put(wav(100), { transcript: 'a', durationMs: 1, sessionId: 's1' });
+    await store.put(wav(200), { transcript: 'b', durationMs: 1, sessionId: 's2' });
+
+    expect((await store.list('s1')).map((c) => c.transcript)).toEqual(['a']);
+  });
+
+  it('drops the oldest past the cap, because nobody prunes an invisible folder', async () => {
+    /**
+     * Left alone this becomes a directory of recordings of somebody talking
+     * about their own codebase, kept indefinitely for no stated reason — the
+     * kind of thing §13 exists to be unhappy about.
+     */
+    const store = new ClipStore(dir, 3);
+    for (let i = 0; i < 6; i += 1) {
+      await store.put(wav(100 + i), { transcript: `c${i}`, durationMs: 1, sessionId: 's' });
+    }
+
+    const kept = await store.list();
+    expect(kept).toHaveLength(3);
+    expect(kept.map((c) => c.transcript).sort()).toEqual(['c3', 'c4', 'c5']);
+  });
+
+  it('forgets one on request, recording and record together', async () => {
+    const store = new ClipStore(dir);
+    const clip = await store.put(wav(100), { transcript: 'x', durationMs: 1, sessionId: 's' });
+    await store.forget(clip.sha256);
+
+    expect(await store.read(clip.sha256)).toBeNull();
+    expect(await store.list()).toEqual([]);
+  });
+
+  it('survives one unreadable record', async () => {
+    // A half-written or hand-edited file should not make the whole history
+    // unreadable.
+    const store = new ClipStore(dir);
+    await store.put(wav(100), { transcript: 'good', durationMs: 1, sessionId: 's' });
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(join(dir, 'broken.json'), '{ not json');
+
+    expect((await store.list()).map((c) => c.transcript)).toEqual(['good']);
   });
 });

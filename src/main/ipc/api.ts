@@ -29,6 +29,8 @@ import {
   type CaptureCommitDto,
   type CapturePreviewDto,
   type CaptureRequestDto,
+  type TranscriptDto,
+  type VoiceStatusDto,
   type CaptureResultDto,
   type CaptureSourceInfo,
   type SendRequest,
@@ -43,6 +45,7 @@ import type {
   PermissionRequest,
   Session,
   SessionId,
+  Sha256,
 } from '@shared/types/index.js';
 import { basename } from 'node:path';
 import {
@@ -58,6 +61,8 @@ import { PendingFrames } from '../capture/pending.js';
 import { scaleToFit, sizeOf } from '../content/pixels.js';
 import { scaleAnnotations, splitRedactions } from '../content/annotate.js';
 import type { Rect } from '../content/redact.js';
+import { findEngine, transcribe, wavDurationMs, type SpeechEngine } from '../voice/stt.js';
+import type { ClipStore } from '../voice/clips.js';
 import { buildMatrix } from '@main/conformance.js';
 import type { ConformanceReport, MatrixCell } from '@shared/types/index.js';
 import { readSshHosts } from '../host/sshConfig.js';
@@ -107,6 +112,13 @@ export interface IpcDeps {
    * `null` means the user cancelled.
    */
   selectRegion?: () => Promise<{ displayId: string; region: Rect } | null>;
+  /**
+   * Where dictated clips are kept, on this machine (§12.4).
+   *
+   * Absent means this client cannot record — there is nowhere local to keep the
+   * clip, and keeping it anywhere else is the thing that section rules out.
+   */
+  clips?: ClipStore;
 }
 
 /** The transport-free API: a channel map, an ack sink, and its teardown. */
@@ -492,6 +504,72 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
 
   handle(CH.captureDiscard, (pendingId: string) => {
     pending.drop(pendingId);
+  });
+
+  // --------------------------------------------------------------------- voice
+
+  /**
+   * The local engine, found once.
+   *
+   * Cached because `findEngine` touches the filesystem and the answer does not
+   * change while the app runs — and because `voice.status` is asked on every
+   * composer render, which is not a reason to stat four paths.
+   */
+  let engine: SpeechEngine | null | undefined;
+  const speech = async (): Promise<SpeechEngine | null> => {
+    if (engine === undefined) engine = await findEngine();
+    return engine;
+  };
+
+  handle(CH.voiceStatus, async (): Promise<VoiceStatusDto> => {
+    const found = await speech();
+    if (found === null) {
+      return {
+        available: false,
+        // Names the two things and why nothing else will happen. §12.4 has no
+        // remote fallback *by design*, and a bare "unavailable" reads as a bug.
+        reason:
+          'no local speech engine — install whisper.cpp and a model, or set ' +
+          'AGBRTE_WHISPER_BIN and AGBRTE_WHISPER_MODEL. Dictation is local only, ' +
+          'because audio is never sent to a provider',
+      };
+    }
+    return { available: true, engine: found.bin, model: found.model };
+  });
+
+  handle(
+    CH.voiceTranscribe,
+    async (r: { wavBase64: string; sessionId: string; locale?: string }): Promise<TranscriptDto> => {
+      if (deps.clips === undefined) {
+        throw new Error('this client cannot record — dictation needs somewhere local to keep the clip');
+      }
+
+      const wav = Buffer.from(r.wavBase64, 'base64');
+      const spoken = await transcribe(wav, await speech(), {
+        ...(r.locale !== undefined ? { locale: r.locale } : {}),
+      });
+
+      const durationMs = wavDurationMs(wav) ?? 0;
+      // Stored here, on this client, and nowhere else — the clip is what makes a
+      // mis-transcription recoverable, and it never crosses a network to do it.
+      const clip = await deps.clips.put(wav, {
+        transcript: spoken.text,
+        durationMs,
+        sessionId: r.sessionId,
+        engine: spoken.engine,
+        model: spoken.model,
+      });
+
+      return { text: spoken.text, sha256: clip.sha256, durationMs };
+    },
+  );
+
+  handle(CH.voiceClips, async (sessionId?: string) =>
+    deps.clips === undefined ? [] : deps.clips.list(sessionId),
+  );
+
+  handle(CH.voiceForget, async (sha256: string) => {
+    await deps.clips?.forget(sha256 as Sha256);
   });
 
   handle(CH.captureRegion, async (sessionId: string): Promise<CaptureResultDto | null> => {

@@ -190,6 +190,33 @@ export interface CaptureCommitDto {
   annotations?: Annotation[];
 }
 
+/** Whether dictation can work here, and if not, what to do about it (§12.4). */
+/** A clip this client is holding. The audio itself never leaves the machine. */
+export interface StoredClipDto {
+  sha256: string;
+  transcript: string;
+  durationMs: number;
+  sessionId: string;
+  at: string;
+  engine?: string;
+  model?: string;
+}
+
+export interface VoiceStatusDto {
+  available: boolean;
+  /** Names what to install. Absent when it works. */
+  reason?: string;
+  engine?: string;
+  model?: string;
+}
+
+export interface TranscriptDto {
+  text: string;
+  /** Identifies the clip **on this client**, which is the only place it exists. */
+  sha256: string;
+  durationMs: number;
+}
+
 export interface CaptureResultDto {
   block: ImageBlock;
   /** Whether the OCR pre-pass ran, so an unscanned frame is not shown as clean. */
@@ -335,6 +362,28 @@ export interface AgbrteApi {
     /** Throw the held frame away — the annotator was closed without sending. */
     discard(pendingId: string): Promise<void>;
   };
+  /**
+   * Dictation, which happens entirely on this machine (§12.4).
+   *
+   * There is no remote fallback and that is the design, not a gap: audio never
+   * reaches a provider, so a client with no local engine cannot dictate and says
+   * which two things to install.
+   */
+  voice: {
+    status(): Promise<VoiceStatusDto>;
+    /**
+     * Transcribe a WAV and keep it here.
+     *
+     * Returns text, because text is what gets sent — the user edits it first and
+     * voice never auto-sends. The clip stays on this client with its transcript,
+     * which is what makes a mis-transcription recoverable without the recording
+     * ever crossing a network.
+     */
+    transcribe(r: { wavBase64: string; sessionId: string; locale?: string }): Promise<TranscriptDto>;
+    /** What was dictated here, for going back to a transcript that came out wrong. */
+    clips(sessionId?: string): Promise<StoredClipDto[]>;
+    forget(sha256: string): Promise<void>;
+  };
   sessions: {
     list(): Promise<Session[]>;
     create(r: CreateSessionRequest): Promise<Session>;
@@ -432,6 +481,10 @@ export const CH = {
   capturePreview: 'agbrte:capture.preview',
   captureCommit: 'agbrte:capture.commit',
   captureDiscard: 'agbrte:capture.discard',
+  voiceStatus: 'agbrte:voice.status',
+  voiceTranscribe: 'agbrte:voice.transcribe',
+  voiceClips: 'agbrte:voice.clips',
+  voiceForget: 'agbrte:voice.forget',
   sessionsInterrupt: 'agbrte:sessions.interrupt',
   sessionsSince: 'agbrte:sessions.since',
   permissionsPending: 'agbrte:permissions.pending',

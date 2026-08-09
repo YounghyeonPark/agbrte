@@ -1832,10 +1832,16 @@ interface TtsProvider { id: string; speak(t: string, o?: TtsOptions): Promise<vo
 
 **Two things this leaves open, stated rather than guessed at.**
 
-- **Where the clip is kept for a remote session.** "Audio kept as an attachment with its transcript, so a mis-transcription is recoverable" and "audio never traverses the transport" pull in opposite directions the moment the session is owned by another machine. Your own build box is not a third party, but §17 already contemplates shared remote hosts. The answer belongs with the recorder rather than ahead of it, because storing locally and storing host-side are different features and only one of them is what a user attaching a clip expects.
+- **Where the clip is kept — settled: on the client that recorded it.** "Kept as an attachment, so a mis-transcription is recoverable" and "audio never traverses the transport" pull opposite ways the moment a session is owned by another machine. The strongest reading of the second wins, because loosening it later is easy and a clip already copied to a shared build box cannot be un-copied.
+
+    That makes the client's clip store **the** attachment, and there is a second reason it has to be: `SessionManager` logs the *fitted* content — what the agent saw, which §5.4 replays on resume — so a clip in the log would be replayed at a model on every rehydration. What travels is the transcript, as ordinary text the user has already had a chance to edit. Recovering a mis-transcription therefore means opening the voice history on the machine you dictated from, which is the only machine that ever held the recording. The store is capped and drops the oldest, because a dictation folder nobody looks at otherwise becomes an indefinite archive of somebody talking about their own codebase.
 - **Voice in the browser client hits the same wall as notifications (§11).** `getUserMedia` requires a secure context and the intended arrangement is `http://` to a tailnet address, so a browser will refuse the microphone outright. Serving over TLS fixes both and is not built; this is the third of §14's costs coming due in a place §14 did not list.
 
-**Not built:** the recorder itself (push-to-talk, the live indicator, the edit-before-send surface), TTS, and cloud STT.
+**The recorder is built, and three of §12.4's four properties are enforced rather than intended.** The stream is opened on press and every track **stopped** on release — not muted, because a muted track still holds the device and still lights the OS indicator, which teaches a user that the indicator means nothing. The transcript lands in the composer as editable text and nothing sends it. And the live indicator is the same element being held down, so it cannot be scrolled out of view while the microphone is open. The fourth, live partials, is honestly absent for the reason above.
+
+**Raw samples, not `MediaRecorder`.** That API gives webm/Opus; whisper takes 16-bit PCM. `shared/audio/wav.ts` writes the header from samples taken off the audio graph, at 16 kHz mono because whisper resamples to exactly that anyway — recording at 48 kHz stereo would be six times the bytes held in memory, base64'd across IPC and written to disk, for none of the accuracy. The encoder and `wavDurationMs` are written separately and tested against each other, since a byte rate wrong in one is a duration confidently wrong everywhere it is shown.
+
+**Not built:** live partials, TTS, and cloud STT.
 
 ---
 

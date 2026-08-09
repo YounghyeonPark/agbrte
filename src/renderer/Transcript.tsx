@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react';
 import type { AgbrteEvent, ContentBlock, SplitProposal } from '../shared/types/index.js';
 import { AttachmentChip, CapturePicker, type Attachment } from './Capture.js';
+import { Dictate } from './Dictate.js';
 
 const META_ROW = 'text-muted flex items-baseline gap-2 text-xs';
 const CODE = 'text-accent rounded bg-[#202029] px-1.5 py-px font-mono text-[11px]';
@@ -340,6 +341,16 @@ export function Composer({
         }}
       />
       </div>
+      {sessionId !== undefined && (
+        <Dictate
+          sessionId={sessionId}
+          // Appended rather than replacing: dictating after typing is adding to
+          // a thought, and §12.4 hands the words over for editing regardless.
+          onTranscript={(spoken) =>
+            setText((prev) => (prev.trim() === '' ? spoken : `${prev.trimEnd()} ${spoken}`))
+          }
+        />
+      )}
       {sessionId !== undefined && (
         <button
           className="btn-quiet shrink-0 self-center"

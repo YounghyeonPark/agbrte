@@ -139,6 +139,12 @@ const api: AgbrteApi = {
     commit: call(CH.captureCommit),
     discard: call(CH.captureDiscard),
   },
+  voice: {
+    status: call(CH.voiceStatus),
+    transcribe: call(CH.voiceTranscribe),
+    clips: call(CH.voiceClips),
+    forget: call(CH.voiceForget),
+  },
   sessions: {
     list: call(CH.sessionsList),
     create: call(CH.sessionsCreate),
