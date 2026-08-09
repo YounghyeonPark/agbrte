@@ -142,6 +142,14 @@ export interface DowngradeNote {
     | 'over_max_count'
     | 'no_audio_support'
     /** Marks could not be drawn here; §12.3's description was sent instead. */
-    | 'annotations_not_flattened';
+    | 'annotations_not_flattened'
+    /**
+     * A voice clip had no usable transcript (§12.4).
+     *
+     * Its own reason rather than `no_audio_support`, which would name the wrong
+     * cause: the agent's capabilities are irrelevant here, because audio never
+     * reaches a provider whatever they say. What failed was the local engine.
+     */
+    | 'not_transcribed';
   detail: string;
 }

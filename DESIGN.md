@@ -1822,6 +1822,21 @@ interface TtsProvider { id: string; speak(t: string, o?: TtsOptions): Promise<vo
 - **TTS is OS-native** by default (`say` on macOS, SAPI on Windows) — offline, free, adequate.
 - Push-to-talk scoped to the focused session; the mic is never hot by default, with an unmistakable live indicator.
 
+**The guarantee is built, and it was held by nothing.** "Audio never reaches a model provider" is a §13-grade promise wearing a §12 heading, and `fitContent` had no audio branch at all — an `AudioBlock` fell straight through to the adapter. It was true only because nothing produced one yet, which is the same shape as redaction holding by not working. A clip is now replaced by its transcript **unconditionally**, and specifically *not* by consulting `input.audio`: a provider that accepts audio is exactly the case this section is about, and branching on the capability would make "your voice reached a third party" depend on which model you happened to pick. The hash goes no further either — it is the handle §6.7 resolves, so a transcript carrying it would let a tool fetch the clip and send it on.
+
+**Detected, not bundled — this section says otherwise and the rest of the document wins.** §12.4 specifies a "bundled `whisper.cpp` with a small multilingual model". §3.12 refuses to vendor a CLI and §12.1 refuses to vendor a browser, both because the installer is one self-contained shell script and a per-platform download would be the heaviest dependency in the project for a feature many sessions never use. That installer is ~370 KB; the smallest useful whisper model is ~75 MB and a good multilingual one several hundred, plus a native binary per platform. Bundling would grow it two orders of magnitude so a headless server that will never have a microphone can carry a speech model. So it is detected like the other two, with `AGBRTE_WHISPER_BIN` / `AGBRTE_WHISPER_MODEL` overriding any guess, and a machine without one says so and names what to install.
+
+**Streaming partials are declared absent rather than faked.** `whisper-cli` transcribes a finished file and exits. Emitting the whole transcript at the end and calling it a stream would be worse than an honest gap: the UI would be built against a promise the engine does not keep.
+
+**WAV only, refused rather than converted.** whisper.cpp takes 16-bit PCM, and handed a browser's webm it produces either an error or a confident transcription of noise — the second being much worse. Converting means ffmpeg, a second detected dependency for a path not yet shown to be needed, so the recorder is what has to produce WAV.
+
+**Two things this leaves open, stated rather than guessed at.**
+
+- **Where the clip is kept for a remote session.** "Audio kept as an attachment with its transcript, so a mis-transcription is recoverable" and "audio never traverses the transport" pull in opposite directions the moment the session is owned by another machine. Your own build box is not a third party, but §17 already contemplates shared remote hosts. The answer belongs with the recorder rather than ahead of it, because storing locally and storing host-side are different features and only one of them is what a user attaching a clip expects.
+- **Voice in the browser client hits the same wall as notifications (§11).** `getUserMedia` requires a secure context and the intended arrangement is `http://` to a tailnet address, so a browser will refuse the microphone outright. Serving over TLS fixes both and is not built; this is the third of §14's costs coming due in a place §14 did not list.
+
+**Not built:** the recorder itself (push-to-talk, the live indicator, the edit-before-send surface), TTS, and cloud STT.
+
 ---
 
 ## 13. Permissions and safety

@@ -31,6 +31,7 @@
 
 import type {
   Annotation,
+  AudioBlock,
   ContentBlock,
   DowngradeNote,
   ImageBlock,
@@ -102,6 +103,13 @@ export async function fitContent(
   let estimatedImageTokens = 0;
 
   for (const block of content) {
+    if (block.type === 'audio') {
+      const spoken = transcribed(block);
+      if (spoken.note !== null) downgrades.push(spoken.note);
+      out.push(spoken.block);
+      continue;
+    }
+
     if (block.type !== 'image') {
       out.push(block);
       continue;
@@ -172,6 +180,55 @@ export async function fitContent(
   }
 
   return { content: out, downgrades, estimatedImageTokens };
+}
+
+/**
+ * A voice clip becomes its transcript, and the audio goes no further (§12.4).
+ *
+ * > STT runs locally, always … Audio never traverses the transport and never
+ * > reaches a model provider; dictating about proprietary code doesn't ship
+ * > your voice to a third party.
+ *
+ * So this is **not** a capability downgrade and does not consult
+ * `caps.input.audio`. A provider that accepts audio is exactly the case the
+ * sentence above is about: the guarantee is that the clip does not leave, not
+ * that it leaves only where it would be understood. Branching on the capability
+ * would make "your voice reached a third party" depend on which model you
+ * happened to pick, which is not a property anybody can reason about.
+ *
+ * Before this, `fitContent` had no audio branch at all — an `AudioBlock` fell
+ * through to the adapter untouched. The guarantee held because nothing produced
+ * one yet, which is the same shape as redaction holding by not working, and it
+ * would have stopped holding the moment §12.4 got a microphone.
+ *
+ * A clip with no transcript is named rather than dropped. STT can fail — no
+ * engine on this machine, a model that will not load — and an agent told "there
+ * was a voice message here that could not be transcribed" can ask; one handed
+ * silence cannot.
+ */
+function transcribed(block: AudioBlock): { block: ContentBlock; note: DowngradeNote | null } {
+  const seconds = Math.round(block.durationMs / 100) / 10;
+
+  if (block.transcript === undefined || block.transcript.trim() === '') {
+    return {
+      block: {
+        type: 'text',
+        text:
+          `[voice message, ${seconds}s, not transcribed. ` +
+          `stored as ${block.sha256.slice(0, 12)}]`,
+      },
+      note: {
+        reason: 'not_transcribed',
+        detail: `a ${seconds}s voice message could not be transcribed; the audio was not sent`,
+      },
+    };
+  }
+
+  // The transcript alone, with no "[voice]" decoration around it. §12.4 says the
+  // user edits the text before sending, so by the time it arrives it is simply
+  // what they meant to say — labelling it would tell a model how the words were
+  // typed, which is not information about the request.
+  return { block: { type: 'text', text: block.transcript }, note: null };
 }
 
 /**
