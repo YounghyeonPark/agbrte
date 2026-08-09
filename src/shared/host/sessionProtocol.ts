@@ -81,25 +81,88 @@ export interface HostIdentity {
   movedFrom?: string;
   /** The host's own pid, so a client can report which process it is talking to. */
   pid: number;
-  /** Protocol version, so a stale app fails loudly rather than subtly. */
+  /** Protocol version, so a client knows which commands this host has. */
   protocol: number;
+  /**
+   * The oldest client this host will serve.
+   *
+   * Optional because hosts deployed before negotiation do not send it, and their
+   * silence means 1 — which is true of them.
+   */
+  minProtocol?: number;
 }
 
 /**
- * Bumped whenever a command's shape changes.
+ * Bumped whenever a command is added or its shape changes.
  *
  * A detached host outlives the app that spawned it, so a *newer* app can meet an
- * *older* host — the one direction a single-process design never has to consider.
- * A version mismatch is refused at handshake rather than discovered halfway
- * through a command whose fields moved.
+ * *older* host — the one direction a single-process design never has to
+ * consider.
+ *
+ * ## It used to be compared for equality, and that disarmed the upgrade
+ *
+ * The rule was "any mismatch is refused at handshake", which is right when a
+ * field moves and much too strong when a command is merely added. §6.7 added two
+ * commands and moved nothing; every running host was refused until restarted.
+ *
+ * Worse, and found on a real server rather than reasoned about: `agbrte stop`
+ * speaks the *new* protocol, so the polite shutdown could not reach the old host
+ * it existed to retire. **The tool that asks is the tool that was just
+ * upgraded.** A bump cost a `kill`, and §8's graceful path was unavailable at
+ * exactly the moment an upgrade needed it.
+ *
+ * ## So compatibility is a range, and each side owns one end
+ *
+ * The **host** decides whether it will serve a client, because the host is the
+ * owner — the same reason roles are granted rather than claimed. It refuses a
+ * client older than `MIN_CLIENT_PROTOCOL`, which is the only case where a
+ * changed command shape could bite.
+ *
+ * The **client** decides whether a command is available, from the version the
+ * host already reports in `welcome` and the table below. An older host is not a
+ * broken connection; it is a connection that cannot do one thing, and it says
+ * which.
+ *
+ * The pleasing part is that this needs nothing from the old host. A v1 host
+ * ignores the extra `hello` field and reports `protocol: 1` exactly as it always
+ * did, so a client shipping this can talk to hosts that were deployed before it
+ * existed.
  */
 export const SESSION_PROTOCOL_VERSION = 2;
+
+/**
+ * The oldest client a host will serve.
+ *
+ * Raised only when a command's shape *changes* — that is the case a version
+ * check has to catch, and the case that has not happened yet.
+ */
+export const MIN_CLIENT_PROTOCOL = 1;
+
+/**
+ * When each command appeared.
+ *
+ * Absent means "always", which is every command from the first version. A client
+ * consults this before using anything optional, so meeting an older host costs
+ * one feature rather than the connection.
+ */
+export const COMMAND_SINCE: Readonly<Record<string, number>> = {
+  'blob.has': 2,
+  'blob.put': 2,
+};
 
 // ------------------------------------------------------------------ app → host
 
 export type SessionCommand =
   /** Always first. Carries the role the client wants. */
-  | { t: 'hello'; id: RequestId; role: AccessRole; client: string }
+  /**
+   * Always first. Carries the role the client wants and the protocol it speaks.
+   *
+   * `protocol` is optional because a host older than this field still has to be
+   * able to read a `hello` from a client that sends it — and, symmetrically,
+   * absent means "v1 or a client that predates negotiation", which is the safest
+   * thing for it to mean.
+   */
+  | { t: 'hello'; id: RequestId; role: AccessRole; client: string; protocol?: number }
   | { t: 'session.list'; id: RequestId }
   | { t: 'session.listOnDisk'; id: RequestId }
   | { t: 'session.get'; id: RequestId; sessionId: string }

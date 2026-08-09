@@ -14,6 +14,7 @@
 
 import { EventEmitter } from 'node:events';
 import {
+  COMMAND_SINCE,
   SESSION_PROTOCOL_VERSION,
   type AppSideSessionChannel,
   type HostIdentity,
@@ -52,11 +53,31 @@ interface Pending {
 type Unsent<T> = T extends unknown ? Omit<T, 'id'> : never;
 
 export class HostProtocolMismatch extends Error {
-  constructor(hostVersion: number) {
+  constructor(hostVersion: number, minimum: number) {
     super(
-      `host speaks session protocol v${hostVersion}, this app speaks v${SESSION_PROTOCOL_VERSION}`,
+      `host v${hostVersion} will not serve a client older than v${minimum}; ` +
+        `this app speaks v${SESSION_PROTOCOL_VERSION} — upgrade the app`,
     );
     this.name = 'HostProtocolMismatch';
+  }
+}
+
+/**
+ * The host is real, connected, and simply older than this command.
+ *
+ * A separate error from the mismatch above, because it is a separate situation
+ * and a separate fix: nothing is wrong with the connection, one feature is
+ * unavailable, and the remedy is on the *other* machine. Reported where the
+ * command is called rather than at handshake, so the rest of the session keeps
+ * working — which is the whole point of negotiating instead of refusing.
+ */
+export class CommandUnavailable extends Error {
+  constructor(command: string, since: number, hostVersion: number) {
+    super(
+      `this host speaks session protocol v${hostVersion} and \`${command}\` needs v${since} — ` +
+        'upgrade the host to use it',
+    );
+    this.name = 'CommandUnavailable';
   }
 }
 
@@ -111,6 +132,9 @@ export class HostConnection extends EventEmitter {
       id: this.mintId(),
       role: opts.role ?? 'read-write',
       client: opts.client ?? 'agbrte-app',
+      // The host decides whether it will serve this, because the host is the
+      // owner — the same reason roles are granted rather than claimed.
+      protocol: SESSION_PROTOCOL_VERSION,
     });
   }
 
@@ -140,12 +164,21 @@ export class HostConnection extends EventEmitter {
   private receive(message: SessionMessage): void {
     switch (message.t) {
       case 'welcome': {
-        if (message.identity.protocol !== SESSION_PROTOCOL_VERSION) {
-          // A detached host outlives the app that spawned it, so a newer app can
-          // meet an older host — the one direction a single-process design never
-          // has to think about. Refuse at the handshake rather than halfway
-          // through a command whose fields moved.
-          this.failReady(new HostProtocolMismatch(message.identity.protocol));
+        /**
+         * Refused only when this app is older than the host will serve.
+         *
+         * That is the one case a version check has to catch: a command whose
+         * *shape* changed, which a client cannot detect on its own. Meeting an
+         * older host is not that case, and used to be refused here — which
+         * stranded every running host on an additive bump, and left `agbrte
+         * stop` unable to reach the host it was meant to retire.
+         *
+         * A host that predates this field sends nothing, and its silence means
+         * 1, which is true of it.
+         */
+        const minimum = message.identity.minProtocol ?? 1;
+        if (SESSION_PROTOCOL_VERSION < minimum) {
+          this.failReady(new HostProtocolMismatch(message.identity.protocol, minimum));
           this.opts.channel.close();
           return;
         }
@@ -258,8 +291,26 @@ export class HostConnection extends EventEmitter {
     });
   }
 
+  /**
+   * Whether the host on the other end has a given command.
+   *
+   * Public because a UI should be able to grey a button rather than offer one
+   * that will explain itself only after being pressed.
+   */
+  supports(command: keyof typeof COMMAND_SINCE | string): boolean {
+    return (this.identity?.protocol ?? 1) >= (COMMAND_SINCE[command] ?? 1);
+  }
+
+  private require(command: string): void {
+    const since = COMMAND_SINCE[command] ?? 1;
+    if (!this.supports(command)) {
+      throw new CommandUnavailable(command, since, this.identity?.protocol ?? 1);
+    }
+  }
+
   /** Whether this session can already resolve the hash (§6.7). */
   hasBlob(sessionId: SessionId, sha256: Sha256, mime: string): Promise<boolean> {
+    this.require('blob.has');
     return this.call({ t: 'blob.has', sessionId, sha256, mime });
   }
 
@@ -278,6 +329,9 @@ export class HostConnection extends EventEmitter {
    * count, which is why a retry cannot duplicate bytes.
    */
   async putBlob(sessionId: SessionId, data: Buffer, mime: string): Promise<Sha256> {
+    // Checked before the hash, so an old host costs nothing rather than a
+    // needless pass over several megabytes.
+    this.require('blob.put');
     const sha = sha256Of(data);
     if (await this.hasBlob(sessionId, sha, mime)) return sha;
 

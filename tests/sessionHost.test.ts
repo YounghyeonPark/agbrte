@@ -16,13 +16,21 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionHostServer } from '../src/host/sessionServer.js';
-import { HostConnection, HostProtocolMismatch } from '@main/host/hostConnection.js';
+import {
+  CommandUnavailable,
+  HostConnection,
+  HostProtocolMismatch,
+} from '@main/host/hostConnection.js';
 import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
-import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
+import {
+  MIN_CLIENT_PROTOCOL,
+  type SessionCommand,
+  type SessionMessage,
+} from '@shared/host/sessionProtocol.js';
 import type { AgentSpec, InstanceId, SessionId } from '@shared/types/index.js';
 
 let root: string;
@@ -383,10 +391,20 @@ describe('shutting down', () => {
   });
 });
 
-describe('protocol version', () => {
-  it('refuses a host speaking a different version at the handshake', async () => {
+describe('protocol version is a range, not an equality', () => {
+  /**
+   * It used to be an equality, and that disarmed the upgrade it was protecting.
+   *
+   * §6.7 added two commands and moved nothing, and every running detached host
+   * was refused until restarted. Worse, found on a real server: `agbrte stop`
+   * speaks the *new* protocol, so the polite shutdown could not reach the old
+   * host it existed to retire — the tool that asks is the tool that was just
+   * upgraded, and a bump therefore cost a `kill`.
+   */
+
+  /** A host that answers `hello` with whatever identity a test wants. */
+  function fakeHost(identity: Partial<{ protocol: number; minProtocol: number }>): HostConnection {
     const pair = memoryChannelPair<SessionCommand, SessionMessage>();
-    // A host from a future release, still running because it was detached.
     pair.host.onMessage((command) => {
       if (command.t !== 'hello') return;
       pair.host.post({
@@ -399,15 +417,86 @@ describe('protocol version', () => {
           workspaceRoot: root,
           runtimes: [],
           pid: 1,
-          protocol: 99,
+          protocol: identity.protocol ?? 1,
+          ...(identity.minProtocol !== undefined ? { minProtocol: identity.minProtocol } : {}),
         },
       });
     });
+    return new HostConnection({ channel: pair.main });
+  }
 
-    const c = new HostConnection({ channel: pair.main });
-    // Loud at the handshake rather than halfway through a command whose fields
-    // moved — the failure a single-process design never has to consider.
+  it('connects to a host older than this app', async () => {
+    // The case that used to be fatal. An older host serves every command it has;
+    // it is missing one, not broken.
+    const c = fakeHost({ protocol: 1 });
+    await expect(c.ready).resolves.toMatchObject({ protocol: 1 });
+  });
+
+  it('says which command the old host is missing, at the call', async () => {
+    /**
+     * At the call rather than the handshake, and that placement is the design:
+     * the session keeps working, and the one thing that cannot happen explains
+     * itself where it was attempted — naming the remedy, which is on the *other*
+     * machine.
+     */
+    const c = fakeHost({ protocol: 1 });
+    await c.ready;
+
+    expect(c.supports('blob.put')).toBe(false);
+    await expect(c.putBlob('s' as SessionId, Buffer.from('x'), 'image/png')).rejects.toThrow(
+      CommandUnavailable,
+    );
+    await expect(c.putBlob('s' as SessionId, Buffer.from('x'), 'image/png')).rejects.toThrow(
+      /upgrade the host/,
+    );
+  });
+
+  it('needs nothing from the old host to do it', async () => {
+    // The pleasing part, and the reason this is deployable rather than a plan.
+    // A v1 host ignores the extra `hello` field and reports `protocol: 1`
+    // exactly as it always did — no `minProtocol`, no negotiation, no idea any
+    // of this happened. A client shipping today talks to hosts deployed before
+    // it existed.
+    const c = fakeHost({ protocol: 1 });
+    await c.ready;
+    expect(c.supports('session.send')).toBe(true);
+  });
+
+  it('connects to a host newer than this app', async () => {
+    // A host that had actually changed a command shape would say so with
+    // `minProtocol`. One that does not is claiming it still serves v1, and
+    // taking it at its word is what lets a server be upgraded before a laptop.
+    const c = fakeHost({ protocol: 99 });
+    await expect(c.ready).resolves.toMatchObject({ protocol: 99 });
+  });
+
+  it('refuses a host that will not serve a client this old', async () => {
+    // The one case a version check must catch, and the only one left: a command
+    // whose *shape* changed, which a client cannot detect for itself. Loud at
+    // the handshake rather than halfway through.
+    const c = fakeHost({ protocol: 99, minProtocol: 99 });
     await expect(c.ready).rejects.toThrow(HostProtocolMismatch);
+    await expect(c.ready).rejects.toThrow(/upgrade the app/);
+  });
+
+  it('turns a real host away when it speaks below the minimum', async () => {
+    // The mirror image, decided by the host because the host is the owner — the
+    // same reason roles are granted rather than claimed.
+    const r = rig();
+    const pair = memoryChannelPair<SessionCommand, SessionMessage>();
+    r.server.accept(pair.host);
+
+    const replies: SessionMessage[] = [];
+    pair.main.onMessage((m) => replies.push(m));
+    pair.main.post({ t: 'hello', id: 'h1', role: 'read-write', client: 'ancient', protocol: 0 });
+
+    await until(() => replies.length > 0);
+    expect(replies[0]).toMatchObject({ t: 'err', name: 'ClientTooOld' });
+  });
+
+  it('advertises the oldest client it serves, so a client need not guess', async () => {
+    const identity = await rig().connect().ready;
+    expect(identity.minProtocol).toBe(MIN_CLIENT_PROTOCOL);
   });
 
   it('fails in-flight calls when the host dies', async () => {
@@ -421,3 +510,12 @@ describe('protocol version', () => {
     await expect(inFlight).rejects.toThrow();
   });
 });
+
+/** Wait on a condition rather than a sleep. */
+async function until(what: () => boolean, ms = 3_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!what()) {
+    if (Date.now() > deadline) throw new Error('condition never held');
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}

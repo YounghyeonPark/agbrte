@@ -198,12 +198,14 @@ leaves `dist/install-agbrte.sh` untouched beside them, so a `scp` after a build
 ships whatever was last packaged — silently, since the installer succeeds and
 the server simply runs old code. Package before you send.
 
-**Upgrading a running host means killing it**, whenever the session protocol
-version changed. `agbrte stop` asks the host politely, and it asks in the new
-protocol — which the old host refuses at handshake with `host speaks v1, this
-app speaks v2`. The tool that would shut it down is the one that can no longer
-talk to it. Killing is safe: the log is the truth and every session reopens from
-it. `pkill -f agbrteHost`, then start what you were running again.
+**Upgrading a running host is `agbrte stop` and start it again.** That used to
+be untrue across a protocol change: the stop command speaks the *new* protocol
+and the old host refused it at the handshake, so the tool that would shut it
+down was the one that could no longer talk to it, and upgrading meant `kill`.
+Versions are now a range rather than an equality — a newer client connects to an
+older host, loses only the commands that host predates, and says which. Killing
+is still safe if you need it, since the log is the truth and every session
+reopens from it.
 
 **Nothing needs to be on that machine** — no git, no npm, no registry, no
 checkout, no build. The installer carries the three bundles that are Agbrte on a

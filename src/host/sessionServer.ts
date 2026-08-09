@@ -38,6 +38,7 @@ import {
 } from '@shared/types/index.js';
 import { BlobIntake } from '@main/store/blobTransfer.js';
 import {
+  MIN_CLIENT_PROTOCOL,
   SESSION_PROTOCOL_VERSION,
   type HostIdentity,
   type HostSideSessionChannel,
@@ -160,6 +161,30 @@ export class SessionHostServer {
     const { manager } = this.opts;
 
     if (command.t === 'hello') {
+      /**
+       * The host decides whether it will serve this client.
+       *
+       * Only the *older* direction is refused, and only below the minimum: a
+       * client newer than this host is fine, because it consults `protocol`
+       * below and declines to send commands this host has never heard of.
+       * Refusing it would be the behaviour that stranded every running host on
+       * an additive bump.
+       *
+       * Absent means a client that predates negotiation, which is v1.
+       */
+      const speaks = command.protocol ?? 1;
+      if (speaks < MIN_CLIENT_PROTOCOL) {
+        client.channel.post({
+          t: 'err',
+          id: command.id,
+          name: 'ClientTooOld',
+          message:
+            `this host serves session protocol v${MIN_CLIENT_PROTOCOL} and above; ` +
+            `that client speaks v${speaks} — upgrade it`,
+        });
+        return;
+      }
+
       const decided = this.opts.grantRole?.(command.role, command.client);
       const granted = decided?.role ?? command.role;
       client.role = granted;
@@ -173,6 +198,7 @@ export class SessionHostServer {
           ...this.opts.identity,
           pid: process.pid,
           protocol: SESSION_PROTOCOL_VERSION,
+          minProtocol: MIN_CLIENT_PROTOCOL,
         },
       });
       return;
