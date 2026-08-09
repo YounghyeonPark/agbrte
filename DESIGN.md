@@ -1841,6 +1841,10 @@ interface TtsProvider { id: string; speak(t: string, o?: TtsOptions): Promise<vo
 
 **Raw samples, not `MediaRecorder`.** That API gives webm/Opus; whisper takes 16-bit PCM. `shared/audio/wav.ts` writes the header from samples taken off the audio graph, at 16 kHz mono because whisper resamples to exactly that anyway — recording at 48 kHz stereo would be six times the bytes held in memory, base64'd across IPC and written to disk, for none of the accuracy. The encoder and `wavDurationMs` are written separately and tested against each other, since a byte rate wrong in one is a duration confidently wrong everywhere it is shown.
 
+**Run against a real engine, which is where the last three bugs came from.** whisper.cpp v1.9.2 with `ggml-tiny.en`, transcribing a sentence synthesized by the platform's own TTS — SAPI, which §12.4 names for exactly that. It came back word for word: *"Please run the tests again and tell me which ones are failing."* Two things were checked rather than assumed. The engine's own `-otxt` file is read instead of its stdout, because whisper prints timestamps and load messages there and the shape has changed between releases. And a **locale the model does not speak** — the renderer passes `navigator.language` on every press, so a Korean user with an English-only model is the obvious way for that to go wrong — produces a warning, an ignored flag, and a transcript, rather than a failure.
+
+Notable in passing: v1.9.2 decodes with miniaudio and so accepts more than WAV. The refusal stays, because it is a guarantee about what *we* send and a build without miniaudio transcribes noise confidently instead of erroring — a property of the caller should not depend on which build of a detected dependency happens to be installed.
+
 **Not built:** live partials, TTS, and cloud STT.
 
 ---
