@@ -8,17 +8,28 @@ An agent-based development workbench. Multiple sessions, multiple agents per
 session, any model behind a pluggable adapter, running on your machine or on a
 server — and agent memory that survives the workspace folder being moved.
 
-**Status: phases 1, 2 and 5 done; 3 and 4 nearly.** A text session edits a real
-repository and its transcript survives an app restart. Remote workspaces, hosts
-that outlive the app, and several clients on one session are exercised against a
-real server — including a phone, over a browser, on a tailnet. There is a
-dashboard with a Needs-you rail, stall detection, quota parking that resumes on
-its own, notifications, a CLI for headless machines, and a one-file installer.
-One conformance suite runs against five deliberately different runtimes,
-including the agent CLI you already have installed.
+**Status: phases 1, 2, 4, 5 and 6 done; 3 and 7 partly.** A text session edits a
+real repository and its transcript survives an app restart. Remote workspaces,
+hosts that outlive the app, and several clients on one session are exercised
+against a real server — including a phone, over a browser, on a tailnet. There
+is a dashboard with a Needs-you rail, stall detection, quota parking that
+resumes on its own, an inbox, notifications, a CLI for headless machines, and a
+one-file installer. One conformance suite runs against five deliberately
+different runtimes, including the agent CLI you already have installed.
 
-**Not built yet:** multi-agent and hierarchy (phase 6), multimodal (phase 7), the
-`QuotaScheduler`, a second cloud provider, and the conformance matrix in the UI.
+Several agents can work one session under file leases, message each other on the
+record, or take a git worktree each. A session too large to hold can propose
+splitting into a child with its own log and a slice of its budget — a person
+approves it — and a permission prompt raised three levels down surfaces at the
+top of the dashboard.
+
+**Not built yet:** a second cloud provider (phase 3), and most of the multimodal
+surface (phase 7) — screen capture, glyph rendering, OCR and voice. What phase 7
+*does* have is the part that needs no GUI: images fitted to each agent's declared
+limits, redaction applied before anything reaches disk, annotations with the
+description that travels beside them, and a headless-browser screenshot an agent
+can take of its own output.
+
 [DESIGN.md §15](DESIGN.md) says what each phase covers and what is deliberately
 unfinished; where something is only partly true, it says which part.
 
@@ -77,6 +88,14 @@ own after a while rather than lingering forever.
 There is no button to stop a host that is still busy, and that is the honest
 state rather than a design: the protocol has a shutdown that refuses while work
 is in flight, but nothing in the UI sends it yet.
+
+There is also no way past a turn that **died** rather than finished. A session
+whose agent went away mid-turn stays `working`, `agbrte stop` refuses on its
+behalf, and the CLI has no `interrupt` — so upgrading such a host means killing
+the process. That is safe, because the log is the truth and every session
+reopens from it, but it is a gap rather than a decision: stall detection notices
+a session has gone quiet and nothing resolves it. Restarting the host clears it,
+since an unloaded session no longer holds the host busy.
 
 ### 4. The same session from a second machine
 
