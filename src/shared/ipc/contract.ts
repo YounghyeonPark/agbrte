@@ -281,6 +281,14 @@ export interface AgbrteApi {
      * `sessions.send` carries a reference and never an image.
      */
     grab(r: CaptureRequestDto): Promise<CaptureResultDto>;
+    /**
+     * Drag a rectangle on the screen, then capture it (§12.1).
+     *
+     * One call rather than select-then-grab, so the renderer never has to hold
+     * a display id and turn it into a source id. `null` means the user pressed
+     * Escape, which is an ordinary answer and not a failure.
+     */
+    region(sessionId: string): Promise<CaptureResultDto | null>;
   };
   sessions: {
     list(): Promise<Session[]>;
@@ -375,6 +383,7 @@ export const CH = {
   sessionsSend: 'agbrte:sessions.send',
   captureSources: 'agbrte:capture.sources',
   captureGrab: 'agbrte:capture.grab',
+  captureRegion: 'agbrte:capture.region',
   sessionsInterrupt: 'agbrte:sessions.interrupt',
   sessionsSince: 'agbrte:sessions.since',
   permissionsPending: 'agbrte:permissions.pending',

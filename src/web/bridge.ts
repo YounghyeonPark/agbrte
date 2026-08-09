@@ -134,6 +134,7 @@ const api: AgbrteApi = {
   capture: {
     sources: call(CH.captureSources),
     grab: call(CH.captureGrab),
+    region: call(CH.captureRegion),
   },
   sessions: {
     list: call(CH.sessionsList),

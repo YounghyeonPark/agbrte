@@ -239,10 +239,33 @@ export async function captureScreen(
  */
 export async function listSources(
   backend: ScreenBackend | null,
-  thumbnailSize = { width: 320, height: 200 },
+  /**
+   * `null` asks without previews.
+   *
+   * Used when the caller only needs ids — resolving which screen source backs a
+   * display, say. Rendering nine full desktops to answer that would be the
+   * expensive way to look up a number.
+   */
+  thumbnailSize: { width: number; height: number } | null = { width: 320, height: 200 },
 ): Promise<ScreenSource[]> {
   if (backend === null) return [];
   const status = await backend.access();
   if (status !== 'granted' && status !== 'unknown') throw new ScreenAccessDenied(status);
-  return backend.sources({ thumbnailSize });
+  return backend.sources(thumbnailSize === null ? {} : { thumbnailSize });
+}
+
+/**
+ * The screen source backing a display.
+ *
+ * Falls back to the only screen when there is exactly one, because
+ * `display_id` is empty on some platforms and a machine with one monitor has no
+ * ambiguity to resolve. With several attached and no ids to match on there is
+ * nothing honest to guess, so it says so.
+ */
+export function screenForDisplay(
+  sources: readonly ScreenSource[],
+  displayId: string,
+): ScreenSource | null {
+  const screens = sources.filter((s) => s.kind === 'screen');
+  return screens.find((s) => s.displayId === displayId) ?? (screens.length === 1 ? screens[0]! : null);
 }

@@ -43,7 +43,14 @@ import type {
   SessionId,
 } from '@shared/types/index.js';
 import { basename } from 'node:path';
-import { captureScreen, listSources, type ScreenBackend } from '../capture/client.js';
+import {
+  captureScreen,
+  CaptureUnavailable,
+  listSources,
+  screenForDisplay,
+  type ScreenBackend,
+} from '../capture/client.js';
+import type { Rect } from '../content/redact.js';
 import { buildMatrix } from '@main/conformance.js';
 import type { ConformanceReport, MatrixCell } from '@shared/types/index.js';
 import { readSshHosts } from '../host/sshConfig.js';
@@ -84,6 +91,15 @@ export interface IpcDeps {
    * reason it is a separate file from `register.ts`.
    */
   screen?: ScreenBackend;
+  /**
+   * Show §12.1's region overlay and wait for a rectangle.
+   *
+   * Separate from `screen` because it is a *window*, not a capture source, and
+   * a client can plausibly have one without the other — a headless host with a
+   * virtual display could grab pixels and has nowhere to draw a selector.
+   * `null` means the user cancelled.
+   */
+  selectRegion?: () => Promise<{ displayId: string; region: Rect } | null>;
 }
 
 /** The transport-free API: a channel map, an ack sink, and its teardown. */
@@ -351,6 +367,42 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
       // write next door or §6.7's chunked transfer over ssh. `captureScreen`
       // does not know which, for the same reason `send` does not.
       (redacted, mime) => fleet.putBlob(sessionId, redacted, mime),
+    );
+    return { block, scanned };
+  });
+
+  handle(CH.captureRegion, async (sessionId: string): Promise<CaptureResultDto | null> => {
+    if (deps.selectRegion === undefined) {
+      throw new CaptureUnavailable(
+        'this client cannot draw a region — use the desktop app, or capture a whole ' +
+          'screen or window',
+      );
+    }
+
+    const chosen = await deps.selectRegion();
+    // Escape. An ordinary answer: opening the overlay and changing your mind is
+    // a thing people do, and an error here would be a red banner for a decision.
+    if (chosen === null) return null;
+
+    // Ids only — rendering every desktop at preview size to look up a number
+    // would be the expensive way to answer this.
+    const sources = await listSources(deps.screen ?? null, null);
+    const source = screenForDisplay(sources, chosen.displayId);
+    if (source === null) {
+      throw new CaptureUnavailable(
+        `no capture source for display ${chosen.displayId}; it may have been ` +
+          'disconnected while the overlay was open',
+      );
+    }
+
+    const { block, scanned } = await captureScreen(
+      deps.screen ?? null,
+      {
+        sourceId: source.id,
+        region: chosen.region,
+        displayId: chosen.displayId,
+      },
+      (redacted, mime) => fleet.putBlob(sessionId as SessionId, redacted, mime),
     );
     return { block, scanned };
   });

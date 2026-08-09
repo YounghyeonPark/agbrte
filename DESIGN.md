@@ -1682,7 +1682,7 @@ Per-session and **always explicitly user-initiated** — never silent or schedul
 4. Frame hashed, written to the local blob store, previewed.
 5. Optional annotation (§12.3), then attached — pushed via `putBlob` (§6.7) for remote sessions, `provenance.origin: 'client'`.
 
-**Client capture is built, less the overlay.** Enumeration, the permission check, cropping, scaling, redaction, storage and attachment all work; what is missing is the transparent click-through window that lets you *draw* the rectangle. The service takes a region and does the right thing with it — the picker just cannot yet produce one, so today a capture is a whole screen or a whole window.
+**Client capture is built, overlay included.** Enumeration, the permission check, region selection, cropping, scaling, redaction, storage and attachment all work, on every target, from the composer.
 
 **Only three things needed Electron, and they are the only three that touch it.** `capture/client.ts` asks a `ScreenBackend` whether it may look, what there is to look at, and for the pixels; `capture/electron.ts` is that backend and is the second and last file in the app that imports `electron`. Not for testability first — for **loadability**: an ESM `import … from 'electron'` is evaluated when a module loads, so one import in the wrong file makes it unloadable under plain Node, which is what `ipc/api.ts` was split off to fix. Everything else §12.1 asks for is pixels and files, which is why the pipeline is identical on every target.
 
@@ -1698,7 +1698,17 @@ Per-session and **always explicitly user-initiated** — never silent or schedul
 
 **Client capture inherits §12.2's fitting for free**, and a test I wrote wrongly is what proved it: asserting that the image survived to an agent declaring `input.image: false` failed, because fitting had already degraded it to a described note. That is the pipeline working on a path I had not thought to connect it to — and the alternative, a capture that skipped fitting because it came from a person rather than from a tool, would send an image to a model that rejects the request.
 
-**Not built:** the region overlay, and voice (§12.4).
+**The overlay is one window per display, and the arithmetic lives outside it.** A single window spanning the virtual screen cannot be transparent-and-clickable everywhere and gets the DPI wrong the moment two monitors differ; N windows also make the coordinates simple, since each covers exactly one display. The page is *injected* rather than loaded — `executeJavaScript` resolves with the value of the promise its script returns, so the whole interaction is one expression main awaits, instead of a preload and an IPC channel for a window that lives three seconds.
+
+**Region selection goes wrong silently, so the conversion is a separate tested module.** Three coordinate spaces meet: CSS pixels inside the overlay, DIPs in the virtual-screen space where a monitor to the left has a *negative* origin, and the native device pixels `desktopCapturer` returns. Each conversion has a plausible wrong answer that still produces a picture — forget `scaleFactor` and a retina selection captures the **top-left quarter** of what was drawn, which looks enough like a working feature to ship. `capture/region.ts` holds the arithmetic and imports no Electron; the window does not compute anything.
+
+**`Promise.race` over the overlays was wrong twice, and both only appear on a second monitor.** A rejected overlay settles the race, so one that failed to load on a secondary display would end a selection the user was still drawing on their main one — as a *cancel*, silently. And after an answer the losing overlays are still awaiting their script inside windows about to be destroyed, which rejects them with nothing watching: every successful multi-monitor capture would raise an unhandled rejection. So the first *resolution* wins, failures are counted, and only all of them failing is a failure.
+
+**Click-through until it is on screen** is not ceremony: the click that opened the picker is still in flight while the window is being constructed, and an armed overlay would read that mouse-up as a zero-pixel drag. A minimum drag size catches it too, but as an error message — and nothing happening is the right response to a click that was never meant for you.
+
+**Region capture is one call, not select-then-grab.** The overlay, the display→source lookup and the capture all happen in main, so the renderer never holds a display id and never has to turn one into a source id. A cancel comes back as `null` rather than an exception, because opening the overlay and changing your mind is a decision and not a failure.
+
+**Not built:** voice (§12.4), and OCR, which is a native model and stays injected.
 
 **Remote capture** — for what the agent's code is doing: a **headless browser screenshot** taken by the host of a URL the agent serves (with viewport and DPR recorded), or a **remote display grab** where a real or virtual display exists. The former lets an agent *see its own output* and iterate without you in the loop. Both tagged `origin: 'remote'`; on hosted targets, only whatever their artifact API exposes.
 

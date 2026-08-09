@@ -14,6 +14,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron';
 import { CH } from '@shared/ipc/contract.js';
 import { createApi, type IpcDeps } from './api.js';
 import { electronScreenBackend } from '../capture/electron.js';
+import { selectRegion } from '../capture/overlay.js';
 
 export type { IpcDeps, AgbrteApiHost } from './api.js';
 export { createApi } from './api.js';
@@ -35,6 +36,7 @@ export function registerIpc(deps: Omit<IpcDeps, 'broadcast' | 'pickFolder'>): {
     // The desktop client has a screen; the web one does not, and `api.ts` says
     // so rather than pretending it might (§12.1).
     screen: electronScreenBackend(),
+    selectRegion,
     broadcast: (channel, payload) => {
       for (const win of windows()) win.webContents.send(channel, payload);
     },

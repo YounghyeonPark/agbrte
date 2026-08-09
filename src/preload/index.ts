@@ -65,6 +65,7 @@ const api: AgbrteApi = {
   capture: {
     sources: () => ipcRenderer.invoke(CH.captureSources),
     grab: (r: CaptureRequestDto) => ipcRenderer.invoke(CH.captureGrab, r),
+    region: (sessionId: string) => ipcRenderer.invoke(CH.captureRegion, sessionId),
   },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),
