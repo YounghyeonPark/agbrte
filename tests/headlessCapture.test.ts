@@ -44,13 +44,34 @@ describe('finding a browser', () => {
   it('refuses the capture, by name, when none was found', async () => {
     await expect(
       captureUrl('http://127.0.0.1:1/', {
-        // Every candidate fails to run, which is what a host with no browser
-        // looks like from here.
+        // A candidate list that matches nothing, which is what a host with no
+        // browser looks like from here.
+        //
+        // This used to stub `exec` instead, and stopped meaning anything when
+        // the probe changed: an absolute candidate is now checked by existence,
+        // because `chrome.exe --version` on Windows prints nothing and never
+        // exits — so the real Chrome on this machine was being skipped after a
+        // ten-second stall, and a stubbed `exec` could no longer hide it.
+        candidates: ['definitely-not-a-browser-xyz'],
         exec: (async () => {
           throw new Error('nope');
         }) as never,
       }),
     ).rejects.toThrow(NoBrowser);
+  });
+
+  it('does not run an absolute candidate to find out whether it is there', async () => {
+    // The bug this replaced: probing with `--version` cost ten seconds per
+    // capture on Windows *and* selected the wrong browser, because the one that
+    // hangs is the one you want.
+    let ran = 0;
+    const exec = (async () => {
+      ran += 1;
+      throw new Error('should not be reached for a path');
+    }) as never;
+
+    await findBrowser(['/no/such/browser', String.raw`C:\no\such\browser.exe`], exec);
+    expect(ran).toBe(0);
   });
 });
 

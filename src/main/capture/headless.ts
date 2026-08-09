@@ -32,6 +32,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -84,17 +85,36 @@ const CANDIDATES: readonly string[] = [
  * `null` rather than a throw: a host without one is an ordinary state of the
  * world, and the caller's job is to say so rather than to fail starting up —
  * the same reasoning as `detectCli` (§3.12).
+ *
+ * ## Not `--version`, and Windows is why
+ *
+ * The obvious probe is to run the thing and see if it answers. `chrome.exe
+ * --version` on Windows prints nothing and **does not exit** — so the best
+ * browser on the machine was skipped after a ten-second stall, and the scan
+ * fell through to Edge. Two costs, and the quiet one is worse: every capture
+ * paid ten seconds, and the browser actually used was not the one anybody
+ * would have chosen.
+ *
+ * So an absolute path is checked by *existence*, which is the question being
+ * asked, and only a bare name is executed — `--version` on a name resolved
+ * through `PATH` is a cheap way to find out whether it resolves to anything, and
+ * on the platforms where bare names are the norm it behaves.
  */
 export async function findBrowser(
   candidates: readonly string[] = CANDIDATES,
   exec = run,
 ): Promise<string | null> {
   for (const candidate of candidates) {
+    // A path is a claim about the filesystem, so ask the filesystem.
+    if (candidate.includes('/') || candidate.includes('\\')) {
+      if (existsSync(candidate)) return candidate;
+      continue;
+    }
     try {
-      await exec(candidate, ['--version'], { timeout: 10_000 });
+      await exec(candidate, ['--version'], { timeout: 5_000 });
       return candidate;
     } catch {
-      // Not there, or not runnable. Try the next.
+      // Not on PATH, or not runnable. Try the next.
     }
   }
   return null;
@@ -117,11 +137,21 @@ export interface Capture {
  */
 export async function captureUrl(
   url: string,
-  opts: { viewport?: Viewport; browser?: string; exec?: typeof run } = {},
+  opts: {
+    viewport?: Viewport;
+    browser?: string;
+    exec?: typeof run;
+    /**
+     * Where to look. Injectable alongside `exec` and for the same reason: since
+     * an absolute candidate is now checked by *existence*, a test cannot make a
+     * machine that has Chrome look like one that does not by stubbing `exec`.
+     */
+    candidates?: readonly string[];
+  } = {},
 ): Promise<Capture> {
   const exec = opts.exec ?? run;
   const viewport = opts.viewport ?? DEFAULT_VIEWPORT;
-  const browser = opts.browser ?? (await findBrowser(CANDIDATES, exec));
+  const browser = opts.browser ?? (await findBrowser(opts.candidates ?? CANDIDATES, exec));
   if (browser === null) {
     throw new NoBrowser(
       'no headless-capable browser found on this host; install Chrome, Chromium or Edge',
@@ -143,8 +173,19 @@ export async function captureUrl(
         `--screenshot=${out}`,
         `--window-size=${viewport.width},${viewport.height}`,
         `--force-device-scale-factor=${viewport.dpr}`,
-        // A screenshot is a read of a page, not a browsing session. Nothing this
-        // does should end up in a profile that outlives the call.
+        /**
+         * A profile of its own, inside the directory removed below.
+         *
+         * `--incognito` alone was not enough and the failure was silent: without
+         * a `--user-data-dir` the browser uses the *default* profile, and when
+         * the user already has that browser open it hands off to the running
+         * process, exits 0, and writes no file. The caller then sees `ENOENT` on
+         * a temp path, which explains nothing about what went wrong.
+         *
+         * A screenshot is a read of a page, not a browsing session, so a
+         * throwaway profile is also what it should have had anyway.
+         */
+        `--user-data-dir=${join(dir, 'profile')}`,
         '--incognito',
         url,
       ],

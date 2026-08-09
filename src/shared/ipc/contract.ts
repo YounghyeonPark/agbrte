@@ -31,6 +31,7 @@ import type {
   AgentRecord,
   AgentRole,
   AgbrteEvent,
+  Annotation,
   ContentBlock,
   ImageBlock,
   PermissionDecision,
@@ -161,6 +162,34 @@ export interface CaptureRequestDto {
   displayId?: string;
 }
 
+/**
+ * A frame taken and **not stored**, waiting to be drawn on (§12.1, §12.3).
+ *
+ * The two-step exists because §12.1's guarantee and §12.3's editing only both
+ * hold if the drawing happens before the first store. Nothing is on disk when
+ * this is returned; `pendingId` is the handle that trades back for the pixels.
+ */
+export interface CapturePreviewDto {
+  pendingId: string;
+  /** A downscaled rendering to draw on. Marks are reported in *these* pixels. */
+  preview: { dataUrl: string; width: number; height: number };
+  /** The size the frame will actually be stored at, so the caller can show it. */
+  stored: { width: number; height: number };
+}
+
+export interface CaptureCommitDto {
+  pendingId: string;
+  sessionId: string;
+  /**
+   * What the user drew, in **preview** coordinates.
+   *
+   * Scaled to the stored frame's space by the receiver, which is the only side
+   * that knows both numbers — the same reason the region overlay reports a drag
+   * in its own window's pixels and lets `region.ts` convert.
+   */
+  annotations?: Annotation[];
+}
+
 export interface CaptureResultDto {
   block: ImageBlock;
   /** Whether the OCR pre-pass ran, so an unscanned frame is not shown as clean. */
@@ -289,6 +318,22 @@ export interface AgbrteApi {
      * Escape, which is an ordinary answer and not a failure.
      */
     region(sessionId: string): Promise<CaptureResultDto | null>;
+    /**
+     * Take a frame and hold it, unstored, for annotation (§12.3).
+     *
+     * `region: true` opens the overlay first. `null` means the user cancelled
+     * the overlay, which is an answer rather than a failure.
+     */
+    preview(r: {
+      sourceId?: string;
+      region?: boolean;
+      windowTitle?: string;
+      displayId?: string;
+    }): Promise<CapturePreviewDto | null>;
+    /** Paint the blackouts, store, and return the block to attach. */
+    commit(r: CaptureCommitDto): Promise<CaptureResultDto>;
+    /** Throw the held frame away — the annotator was closed without sending. */
+    discard(pendingId: string): Promise<void>;
   };
   sessions: {
     list(): Promise<Session[]>;
@@ -384,6 +429,9 @@ export const CH = {
   captureSources: 'agbrte:capture.sources',
   captureGrab: 'agbrte:capture.grab',
   captureRegion: 'agbrte:capture.region',
+  capturePreview: 'agbrte:capture.preview',
+  captureCommit: 'agbrte:capture.commit',
+  captureDiscard: 'agbrte:capture.discard',
   sessionsInterrupt: 'agbrte:sessions.interrupt',
   sessionsSince: 'agbrte:sessions.since',
   permissionsPending: 'agbrte:permissions.pending',

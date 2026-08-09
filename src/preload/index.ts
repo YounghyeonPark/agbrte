@@ -23,6 +23,7 @@ import {
   CH,
   PUSH,
   type AddAgentRequest,
+  type CaptureCommitDto,
   type CaptureRequestDto,
   type CreateSessionRequest,
   type EventBatch,
@@ -66,6 +67,10 @@ const api: AgbrteApi = {
     sources: () => ipcRenderer.invoke(CH.captureSources),
     grab: (r: CaptureRequestDto) => ipcRenderer.invoke(CH.captureGrab, r),
     region: (sessionId: string) => ipcRenderer.invoke(CH.captureRegion, sessionId),
+    preview: (r: Parameters<AgbrteApi['capture']['preview']>[0]) =>
+      ipcRenderer.invoke(CH.capturePreview, r),
+    commit: (r: CaptureCommitDto) => ipcRenderer.invoke(CH.captureCommit, r),
+    discard: (pendingId: string) => ipcRenderer.invoke(CH.captureDiscard, pendingId),
   },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),

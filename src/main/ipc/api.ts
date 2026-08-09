@@ -26,6 +26,8 @@ import {
   type EventBatch,
   type HostInfo,
   type RuntimeInfo,
+  type CaptureCommitDto,
+  type CapturePreviewDto,
   type CaptureRequestDto,
   type CaptureResultDto,
   type CaptureSourceInfo,
@@ -48,8 +50,13 @@ import {
   CaptureUnavailable,
   listSources,
   screenForDisplay,
+  storeFrame,
+  takeFrame,
   type ScreenBackend,
 } from '../capture/client.js';
+import { PendingFrames } from '../capture/pending.js';
+import { scaleToFit, sizeOf } from '../content/pixels.js';
+import { scaleAnnotations, splitRedactions } from '../content/annotate.js';
 import type { Rect } from '../content/redact.js';
 import { buildMatrix } from '@main/conformance.js';
 import type { ConformanceReport, MatrixCell } from '@shared/types/index.js';
@@ -371,6 +378,122 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     return { block, scanned };
   });
 
+  /**
+   * Frames taken and not yet stored (§12.1).
+   *
+   * Per API host rather than per client, so a browser refresh mid-annotation
+   * does not strand a screenshot of somebody's desktop in a map nobody can
+   * reach. The TTL would catch it eventually; losing the handle should not mean
+   * losing the ability to drop it early.
+   */
+  const pending = new PendingFrames();
+
+  /** How big a preview may be. Large enough to draw accurately on, small enough
+   * to cross an IPC boundary as a data URL without being felt. */
+  const PREVIEW_EDGE = 1100;
+
+  async function heldPreview(
+    frame: Buffer,
+    meta: { windowTitle?: string; displayId?: string },
+  ): Promise<CapturePreviewDto> {
+    const stored = sizeOf(frame);
+    const shown = await scaleToFit(frame, PREVIEW_EDGE);
+    const size = sizeOf(shown);
+    return {
+      pendingId: pending.put(frame, { ...meta, previewWidth: size.width }),
+      preview: {
+        dataUrl: `data:image/png;base64,${shown.toString('base64')}`,
+        width: size.width,
+        height: size.height,
+      },
+      stored,
+    };
+  }
+
+  handle(CH.capturePreview, async (r: {
+    sourceId?: string;
+    region?: boolean;
+    windowTitle?: string;
+    displayId?: string;
+  }): Promise<CapturePreviewDto | null> => {
+    const meta = {
+      ...(r.windowTitle !== undefined ? { windowTitle: r.windowTitle } : {}),
+      ...(r.displayId !== undefined ? { displayId: r.displayId } : {}),
+    };
+
+    if (r.region === true) {
+      if (deps.selectRegion === undefined) {
+        throw new CaptureUnavailable(
+          'this client cannot draw a region — use the desktop app, or capture a whole ' +
+            'screen or window',
+        );
+      }
+      const chosen = await deps.selectRegion();
+      if (chosen === null) return null;
+
+      const sources = await listSources(deps.screen ?? null, null);
+      const source = screenForDisplay(sources, chosen.displayId);
+      if (source === null) {
+        throw new CaptureUnavailable(
+          `no capture source for display ${chosen.displayId}; it may have been ` +
+            'disconnected while the overlay was open',
+        );
+      }
+      const frame = await takeFrame(deps.screen ?? null, {
+        sourceId: source.id,
+        region: chosen.region,
+        displayId: chosen.displayId,
+      });
+      return heldPreview(frame, { ...meta, displayId: chosen.displayId });
+    }
+
+    if (r.sourceId === undefined) throw new Error('capture.preview needs a sourceId or region');
+    const frame = await takeFrame(deps.screen ?? null, { sourceId: r.sourceId, ...meta });
+    return heldPreview(frame, meta);
+  });
+
+  handle(CH.captureCommit, async (r: CaptureCommitDto): Promise<CaptureResultDto> => {
+    // Consumed: the unredacted frame stops existing at the moment the redacted
+    // one starts, rather than lingering for whatever comes next to forget.
+    const { frame, meta } = pending.take(r.pendingId);
+
+    // Marks arrive in preview pixels; the frame may be larger. The same
+    // conversion the region overlay needs, done on the side that knows both
+    // numbers — a renderer scaling its own would be one refactor away from
+    // scaling twice. `previewWidth` is the width that was actually sent, not a
+    // recomputed guess at it.
+    const { previewWidth, ...frameMeta } = meta;
+    const drawn = scaleAnnotations(r.annotations ?? [], sizeOf(frame).width / previewWidth);
+
+    /**
+     * Blackouts leave the vector model here and never come back (§12.3).
+     *
+     * They are painted into the bytes before the store, because deferring one
+     * would leave the secret in a content-addressed index that §6.7 pushes on
+     * request. Everything else stays editable, which is what that section
+     * promises for the marks that are not hiding anything.
+     */
+    const { redactions, editable } = splitRedactions(drawn);
+
+    const result = await storeFrame(
+      frame,
+      { redactions, ...frameMeta },
+      (redacted, mime) => fleet.putBlob(r.sessionId as SessionId, redacted, mime),
+    );
+
+    return {
+      ...result,
+      block: {
+        ...result.block,
+        ...(editable.length > 0 ? { annotations: editable } : {}),
+      },
+    };
+  });
+
+  handle(CH.captureDiscard, (pendingId: string) => {
+    pending.drop(pendingId);
+  });
+
   handle(CH.captureRegion, async (sessionId: string): Promise<CaptureResultDto | null> => {
     if (deps.selectRegion === undefined) {
       throw new CaptureUnavailable(
@@ -429,6 +552,9 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     // await one per batch would serialize rendering behind the round trip.
     ack: (sessionId: string, seq: number) => bridge.ack(sessionId, seq),
     dispose: () => {
+      // Held frames are unstored screenshots of somebody's desktop. Nothing
+      // outlives the API host that took them.
+      pending.clear();
       fleet.off('event', onEvent);
       fleet.off('session', onSession);
       fleet.off('permission', onPermission);

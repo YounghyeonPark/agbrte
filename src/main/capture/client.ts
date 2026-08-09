@@ -158,12 +158,25 @@ export interface CaptureResult {
  * local host it writes next door and for a remote one it is §6.7's chunked
  * transfer, and this function should no more know which than `send` does.
  */
-export async function captureScreen(
+/**
+ * Grab the pixels and get them ready, **without storing anything**.
+ *
+ * Split from storing because §12.1's guarantee decides the order. That section
+ * says the unredacted frame is never written to disk, and §12.3 wants the user
+ * to draw before it is sent — which only both hold if the drawing happens
+ * *between* these two calls. A single `grab-and-store` forces the opposite: the
+ * frame lands on disk, the user blacks something out afterwards, and the
+ * original is already in a content-addressed index that §6.7 will push on
+ * request. §12.3 says so itself — "the annotator must therefore offer redaction
+ * at capture; anything later is a second-best".
+ *
+ * So the frame lives in memory until somebody decides what may be seen.
+ */
+export async function takeFrame(
   backend: ScreenBackend | null,
-  request: CaptureRequest,
-  store: (redacted: Buffer, mime: string) => Promise<Sha256>,
-  opts: { ocr?: Ocr; now?: () => Date; maxEdge?: number } = {},
-): Promise<CaptureResult> {
+  request: Omit<CaptureRequest, 'redactions'>,
+  opts: { maxEdge?: number } = {},
+): Promise<Buffer> {
   if (backend === null) {
     // The `pickFolder` precedent: an API that exists and fails opaquely is worse
     // than one that explains why it cannot. A browser client has no screen to
@@ -187,10 +200,25 @@ export async function captureScreen(
   // which means a scan cannot spend its time on a region that is being thrown
   // away and a blackout is drawn in the coordinates the user was looking at.
   const cropped = request.region !== undefined ? await cropFrame(raw, request.region) : raw;
-  const scaled = await scaleToFit(cropped, opts.maxEdge ?? MAX_STORED_EDGE);
+  return scaleToFit(cropped, opts.maxEdge ?? MAX_STORED_EDGE);
+}
 
+/**
+ * Paint what the user blacked out, store the result, and describe it.
+ *
+ * The frame arrives as bytes nobody has written anywhere. `redactAndStore` is
+ * what makes that final: it takes the buffer, paints, and hands only the result
+ * on, so the unredacted pixels exist as a parameter and a local and there is no
+ * path from here that writes them.
+ */
+export async function storeFrame(
+  frame: Buffer,
+  request: Pick<CaptureRequest, 'redactions' | 'windowTitle' | 'displayId'>,
+  store: (redacted: Buffer, mime: string) => Promise<Sha256>,
+  opts: { ocr?: Ocr; now?: () => Date } = {},
+): Promise<CaptureResult> {
   const { sha256, redactions, scanned } = await redactAndStore(
-    scaled,
+    frame,
     request.redactions ?? [],
     (redacted) => store(redacted, 'image/png'),
     {
@@ -203,7 +231,7 @@ export async function captureScreen(
     },
   );
 
-  const { width, height } = sizeOf(scaled);
+  const { width, height } = sizeOf(frame);
   const now = opts.now ?? ((): Date => new Date());
 
   return {
@@ -227,6 +255,23 @@ export async function captureScreen(
       },
     },
   };
+}
+
+/**
+ * Take and store in one step, for a capture nobody is going to annotate.
+ *
+ * Kept because it is the honest shape of "screenshot this and send it", and
+ * because the two-step path above is only worth its extra round trip when a
+ * person is actually going to draw.
+ */
+export async function captureScreen(
+  backend: ScreenBackend | null,
+  request: CaptureRequest,
+  store: (redacted: Buffer, mime: string) => Promise<Sha256>,
+  opts: { ocr?: Ocr; now?: () => Date; maxEdge?: number } = {},
+): Promise<CaptureResult> {
+  const frame = await takeFrame(backend, request, opts);
+  return storeFrame(frame, request, store, opts);
 }
 
 /**
