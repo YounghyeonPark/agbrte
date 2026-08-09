@@ -13,7 +13,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { decodePng, encodePng, isPng, UnsupportedPng, type RawImage } from '@main/content/png.js';
-import { fillRects, scaleToFit, sizeOf } from '@main/content/pixels.js';
+import { fillRects, flattenAnnotations, scaleToFit, sizeOf } from '@main/content/pixels.js';
 
 /** A solid image of a known colour, so a changed pixel is unambiguous. */
 function solid(width: number, height: number, rgb: [number, number, number]): RawImage {
@@ -233,5 +233,113 @@ describe('the operations the rest of §12 was waiting for', () => {
     // A real image at a real size, where before this was a sentence explaining
     // that one could not be sent.
     expect(result.content[0]).toMatchObject({ type: 'image', width: 100, height: 50 });
+  });
+});
+
+// ----------------------------------------------------------- flattening
+
+describe('burning annotations in', () => {
+  const white = (): Buffer => encodePng(solid(60, 60, [255, 255, 255]));
+
+  it('draws a box where the box was', async () => {
+    const out = decodePng(
+      await flattenAnnotations(white(), [
+        { kind: 'rectangle', colour: 'red', rect: { x: 10, y: 10, w: 30, h: 20 } },
+      ]),
+    );
+
+    // On the edge, not in the middle: a box is an outline, and filling it would
+    // cover the thing it was drawn to point at.
+    expect(pixelAt(out, 25, 10)[0]).toBe(255);
+    expect(pixelAt(out, 25, 10)[1]).toBeLessThan(100);
+    expect(pixelAt(out, 25, 20)).toEqual([255, 255, 255, 255]);
+  });
+
+  it('puts the arrowhead at the tip', async () => {
+    const out = decodePng(
+      await flattenAnnotations(white(), [
+        { kind: 'arrow', colour: 'blue', from: { x: 5, y: 5 }, to: { x: 50, y: 50 } },
+      ]),
+    );
+
+    /**
+     * Counted rather than probed at one pixel: the head is two short strokes at
+     * an angle, and asserting on a single coordinate tests my trigonometry
+     * rather than the property. The property is that there is visibly *more*
+     * mark near the tip than near the tail, which is what an arrowhead is.
+     */
+    const marked = (cx: number, cy: number): number => {
+      let n = 0;
+      for (let y = cy - 8; y <= cy + 8; y += 1) {
+        for (let x = cx - 8; x <= cx + 8; x += 1) {
+          if (x < 0 || y < 0 || x >= out.width || y >= out.height) continue;
+          const px = pixelAt(out, x, y);
+          if ((px[2] ?? 0) > 200 && (px[0] ?? 255) < 100) n += 1;
+        }
+      }
+      return n;
+    };
+
+    // The head is the whole meaning of an arrow, and it belongs where the user
+    // was pointing rather than where their hand started.
+    expect(marked(50, 50)).toBeGreaterThan(marked(5, 5));
+  });
+
+  it('follows a freehand stroke through its points', async () => {
+    const out = decodePng(
+      await flattenAnnotations(white(), [
+        {
+          kind: 'freehand',
+          colour: 'green',
+          points: [
+            { x: 5, y: 30 },
+            { x: 30, y: 30 },
+            { x: 30, y: 55 },
+          ],
+        },
+      ]),
+    );
+    expect(pixelAt(out, 20, 30)[1]).toBeGreaterThan(150);
+    expect(pixelAt(out, 30, 45)[1]).toBeGreaterThan(150);
+  });
+
+  it('crops last, so the marks are still under the crop', async () => {
+    // Annotation coordinates are in the original image's space. Cropping first
+    // would move every mark out from under them.
+    const out = decodePng(
+      await flattenAnnotations(white(), [
+        { kind: 'rectangle', colour: 'red', rect: { x: 30, y: 30, w: 20, h: 20 } },
+        { kind: 'crop', rect: { x: 25, y: 25, w: 30, h: 30 } },
+      ]),
+    );
+
+    expect(out.width).toBe(30);
+    expect(out.height).toBe(30);
+    // The box was at (30,30) in the original, so (5,5) after the crop.
+    expect(pixelAt(out, 10, 5)[1]).toBeLessThan(100);
+  });
+
+  it('does not repaint blackouts', async () => {
+    // They went through `redactAndStore` before the frame was ever written
+    // (§12.1). Repainting here would suggest this is where redaction happens,
+    // and nothing about a frame that reached this point should depend on it.
+    const out = decodePng(
+      await flattenAnnotations(white(), [{ kind: 'blackout', rect: { x: 0, y: 0, w: 60, h: 60 } }]),
+    );
+    expect(pixelAt(out, 30, 30)).toEqual([255, 255, 255, 255]);
+  });
+
+  it('leaves an unannotated frame recognisably itself', async () => {
+    const out = decodePng(await flattenAnnotations(white(), []));
+    expect(pixelAt(out, 30, 30)).toEqual([255, 255, 255, 255]);
+    expect(out.width).toBe(60);
+  });
+
+  it('survives a stroke drawn off the edge', async () => {
+    await expect(
+      flattenAnnotations(white(), [
+        { kind: 'arrow', colour: 'red', from: { x: -500, y: -500 }, to: { x: 900, y: 900 } },
+      ]),
+    ).resolves.toBeInstanceOf(Buffer);
   });
 });

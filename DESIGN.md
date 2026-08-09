@@ -1707,7 +1707,7 @@ Rectangle, arrow, freehand, text label, blackout, crop. Annotations are stored a
 
 The flattened image is sent with a generated text block describing the annotations (`"Red arrow at (412, 208) labeled 'this button does nothing'"`). This materially improves how reliably a model attends to what you pointed at — and for weaker vision models it's often the only part that lands, which is a good reason to always send both.
 
-**The vector model and the description are built**; flattening itself is injected, like every other operation that touches pixels.
+**The vector model, the description and the flattening are built.**
 
 - **An arrow is described by its tip.** Leading with the tail points a model at where the hand started rather than at what was meant, which is a confidently wrong answer about a picture the model can also see.
 - **Position is given in words as well as pixels.** "upper right" survives a resize and a model that reasons poorly about numbers; `(1100, 100)` survives neither.
@@ -1716,6 +1716,10 @@ The flattened image is sent with a generated text block describing the annotatio
 - **Blackouts and crops are described too.** A model shown a black rectangle and told nothing may conclude the interface has a black rectangle in it; one shown a crop may reason about the whole screen it thinks it is seeing.
 
 **Where §12.1 and §12.3 meet, and it is a real conflict.** This section says annotations are flattened *at send time*; §12.1 says the unredacted frame is never written to disk. Deferring a blackout as a vector op breaks the second outright — the frame with the secret in it sits in the blob store the whole time, indexed and pushable. So a **blackout is its own annotation kind**, split out and routed through `redactAndStore` before the bytes are written, while everything else stays editable. Distinguishing it by colour instead would be a heuristic where this section names a tool, and getting that heuristic wrong means either a highlight burned irreversibly into the stored blob or a secret quietly left in it.
+
+**Text labels are marked, not lettered.** A text annotation burns a small filled square at its anchor and no glyphs. Rendering letters means shipping a bitmap font — ninety-odd hand-entered characters — for words the generated description already carries verbatim, and this section says the description is often the only part a weaker vision model reads. What the image has to convey is *where*; what it said travels in the text block beside it.
+
+**Crop is applied last and blackouts are not repainted.** Annotation coordinates live in the original image's space, so cropping first would move every mark out from under them. Blackouts already went through `redactAndStore` before the frame was written; repainting them here would be harmless and would suggest this is where redaction happens, which it is not.
 
 **The limit that follows, stated rather than papered over:** §12.1's guarantee holds only for a blackout drawn *before* the first store. Blacking out an image already on disk produces a new redacted blob and cannot unwrite the old one. The annotator must therefore offer redaction at capture; anything later is a second-best the sentence in §12.1 does not cover.
 
@@ -1863,7 +1867,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
 | 6 | Multi-agent + hierarchy | 6th | **done** |
-| 7 | Multimodal | 7th | fitting, redaction, annotation model, and the pixel operations done; capture surfaces, annotation flattening, OCR and voice remain |
+| 7 | Multimodal | 7th | fitting, redaction, annotations end to end, and the pixel operations done; capture surfaces, glyph rendering, OCR and voice remain |
 | 8 | Breadth + polish | 8th | not started |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow.
