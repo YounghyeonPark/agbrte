@@ -1666,6 +1666,14 @@ Per-session and **always explicitly user-initiated** — never silent or schedul
 
 **Remote capture** — for what the agent's code is doing: a **headless browser screenshot** taken by the host of a URL the agent serves (with viewport and DPR recorded), or a **remote display grab** where a real or virtual display exists. The former lets an agent *see its own output* and iterate without you in the loop. Both tagged `origin: 'remote'`; on hosted targets, only whatever their artifact API exposes.
 
+**The headless screenshot is built**, and it is the first thing in §12 that closes a loop with nobody in it.
+
+- **A browser the user already has, driven as a subprocess.** Not Playwright or Puppeteer: the host is frequently a headless Linux box reached over ssh and the installer is one self-contained shell script, so a package that downloads a browser per platform would be the heaviest dependency in the project — for a feature many sessions never use. Same shape as §3.12: detect what is installed, drive it, refuse clearly when it is absent. `--headless --screenshot` needs no protocol client at all.
+- **Reached through a tool, because it is a data-egress decision.** An agent that can screenshot `localhost:8080` can screenshot an internal dashboard and put it in a third-party model's context. §13 says that belongs to the permission gate, and being a tool is what puts it there. `file://` and `data:` are refused outright — otherwise this is a way to read the disk through a screenshot.
+- **The temp directory is removed whatever happens.** A screenshot of somebody's admin panel left in `/tmp` is the same leak §12.1 spends its length preventing, arriving through a cleanup nobody wrote.
+
+**Tool results had to learn to carry images.** `ToolResult` was text, so a screenshot tool could only ever have described what it saw — which is not "the agent sees its own output", it is the agent reading its own caption. `ToolResult.blocks` now carries content, and the harness delivers it as a **user** message immediately after the tool result rather than inside it: providers reliably accept images in a user turn and many reject them in a tool role, and a screenshot delivered where the provider will not look costs a request to discover. The blocks go through §12.2's fitting first, so an agent that cannot see images gets the described downgrade instead of a rejected request.
+
 **Preview-then-capture** is often best: forward the port (§6.8), open it in your browser, capture that window, annotate, send — you see exactly what the model will see.
 
 Platform notes: macOS needs Screen Recording permission — check `systemPreferences.getMediaAccessStatus('screen')` before the first capture and route the user to System Settings rather than producing a black frame. Windows needs none. Wayland requires the portal path.
@@ -1867,7 +1875,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
 | 6 | Multi-agent + hierarchy | 6th | **done** |
-| 7 | Multimodal | 7th | fitting, redaction, annotations end to end, and the pixel operations done; capture surfaces, glyph rendering, OCR and voice remain |
+| 7 | Multimodal | 7th | fitting, redaction, annotations, pixel operations and headless remote capture done; client capture surfaces, glyph rendering, OCR and voice remain |
 | 8 | Breadth + polish | 8th | not started |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow.

@@ -243,6 +243,7 @@ describe('the suite', () => {
       'bash',
       'message',
       'propose_split',
+      'screenshot',
     ]);
     expect(toolByName(DEFAULT_TOOLS, 'READ')).toBe(readTool);
     expect(toolByName(DEFAULT_TOOLS, 'nope')).toBeUndefined();

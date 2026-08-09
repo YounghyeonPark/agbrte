@@ -37,6 +37,7 @@ import {
 } from '@shared/types/index.js';
 import { DEFAULT_TOOLS, toolByName, type ToolDefinition } from '../../tools/index.js';
 import { WorkspaceLeases } from '../../tools/leases.js';
+import { fitContent } from '../../content/fit.js';
 
 export const AGBRTE_HARNESS_RUNTIME_ID = 'agbrte-harness';
 
@@ -250,18 +251,25 @@ class AgbrteHarnessHandle implements AgentHandle {
           ? { sendMessage: this.ctx.sendMessage.bind(this.ctx) }
           : {}),
         ...(this.ctx.peers !== undefined ? { roster: this.ctx.peers } : {}),
+        ...(this.ctx.capture !== undefined ? { capture: this.ctx.capture.bind(this.ctx) } : {}),
         ...(this.ctx.proposeSplit !== undefined
           ? { proposeSplit: this.ctx.proposeSplit.bind(this.ctx) }
           : {}),
       });
-      this.finishTool(call, result.ok, result.summary, result.content);
+      this.finishTool(call, result.ok, result.summary, result.content, result.blocks);
     } catch (err) {
       const message = (err as Error).message;
       this.finishTool(call, false, `tool threw: ${message}`, message);
     }
   }
 
-  private finishTool(call: NormalizedToolCall, ok: boolean, summary: string, payload: string): void {
+  private finishTool(
+    call: NormalizedToolCall,
+    ok: boolean,
+    summary: string,
+    payload: string,
+    blocks?: ContentBlock[],
+  ): void {
     this.emit({ type: 'tool_result', id: call.id, ok, summary });
     // The model must see the outcome, including a denial and its reason, so it
     // can adapt instead of retrying blindly (§13).
@@ -272,6 +280,35 @@ class AgbrteHarnessHandle implements AgentHandle {
       result: payload,
       ...(ok ? {} : { isError: true }),
     });
+
+    /**
+     * Non-text a tool produced arrives as a **user** message right after the
+     * tool result (§12.1).
+     *
+     * Not inside the tool result, because providers reliably accept images in a
+     * user turn and many reject them in a tool role — a screenshot delivered
+     * where the provider will not look is the same as no screenshot, except it
+     * costs a request to find out.
+     *
+     * Fitted to this agent first, for the same reason a pasted image is: an
+     * agent that cannot see images gets the described downgrade rather than a
+     * request the provider rejects. The fitting is capability-only here — no
+     * resizer, because the harness has no reach into the blob store (§12.2), so
+     * an oversized capture becomes a named downgrade rather than a silent
+     * failure.
+     */
+    if (blocks !== undefined && blocks.length > 0) {
+      void fitContent(blocks, this.caps).then((fitted) => {
+        for (const note of fitted.downgrades) {
+          this.ctx.reportProgress({
+            kind: 'phase',
+            detail: note.detail,
+            at: new Date().toISOString(),
+          });
+        }
+        this.messages.push({ role: 'user', content: fitted.content });
+      });
+    }
   }
 
   private declaredTools(): DegradedTool[] {

@@ -25,6 +25,8 @@ import { globMatch, isInsideWorkspace } from '../policy/evaluate.js';
 import type { WorkspaceLeases } from './leases.js';
 import type {
   AgentId,
+  ContentBlock,
+  ImageBlock,
   AgentMessage,
   OutboundMessage,
   SplitProposal,
@@ -57,6 +59,14 @@ export interface ToolContext {
    * sent something.
    */
   sendMessage?: (message: OutboundMessage) => void;
+  /**
+   * Take a headless-browser screenshot and store it (§12.1).
+   *
+   * Injected, and absent on a host with no browser — the tool says so rather
+   * than pretending. Returns the stored image, because the bytes belong to the
+   * session's blob store and a tool has no business writing there directly.
+   */
+  capture?: (o: { url: string; viewport?: { width: number; height: number; dpr: number } }) => Promise<ImageBlock>;
   /** Ask to split this session, subject to a person agreeing (§4.3). */
   proposeSplit?: (proposal: Omit<SplitProposal, 'proposalId'>) => void;
   /** Who else is here, so a bad address is refused rather than dropped. */
@@ -69,6 +79,17 @@ export interface ToolResult {
   summary: string;
   /** Full payload handed back to the model, already truncated. */
   content: string;
+  /**
+   * Non-text the tool produced, for a model that can take it (§12.1).
+   *
+   * A screenshot tool that could only answer in prose would not let an agent
+   * "see its own output and iterate", which is the entire point of headless
+   * capture. Delivered as a follow-up **user** message rather than inside the
+   * tool result, because providers reliably accept images there and many reject
+   * them in a tool role — the arrangement is "the tool says what it did, and the
+   * picture arrives as if you had pasted it".
+   */
+  blocks?: ContentBlock[];
 }
 
 export interface ToolDefinition {
@@ -527,6 +548,64 @@ export const proposeSplitTool: ToolDefinition = {
   },
 };
 
+/**
+ * Screenshot a URL the agent is serving (§12.1).
+ *
+ * > The former lets an agent *see its own output* and iterate without you in the
+ * > loop.
+ *
+ * Reached through a tool rather than offered ambiently, because taking a picture
+ * of a page and putting it into a model's context is a **data-egress decision**:
+ * an agent that can screenshot `localhost:8080` can screenshot an internal
+ * dashboard and show it to a third-party provider. §13 says that belongs to the
+ * permission gate, and being a tool is what puts it there.
+ */
+export const screenshotTool: ToolDefinition = {
+  name: 'screenshot',
+  description:
+    'Take a headless-browser screenshot of a URL — usually something this session is serving — ' +
+    'so you can see what your own code rendered.',
+  schema: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'The page to open, e.g. http://localhost:5173' },
+      width: { type: 'number' },
+      height: { type: 'number' },
+    },
+    required: ['url'],
+    additionalProperties: false,
+  },
+  async run(args, ctx) {
+    if (ctx.capture === undefined) {
+      return fail('screenshots are not available on this host');
+    }
+    const url = args['url'];
+    if (typeof url !== 'string' || !/^https?:\/\//.test(url)) {
+      // Refused rather than guessed. A `file://` or `data:` URL here is a way to
+      // read the disk through a screenshot, which is not what this is for.
+      return fail('url must be an http or https address');
+    }
+
+    const width = typeof args['width'] === 'number' ? args['width'] : undefined;
+    const height = typeof args['height'] === 'number' ? args['height'] : undefined;
+
+    try {
+      const shot = await ctx.capture({
+        url,
+        ...(width !== undefined && height !== undefined ? { viewport: { width, height, dpr: 1 } } : {}),
+      });
+      return {
+        ok: true,
+        summary: `screenshot of ${url} (${shot.width}×${shot.height})`,
+        content: `Captured ${url} at ${shot.width}×${shot.height}. The image follows.`,
+        blocks: [shot],
+      };
+    } catch (err) {
+      return fail(`could not screenshot ${url}: ${(err as Error).message}`);
+    }
+  },
+};
+
 export const DEFAULT_TOOLS: ToolDefinition[] = [
   readTool,
   writeTool,
@@ -536,6 +615,7 @@ export const DEFAULT_TOOLS: ToolDefinition[] = [
   bashTool,
   messageTool,
   proposeSplitTool,
+  screenshotTool,
 ];
 
 /**

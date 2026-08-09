@@ -9,7 +9,7 @@
  */
 
 import type { AgentId } from './ids.js';
-import type { ContentSupport, NormalizedTurn } from './content.js';
+import type { ContentSupport, ImageBlock, NormalizedTurn } from './content.js';
 import type { PermissionAsk, PermissionDecision, PermissionFidelity, ToolPolicy } from './policy.js';
 // Type-only, and circular with `session.ts` — which already imports from here.
 // `SplitProposal` is a session concept and belongs there; `RuntimeContext` is
@@ -220,6 +220,18 @@ export interface RuntimeContext {
    * connection open across a human decision.
    */
   proposeSplit?(proposal: Omit<SplitProposal, 'proposalId'>): void;
+  /**
+   * Screenshot a URL and store the image (§12.1).
+   *
+   * Optional like the rest: a host with no browser cannot, and a tool that
+   * pretended otherwise would report a capture nobody took. It returns a stored
+   * `ImageBlock` rather than bytes, because the blob store belongs to the owner
+   * of the log and an adapter has no business writing there.
+   */
+  capture?(o: {
+    url: string;
+    viewport?: { width: number; height: number; dpr: number };
+  }): Promise<ImageBlock>;
   /**
    * Who else is in this session (§4.2).
    *

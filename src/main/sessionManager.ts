@@ -34,6 +34,7 @@ import {
   type AgentSpec,
   type AttentionReason,
   type ChildRef,
+  type ImageBlock,
   type EventOrigin,
   type ExecutionTarget,
   type InboxEntry,
@@ -61,6 +62,7 @@ import { groupFor, QuotaScheduler } from './quota.js';
 import { entriesFrom, merge, ReadMarker } from './inbox.js';
 import { fitContent } from './content/fit.js';
 import { scaleToFit, sizeOf } from './content/pixels.js';
+import { captureUrl } from './capture/headless.js';
 import { buildBrief, checkResult, reserveForChild } from './store/brief.js';
 import {
   createWorktree,
@@ -984,6 +986,7 @@ export class SessionManager extends EventEmitter {
       requestPermission: (ask) => this.decide(live, spec, ask),
       sendMessage: (message) => void this.deliver(live, spec.agentId, message),
       peers: live.session.agents.map((a) => a.agentId),
+      capture: (o) => this.captureUrl(live, o),
       proposeSplit: (proposal) => void this.proposeSplit(live.session.sessionId, proposal, spec.agentId),
     };
   }
@@ -1091,6 +1094,44 @@ export class SessionManager extends EventEmitter {
     } catch {
       return null;
     }
+  }
+
+/**
+   * Screenshot a URL and store it in this session's blobs (§12.1).
+   *
+   * Here rather than in the adapter for the same reason fitting is: the blob
+   * store belongs to the owner of the log. An adapter handed raw bytes would
+   * either have to write them somewhere it does not own or hold a screenshot in
+   * memory for the rest of the turn.
+   *
+   * Provenance is recorded in full — url, viewport, which browser — because §12.1
+   * asks for it and because a rendering difference between two captures is
+   * unattributable without it.
+   */
+  private async captureUrl(
+    live: LiveSession,
+    o: { url: string; viewport?: { width: number; height: number; dpr: number } },
+  ): Promise<ImageBlock> {
+    const shot = await captureUrl(o.url, { ...(o.viewport !== undefined ? { viewport: o.viewport } : {}) });
+    const { width, height } = sizeOf(shot.png);
+    const stored = await live.store.attach(shot.png, 'image/png');
+
+    return {
+      type: 'image',
+      sha256: stored.sha256 as Sha256,
+      mime: 'image/png',
+      width,
+      height,
+      provenance: {
+        kind: 'headless_browser',
+        // §12.1: both remote sources are tagged this way. The pixels were
+        // produced by the machine running the work, not by the person watching.
+        origin: 'remote',
+        capturedAt: this.now().toISOString(),
+        url: shot.url,
+        viewport: { w: shot.viewport.width, h: shot.viewport.height, dpr: shot.viewport.dpr },
+      },
+    };
   }
 
   /** Provenance for events attributable to an agent (§5.1). */
