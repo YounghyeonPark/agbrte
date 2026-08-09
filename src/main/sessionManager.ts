@@ -45,6 +45,7 @@ import {
   type Session,
   type SessionBudget,
   type SessionState,
+  type Sha256,
   type SplitProposal,
   type ToolPolicy,
   type UserTurn,
@@ -58,6 +59,8 @@ import { rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
 import { entriesFrom, merge, ReadMarker } from './inbox.js';
+import { fitContent } from './content/fit.js';
+import { scaleToFit, sizeOf } from './content/pixels.js';
 import { buildBrief, checkResult, reserveForChild } from './store/brief.js';
 import {
   createWorktree,
@@ -655,8 +658,33 @@ export class SessionManager extends EventEmitter {
       handle = await this.openHandle(live, record, spec, runtime);
     }
 
+    /**
+     * Fitted to what this agent declared it can take (§12.2).
+     *
+     * Here rather than in the harness, and that placement is the point: this is
+     * the only process holding both the blob store and the agent's capabilities.
+     * A resizer inside the adapter could decide an image was too large and had
+     * no way to reach the bytes to do anything about it.
+     *
+     * Per agent, not per session: one session can hold a frontier lead and a
+     * local worker with different limits, and the answer belongs to whoever is
+     * receiving this turn.
+     */
+    const fitted = await fitContent(turn.content, record.resolvedCapabilities, (image, max) =>
+      this.rescale(live, image, max),
+    );
+    for (const note of fitted.downgrades) {
+      // Reported, never silent. §3.5: "this model keeps ignoring my screenshots"
+      // should have a visible cause rather than becoming folklore.
+      this.emit('progress', live.session.sessionId, {
+        kind: 'phase',
+        detail: note.detail,
+        at: this.now().toISOString(),
+      });
+    }
+
     await live.store.append(
-      { type: 'user.turn', content: turn.content },
+      { type: 'user.turn', content: fitted.content },
       { agentId, ...(actor !== undefined ? { actor } : {}) },
     );
     await this.setState(live, 'working');
@@ -688,7 +716,7 @@ export class SessionManager extends EventEmitter {
     }
 
     const pumped = pumpAgent(handle, live.store, { origin: this.originFor(spec), agentId });
-    await handle.send(turn);
+    await handle.send({ content: fitted.content });
     const outcome = await pumped;
 
     // What one agent learned about the credential, before the others send. This
@@ -1034,6 +1062,35 @@ export class SessionManager extends EventEmitter {
       },
       { agentId },
     );
+  }
+
+/**
+   * Scale a stored image down for an agent that cannot take it whole (§12.2).
+   *
+   * Reads the blob, scales, and stores the result as a *new* blob — the original
+   * is never replaced. §12.3 makes that rule explicit for annotations and the
+   * same reasoning applies here: what was attached has to stay recoverable, and
+   * a second agent with a larger limit should get the full-size image rather
+   * than whatever the first agent's ceiling left behind.
+   *
+   * `null` on anything at all — an unreadable blob, a format this cannot decode.
+   * `fitContent` turns that into a named downgrade, which is the honest outcome:
+   * the image is not sent, and the model is told why.
+   */
+  private async rescale(
+    live: LiveSession,
+    image: { sha256: string; mime: string },
+    maxLongEdge: number,
+  ): Promise<{ sha256: Sha256; width: number; height: number } | null> {
+    try {
+      const original = await live.store.blobs.get(image.sha256 as Sha256, image.mime);
+      const scaled = await scaleToFit(original, maxLongEdge);
+      const { width, height } = sizeOf(scaled);
+      const stored = await live.store.attach(scaled, image.mime);
+      return { sha256: stored.sha256 as Sha256, width, height };
+    } catch {
+      return null;
+    }
   }
 
   /** Provenance for events attributable to an agent (§5.1). */

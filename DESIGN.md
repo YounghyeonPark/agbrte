@@ -1680,7 +1680,11 @@ Platform notes: macOS needs Screen Recording permission — check `systemPrefere
 
 **The marker list stays short.** §12.1 names four prefixes and the implementation adds none. A scanner that tries to be clever about secrets in general produces false positives, then a user who learns to ignore them, then a false sense that the sweep is a guarantee rather than a helper for the person doing the redacting.
 
-**Not built:** OCR and the painter themselves, both injected — the first is a native model, the second needs an image decoder. Without them the explicit-rectangle path still works and the sweep honestly reports that it did not run.
+**The painter is built**, on a small PNG codec over `node:zlib` rather than a native library or Electron's `nativeImage` — which resizes and crops and cannot draw at all. That choice is the substance: redaction fails closed, so an Electron-only painter would have left it unavailable in the agent host and on every remote machine, which is exactly where a screenshot of somebody's production console gets taken. Redaction now works wherever Node does.
+
+The codec **refuses everything it does not fully understand** — interlaced, 16-bit, palettes, greyscale, and anything that is not a PNG. Approximating any of them risks an image that looks redacted and is not, and a picture that looks safe is worse than an error, because the error stops you. Blackouts are painted opaque rather than blurred: people have read text back out of blurs.
+
+**Not built:** OCR, which is a native model and stays injected. Without it the explicit-rectangle path works and the sweep honestly reports that it did not run.
 
 ### 12.2 Images in
 
@@ -1695,7 +1699,7 @@ Paste and drag-drop. **Downscaling is driven by the receiving agent's capabiliti
 - **A scaled copy links back to the original** through `provenance.annotatedFrom`, on the same rule §12.3 sets for annotations: what was sent has to be traceable to what was attached.
 - **The token estimate is deliberately approximate.** Every provider counts image tokens differently, and a precise-looking number from the wrong formula is worse than an obviously rounded one. It exists to make four 4K screenshots visible, not to predict an invoice.
 
-**Fitted per agent, at the agent.** One session can hold several agents with different limits, so the answer belongs to whichever one is receiving the turn — the same reason `capabilities()` is a function of the spec (§3.2) rather than a constant on the adapter.
+**Fitted per agent, in the session host.** One session can hold several agents with different limits, so the answer belongs to whichever is receiving the turn — the same reason `capabilities()` is a function of the spec (§3.2). It sits in the host rather than the adapter because the host is the only process holding both the blob store and the capabilities: the first attempt put it in `AgbrteHarness`, where a resizer could decide an image was too large and had no way to reach the bytes to do anything about it. A scaled image is stored as a **new** blob, never replacing the original — a second agent with a larger limit should get the full-size image rather than whatever the first agent's ceiling left behind.
 
 ### 12.3 Annotated screenshots
 
@@ -1859,7 +1863,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
 | 6 | Multi-agent + hierarchy | 6th | **done** |
-| 7 | Multimodal | 7th | image fitting, redaction, and the annotation model and descriptions done; capture surfaces, flattening and voice remain |
+| 7 | Multimodal | 7th | fitting, redaction, annotation model, and the pixel operations done; capture surfaces, annotation flattening, OCR and voice remain |
 | 8 | Breadth + polish | 8th | not started |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow.
