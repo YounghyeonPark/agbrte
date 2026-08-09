@@ -16,9 +16,20 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { estimateImageTokens, fitContent, type Resizer } from '@main/content/fit.js';
+import {
+  estimateImageTokens,
+  fitContent,
+  type Flattener,
+  type Resizer,
+} from '@main/content/fit.js';
 import { DEFAULT_ECHO_CAPABILITIES } from '@main/runtime/runtimes/echo.js';
-import type { ContentBlock, ImageBlock, RuntimeCapabilities } from '@shared/types/index.js';
+import type {
+  Annotation,
+  ContentBlock,
+  ImageBlock,
+  RuntimeCapabilities,
+  Sha256,
+} from '@shared/types/index.js';
 
 function image(over: Partial<ImageBlock> = {}): ImageBlock {
   return {
@@ -209,5 +220,137 @@ describe('showing the cost', () => {
     // The scaled size, not the attached one: a cost quoted for an image nobody
     // sent would be a confident wrong number.
     expect(result.estimatedImageTokens).toBe(estimateImageTokens(1024, 512));
+  });
+});
+
+describe('annotations reach the model, in pixels and in words (§12.3)', () => {
+  /**
+   * The vector model, the describer and the flattener were all built and
+   * **nothing called any of them** — every one was reachable only from inside
+   * `content/`. §12.3 read as done because its pieces existed, which is a
+   * different claim from a user being able to point at something.
+   */
+  const annotated = (annotations: Annotation[], size = { w: 800, h: 600 }): ImageBlock => ({
+    type: 'image',
+    sha256: 'abc123' as Sha256,
+    mime: 'image/png',
+    width: size.w,
+    height: size.h,
+    provenance: { kind: 'screen_capture', origin: 'client' },
+    annotations,
+  });
+
+  const ARROW: Annotation = {
+    kind: 'arrow',
+    colour: 'red',
+    from: { x: 100, y: 100 },
+    to: { x: 400, y: 300 },
+    label: 'this button does nothing',
+  };
+
+  /** A flattener that reports what it was asked to draw. */
+  function painter(): { flatten: Flattener; calls: Array<readonly Annotation[]> } {
+    const calls: Array<readonly Annotation[]> = [];
+    return {
+      calls,
+      flatten: async (_image, annotations) => {
+        calls.push(annotations);
+        return { sha256: 'burned' as Sha256 };
+      },
+    };
+  }
+
+  it('sends the flattened image and a sentence about it', async () => {
+    const p = painter();
+    const result = await fitContent([annotated([ARROW])], caps({}), undefined, p.flatten);
+
+    expect(result.content.map((b) => b.type)).toEqual(['image', 'text']);
+    expect((result.content[0] as ImageBlock).sha256).toBe('burned');
+    // §12.3: "always send both" — for a weaker vision model the sentence is
+    // often the only part that lands.
+    expect((result.content[1] as { text: string }).text).toMatch(/arrow/i);
+  });
+
+  it('points the flattened copy back at the frame it was drawn on', async () => {
+    // §12.3's rule: annotations stay editable and the original is never
+    // destroyed. Overwriting the original would break `annotatedFrom` and the
+    // promise in the same move.
+    const p = painter();
+    const result = await fitContent([annotated([ARROW])], caps({}), undefined, p.flatten);
+
+    const out = result.content[0] as ImageBlock;
+    expect(out.provenance.annotatedFrom).toBe('abc123');
+    expect(out.provenance.kind).toBe('annotated_capture');
+  });
+
+  it('drops the vectors from the block it burned them into', async () => {
+    // Otherwise anything that fits the same content again draws them twice.
+    const p = painter();
+    const result = await fitContent([annotated([ARROW])], caps({}), undefined, p.flatten);
+
+    expect((result.content[0] as ImageBlock).annotations).toBeUndefined();
+  });
+
+  it('says nothing when nothing was drawn', async () => {
+    // §12.3: an "the user annotated this image" line on every ordinary paste is
+    // noise in the one place that section depends on being read.
+    const p = painter();
+    const plain = annotated([]);
+    const result = await fitContent([plain], caps({}), undefined, p.flatten);
+
+    expect(result.content.map((b) => b.type)).toEqual(['image']);
+    expect(p.calls).toEqual([]);
+  });
+
+  it('draws and describes at the size the model will see', async () => {
+    /**
+     * The ordering §12.3 states outright: "coordinates are described as sent,
+     * not as drawn". A sentence built from the original numbers points a model
+     * at the wrong part of a picture it can also see — a confidently wrong
+     * answer, which is worse than a vague right one.
+     *
+     * Flattening after scaling matters for a second reason: a 3px stroke drawn
+     * first and scaled after thins towards nothing at exactly these ratios, and
+     * 3px was chosen to survive them.
+     */
+    const p = painter();
+    const resize: Resizer = async () => ({ sha256: 'small' as Sha256, width: 400, height: 300 });
+    await fitContent(
+      [annotated([ARROW])],
+      caps({ imageMaxLongEdge: 400 }),
+      resize,
+      p.flatten,
+    );
+
+    const drawn = p.calls[0]![0] as Extract<Annotation, { kind: 'arrow' }>;
+    expect(drawn.to).toEqual({ x: 200, y: 150 });
+  });
+
+  it('keeps the words when the marks cannot be drawn', async () => {
+    /**
+     * §12.2's asymmetry applied to §12.3. A missing decoder costs the marks, not
+     * the meaning — and the description is the half worth keeping, since it is
+     * the part a weaker model reads anyway. Reported rather than silent, so
+     * "why is my arrow missing" has an answer.
+     */
+    const result = await fitContent([annotated([ARROW])], caps({}), undefined, undefined);
+
+    expect(result.content.map((b) => b.type)).toEqual(['image', 'text']);
+    // The unannotated original, not a pretend flattened one.
+    expect((result.content[0] as ImageBlock).sha256).toBe('abc123');
+    expect(result.downgrades.map((d) => d.reason)).toContain('annotations_not_flattened');
+  });
+
+  it('still describes what an agent that cannot see images is missing', async () => {
+    // The two downgrades compose. An agent with no vision gets the placeholder
+    // *and* nothing pretending an arrow was drawn for it.
+    const result = await fitContent(
+      [annotated([ARROW])],
+      caps({ input: { image: false, audio: false, pdf: false, video: false } }),
+      undefined,
+      painter().flatten,
+    );
+
+    expect(result.content.every((b) => b.type === 'text')).toBe(true);
   });
 });

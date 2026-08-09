@@ -1769,7 +1769,12 @@ Rectangle, arrow, freehand, text label, blackout, crop. Annotations are stored a
 
 The flattened image is sent with a generated text block describing the annotations (`"Red arrow at (412, 208) labeled 'this button does nothing'"`). This materially improves how reliably a model attends to what you pointed at — and for weaker vision models it's often the only part that lands, which is a good reason to always send both.
 
-**The vector model, the description and the flattening are built.**
+**Built, and — belatedly — actually reachable.** The vector model, the describer and the flattener existed for some time and **nothing outside `content/` called any of them**, so this section read as done while a user could not point at anything. That is the failure mode a phase table invites: the pieces were real, the feature was not. `ImageBlock` now carries `annotations`, and the session host flattens and describes them at send.
+
+- **Flattening happens where the store is**, next to §12.2's resizer and for the same reason: that process is the only one holding both the blob store and the agent's capabilities. A new blob every time, never a replacement — `annotatedFrom` points back at the original, and overwriting it would break the link and this section's promise in one move.
+- **Draw after scaling, not before.** A 3px stroke drawn first and scaled after thins towards nothing at exactly the ratios §12.2 uses, and 3px was chosen to survive them. It also puts the description in the right coordinates for free, which this section requires by name.
+- **A missing decoder costs the marks, not the meaning.** §12.2's asymmetry applied here: the description is sent regardless, because it is the half a weaker model reads anyway — and the downgrade is named, so "why is my arrow missing" has an answer.
+- **The vectors are dropped from the block they were burned into**, so fitting the same content twice cannot draw them twice.
 
 - **An arrow is described by its tip.** Leading with the tail points a model at where the hand started rather than at what was meant, which is a confidently wrong answer about a picture the model can also see.
 - **Position is given in words as well as pixels.** "upper right" survives a resize and a model that reasons poorly about numbers; `(1100, 100)` survives neither.
@@ -1779,9 +1784,11 @@ The flattened image is sent with a generated text block describing the annotatio
 
 **Where §12.1 and §12.3 meet, and it is a real conflict.** This section says annotations are flattened *at send time*; §12.1 says the unredacted frame is never written to disk. Deferring a blackout as a vector op breaks the second outright — the frame with the secret in it sits in the blob store the whole time, indexed and pushable. So a **blackout is its own annotation kind**, split out and routed through `redactAndStore` before the bytes are written, while everything else stays editable. Distinguishing it by colour instead would be a heuristic where this section names a tool, and getting that heuristic wrong means either a highlight burned irreversibly into the stored blob or a secret quietly left in it.
 
-**Text labels are marked, not lettered.** A text annotation burns a small filled square at its anchor and no glyphs. Rendering letters means shipping a bitmap font — ninety-odd hand-entered characters — for words the generated description already carries verbatim, and this section says the description is often the only part a weaker vision model reads. What the image has to convey is *where*; what it said travels in the text block beside it.
+**Text labels are marked, not lettered — still, and now for a checked reason.** A text annotation burns a small filled square at its anchor and no glyphs. Rendering letters means shipping a bitmap font — ninety-odd hand-entered characters — for words the generated description already carries verbatim, and this section says the description is often the only part a weaker vision model reads. What the image has to convey is *where*; what it said travels in the text block beside it.
 
 **Crop is applied last and blackouts are not repainted.** Annotation coordinates live in the original image's space, so cropping first would move every mark out from under them. Blackouts already went through `redactAndStore` before the frame was written; repainting them here would be harmless and would suggest this is where redaction happens, which it is not.
+
+**Still not built: the drawing surface.** Annotations reach a model correctly once something produces them, and nothing does — the capture picker attaches a frame and offers no way to mark it. That is the next piece, and §12.1's constraint decides its shape: a blackout drawn *after* the first store cannot unwrite the original, so the blackout tool has to live in the capture flow rather than in a later editor.
 
 **The limit that follows, stated rather than papered over:** §12.1's guarantee holds only for a blackout drawn *before* the first store. Blacking out an image already on disk produces a new redacted blob and cannot unwrite the old one. The annotator must therefore offer redaction at capture; anything later is a second-best the sentence in §12.1 does not cover.
 

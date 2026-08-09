@@ -27,7 +27,7 @@ import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
-import type { InstanceId } from '@shared/types/index.js';
+import type { ContentBlock, ImageBlock, InstanceId } from '@shared/types/index.js';
 import { decodePng, encodePng, type RawImage } from '@main/content/png.js';
 import { cropFrame } from '@main/content/pixels.js';
 import {
@@ -464,5 +464,99 @@ describe('end to end: point at something, and the agent sees it', () => {
     // that it could not be shown, which is a diagnosable answer rather than a
     // silent absence.
     expect(JSON.stringify(turn)).toMatch(/image/i);
+  });
+});
+
+describe('what you drew reaches the model (§12.3, end to end)', () => {
+  /**
+   * Through a real host with a real blob store, because the interesting claim is
+   * about *bytes on disk*: the annotated image is a new blob, the original still
+   * exists, and the link between them survives into the transcript.
+   *
+   * §12.3's machinery had been built for some time and nothing called it — this
+   * is the test that would have caught that, and did not exist.
+   */
+  let root: string;
+  let instanceId: InstanceId;
+  const managers: SessionManager[] = [];
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'agbrte-annot-'));
+    instanceId = (await openWorkspace(root)).instanceId;
+  });
+  afterEach(async () => {
+    for (const m of managers.splice(0)) m.dispose();
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  function connect(): HostConnection {
+    const registry = new RuntimeRegistry();
+    registry.register(
+      new EchoRuntime({
+        script: [{ kind: 'stop', stop: { kind: 'end_turn' } }],
+        capabilities: { input: { image: true, audio: false, pdf: false, video: false } },
+      }),
+      { label: 'Echo', requiresModel: false },
+    );
+    const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
+    managers.push(manager);
+    const server = new SessionHostServer({
+      manager,
+      identity: { instanceId, lineageId: 'lin' as never, workspaceRoot: root, runtimes: ['echo'] },
+    });
+    const pair = memoryChannelPair<SessionCommand, SessionMessage>();
+    server.accept(pair.host);
+    return new HostConnection({ channel: pair.main });
+  }
+
+  it('burns the marks into a new blob and keeps the original', async () => {
+    const c = connect();
+    const session = await c.createSession({ title: 's', goal: 'g' });
+    const agent = await c.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    const { block } = await captureScreen(backend(quartered()), { sourceId: 'screen:0' }, (b, m) =>
+      c.putBlob(session.sessionId, b, m),
+    );
+
+    await c.send(session.sessionId, agent.agentId, 'look here', [
+      {
+        ...block,
+        annotations: [
+          { kind: 'arrow', colour: 'red', from: { x: 2, y: 2 }, to: { x: 30, y: 30 } },
+        ],
+      },
+    ]);
+
+    const events = await c.events(session.sessionId);
+    const turn = events.find((e) => e.type === 'user.turn') as { content: ContentBlock[] };
+    const sent = turn.content.find((b) => b.type === 'image') as ImageBlock;
+
+    // A different blob, and one that names what it was drawn on. §12.3: the
+    // original is never destroyed.
+    expect(sent.sha256).not.toBe(block.sha256);
+    expect(sent.provenance.annotatedFrom).toBe(block.sha256);
+    expect(await c.hasBlob(session.sessionId, block.sha256, 'image/png')).toBe(true);
+    expect(await c.hasBlob(session.sessionId, sent.sha256, 'image/png')).toBe(true);
+
+    // And the sentence travels with it, because §12.3 says always send both.
+    expect(turn.content.some((b) => b.type === 'text' && /arrow/i.test(b.text))).toBe(true);
+  });
+
+  it('leaves an unannotated capture exactly as it was', async () => {
+    // No second blob, no sentence. The ordinary paste must cost nothing.
+    const c = connect();
+    const session = await c.createSession({ title: 's', goal: 'g' });
+    const agent = await c.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+    const { block } = await captureScreen(backend(quartered()), { sourceId: 'screen:0' }, (b, m) =>
+      c.putBlob(session.sessionId, b, m),
+    );
+
+    await c.send(session.sessionId, agent.agentId, 'and this', [block]);
+
+    const turn = (await c.events(session.sessionId)).find((e) => e.type === 'user.turn') as {
+      content: ContentBlock[];
+    };
+    expect(turn.content.map((b) => b.type)).toEqual(['text', 'image']);
+    expect((turn.content[1] as ImageBlock).sha256).toBe(block.sha256);
   });
 });

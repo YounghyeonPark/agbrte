@@ -30,17 +30,29 @@
  */
 
 import type {
+  Annotation,
   ContentBlock,
   DowngradeNote,
   ImageBlock,
   RuntimeCapabilities,
 } from '@shared/types/index.js';
+import { describeAnnotations, scaleAnnotations } from './annotate.js';
 
 /** Rescale an encoded image. Injected, because a decoder is not always present. */
 export type Resizer = (
   image: ImageBlock,
   maxLongEdge: number,
 ) => Promise<{ sha256: ImageBlock['sha256']; width: number; height: number } | null>;
+
+/**
+ * Burn annotations into an encoded image (§12.3). Injected for the same reason
+ * `Resizer` is: it needs a decoder and it needs somewhere to put the result,
+ * and neither belongs to whoever is fitting.
+ */
+export type Flattener = (
+  image: ImageBlock,
+  annotations: readonly Annotation[],
+) => Promise<{ sha256: ImageBlock['sha256'] } | null>;
 
 export interface FitResult {
   content: ContentBlock[];
@@ -82,6 +94,7 @@ export async function fitContent(
   content: readonly ContentBlock[],
   caps: RuntimeCapabilities,
   resize?: Resizer,
+  flatten?: Flattener,
 ): Promise<FitResult> {
   const downgrades: DowngradeNote[] = [];
   const out: ContentBlock[] = [];
@@ -143,18 +156,88 @@ export async function fitContent(
         // same reasoning): the scaled copy points back at what it came from.
         provenance: { ...block.provenance, annotatedFrom: block.sha256 },
       };
-      out.push(scaled);
+      const marked = await burnIn(scaled, block.annotations, resized.width / block.width, flatten);
+      out.push(...marked.blocks);
+      if (marked.note !== null) downgrades.push(marked.note);
       estimatedImageTokens += estimateImageTokens(resized.width, resized.height);
       kept += 1;
       continue;
     }
 
-    out.push(block);
+    const marked = await burnIn(block, block.annotations, 1, flatten);
+    out.push(...marked.blocks);
+    if (marked.note !== null) downgrades.push(marked.note);
     estimatedImageTokens += estimateImageTokens(block.width, block.height);
     kept += 1;
   }
 
   return { content: out, downgrades, estimatedImageTokens };
+}
+
+/**
+ * Draw the marks and say what they are (§12.3).
+ *
+ * Runs **after** scaling, and both halves depend on that:
+ *
+ *  - Flattening onto the already-scaled frame keeps the strokes crisp. Drawing
+ *    first and scaling after would thin a 3px line towards nothing at exactly
+ *    the ratios §12.2 uses, which is what the 3px was chosen to survive.
+ *  - Describing from the scaled geometry is what §12.3 requires in as many
+ *    words: "coordinates are described as sent, not as drawn". A sentence built
+ *    from the original numbers points a model at the wrong part of the picture
+ *    it is looking at — a confidently wrong answer about an image it can see.
+ *
+ * The description is emitted whether or not the flattening worked. §12.3 says it
+ * "is often the only part a weaker vision model reads", so it is the half worth
+ * keeping when the other is unavailable — and a missing decoder here costs the
+ * marks, not the meaning.
+ */
+async function burnIn(
+  block: ImageBlock,
+  annotations: readonly Annotation[] | undefined,
+  factor: number,
+  flatten?: Flattener,
+): Promise<{ blocks: ContentBlock[]; note: DowngradeNote | null }> {
+  // Nothing drawn means nothing said (§12.3). An "the user annotated this image"
+  // line on every ordinary paste is noise in the one place that section depends
+  // on being read.
+  if (annotations === undefined || annotations.length === 0) {
+    return { blocks: [block], note: null };
+  }
+
+  const scaled = factor === 1 ? [...annotations] : scaleAnnotations(annotations, factor);
+  const sentence = describeAnnotations(scaled, { width: block.width, height: block.height });
+  const said: ContentBlock[] = sentence === null ? [] : [{ type: 'text', text: sentence }];
+
+  const burned = flatten === undefined ? null : await flatten(block, scaled);
+  if (burned === null) {
+    return {
+      blocks: [block, ...said],
+      note: {
+        reason: 'annotations_not_flattened',
+        detail: `${describe(block)} — annotations could not be drawn here; the description was sent instead`,
+      },
+    };
+  }
+
+  // Destructured away rather than set to `undefined`: the marks are in the
+  // pixels now, and a block that still carried them would be drawn on twice by
+  // anything that fitted the same content again.
+  const { annotations: _burnedIn, ...rest } = block;
+
+  return {
+    blocks: [
+      {
+        ...rest,
+        sha256: burned.sha256,
+        // The original is never destroyed (§12.3). The flattened copy is a
+        // derivative and says which frame it was drawn on.
+        provenance: { ...block.provenance, kind: 'annotated_capture', annotatedFrom: block.sha256 },
+      },
+      ...said,
+    ],
+    note: null,
+  };
 }
 
 /**

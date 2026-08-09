@@ -34,6 +34,7 @@ import {
   type AgentSpec,
   type AttentionReason,
   type ChildRef,
+  type Annotation,
   type ImageBlock,
   type EventOrigin,
   type ExecutionTarget,
@@ -62,7 +63,7 @@ import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
 import { entriesFrom, merge, ReadMarker } from './inbox.js';
 import { fitContent } from './content/fit.js';
-import { scaleToFit, sizeOf } from './content/pixels.js';
+import { flattenAnnotations, scaleToFit, sizeOf } from './content/pixels.js';
 import { captureUrl } from './capture/headless.js';
 import { buildBrief, checkResult, reserveForChild } from './store/brief.js';
 import {
@@ -673,8 +674,13 @@ export class SessionManager extends EventEmitter {
      * local worker with different limits, and the answer belongs to whoever is
      * receiving this turn.
      */
-    const fitted = await fitContent(turn.content, record.resolvedCapabilities, (image, max) =>
-      this.rescale(live, image, max),
+    const fitted = await fitContent(
+      turn.content,
+      record.resolvedCapabilities,
+      (image, max) => this.rescale(live, image, max),
+      // §12.3's flattening, here for the same reason as the resizer: this is the
+      // only process holding both the blob store and the agent's capabilities.
+      (image, annotations) => this.burnAnnotations(live, image, annotations),
     );
     for (const note of fitted.downgrades) {
       // Reported, never silent. §3.5: "this model keeps ignoring my screenshots"
@@ -1124,6 +1130,38 @@ export class SessionManager extends EventEmitter {
   }
 
 /**
+   * Draw a turn's annotations onto its image and store the result (§12.3).
+   *
+   * A *new* blob every time, never a replacement. §12.3: annotations "stay
+   * editable and the original is never destroyed" — and the original is what
+   * `annotatedFrom` points back at, so overwriting it would break the link and
+   * the promise in one move.
+   *
+   * Blackouts never reach here. They went through `redactAndStore` before the
+   * frame was written, because deferring one would leave the secret sitting in a
+   * content-addressed store that §6.7 will push on request — §12.1's guarantee,
+   * which §12.3 explicitly must not undo.
+   *
+   * `null` rather than a throw when there is no decoder: a missing painter costs
+   * the marks, not the message. The description travels either way, and §12.3
+   * says that is often the only part a weaker model reads.
+   */
+  private async burnAnnotations(
+    live: LiveSession,
+    image: { sha256: string; mime: string },
+    annotations: readonly Annotation[],
+  ): Promise<{ sha256: Sha256 } | null> {
+    try {
+      const original = await live.store.blobs.get(image.sha256 as Sha256, image.mime);
+      const painted = await flattenAnnotations(original, annotations);
+      const stored = await live.store.attach(painted, image.mime);
+      return { sha256: stored.sha256 as Sha256 };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Screenshot a URL and store it in this session's blobs (§12.1).
    *
    * Here rather than in the adapter for the same reason fitting is: the blob

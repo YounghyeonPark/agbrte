@@ -46,36 +46,12 @@
 
 import type { Rect } from './redact.js';
 
-export interface Point {
-  x: number;
-  y: number;
-}
-
-/** A colour as the user chose it, kept for the description rather than for CSS. */
-export type AnnotationColour = 'red' | 'yellow' | 'green' | 'blue' | 'white' | 'black';
-
-export type Annotation =
-  | { kind: 'rectangle'; colour: AnnotationColour; rect: Rect; label?: string }
-  | { kind: 'arrow'; colour: AnnotationColour; from: Point; to: Point; label?: string }
-  | { kind: 'freehand'; colour: AnnotationColour; points: Point[]; label?: string }
-  | { kind: 'text'; colour: AnnotationColour; at: Point; text: string }
-  /**
-   * A region to obliterate — its own kind, not a black rectangle.
-   *
-   * Distinguishing it by colour would be a heuristic where §12.3 gives a tool,
-   * and getting that heuristic wrong means either a highlight silently burned
-   * into the stored blob or a *secret* silently left in it. The second is the
-   * one that matters, and neither should depend on which colour was picked.
-   */
-  | { kind: 'blackout'; rect: Rect }
-  /**
-   * A crop, described rather than applied here.
-   *
-   * Kept as a vector op like the rest, because §12.3's rule is that the original
-   * survives — and a crop applied at capture would destroy the surrounding
-   * context that makes a screenshot legible later.
-   */
-  | { kind: 'crop'; rect: Rect };
+export type {
+  Annotation,
+  AnnotationColour,
+  Point,
+} from '@shared/types/index.js';
+import type { Annotation, Point } from '@shared/types/index.js';
 
 /**
  * Flatten annotations onto an image. Injected: needs a decoder, like everything
