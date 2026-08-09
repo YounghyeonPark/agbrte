@@ -876,6 +876,32 @@ export class SessionManager extends EventEmitter {
         { agentId: id, ...(actor !== undefined ? { actor } : {}) },
       );
     }
+
+    /**
+     * A session that is `working` with nothing running is stuck, and this is the
+     * only thing that can say so.
+     *
+     * The manager owns the turn loop, so a handle is registered before the state
+     * becomes `working` and removed when the turn ends. `working` with an empty
+     * handle map therefore means the agent went away mid-turn — the host died,
+     * the adapter crashed — and nothing else will ever move it: §10 will not let
+     * stall detection change the state, because a stall is a suspicion and an
+     * agent may simply be slow.
+     *
+     * Left alone, that session holds the host busy forever: `shutdown` refuses
+     * while anything is `working`, so the host cannot be asked to exit and
+     * upgrading it means killing the process. Found in the field, doing exactly
+     * that.
+     *
+     * Only on an *explicit* interrupt. A person typed this; inferring it from a
+     * timer would be stall detection issuing the verdict §10 denies it.
+     *
+     * `awaiting_input` rather than `failed`, per §4.1: nothing is broken, the
+     * work simply stopped and is waiting for whoever stopped it.
+     */
+    if (live.session.state === 'working' && live.handles.size === 0) {
+      await this.setState(live, 'awaiting_input', 'interrupted; no turn was running');
+    }
   }
 
   // ---------------------------------------------------------------- permissions

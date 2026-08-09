@@ -51,6 +51,7 @@ const USAGE = `agbrte — an agent workbench, at a terminal
   agbrte ls [path]              list sessions, one per line
   agbrte serve [path]           run the host in the foreground (no client)
   agbrte web [path]             serve the app in a browser — a phone, over your VPN
+  agbrte interrupt [path]       stop whatever is running here
   agbrte stop [path]            ask the host to exit; refuses while work is running
   agbrte --version
 
@@ -245,6 +246,43 @@ async function main(): Promise<number> {
         }
         if (sessions.length === 0 && onDisk.length === 0) {
           process.stderr.write(c.dim('no sessions in this workspace yet\n'));
+        }
+        return 0;
+      }
+
+      case 'interrupt': {
+        /**
+         * Stop a turn from outside the interactive client (§8, §10).
+         *
+         * `attach` has always had Ctrl-C, which is no help when the thing you
+         * need to stop is on a headless server and its agent has already gone
+         * away. Without this, a session left `working` by a dead turn holds the
+         * host busy for good: `stop` refuses on its behalf, and upgrading the
+         * host means killing the process.
+         *
+         * Interrupts every working session by default, because that is the
+         * situation this exists for — "something in here is stuck and I want the
+         * host back". A single session can be named when the workspace has other
+         * work that should carry on.
+         */
+        const target = value('--session');
+        const sessions = await connection.list();
+        const working = sessions.filter((x) =>
+          target !== undefined ? x.sessionId === target : x.state === 'working',
+        );
+
+        if (working.length === 0) {
+          process.stdout.write(
+            target !== undefined ? `no session ${target} here\n` : 'nothing is running here\n',
+          );
+          // Not an error: "there was nothing to stop" is a successful outcome
+          // for anyone scripting a stop-then-upgrade.
+          return 0;
+        }
+
+        for (const session of working) {
+          await connection.interrupt(session.sessionId);
+          process.stdout.write(`interrupted ${session.sessionId}  ${session.title}\n`);
         }
         return 0;
       }

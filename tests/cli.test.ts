@@ -86,6 +86,19 @@ describe('parsing a command line', () => {
     expect(parsed.path).toContain('api');
   });
 
+  it('recognises every subcommand the CLI dispatches on', () => {
+    /**
+     * A new subcommand has to be registered in two places — the `KNOWN` set here
+     * and the switch in `agbrte.ts` — and missing this one fails *silently*:
+     * the verb is taken for a path, so `agbrte interrupt .` opened an
+     * interactive session on a folder named `interrupt`. Found on a real
+     * server, which is a slow way to notice.
+     */
+    for (const verb of ['attach', 'run', 'ls', 'serve', 'stop', 'web', 'interrupt']) {
+      expect(parse([verb]).command).toBe(verb);
+    }
+  });
+
   it('tells a path from a prompt by asking the filesystem', () => {
     // Not by shape: a prompt can look like a path ("src/main is broken") and a
     // path can contain spaces. `root` exists, so it is the workspace.

@@ -116,7 +116,18 @@ describe('a session that has gone quiet', () => {
 
     // Any append at all clears it — a long turn that resumes was never stuck.
     await m.interrupt(session.sessionId, agentId);
-    expect((await m.get(session.sessionId)).needsAttention).toBeNull();
+    expect((await m.get(session.sessionId)).needsAttention?.reason).not.toBe('stalled');
+
+    /**
+     * And the session now waits for a person rather than staying `working`.
+     *
+     * This assertion read `toBeNull()`, which passed because interrupting only
+     * appended. Interrupting a turn whose agent has gone now also resolves the
+     * session (§8), so it reports `needs_input` — a stronger and more truthful
+     * outcome than "nothing is flagged", and the reason the old assertion was
+     * worth revisiting rather than relaxing.
+     */
+    expect((await m.get(session.sessionId)).state).toBe('awaiting_input');
   });
 
   it('leaves a paused session alone', async () => {

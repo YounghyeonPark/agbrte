@@ -41,7 +41,7 @@ export function parse(argv: string[]): Parsed {
     }
   }
 
-  const KNOWN = new Set(['attach', 'run', 'ls', 'serve', 'stop', 'web']);
+  const KNOWN = new Set(['attach', 'run', 'ls', 'serve', 'stop', 'web', 'interrupt']);
   // `agbrte /srv/api` and `agbrte attach /srv/api` both work: a first argument that
   // is not a command is a path. Requiring the verb would make the common case
   // the long one.

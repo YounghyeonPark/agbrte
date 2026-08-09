@@ -89,13 +89,11 @@ There is no button to stop a host that is still busy, and that is the honest
 state rather than a design: the protocol has a shutdown that refuses while work
 is in flight, but nothing in the UI sends it yet.
 
-There is also no way past a turn that **died** rather than finished. A session
-whose agent went away mid-turn stays `working`, `agbrte stop` refuses on its
-behalf, and the CLI has no `interrupt` — so upgrading such a host means killing
-the process. That is safe, because the log is the truth and every session
-reopens from it, but it is a gap rather than a decision: stall detection notices
-a session has gone quiet and nothing resolves it. Restarting the host clears it,
-since an unloaded session no longer holds the host busy.
+`agbrte interrupt` stops whatever is running in a workspace, which is also the
+way past a turn that **died** rather than finished. A session whose agent went
+away mid-turn stays `working` — correctly, since a stall is a suspicion and an
+agent may simply be slow — and `agbrte stop` then refuses on its behalf. An
+explicit interrupt resolves it and gives the host back.
 
 ### 4. The same session from a second machine
 
