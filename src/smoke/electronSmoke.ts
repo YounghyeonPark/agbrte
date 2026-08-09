@@ -18,7 +18,11 @@
  * the IPC contract is broken.
  */
 
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, screen } from 'electron';
+import { electronScreenBackend } from '../main/capture/electron.js';
+import { storeFrame, takeFrame } from '../main/capture/client.js';
+import { decodePng, isPng } from '../main/content/png.js';
+import { sizeOf } from '../main/content/pixels.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -245,6 +249,16 @@ async function main(): Promise<number> {
     //    but not in a child, a missing `parentPort`. All of those present as a
     //    host that never sends `ready`, which is indistinguishable from a hang.
     await hostChecks(root);
+
+    // 9. The screen is real, and so is `capture/electron.ts` (§12.1).
+    //
+    //    Every capture test so far runs against a fake `ScreenBackend`, because
+    //    `desktopCapturer` needs a compositor. That leaves the one file nothing
+    //    has ever executed: the Electron half. Its failures are exactly the kind
+    //    a fake cannot have — an id shape that changed, a `NativeImage` that
+    //    comes back empty, a display whose `scaleFactor` is not where it was
+    //    looked for. All of those present as "capture does nothing".
+    await captureChecks();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -325,6 +339,85 @@ async function hostChecks(root: string): Promise<void> {
     record('agent host process starts and handshakes', false, String(err));
   } finally {
     supervisor.dispose();
+  }
+}
+
+/**
+ * Client capture, against the actual screen (§12.1).
+ *
+ * The only place `capture/electron.ts` runs at all. Deliberately tolerant about
+ * *what* is on the screen — a CI machine's desktop is whatever it is — and
+ * strict about the shape: a source that exists, pixels that decode, and a size
+ * that matches a display rather than a thumbnail.
+ *
+ * The size check is the one worth having. A thumbnail requested at native
+ * resolution *is* the capture, which is a neat trick and one silent failure
+ * away from shipping 320×200 screenshots to a model and wondering why it cannot
+ * read them.
+ */
+async function captureChecks(): Promise<void> {
+  try {
+    const backend = electronScreenBackend();
+
+    const status = await backend.access();
+    // Windows reports nothing to report, which is `unknown` and is fine. A
+    // `denied` here would mean the smoke check itself cannot see the screen.
+    record('screen access is not denied', status !== 'denied' && status !== 'restricted', status);
+
+    const sources = await backend.sources({ thumbnailSize: { width: 160, height: 100 } });
+    const screens = sources.filter((s) => s.kind === 'screen');
+    record('desktopCapturer lists at least one screen', screens.length > 0, sources.length);
+    if (screens.length === 0) return;
+
+    const first = screens[0]!;
+    record(
+      'a screen source carries a thumbnail',
+      first.thumbnailPng !== undefined && isPng(first.thumbnailPng),
+      first.thumbnailPng?.length ?? 'none',
+    );
+
+    // The whole pipeline on real pixels: grab, crop, scale, redact, store.
+    const frame = await takeFrame(backend, {
+      sourceId: first.id,
+      region: { x: 0, y: 0, w: 400, h: 300 },
+    });
+    const size = sizeOf(frame);
+    record('a real capture decodes as a PNG', isPng(frame), frame.length);
+    record('the region was applied to the pixels', size.width === 400 && size.height === 300, size);
+
+    // Full-screen, to catch the failure a region would hide: a `NativeImage`
+    // that came back at thumbnail resolution rather than the display's.
+    const full = sizeOf(await takeFrame(backend, { sourceId: first.id }));
+    const display = screen.getPrimaryDisplay();
+    record(
+      'the grab is a display, not a thumbnail',
+      full.width > 640,
+      `${full.width}x${full.height} vs display ${display.size.width}x${display.size.height} @${display.scaleFactor}`,
+    );
+
+    const stored: Buffer[] = [];
+    const result = await storeFrame(
+      frame,
+      { redactions: [{ x: 0, y: 0, w: 100, h: 100 }] },
+      async (redacted) => {
+        stored.push(redacted);
+        return 'smoke' as never;
+      },
+    );
+    record('redaction paints before storing', stored.length === 1, stored[0]?.length ?? 0);
+    record(
+      'the blackout is recorded for audit',
+      result.block.provenance.redactions?.length === 1,
+      result.block.provenance,
+    );
+    // Read back out of the bytes that were about to be stored, not out of the
+    // report about them: the failure this guards is a pipeline that records
+    // rectangles and writes the frame unpainted.
+    const painted = decodePng(stored[0]!);
+    const corner = [painted.rgba[0], painted.rgba[1], painted.rgba[2]];
+    record('the blacked-out pixels really are black', corner.every((c) => c === 0), corner);
+  } catch (err) {
+    record('client capture runs against a real screen', false, String(err));
   }
 }
 

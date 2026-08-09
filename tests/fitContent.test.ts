@@ -341,9 +341,17 @@ describe('annotations reach the model, in pixels and in words (§12.3)', () => {
     expect(result.downgrades.map((d) => d.reason)).toContain('annotations_not_flattened');
   });
 
-  it('still describes what an agent that cannot see images is missing', async () => {
-    // The two downgrades compose. An agent with no vision gets the placeholder
-    // *and* nothing pretending an arrow was drawn for it.
+  it('tells an agent that cannot see images what was pointed at anyway', async () => {
+    /**
+     * The bug this replaced, and it inverted §12.3's own argument. The
+     * description "is often the only part a weaker vision model reads" — so the
+     * agent that cannot see the picture is the one that needs the sentence most,
+     * and it was the only one not getting it: placeholder, no annotations, no
+     * mention that anything had been drawn.
+     *
+     * Found by running a capture against a real remote session, where the turn
+     * came back as two text blocks and the arrow was nowhere.
+     */
     const result = await fitContent(
       [annotated([ARROW])],
       caps({ input: { image: false, audio: false, pdf: false, video: false } }),
@@ -352,5 +360,51 @@ describe('annotations reach the model, in pixels and in words (§12.3)', () => {
     );
 
     expect(result.content.every((b) => b.type === 'text')).toBe(true);
+    const text = result.content.map((b) => (b as { text: string }).text).join(' ');
+    expect(text).toMatch(/image not sent/i);
+    expect(text).toMatch(/arrow/i);
+  });
+
+  it('says it for an image dropped over the count limit too', async () => {
+    // Same reasoning, different branch. Every path that declines to send the
+    // picture still has to say what the user was pointing at.
+    const result = await fitContent(
+      [annotated([ARROW]), annotated([ARROW])],
+      caps({ imageMaxCount: 1 }),
+      undefined,
+      painter().flatten,
+    );
+
+    const text = result.content.map((b) => (b as { text?: string }).text ?? '').join(' ');
+    expect(text).toMatch(/at most 1 image|limit of 1 image/i);
+    expect(text).toMatch(/arrow/i);
+  });
+
+  it('says it for an image too large to resize here', async () => {
+    const result = await fitContent(
+      [annotated([ARROW], { w: 4000, h: 3000 })],
+      caps({ imageMaxLongEdge: 500 }),
+      // No resizer: the branch where the image cannot be made to fit.
+      undefined,
+      painter().flatten,
+    );
+
+    const text = result.content.map((b) => (b as { text?: string }).text ?? '').join(' ');
+    expect(text).toMatch(/too large/i);
+    expect(text).toMatch(/arrow/i);
+  });
+
+  it('adds nothing for an unannotated image that is not sent', async () => {
+    // The placeholder alone. An empty "Annotations on this image:" line would be
+    // the noise §12.3 rules out.
+    const plain = annotated([]);
+    const result = await fitContent(
+      [plain],
+      caps({ input: { image: false, audio: false, pdf: false, video: false } }),
+      undefined,
+      painter().flatten,
+    );
+
+    expect(result.content).toHaveLength(1);
   });
 });

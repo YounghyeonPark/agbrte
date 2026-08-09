@@ -114,7 +114,7 @@ export async function fitContent(
         reason: 'no_image_support',
         detail: `${describe(block)} — this agent has input.image: false`,
       });
-      out.push(placeholder(block, 'this agent cannot see images'));
+      out.push(...instead(block, 'this agent cannot see images'));
       continue;
     }
 
@@ -123,7 +123,7 @@ export async function fitContent(
         reason: 'over_max_count',
         detail: `${describe(block)} — this agent takes at most ${caps.imageMaxCount} images per turn`,
       });
-      out.push(placeholder(block, `over this agent's limit of ${caps.imageMaxCount} images`));
+      out.push(...instead(block, `over this agent's limit of ${caps.imageMaxCount} images`));
       continue;
     }
 
@@ -139,7 +139,7 @@ export async function fitContent(
           reason: 'over_max_long_edge',
           detail: `${describe(block)} — over this agent's ${limit}px limit and it could not be resized here`,
         });
-        out.push(placeholder(block, `too large for this agent (limit ${limit}px)`));
+        out.push(...instead(block, `too large for this agent (limit ${limit}px)`));
         continue;
       }
 
@@ -172,6 +172,33 @@ export async function fitContent(
   }
 
   return { content: out, downgrades, estimatedImageTokens };
+}
+
+/**
+ * A picture that is not being sent, and what the user pointed at in it.
+ *
+ * The description has to survive here, and this is where it was being dropped.
+ * An agent with `input.image: false` got "[image not sent]" and **nothing about
+ * the arrow** — which inverts §12.3's whole argument: the sentence "is often the
+ * only part a weaker vision model reads", so the agent that cannot see the
+ * picture is the one that needs it most, and it was the only one not getting it.
+ *
+ * Found by running a capture against a real remote session rather than by
+ * reading the code: the turn arrived as two text blocks, the second of them a
+ * placeholder, and the annotations nowhere.
+ *
+ * Described at the block's own size, because no resizing happened on this path —
+ * there is no "as sent" to describe when nothing is being sent.
+ */
+function instead(block: ImageBlock, why: string): ContentBlock[] {
+  const sentence =
+    block.annotations === undefined || block.annotations.length === 0
+      ? null
+      : describeAnnotations(block.annotations, { width: block.width, height: block.height });
+
+  return sentence === null
+    ? [placeholder(block, why)]
+    : [placeholder(block, why), { type: 'text', text: sentence }];
 }
 
 /**
