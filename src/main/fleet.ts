@@ -44,6 +44,7 @@ import type {
   Session,
   SessionId,
   SessionProjection,
+  Sha256,
 } from '@shared/types/index.js';
 
 /** A runtime a host offers, as advertised to the UI. */
@@ -603,6 +604,18 @@ export class Fleet extends EventEmitter {
 
   async send(sessionId: SessionId, agentId: AgentId, text: string): Promise<void> {
     return this.ownerOf(sessionId).connection.send(sessionId, agentId, text);
+  }
+
+  /**
+   * Put bytes where the session that will reference them can read them (§6.7).
+   *
+   * Routed through `ownerOf` like everything else, and that is the point: for a
+   * local host it is a write next door and for a remote one a chunked transfer
+   * over ssh, and §12.1's capture path should no more have to know which than
+   * `send` does.
+   */
+  async putBlob(sessionId: SessionId, data: Buffer, mime: string): Promise<Sha256> {
+    return this.ownerOf(sessionId).connection.putBlob(sessionId, data, mime);
   }
 
   async interrupt(sessionId: SessionId, agentId?: AgentId): Promise<void> {

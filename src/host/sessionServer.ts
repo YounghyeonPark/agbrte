@@ -34,7 +34,9 @@ import {
   type AgentSpec,
   type RuntimeCapabilities,
   type SessionId,
+  type Sha256,
 } from '@shared/types/index.js';
+import { BlobIntake } from '@main/store/blobTransfer.js';
 import {
   SESSION_PROTOCOL_VERSION,
   type HostIdentity,
@@ -91,6 +93,15 @@ interface Client {
 
 export class SessionHostServer {
   private readonly clients = new Set<Client>();
+  /**
+   * Partial blob transfers, held in memory (§6.7).
+   *
+   * Per host rather than per client, which is what makes a transfer resumable
+   * across a reconnect: the laptop that dropped its connection halfway through a
+   * screenshot comes back as a *new* client and continues from where the host
+   * already is, rather than starting again because its old staging left with it.
+   */
+  private readonly intake = new BlobIntake();
   private lingerTimer: NodeJS.Timeout | null = null;
   private closed = false;
 
@@ -288,6 +299,33 @@ export class SessionHostServer {
             command.decision,
             client.actor,
           );
+
+        case 'blob.has':
+          return manager.hasBlob(
+            command.sessionId as SessionId,
+            command.sha256 as Sha256,
+            command.mime,
+          );
+
+        case 'blob.put': {
+          // A write, because it lands bytes in a session's store and an event in
+          // its log. A read-only client that could push blobs is not read-only.
+          this.requireWrite(client, 'transfer a blob');
+
+          const received = this.intake.accept(
+            command.sha256,
+            command.offset,
+            Buffer.from(command.chunk, 'base64'),
+          );
+          if (!command.final) return received;
+
+          // Verified here, before the store ever sees it. `commit` throws on a
+          // mismatch and drops the staging, so bytes that do not hash to the
+          // name they were sent under are never written under either name.
+          const verified = this.intake.commit(command.sha256);
+          await manager.attachBlob(command.sessionId as SessionId, verified, command.mime);
+          return verified.length;
+        }
 
         case 'permission.pending':
           return manager.pendingPermissions();

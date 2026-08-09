@@ -56,6 +56,7 @@ import {
 } from '@shared/types/index.js';
 import { SessionStore, type SessionMeta } from './store/sessionStore.js';
 import { workspaceLayout } from './store/layout.js';
+import { ensureBlob } from './store/blobTransfer.js';
 import { rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
@@ -1462,6 +1463,35 @@ export class SessionManager extends EventEmitter {
     const record = live.session.agents.find((a) => a.agentId === agentId);
     if (!record) throw new Error(`unknown agent ${agentId}`);
     return record;
+  }
+
+  /**
+   * Whether a session can already resolve a hash, sourcing it from a sibling
+   * session on this host if one can (§6.7).
+   *
+   * The transfer is driven from the client side — the client is what holds the
+   * bytes and therefore what has to decide whether to send them — but the answer
+   * belongs here, because the store does.
+   */
+  async hasBlob(sessionId: SessionId, sha256: Sha256, mime: string): Promise<boolean> {
+    // Throws on an unknown session rather than answering `false`, which would
+    // read as "send it to me" and then fail on the write.
+    this.live(sessionId);
+    return ensureBlob(this.deps.workspaceRoot, sessionId, sha256, mime);
+  }
+
+  /**
+   * Store verified bytes against a session (§6.7).
+   *
+   * `attach` rather than `put`, and the difference is the log: the bytes land in
+   * the store *and* a `capture.attached` event lands in the transcript. A blob
+   * that arrived without a trace would be unattributable the moment anybody
+   * asked where a screenshot came from — which for a screenshot is the question
+   * that gets asked.
+   */
+  async attachBlob(sessionId: SessionId, data: Buffer, mime: string): Promise<Sha256> {
+    const { sha256 } = await this.live(sessionId).store.attach(data, mime);
+    return sha256 as Sha256;
   }
 
   /** Tail the durable log for a session — the renderer's subscription source. */

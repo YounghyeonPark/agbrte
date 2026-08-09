@@ -34,7 +34,10 @@ import type {
   Session,
   SessionId,
   SessionProjection,
+  Sha256,
 } from '@shared/types/index.js';
+import { sha256Of } from '@main/store/blobs.js';
+import { CHUNK_BYTES } from '@main/store/blobTransfer.js';
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -241,6 +244,51 @@ export class HostConnection extends EventEmitter {
   /** Resolves when the turn completes — which may be long after this client left. */
   send(sessionId: SessionId, agentId: AgentId, text: string): Promise<void> {
     return this.call({ t: 'session.send', sessionId, agentId, text });
+  }
+
+  /** Whether this session can already resolve the hash (§6.7). */
+  hasBlob(sessionId: SessionId, sha256: Sha256, mime: string): Promise<boolean> {
+    return this.call({ t: 'blob.has', sessionId, sha256, mime });
+  }
+
+  /**
+   * Transfer bytes to the session's blob store, skipping it if they are there.
+   *
+   * Chunks are sent one at a time and awaited, which is the whole of §6.7's
+   * "rate-limited so a 4K screenshot never starves the event tail". A rate
+   * limiter inside a single 10 MiB write would not have helped; a gap between
+   * every 256 KiB is what actually lets the host's pushes through.
+   *
+   * Resumption is implicit and needs no reconnect handling here: the reply is
+   * the byte count the host holds, so a chunk that was applied but whose
+   * acknowledgement was lost simply reports a further offset, and the next
+   * chunk continues from it. The loop follows the host rather than its own
+   * count, which is why a retry cannot duplicate bytes.
+   */
+  async putBlob(sessionId: SessionId, data: Buffer, mime: string): Promise<Sha256> {
+    const sha = sha256Of(data);
+    if (await this.hasBlob(sessionId, sha, mime)) return sha;
+
+    let offset = 0;
+    // `do` rather than `while`: an empty buffer is still a blob, and a loop that
+    // never runs would return a hash the host has never been told about — a
+    // dangling reference produced by the transfer that was meant to prevent one.
+    do {
+      const end = Math.min(offset + CHUNK_BYTES, data.length);
+      const received: number = await this.call({
+        t: 'blob.put',
+        sessionId,
+        sha256: sha,
+        mime,
+        offset,
+        chunk: data.subarray(offset, end).toString('base64'),
+        final: end === data.length,
+      });
+      // The host's count, not ours. A retried chunk reports where the host
+      // actually is, and following that is what makes the retry idempotent.
+      offset = received;
+    } while (offset < data.length);
+    return sha;
   }
 
   interrupt(sessionId: SessionId, agentId?: AgentId): Promise<void> {

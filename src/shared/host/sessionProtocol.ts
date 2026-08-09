@@ -92,7 +92,7 @@ export interface HostIdentity {
  * A version mismatch is refused at handshake rather than discovered halfway
  * through a command whose fields moved.
  */
-export const SESSION_PROTOCOL_VERSION = 1;
+export const SESSION_PROTOCOL_VERSION = 2;
 
 // ------------------------------------------------------------------ app → host
 
@@ -133,6 +133,35 @@ export type SessionCommand =
       sessionId: string;
       proposalId: string;
       decision: { approved: boolean; reason?: string };
+    }
+  /**
+   * Does this session already hold these bytes? (§6.7)
+   *
+   * Asked before every transfer, and answered `true` when a *sibling* session on
+   * the same host has them — the host copies locally rather than making a client
+   * send a screenshot that machine already received once.
+   */
+  | { t: 'blob.has'; id: RequestId; sessionId: string; sha256: string; mime: string }
+  /**
+   * One chunk of a blob, base64 in a JSON message.
+   *
+   * `offset` rather than a chunk index, so resuming needs no server-side notion
+   * of which chunk was which: the client asks how much arrived and continues
+   * from the answer. `final` commits — the host assembles, verifies the bytes
+   * hash to `sha256`, and only then stores.
+   *
+   * Every reply carries the byte count received so far, which is both the
+   * acknowledgement and the resume point.
+   */
+  | {
+      t: 'blob.put';
+      id: RequestId;
+      sessionId: string;
+      sha256: string;
+      mime: string;
+      offset: number;
+      chunk: string;
+      final: boolean;
     }
   | { t: 'permission.pending'; id: RequestId }
   | { t: 'permission.respond'; id: RequestId; requestId: string; decision: PermissionDecision }
