@@ -77,6 +77,18 @@ const DESIGNATED_ARG: Readonly<Record<string, string>> = {
   web_search: 'query',
   websearch: 'query',
   task: 'description',
+  /**
+   * §12.1's headless capture. Its designated argument is the URL, exactly as
+   * `web_fetch`'s is — the tool fetches an address and puts the rendering into a
+   * model's context, so the URL is the whole of what a rule needs to see.
+   *
+   * It does not make the tool grantable — the explicit `ask` below outranks any
+   * `allow`, whatever its scope, which is the point of that rule. What it buys
+   * is a **precise deny**: `screenshot(*internal-admin*)` tests the URL rather
+   * than, as §13 permits for an unmapped tool, any string argument the model
+   * happened to include.
+   */
+  screenshot: 'url',
 };
 
 /** Tools whose designated argument is a filesystem path, for `scope` rules. */
@@ -312,6 +324,20 @@ function networkAndPushRules(): PolicyRule[] {
     { tool: 'webfetch', action: 'ask' },
     { tool: 'web_search', action: 'ask' },
     { tool: 'websearch', action: 'ask' },
+    /**
+     * A screenshot is egress, and needs the same explicit rule for the same
+     * reason (§12.1, §13).
+     *
+     * It fetches a URL and puts the rendering into a model's context, so an
+     * agent that can screenshot `localhost:8080` can screenshot an internal
+     * dashboard and show it to a third-party provider. Left to `defaultAction`
+     * it would still prompt — once. Then `Allow for this session` on that one
+     * prompt grants the *tool*, and every later URL goes unasked. That is
+     * precisely the widening §13 introduces these explicit rules to prevent,
+     * and resolution scanning `deny` → `ask` → `allow` is what makes the rule
+     * survive the grant.
+     */
+    { tool: 'screenshot', action: 'ask' },
 
     ...EGRESS_COMMANDS.map((cmd): PolicyRule => ({ tool: 'bash', match: `*${cmd}*`, action: 'ask' })),
 

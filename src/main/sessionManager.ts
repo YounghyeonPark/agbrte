@@ -1548,6 +1548,23 @@ export class SessionManager extends EventEmitter {
       {
         title: input.title,
         goal: input.scope,
+        /**
+         * The parent's policy, copied (§13).
+         *
+         * > A child **never inherits more permission than its parent held** …
+         * > so "decompose the work" can never be a route to escalating
+         * > privilege.
+         *
+         * Without this the child took `defaultPolicyForTarget`, so a parent
+         * that had been *narrowed* — bash denied, say — produced a child with
+         * the permissions back. Splitting was a way to undo a restriction, which
+         * is the one thing this section says it must never be.
+         *
+         * A copy rather than the object, for the reason `addAgent` copies: a
+         * grant made in the child would otherwise widen the parent, and every
+         * sibling with it.
+         */
+        policy: clonePolicy(parent.policy),
         ...(input.target !== undefined ? { target: input.target } : {}),
       },
       actor,
