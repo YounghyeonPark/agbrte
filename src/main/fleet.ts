@@ -32,6 +32,7 @@ import type {
   AccessRole,
   AgentId,
   AgentRecord,
+  ContentBlock,
   ExecutionTarget,
   HostLocation,
   InstanceId,
@@ -602,8 +603,13 @@ export class Fleet extends EventEmitter {
     return this.ownerOf(sessionId).connection.addAgent(sessionId, input);
   }
 
-  async send(sessionId: SessionId, agentId: AgentId, text: string): Promise<void> {
-    return this.ownerOf(sessionId).connection.send(sessionId, agentId, text);
+  async send(
+    sessionId: SessionId,
+    agentId: AgentId,
+    text: string,
+    blocks?: ContentBlock[],
+  ): Promise<void> {
+    return this.ownerOf(sessionId).connection.send(sessionId, agentId, text, blocks);
   }
 
   /**

@@ -22,6 +22,7 @@ import type {
 } from '../shared/ipc/contract.js';
 import type {
   AgbrteEvent,
+  ContentBlock,
   InboxEntry,
   MatrixCell,
   PermissionRequest,
@@ -74,7 +75,14 @@ export interface AgbrteState {
   closeSession(): void;
   addAgent(runtimeId: string, modelId: string | null, endpointId?: string): Promise<void>;
   /** `to` addresses one agent in a roster; absent means the first (§4.2). */
-  send(text: string, to?: string): Promise<void>;
+  /**
+   * A turn from the user, optionally carrying what they pointed at (§12).
+   *
+   * `blocks` are already stored on the owning host — `capture.grab` put them
+   * there — so this call carries hashes rather than pixels however far away
+   * that host is.
+   */
+  send(text: string, to?: string, blocks?: ContentBlock[]): Promise<void>;
   interrupt(): Promise<void>;
   respond(requestId: string, allow: boolean): Promise<void>;
   /** Answer a split an agent proposed on the open session (§4.3). */
@@ -256,7 +264,7 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     });
   },
 
-  async send(text, to) {
+  async send(text, to, blocks) {
     const { activeId, active } = get();
     /**
      * Whoever the pane is focused on, else the first agent (§4.2).
@@ -273,7 +281,12 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     // unreadable. Failures still surface.
     try {
       set({ error: null });
-      await agbrte().sessions.send({ sessionId: activeId, agentId, text });
+      await agbrte().sessions.send({
+        sessionId: activeId,
+        agentId,
+        text,
+        ...(blocks !== undefined && blocks.length > 0 ? { blocks } : {}),
+      });
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) });
     } finally {

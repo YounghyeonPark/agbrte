@@ -337,9 +337,10 @@ export function App(): JSX.Element {
                   />
                 ))}
                 <Composer
-                  onSend={(t) => void store.send(t, focusedAgent ?? undefined)}
+                  onSend={(t, blocks) => void store.send(t, focusedAgent ?? undefined, blocks)}
                   disabled={active.state === 'working'}
                   queued={queued}
+                  sessionId={active.sessionId}
                 />
               </>
             )}

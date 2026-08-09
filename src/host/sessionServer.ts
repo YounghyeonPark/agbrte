@@ -249,7 +249,15 @@ export class SessionHostServer {
           await manager.send(
             command.sessionId as SessionId,
             command.agentId as AgentId,
-            { content: [{ type: 'text', text: command.text }] },
+            {
+              // Text first, because it is what the person wrote and the blocks
+              // are what they were pointing at. An image ahead of its caption
+              // reads to a model as an image nobody explained.
+              content: [
+                ...(command.text !== '' ? [{ type: 'text' as const, text: command.text }] : []),
+                ...(command.blocks ?? []),
+              ],
+            },
             client.actor,
           );
           return undefined;

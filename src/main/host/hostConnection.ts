@@ -25,6 +25,7 @@ import {
 import type {
   AccessRole,
   AgentId,
+  ContentBlock,
   AgentRecord,
   AgbrteEvent,
   PermissionDecision,
@@ -242,8 +243,19 @@ export class HostConnection extends EventEmitter {
   }
 
   /** Resolves when the turn completes — which may be long after this client left. */
-  send(sessionId: SessionId, agentId: AgentId, text: string): Promise<void> {
-    return this.call({ t: 'session.send', sessionId, agentId, text });
+  send(
+    sessionId: SessionId,
+    agentId: AgentId,
+    text: string,
+    blocks?: ContentBlock[],
+  ): Promise<void> {
+    return this.call({
+      t: 'session.send',
+      sessionId,
+      agentId,
+      text,
+      ...(blocks !== undefined && blocks.length > 0 ? { blocks } : {}),
+    });
   }
 
   /** Whether this session can already resolve the hash (§6.7). */

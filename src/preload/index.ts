@@ -23,6 +23,7 @@ import {
   CH,
   PUSH,
   type AddAgentRequest,
+  type CaptureRequestDto,
   type CreateSessionRequest,
   type EventBatch,
   type HostInfo,
@@ -60,6 +61,10 @@ const api: AgbrteApi = {
   inbox: {
     list: (limit?: number) => ipcRenderer.invoke(CH.inboxList, limit),
     markRead: () => ipcRenderer.invoke(CH.inboxMarkRead),
+  },
+  capture: {
+    sources: () => ipcRenderer.invoke(CH.captureSources),
+    grab: (r: CaptureRequestDto) => ipcRenderer.invoke(CH.captureGrab, r),
   },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),

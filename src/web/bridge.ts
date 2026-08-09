@@ -121,6 +121,20 @@ const api: AgbrteApi = {
     list: call(CH.inboxList),
     markRead: call(CH.inboxMarkRead),
   },
+  /**
+   * Routed to the server like everything else, which is what makes the honest
+   * answer possible (§12.1).
+   *
+   * The server has no screen backend when it is serving a browser, so
+   * `sources` comes back empty and `grab` comes back with a sentence naming the
+   * remedy. Short-circuiting here instead would have been one line shorter and
+   * would have put the refusal in two places — and the browser is not the only
+   * client that can reach a screenless host.
+   */
+  capture: {
+    sources: call(CH.captureSources),
+    grab: call(CH.captureGrab),
+  },
   sessions: {
     list: call(CH.sessionsList),
     create: call(CH.sessionsCreate),

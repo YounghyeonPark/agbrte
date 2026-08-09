@@ -31,6 +31,7 @@
 import type {
   AccessRole,
   AgentRecord,
+  ContentBlock,
   InstanceId,
   LineageId,
   AgbrteEvent,
@@ -105,7 +106,22 @@ export type SessionCommand =
   | { t: 'session.create'; id: RequestId; title: string; goal: string }
   | { t: 'session.resume'; id: RequestId; sessionId: string }
   | { t: 'session.addAgent'; id: RequestId; sessionId: string; input: unknown }
-  | { t: 'session.send'; id: RequestId; sessionId: string; agentId: string; text: string }
+  /**
+   * A turn from a person.
+   *
+   * `blocks` alongside `text` rather than replacing it (§12): a screenshot
+   * almost always arrives with a sentence attached, and the two together are
+   * the message. Every block names a hash this host can already resolve — §6.7
+   * put it there before this command was sent — so nothing large travels here.
+   */
+  | {
+      t: 'session.send';
+      id: RequestId;
+      sessionId: string;
+      agentId: string;
+      text: string;
+      blocks?: ContentBlock[];
+    }
   | { t: 'session.interrupt'; id: RequestId; sessionId: string; agentId?: string }
   | { t: 'session.events'; id: RequestId; sessionId: string; fromSeq: number }
   | { t: 'session.projection'; id: RequestId; sessionId: string }

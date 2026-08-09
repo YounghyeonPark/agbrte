@@ -8,7 +8,8 @@
  */
 
 import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react';
-import type { AgbrteEvent, SplitProposal } from '../shared/types/index.js';
+import type { AgbrteEvent, ContentBlock, SplitProposal } from '../shared/types/index.js';
+import { AttachmentChip, CapturePicker, type Attachment } from './Capture.js';
 
 const META_ROW = 'text-muted flex items-baseline gap-2 text-xs';
 const CODE = 'text-accent rounded bg-[#202029] px-1.5 py-px font-mono text-[11px]';
@@ -264,30 +265,67 @@ export function Composer({
   onSend,
   disabled,
   queued = 0,
+  sessionId,
 }: {
-  onSend: (text: string) => void;
+  onSend: (text: string, blocks?: ContentBlock[]) => void;
   disabled: boolean;
   /** Turns waiting behind the running one — possibly sent from another device. */
   queued?: number;
+  /** Which session a capture is stored against (§12.1). Absent hides the button. */
+  sessionId?: string;
 }): JSX.Element {
   const [text, setText] = useState('');
+  const [picking, setPicking] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   const submit = (): void => {
-    if (text.trim() === '') return;
-    onSend(text);
+    // An attachment on its own is a message. "Look at this" with nothing typed
+    // is the most natural way to use a screenshot, and requiring a sentence
+    // would be a rule invented by the form rather than by the user.
+    if (text.trim() === '' && attachments.length === 0) return;
+    onSend(
+      text,
+      attachments.map((a) => a.block),
+    );
     setText('');
+    setAttachments([]);
   };
 
   return (
     <form
-      className="border-line flex items-end gap-2.5 border-t px-4.5 py-3"
+      className="border-line relative flex items-end gap-2.5 border-t px-4.5 py-3"
       onSubmit={(e) => {
         e.preventDefault();
         submit();
       }}
     >
+      {picking && sessionId !== undefined && (
+        <CapturePicker
+          sessionId={sessionId}
+          onCaptured={(a) => setAttachments((prev) => [...prev, a])}
+          onClose={() => setPicking(false)}
+        />
+      )}
+      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {attachments.map((a, i) => (
+              <AttachmentChip
+                key={a.block.sha256 + String(i)}
+                attachment={a}
+                onRemove={() =>
+                  // Dropped from the turn, not from the store. The blob stays —
+                  // it is content-addressed and already logged as attached, and
+                  // deleting it here would mean a client could unmake a record
+                  // the host wrote.
+                  setAttachments((prev) => prev.filter((_, at) => at !== i))
+                }
+              />
+            ))}
+          </div>
+        )}
       <textarea
-        className="field max-h-44 min-h-[42px] resize-y"
+        className="field max-h-44 min-h-[42px] w-full resize-y"
         data-testid="composer-input"
         value={text}
         placeholder={disabled ? 'Working…' : 'Ask the agent to do something'}
@@ -301,6 +339,18 @@ export function Composer({
           }
         }}
       />
+      </div>
+      {sessionId !== undefined && (
+        <button
+          className="btn-quiet shrink-0 self-center"
+          data-testid="composer-capture"
+          type="button"
+          title="Attach a screen capture"
+          onClick={() => setPicking((p) => !p)}
+        >
+          Screen
+        </button>
+      )}
       {/* Sending into a silent queue reads as a broken app, and with several
           clients the backlog may not be yours. */}
       {queued > 0 && (
@@ -312,7 +362,7 @@ export function Composer({
         className="btn"
         data-testid="composer-send"
         type="submit"
-        disabled={disabled || text.trim() === ''}
+        disabled={disabled || (text.trim() === '' && attachments.length === 0)}
       >
         Send
       </button>

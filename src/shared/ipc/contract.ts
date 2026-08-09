@@ -31,6 +31,8 @@ import type {
   AgentRecord,
   AgentRole,
   AgbrteEvent,
+  ContentBlock,
+  ImageBlock,
   PermissionDecision,
   PermissionRequest,
   PermissionResolved,
@@ -122,6 +124,47 @@ export interface SendRequest {
   sessionId: string;
   agentId: string;
   text: string;
+  /**
+   * Anything that is not typed text — a screen capture, a paste (§12).
+   *
+   * Alongside `text` rather than replacing it, because a screenshot almost
+   * always arrives with a sentence attached and "here, look at this" is the
+   * whole message. The blocks are already stored: each names a hash the owning
+   * host can resolve, put there by `capture.grab` before this call.
+   */
+  blocks?: ContentBlock[];
+}
+
+/** One thing the user can capture, as the picker sees it. */
+export interface CaptureSourceInfo {
+  id: string;
+  name: string;
+  kind: 'screen' | 'window';
+  displayId?: string;
+  /**
+   * A `data:` URL rather than a Buffer.
+   *
+   * The same payload has to survive Electron's structured clone *and* a JSON
+   * WebSocket frame, and only one of those carries a Buffer. Encoding once here
+   * is cheaper than discovering in the browser that the preview is `{"0":137,…}`.
+   */
+  thumbnailDataUrl?: string;
+}
+
+/** A capture the user asked for (§12.1). Every field is in the source's own pixels. */
+export interface CaptureRequestDto {
+  sessionId: string;
+  sourceId: string;
+  region?: { x: number; y: number; w: number; h: number };
+  redactions?: Array<{ x: number; y: number; w: number; h: number }>;
+  windowTitle?: string;
+  displayId?: string;
+}
+
+export interface CaptureResultDto {
+  block: ImageBlock;
+  /** Whether the OCR pre-pass ran, so an unscanned frame is not shown as clean. */
+  scanned: boolean;
 }
 
 /**
@@ -212,6 +255,32 @@ export interface AgbrteApi {
   inbox: {
     list(limit?: number): Promise<InboxEntry[]>;
     markRead(): Promise<void>;
+  };
+  /**
+   * Your screen, for the sessions that want to see it (§12.1).
+   *
+   * Not on `sessions` even though a capture is always attached to one: what is
+   * capturable belongs to the *client*, and a picker asks before a session is
+   * necessarily chosen.
+   */
+  capture: {
+    /**
+     * What can be captured here.
+     *
+     * Empty rather than an error when this client has no screen, so a picker
+     * can render "nothing to capture" without a try/catch. `grab` is the
+     * asymmetric one: capturing is a thing the user *did*, and it explains.
+     */
+    sources(): Promise<CaptureSourceInfo[]>;
+    /**
+     * Take one, store it against the session, and return the block to attach.
+     *
+     * Stored before it is attached, and by the owning host — which for a remote
+     * session means the bytes have already crossed (§6.7) by the time this
+     * resolves. The returned block names a hash that side can resolve, so
+     * `sessions.send` carries a reference and never an image.
+     */
+    grab(r: CaptureRequestDto): Promise<CaptureResultDto>;
   };
   sessions: {
     list(): Promise<Session[]>;
@@ -304,6 +373,8 @@ export const CH = {
   sessionsSnapshot: 'agbrte:sessions.snapshot',
   sessionsAddAgent: 'agbrte:sessions.addAgent',
   sessionsSend: 'agbrte:sessions.send',
+  captureSources: 'agbrte:capture.sources',
+  captureGrab: 'agbrte:capture.grab',
   sessionsInterrupt: 'agbrte:sessions.interrupt',
   sessionsSince: 'agbrte:sessions.since',
   permissionsPending: 'agbrte:permissions.pending',

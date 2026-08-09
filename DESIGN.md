@@ -1682,6 +1682,24 @@ Per-session and **always explicitly user-initiated** — never silent or schedul
 4. Frame hashed, written to the local blob store, previewed.
 5. Optional annotation (§12.3), then attached — pushed via `putBlob` (§6.7) for remote sessions, `provenance.origin: 'client'`.
 
+**Client capture is built, less the overlay.** Enumeration, the permission check, cropping, scaling, redaction, storage and attachment all work; what is missing is the transparent click-through window that lets you *draw* the rectangle. The service takes a region and does the right thing with it — the picker just cannot yet produce one, so today a capture is a whole screen or a whole window.
+
+**Only three things needed Electron, and they are the only three that touch it.** `capture/client.ts` asks a `ScreenBackend` whether it may look, what there is to look at, and for the pixels; `capture/electron.ts` is that backend and is the second and last file in the app that imports `electron`. Not for testability first — for **loadability**: an ESM `import … from 'electron'` is evaluated when a module loads, so one import in the wrong file makes it unloadable under plain Node, which is what `ipc/api.ts` was split off to fix. Everything else §12.1 asks for is pixels and files, which is why the pipeline is identical on every target.
+
+**Cropping is a redaction that nobody calls one.** What lies outside the rectangle is precisely what the user chose not to send, and on a desk covered in windows that is most of the sensitive content on the screen. So the region is applied to the bytes before anything is stored, not as a viewport the renderer draws — the latter would keep the whole screen in the blob and merely *show* a slice of it. It also fixes the coordinate space: crop first means a blackout is painted in the coordinates the user was actually looking at.
+
+**The permission check comes before the grab, and macOS is the reason.** A denied capture there does not fail — it succeeds and returns an empty desktop, which is indistinguishable from a screenshot of a tidy one. Checking afterwards would turn an error into a mystery. `unknown` is its own status and proceeds, because Windows has no such concept to report and a platform with nothing to say must not be read as one that said no.
+
+**A capture is scaled once, here.** §12.2 downsizes at send time regardless, so doing it at capture means the blob that is transferred (§6.7) and kept forever is the useful size rather than the captured one.
+
+**A client with no screen says so.** `sources()` returns empty and `grab()` explains, naming the remedy — the desktop app, or the headless screenshot for a page the agent is serving. This follows `pickFolder`: an API that exists and fails opaquely is worse than one that says why it cannot. The asymmetry is deliberate — listing is a question a UI asks on open and must not need a `try`; capturing is something a person did and deserves a sentence.
+
+**The renderer never holds a screenshot.** `capture.grab` returns an `ImageBlock` — a hash the owning host can already resolve, because for a remote session §6.7's transfer finished before it resolved. A renderer that held the frame would be a renderer that could be asked to store it.
+
+**Client capture inherits §12.2's fitting for free**, and a test I wrote wrongly is what proved it: asserting that the image survived to an agent declaring `input.image: false` failed, because fitting had already degraded it to a described note. That is the pipeline working on a path I had not thought to connect it to — and the alternative, a capture that skipped fitting because it came from a person rather than from a tool, would send an image to a model that rejects the request.
+
+**Not built:** the region overlay, and voice (§12.4).
+
 **Remote capture** — for what the agent's code is doing: a **headless browser screenshot** taken by the host of a URL the agent serves (with viewport and DPR recorded), or a **remote display grab** where a real or virtual display exists. The former lets an agent *see its own output* and iterate without you in the loop. Both tagged `origin: 'remote'`; on hosted targets, only whatever their artifact API exposes.
 
 **The headless screenshot is built**, and it is the first thing in §12 that closes a loop with nobody in it.

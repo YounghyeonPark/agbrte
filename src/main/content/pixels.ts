@@ -120,6 +120,46 @@ export function sizeOf(frame: Buffer): { width: number; height: number } {
   return { width: image.width, height: image.height };
 }
 
+/**
+ * Cut a region out of a frame (§12.1's region selection).
+ *
+ * **Cropping is a redaction that nobody calls one.** The parts of the screen
+ * outside the rectangle are the parts the user chose not to send, and for a
+ * region drawn around one window on a desk covered in other windows, that is
+ * most of the sensitive content on the screen. So it happens here, on the bytes,
+ * before anything is stored — not as a viewport the renderer applies, which
+ * would leave the whole screen in the blob and show a slice of it.
+ *
+ * Clamped to the image rather than trusted, like `fillRects` and for a sharper
+ * reason: a rectangle dragged past the edge of a display is completely ordinary,
+ * and reading out of bounds here would splice in whatever followed the buffer.
+ *
+ * A rectangle that lands entirely outside is an error rather than an empty
+ * image. An empty capture is not a thing anybody meant to take, and a 0×0 PNG
+ * travelling down the attach path would fail somewhere less legible.
+ */
+export async function cropFrame(frame: Buffer, rect: Rect): Promise<Buffer> {
+  const image = decode(frame);
+
+  // Refused rather than clamped to a pixel. The private `cropTo` below keeps a
+  // 1×1 floor because §12.3's crop annotation is a user dragging a box and the
+  // worst case there is a tiny image; here a fully-outside rectangle means the
+  // region and the frame disagree about coordinate space, and a 1×1 capture
+  // would carry that bug forward as a picture of nothing.
+  const x0 = Math.max(0, Math.min(image.width, Math.floor(rect.x)));
+  const y0 = Math.max(0, Math.min(image.height, Math.floor(rect.y)));
+  const x1 = Math.max(x0, Math.min(image.width, Math.ceil(rect.x + rect.w)));
+  const y1 = Math.max(y0, Math.min(image.height, Math.ceil(rect.y + rect.h)));
+  if (x1 - x0 === 0 || y1 - y0 === 0) {
+    throw new RangeError(
+      `region ${rect.w}×${rect.h} at (${rect.x},${rect.y}) lies outside the ` +
+        `${image.width}×${image.height} frame`,
+    );
+  }
+
+  return encodePng(cropTo(image, rect));
+}
+
 // --------------------------------------------------------------- flattening
 
 /** The palette, as RGB. Kept beside the drawing rather than in the UI layer. */

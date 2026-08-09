@@ -2,13 +2,18 @@
  * The Electron transport over the API (DESIGN.md §7).
  *
  * Thin by design. Everything it drives lives in `api.ts` and knows nothing about
- * windows, so this is the only file in the app that imports `electron` — and the
- * web server is its exact counterpart over a socket.
+ * windows, so this is one of only two files in the app that import `electron` —
+ * and the web server is its exact counterpart over a socket.
+ *
+ * The other is `capture/electron.ts`, and it is reached only from here. That is
+ * the rule this file exists to keep: `electron` is imported where the transport
+ * is chosen, never where the work is done.
  */
 
 import { BrowserWindow, dialog, ipcMain } from 'electron';
 import { CH } from '@shared/ipc/contract.js';
 import { createApi, type IpcDeps } from './api.js';
+import { electronScreenBackend } from '../capture/electron.js';
 
 export type { IpcDeps, AgbrteApiHost } from './api.js';
 export { createApi } from './api.js';
@@ -27,6 +32,9 @@ export function registerIpc(deps: Omit<IpcDeps, 'broadcast' | 'pickFolder'>): {
 
   const api = createApi({
     ...deps,
+    // The desktop client has a screen; the web one does not, and `api.ts` says
+    // so rather than pretending it might (§12.1).
+    screen: electronScreenBackend(),
     broadcast: (channel, payload) => {
       for (const win of windows()) win.webContents.send(channel, payload);
     },

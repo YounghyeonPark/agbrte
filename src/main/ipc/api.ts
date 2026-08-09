@@ -26,6 +26,9 @@ import {
   type EventBatch,
   type HostInfo,
   type RuntimeInfo,
+  type CaptureRequestDto,
+  type CaptureResultDto,
+  type CaptureSourceInfo,
   type SendRequest,
   type SessionSnapshot,
   type SshHostInfo,
@@ -40,6 +43,7 @@ import type {
   SessionId,
 } from '@shared/types/index.js';
 import { basename } from 'node:path';
+import { captureScreen, listSources, type ScreenBackend } from '../capture/client.js';
 import { buildMatrix } from '@main/conformance.js';
 import type { ConformanceReport, MatrixCell } from '@shared/types/index.js';
 import { readSshHosts } from '../host/sshConfig.js';
@@ -69,6 +73,17 @@ export interface IpcDeps {
    * that explains why it cannot.
    */
   pickFolder?: () => Promise<string | null>;
+  /**
+   * The screen, when this client has one (§12.1).
+   *
+   * Absent in a browser, and the handlers below say so rather than throwing
+   * something shaped like a bug — the same choice `pickFolder` makes, for the
+   * same reason. Injected rather than imported because `capture/electron.ts`
+   * imports `electron`, and an ESM import is evaluated at load: a single one
+   * here would make this file unloadable under plain Node, which is the whole
+   * reason it is a separate file from `register.ts`.
+   */
+  screen?: ScreenBackend;
 }
 
 /** The transport-free API: a channel map, an ack sink, and its teardown. */
@@ -299,8 +314,46 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   );
 
   handle(CH.sessionsSend, (r: SendRequest) =>
-    fleet.send(r.sessionId as SessionId, r.agentId as AgentId, r.text),
+    fleet.send(r.sessionId as SessionId, r.agentId as AgentId, r.text, r.blocks),
   );
+
+  // ------------------------------------------------------------------- capture
+
+  handle(CH.captureSources, async (): Promise<CaptureSourceInfo[]> =>
+    (await listSources(deps.screen ?? null)).map((source) => ({
+      id: source.id,
+      name: source.name,
+      kind: source.kind,
+      ...(source.displayId !== undefined ? { displayId: source.displayId } : {}),
+      ...(source.thumbnailPng !== undefined
+        ? {
+            // Encoded here rather than shipped as a Buffer: the same payload has
+            // to survive Electron's structured clone *and* a JSON WebSocket
+            // frame, and only one of those carries a Buffer.
+            thumbnailDataUrl: `data:image/png;base64,${source.thumbnailPng.toString('base64')}`,
+          }
+        : {}),
+    })),
+  );
+
+  handle(CH.captureGrab, async (r: CaptureRequestDto): Promise<CaptureResultDto> => {
+    const sessionId = r.sessionId as SessionId;
+    const { block, scanned } = await captureScreen(
+      deps.screen ?? null,
+      {
+        sourceId: r.sourceId,
+        ...(r.region !== undefined ? { region: r.region } : {}),
+        ...(r.redactions !== undefined ? { redactions: r.redactions } : {}),
+        ...(r.windowTitle !== undefined ? { windowTitle: r.windowTitle } : {}),
+        ...(r.displayId !== undefined ? { displayId: r.displayId } : {}),
+      },
+      // The sink is the owning host's store, whichever machine that is — a local
+      // write next door or §6.7's chunked transfer over ssh. `captureScreen`
+      // does not know which, for the same reason `send` does not.
+      (redacted, mime) => fleet.putBlob(sessionId, redacted, mime),
+    );
+    return { block, scanned };
+  });
 
   handle(CH.sessionsInterrupt, (sessionId: string, agentId?: string) =>
     fleet.interrupt(sessionId as SessionId, agentId as AgentId | undefined),
