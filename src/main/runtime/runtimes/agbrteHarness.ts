@@ -37,6 +37,7 @@ import {
 } from '@shared/types/index.js';
 import { DEFAULT_TOOLS, toolByName, type ToolDefinition } from '../../tools/index.js';
 import { WorkspaceLeases } from '../../tools/leases.js';
+import { fitContent, type Resizer } from '../../content/fit.js';
 
 export const AGBRTE_HARNESS_RUNTIME_ID = 'agbrte-harness';
 
@@ -72,6 +73,15 @@ export interface AgbrteHarnessOptions {
    * test still get arbitration rather than none.
    */
   leases?: WorkspaceLeases;
+  /**
+   * Rescale an image that exceeds this agent's declared limit (§12.2).
+   *
+   * Injected because decoding needs a decoder, and the only one guaranteed to
+   * exist is Electron's — absent in the agent host, on a remote machine, and in
+   * every test. Without it an oversized image becomes a named downgrade rather
+   * than something sent for a provider to reject.
+   */
+  resizeImage?: Resizer;
   /** Hard ceiling on provider round trips per turn. */
   maxIterations?: number;
 }
@@ -136,7 +146,21 @@ class AgbrteHarnessHandle implements AgentHandle {
   }
 
   async send(turn: UserTurn): Promise<void> {
-    this.messages.push({ role: 'user', content: turn.content });
+    /**
+     * Fitted to what this agent declared it can take (§12.2).
+     *
+     * Here rather than at the composer, because the answer belongs to the agent
+     * receiving the turn and one session can hold several with different limits
+     * — the same reason `capabilities()` is a function of the spec (§3.2).
+     * Every loss is reported rather than dropped silently: §3.5's whole point is
+     * that "this model keeps ignoring my screenshots" should have a visible
+     * cause instead of becoming folklore.
+     */
+    const fitted = await fitContent(turn.content, this.caps, this.opts.resizeImage);
+    for (const note of fitted.downgrades) {
+      this.ctx.reportProgress({ kind: 'phase', detail: note.detail, at: new Date().toISOString() });
+    }
+    this.messages.push({ role: 'user', content: fitted.content });
     try {
       await this.loop();
     } catch (err) {

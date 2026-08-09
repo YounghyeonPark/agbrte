@@ -1676,6 +1676,17 @@ Platform notes: macOS needs Screen Recording permission — check `systemPrefere
 
 Paste and drag-drop. **Downscaling is driven by the receiving agent's capabilities**, not a constant: `imageMaxLongEdge` and `imageMaxCount` come from §3.3, and a model with `input.image: false` gets the declared text-plus-`file_ref` downgrade. Per-image token cost is shown from that agent's pricing — or marked unknown under an opaque allowance — so attaching four 4K screenshots per turn is visible rather than mysterious.
 
+**The fitting is built**, which is the part every other multimodal path funnels into. The types existed from Phase 1 and nothing used them, so attaching an image to an agent that could not see one produced a request the provider rejected or quietly ignored — §3.5's named failure, where "this model keeps ignoring my screenshots" becomes folklore instead of a reported capability gap.
+
+- **A dropped image is described, not deleted.** A downgrade that only reaches the log tells the *user* something was lost and leaves the *model* looking at a turn with a hole in it. A model told "there was a 2560×1440 screenshot here and you cannot see it" can ask about it; one handed nothing cannot.
+- **Count is checked before size.** Dropping the fifth image is cheaper than rescaling it and then dropping it, and someone who over-attached should hear about it before anything is spent on the ones that will not be sent.
+- **An absent limit means unlimited, not zero.** A default ceiling would shrink images for agents that never asked for one.
+- **Resizing is injected, and its absence is a named downgrade.** Decoding needs a decoder and the only one guaranteed present is Electron's — absent in the agent host, on a remote machine, and in every test. Sending an oversized image anyway hands the provider something it will reject or silently crop, which is a loss with nobody's name on it. So it becomes text that says why.
+- **A scaled copy links back to the original** through `provenance.annotatedFrom`, on the same rule §12.3 sets for annotations: what was sent has to be traceable to what was attached.
+- **The token estimate is deliberately approximate.** Every provider counts image tokens differently, and a precise-looking number from the wrong formula is worse than an obviously rounded one. It exists to make four 4K screenshots visible, not to predict an invoice.
+
+**Fitted per agent, at the agent.** One session can hold several agents with different limits, so the answer belongs to whichever one is receiving the turn — the same reason `capabilities()` is a function of the spec (§3.2) rather than a constant on the adapter.
+
 ### 12.3 Annotated screenshots
 
 Rectangle, arrow, freehand, text label, blackout, crop. Annotations are stored as **vector operations** alongside the original hash and flattened to PNG at send time (`provenance.annotatedFrom` links back), so they stay editable and the original is never destroyed.
@@ -1826,7 +1837,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
 | 6 | Multi-agent + hierarchy | 6th | **done** |
-| 7 | Multimodal | 7th | not started |
+| 7 | Multimodal | 7th | capability-driven image fitting done; capture, annotation, redaction and voice remain |
 | 8 | Breadth + polish | 8th | not started |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow.
