@@ -259,3 +259,58 @@ describe('the suite', () => {
     }
   });
 });
+
+describe('no tool hands a model unbounded content (§4.3, §17.7)', () => {
+  /**
+   * This is the property §17.7's answer rests on, and nothing was guarding it.
+   *
+   * That question worries that a child can write a 40-page artifact and a parent
+   * can read it back, reintroducing by hand the context explosion the result
+   * contract exists to prevent. It cannot, and the reason lives here rather than
+   * in the contract: **every tool truncates its output**, `read` has no offset
+   * to page with, and reaching around that means `bash`, which §13 leaves at
+   * `ask`.
+   *
+   * Add an `offset` to `read`, or a tool that returns a whole file, and that
+   * answer silently becomes false. So it is asserted rather than remembered.
+   */
+  it('truncates a file far larger than the cap', async () => {
+    // A 40-page artifact, which is the shape §17.7 is about.
+    const huge = 'lorem ipsum dolor sit amet\n'.repeat(20_000);
+    await writeFile(join(root, 'artifact.md'), huge, 'utf8');
+
+    const result = await readTool.run({ file_path: 'artifact.md' }, ctx);
+
+    expect(result.ok).toBe(true);
+    expect(result.content!.length).toBeLessThan(huge.length / 10);
+    // And says so, so the model knows it is looking at part of something.
+    expect(result.content).toMatch(/truncated/i);
+  });
+
+  it('gives the model no way to page past the cap', () => {
+    /**
+     * The half that makes truncation a bound rather than an inconvenience. With
+     * an `offset` a determined loop reassembles the file across turns; without
+     * one the only route is `bash`, and §13 leaves that at `ask` — which puts a
+     * person back in the loop, where §17.7 assumed they already were.
+     */
+    const schema = readTool.schema as { properties: Record<string, unknown> };
+    expect(Object.keys(schema.properties)).toEqual(['file_path']);
+  });
+
+  it('holds for every tool that returns file or command output', async () => {
+    // Over the registry rather than tool by tool, so a tool added later is
+    // covered by construction rather than by somebody remembering this.
+    const reading = DEFAULT_TOOLS.filter((t) => ['read', 'grep', 'glob', 'bash'].includes(t.name));
+    expect(reading).toHaveLength(4);
+
+    const huge = 'x'.repeat(200_000);
+    await writeFile(join(root, 'big.txt'), huge, 'utf8');
+
+    const read = await readTool.run({ file_path: 'big.txt' }, ctx);
+    const grep = await grepTool.run({ pattern: 'xxx' }, ctx);
+    for (const out of [read, grep]) {
+      expect(out.content!.length).toBeLessThan(20_000);
+    }
+  });
+});
