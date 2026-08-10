@@ -72,7 +72,22 @@ export async function writeHostRecord(
   await writeFile(
     hostRecordPath(workspaceRoot),
     `${JSON.stringify({ ...record, protocol: SESSION_PROTOCOL_VERSION }, null, 2)}\n`,
-    'utf8',
+    /**
+     * `0600` unconditionally rather than only when a token is present. The
+     * containing directory is already `0700`, so this changes nothing for other
+     * users — but a record that is sometimes a credential and sometimes not
+     * would depend on every future caller remembering which, and always costs
+     * nothing. Ignored on Windows, where the pipe path it carries is not secret.
+     *
+     * **This was written once and did not take.** The edit that added it landed
+     * in the interface's documentation and not in this call, so the file went
+     * out at `0666 & ~umask` — `0644` on an ordinary machine — carrying the
+     * bearer token that is the *entire* authentication for §6.2's loopback
+     * control channel. The test asserting `0600` existed the whole time and
+     * skips on Windows, which was the only place it had ever run. Linux CI
+     * caught it on its first execution: `expected 420 to be 384`.
+     */
+    { encoding: 'utf8', mode: 0o600 },
   );
 }
 

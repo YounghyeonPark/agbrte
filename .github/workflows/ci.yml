@@ -51,11 +51,16 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Unit tests
-        run: npm test
-
+      # Before the tests, not after. Several of them fork the built session and
+      # agent hosts — a detached host is a real process, and there is nothing to
+      # exec without this. Running tests first reported `dist/main/agbrteHost.js
+      # is missing` on every runner, which is a true sentence about the wrong
+      # thing.
       - name: Build
         run: npm run build
+
+      - name: Unit tests
+        run: npm test
 
       # A record of which platform-specific paths actually ran, so a green tick
       # can be read rather than trusted. Prints on failure too.
