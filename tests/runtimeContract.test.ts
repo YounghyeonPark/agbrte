@@ -12,7 +12,6 @@
 
 import { describe, expect, it } from 'vitest';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
-import { ClaudeAgentSdkRuntime } from '@main/runtime/runtimes/claudeAgentSdk.js';
 import { AgbrteHarnessRuntime } from '@main/runtime/runtimes/agbrteHarness.js';
 import { CliStdioRuntime } from '@main/runtime/runtimes/cliStdio.js';
 import { CLAUDE_CODE_MANIFEST } from '@main/runtime/cli/manifests.js';
@@ -37,7 +36,6 @@ import {
   type RuntimeEvent,
   type ToolPolicy,
 } from '@shared/types/index.js';
-import type { Options, Query, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { recorderFor, scenario } from './support/conformance.js';
 import type { Evidence } from '@shared/types/index.js';
 
@@ -97,66 +95,6 @@ async function drain(events: AsyncIterable<RuntimeEvent>): Promise<RuntimeEvent[
   for await (const ev of events) out.push(ev);
   return out;
 }
-
-// ------------------------------------------------------------- SDK stream stub
-
-/** Minimal `Query`: an async generator plus the control methods we call. */
-function fakeQuery(
-  messages: SDKMessage[],
-  hooks: { onOptions?: (o: Options) => void; callGate?: { tool: string; input: Record<string, unknown> } } = {},
-): typeof import('@anthropic-ai/claude-agent-sdk').query {
-  return ((params: { prompt: string | AsyncIterable<unknown>; options?: Options }) => {
-    const options = params.options as Options;
-    hooks.onOptions?.(options);
-
-    async function* gen(): AsyncGenerator<SDKMessage, void> {
-      // Consume one prompt message, proving send() reaches the SDK's input.
-      if (typeof params.prompt !== 'string') {
-        await (params.prompt as AsyncIterable<unknown>)[Symbol.asyncIterator]().next();
-      }
-      // Exercise the real gate wiring where the scenario asks for it.
-      if (hooks.callGate && options.canUseTool) {
-        await options.canUseTool(hooks.callGate.tool, hooks.callGate.input, {
-          signal: new AbortController().signal,
-        } as never);
-      }
-      for (const msg of messages) yield msg;
-    }
-
-    const it = gen();
-    return Object.assign(it, {
-      interrupt: async () => undefined,
-      setPermissionMode: async () => undefined,
-      setModel: async () => undefined,
-      applyFlagSettings: async () => undefined,
-      stopTask: async () => undefined,
-      streamInput: async () => undefined,
-      close: () => undefined,
-    }) as unknown as Query;
-  }) as typeof import('@anthropic-ai/claude-agent-sdk').query;
-}
-
-const assistantText = (text: string): SDKMessage =>
-  ({
-    type: 'assistant',
-    message: { role: 'assistant', content: [{ type: 'text', text }] },
-    parent_tool_use_id: null,
-    uuid: 'u1',
-    session_id: 'sess-contract',
-  }) as unknown as SDKMessage;
-
-const resultSuccess = (): SDKMessage =>
-  ({
-    type: 'result',
-    subtype: 'success',
-    is_error: false,
-    num_turns: 1,
-    result: 'ok',
-    usage: { input_tokens: 12, output_tokens: 7 },
-    total_cost_usd: 0.003,
-    session_id: 'sess-contract',
-    uuid: 'u2',
-  }) as unknown as SDKMessage;
 
 // -------------------------------------------------------------- the contract
 
@@ -279,23 +217,6 @@ const CANDIDATES: Candidate[] = [
         ],
       }),
     expectsResumeToken: null,
-  },
-  {
-    name: 'claude-agent-sdk',
-    runtimeId: 'claude-agent-sdk',
-    evidence: 'scripted-fixture',
-    make: () =>
-      new ClaudeAgentSdkRuntime({
-        queryFn: fakeQuery([assistantText('hello'), resultSuccess()]),
-      }),
-    makeGated: () =>
-      new ClaudeAgentSdkRuntime({
-        queryFn: fakeQuery([resultSuccess()], {
-          callGate: { tool: 'Read', input: { file_path: 'a.ts' } },
-        }),
-      }),
-    // The SDK reports a session id, which is a cache and never truth (§5.4).
-    expectsResumeToken: 'sess-contract',
   },
   {
     // The provider branch: our own loop over a raw endpoint (§3.7). Included
@@ -507,67 +428,3 @@ for (const candidate of CANDIDATES) {
 
 // ------------------------------------------------- adapter-specific guarantees
 
-describe('claude-agent-sdk: the configuration its fidelity claim depends on', () => {
-  async function capturedOptions(): Promise<Options> {
-    let captured: Options | null = null;
-    const runtime = new ClaudeAgentSdkRuntime({
-      queryFn: fakeQuery([resultSuccess()], { onOptions: (o) => (captured = o) }),
-    });
-    const handle = await runtime.start(spec(), context());
-    const drained = drain(handle.events);
-    await handle.send({ content: [{ type: 'text', text: 'x' }] });
-    await drained;
-    return captured as unknown as Options;
-  }
-
-  it('never passes allowedTools, which would bypass the gate', async () => {
-    // "The callback never fires for auto-approved tools" — a bare allowedTools
-    // entry would make the declared `callback` fidelity false.
-    expect((await capturedOptions()).allowedTools).toBeUndefined();
-  });
-
-  it('pins permissionMode to default so nothing is auto-approved', async () => {
-    expect((await capturedOptions()).permissionMode).toBe('default');
-  });
-
-  it('pins settingSources to [] so settings files add no invisible allow rules', async () => {
-    expect((await capturedOptions()).settingSources).toEqual([]);
-  });
-
-  it('always supplies canUseTool — without it there is no gate at all', async () => {
-    expect(typeof (await capturedOptions()).canUseTool).toBe('function');
-  });
-
-  it('passes the workspace as cwd', async () => {
-    expect((await capturedOptions()).cwd).toBe('/tmp/ws');
-  });
-
-  it('translates a denial into an SDK deny result carrying the reason', async () => {
-    let gateResult: unknown = null;
-    const runtime = new ClaudeAgentSdkRuntime({
-      queryFn: ((params: { prompt: unknown; options?: Options }) => {
-        const options = params.options as Options;
-        async function* gen(): AsyncGenerator<SDKMessage, void> {
-          gateResult = await options.canUseTool?.(
-            'Bash',
-            { command: 'rm -rf /' },
-            { signal: new AbortController().signal } as never,
-          );
-          yield resultSuccess();
-        }
-        return Object.assign(gen(), {
-          interrupt: async () => undefined,
-          close: () => undefined,
-        }) as unknown as Query;
-      }) as typeof import('@anthropic-ai/claude-agent-sdk').query,
-    });
-
-    const ctx = context(() => ({ result: 'deny', reason: 'use git rm instead' }));
-    const handle = await runtime.start(spec(), ctx);
-    const drained = drain(handle.events);
-    await handle.send({ content: [{ type: 'text', text: 'go' }] });
-    await drained;
-
-    expect(gateResult).toEqual({ behavior: 'deny', message: 'use git rm instead' });
-  });
-});

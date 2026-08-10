@@ -11,6 +11,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { until } from './support/until.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -295,7 +296,7 @@ describe('events carry their host', () => {
     const onB = await fleet.createSession(b.instanceId, { title: 'B', goal: 'g' });
     const agent = await fleet.addAgent(onB.sessionId, { role: 'worker', runtimeId: 'echo' });
     await fleet.send(onB.sessionId, agent.agentId, TEXT);
-    await new Promise((res) => setTimeout(res, 20));
+    await until(() => seen.length > 0);
 
     // Without the host on the event, a renderer showing two hosts cannot tell
     // which pane a line belongs to.
@@ -389,6 +390,8 @@ describe('detaching', () => {
     fleet.on('event', (_i, _s, e: { type: string }) => seen.push(e.type));
 
     await fleet.detach(a.instanceId);
+    // A duration, and right: the assertion is that *nothing* arrives, which only
+    // means something if you waited. There is no fact to poll for.
     await new Promise((res) => setTimeout(res, 20));
 
     // A listener left attached would forward events for a host the UI has
@@ -436,7 +439,11 @@ describe('stopping a host', () => {
     });
 
     const turn = fleet.send(session.sessionId, agent.agentId as never, 'go');
-    await new Promise((r) => setTimeout(r, 50));
+    // In flight means *blocked on the gate*, which is a fact to wait for rather
+    // than a duration to guess at. This slept 50ms and failed roughly one full
+    // run in five — I swept the suite for exactly this pattern and missed this
+    // line, then watched it fail again an hour later.
+    await until(async () => (await fleet.pendingPermissions()).length > 0);
 
     // The whole reason the host is a separate process: a window deciding to
     // close must not take a running turn with it.

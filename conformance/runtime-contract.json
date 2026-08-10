@@ -1,5 +1,5 @@
 {
-  "ranAt": "2026-08-10T02:37:20.112Z",
+  "ranAt": "2026-08-10T03:03:05.319Z",
   "results": [
     {
       "runtimeId": "echo",
@@ -45,55 +45,6 @@
     },
     {
       "runtimeId": "echo",
-      "scenarioId": "capabilities-per-spec",
-      "adapterVersion": "0.0.1",
-      "evidence": "scripted-fixture",
-      "ok": true
-    },
-    {
-      "runtimeId": "claude-agent-sdk",
-      "scenarioId": "stream-before-send",
-      "adapterVersion": "0.0.1",
-      "evidence": "scripted-fixture",
-      "ok": true
-    },
-    {
-      "runtimeId": "claude-agent-sdk",
-      "scenarioId": "explicit-stop",
-      "adapterVersion": "0.0.1",
-      "evidence": "scripted-fixture",
-      "ok": true
-    },
-    {
-      "runtimeId": "claude-agent-sdk",
-      "scenarioId": "usage-reported",
-      "adapterVersion": "0.0.1",
-      "evidence": "scripted-fixture",
-      "ok": true
-    },
-    {
-      "runtimeId": "claude-agent-sdk",
-      "scenarioId": "stream-once",
-      "adapterVersion": "0.0.1",
-      "evidence": "scripted-fixture",
-      "ok": true
-    },
-    {
-      "runtimeId": "claude-agent-sdk",
-      "scenarioId": "gate-before-execute",
-      "adapterVersion": "0.0.1",
-      "evidence": "scripted-fixture",
-      "ok": true
-    },
-    {
-      "runtimeId": "claude-agent-sdk",
-      "scenarioId": "resume-token-consistent",
-      "adapterVersion": "0.0.1",
-      "evidence": "scripted-fixture",
-      "ok": true
-    },
-    {
-      "runtimeId": "claude-agent-sdk",
       "scenarioId": "capabilities-per-spec",
       "adapterVersion": "0.0.1",
       "evidence": "scripted-fixture",

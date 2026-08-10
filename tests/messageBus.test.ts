@@ -192,6 +192,8 @@ describe('delivery through the session', () => {
       kind: 'report',
       content: [{ type: 'text', text: 'parser done' }],
     });
+    // A duration: the claim below is that a broadcast wakes *nobody*, and an
+    // absence only means something if you waited for it.
     await new Promise((r) => setTimeout(r, 50));
 
     const events = await m.events(sessionId as never);
@@ -209,6 +211,7 @@ describe('delivery through the session', () => {
       kind: 'task',
       content: [{ type: 'text', text: 'x' }],
     });
+    // A duration, for the same reason: nothing should have been woken.
     await new Promise((r) => setTimeout(r, 50));
 
     const events = await m.events(sessionId as never);

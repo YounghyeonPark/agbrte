@@ -238,7 +238,7 @@ describe('the report the suite actually wrote', () => {
     const ids = new Set(loaded?.results.map((r) => r.runtimeId));
     expect(ids).toContain('echo');
     expect(ids).toContain('agbrte-harness');
-    expect(ids).toContain('claude-agent-sdk');
+    expect(ids).toContain('agent-host');
     expect(ids).toContain('cli:claude-code');
   });
 });

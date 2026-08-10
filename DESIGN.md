@@ -30,7 +30,7 @@ A desktop app for running software development work through AI agents. The unit 
 ### Confirmed decisions
 
 - **Shell:** Electron desktop app (Node main + React/TS renderer).
-- **Runtime layer:** pluggable, **two adapter branches** — external *harnesses* and raw *model providers* driven by a built-in harness (§3). Claude Agent SDK is the reference harness adapter, not a privileged one.
+- **Runtime layer:** pluggable, **two adapter branches** — external *harnesses* and raw *model providers* driven by a built-in harness (§3). No adapter is privileged; the harness branch is currently represented by the user's own installed CLI (§3.12).
 - **Execution target:** pluggable transport layer. Local first, SSH second, then WSL / container / k8s, with hosted agent services as a reduced-capability fourth locality (§6.9).
 - **Auth:** three modes — API key through our gateway, the user's own installed CLI session, or none for local models (§3.11). **Agbrte never stores, proxies, or replays a vendor session token.**
 - **Memory/history location:** **inside the workspace** (`<workspace>/.devagents/`), with a local follower mirror for remote workspaces. One documented exception: hosted targets, where the app-side store becomes primary (§6.9).
@@ -42,7 +42,7 @@ The usual way to get this wrong is to conflate *what drives the loop*, *which mo
 
 | Axis | Interface | Question | Examples |
 |---|---|---|---|
-| Harness | `AgentRuntime` (§3.2) | who runs the loop, owns tools and context | Claude Agent SDK, an installed agent CLI, a hosted agent service, **Agbrte's own harness** |
+| Harness | `AgentRuntime` (§3.2) | who runs the loop, owns tools and context | an installed agent CLI, a vendor SDK, a hosted agent service, **Agbrte's own harness** |
 | Model | `ModelProvider` (§3.6) | who answers one request | Anthropic Messages, OpenAI, Gemini, Bedrock/Vertex/Foundry, Ollama/vLLM/llama.cpp |
 | Location | `Transport` (§6.2) | where it executes and how we reach it | local, ssh, wsl, container, k8s, hosted |
 
@@ -143,8 +143,8 @@ Tier 0 is the **provider branch**. Tiers 2 and 3 are the **harness branch**. Tie
 AgentRuntime  (what the session sees — §3.2)
 │
 ├── HarnessRuntime adapters — wrap something that already loops
-│   ├── claude-agent-sdk        (Tier 2, in-process library — reference impl)
 │   ├── agent-cli-stdio         (Tier 2, the user's installed CLI — §3.12)
+│   ├── (in-process vendor library — no implementation, §3.14)
 │   └── hosted-agent-http       (Tier 3, REST + event stream — §6.9)
 │
 └── AgbrteHarness — our own loop, tools, gating, context management (§3.7)
@@ -638,7 +638,7 @@ Downgrade is a declared pipeline driven by capabilities, not scattered condition
 
 **The conformance suite is what keeps this abstraction from rotting.** Every adapter, both branches, runs one scenario set, and the *point* of the set is that it is run identically against deliberately different implementations. This exists because 158 passing tests failed to catch a reference adapter that emitted zero events: every runtime test asserted against the in-repo `echo` runtime, so the interface was only ever validated by the implementation that happened to satisfy it — §16's first risk, arriving on schedule.
 
-**Five candidates run it now**, and they are deliberately unalike: `echo`; `claude-agent-sdk` through an injected `query`; `AgbrteHarness` over a raw provider; `agent-cli-stdio` against a real subprocess speaking the protocol over real pipes; and `echo` again reached through the agent-host control protocol. The last two matter most to the claim — one is a text protocol with no loop to hold, the other is the same adapter after serialization and a process boundary.
+**Four candidates run it now**, and they are deliberately unalike: `echo`; `AgbrteHarness` over a raw provider; `agent-cli-stdio` against a real subprocess speaking the protocol over real pipes; and a runtime reached through the agent-host control protocol. The last two matter most to the claim — one is a text protocol with no loop to hold, the other is the same adapter after serialization and a process boundary. It was five: `claude-agent-sdk` ran through an injected `query` until the dependency was removed (§3.14).
 
 **Scenario status is part of the design, not a CI detail.** Claiming a scenario the suite does not run is the fiction this section exists to prevent, so the target set is listed with what is actually verified today No credentials and no real endpoints are involved anywhere in it: what the suite proves is the adapter, and what it cannot prove is the vendor's behaviour.
 
@@ -683,6 +683,20 @@ Six cell states, because three were not enough to stay honest:
 Results publish as a **support matrix in the app**, so choosing a runtime shows what it can actually do here. An adapter that can't pass a scenario declares the capability `false` and the orchestrator routes around it — a configuration fact, not a runtime surprise. The matrix must distinguish *verified*, *declared*, and *not run*: a green cell earned by a scripted fixture is not the same claim as one earned against a live endpoint, and collapsing them would reintroduce exactly the confidence this table exists to remove.
 
 ---
+
+### 3.14 No vendor SDK, and what that cost
+
+The `claude-agent-sdk` adapter is removed, along with the dependency it imported. What is left in the harness branch is `agent-cli-stdio` — the user's own installed CLI, under their own auth, detected rather than bundled.
+
+**The reason is what the project already says everywhere else.** §3.12 refuses to vendor a CLI, §12.1 refuses to vendor a browser, and §12.4 refuses to vendor a speech model — each time because the installer is one self-contained shell script and a dependency that is not ours is a dependency the user did not choose. An in-process SDK is the same argument with more force: it is *proprietary* code, "© Anthropic PBC. All rights reserved", and `scripts/package.mjs` already carried a licence gate refusing to redistribute it.
+
+**That gate never fired, and that is the point.** The SDK reached no shipped bundle — but only because the adapter importing it happened not to be registered in any headless entry point. An accident that holds is not a guarantee, which is what the gate's own comment said. The gate stays now that the dependency is gone: the next proprietary SDK will arrive as a convenience inside one adapter, and this script is where redistribution would actually happen.
+
+**What it cost, stated rather than glossed.** §3.2 names three harness tiers, and Tier 2's *in-process library* shape now has no implementation. The branch is still exercised — `agent-cli-stdio` runs the full contract suite against a real subprocess over real pipes — but the specific shape of "an adapter that is a function call into somebody else's loop, in our own process" is unproven. It was also the only candidate exercising `canUseTool`-style approval callbacks from inside a library, which is a different gate wiring from a subprocess flag list.
+
+Four candidates still run the contract suite and they remain deliberately unalike (§3.13). The claim that gets weaker is R8's, and §16 records it as weaker rather than pretending otherwise.
+
+**What it did not cost:** nothing about *using* Claude. `cli:claude-code` is a manifest — a binary name and a list of argv flags describing how to drive a CLI the user installed and authenticated themselves. It bundles nothing, depends on nothing, and is the shape §3.12 argues for. Removing it would remove support for the user's own tool while removing no coupling at all.
 
 ## 4. Session and agent model
 
@@ -1942,7 +1956,7 @@ Each endpoint records provider, region, and retention posture (`dataHandling`, �
 | Durable log | JSONL + periodic JSON checkpoints | crash-safe appends, replayable, greppable, **byte-offset mirrorable** |
 | Index/search | better-sqlite3 + FTS5 | synchronous and fast in a utility process; no server |
 | File watching | chokidar (local), host-side inotify (remote) | move detection, external edits |
-| Reference harness | Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) | batteries-included loop, real approval callbacks |
+| Harness adapters | the user's installed CLI (§3.12); no vendor SDK bundled or depended on (§3.14) | their auth, their licence, their upgrade cadence — and nothing proprietary in what we distribute |
 | CLI harness | subprocess + per-CLI manifest (§3.12) | supports the user's installed tooling under their own auth |
 | Provider SDKs | each provider's official SDK behind our adapter | never a cross-provider shim; official clients get auth, retries, streaming right |
 | Schema handling | canonical JSON Schema + a pure degrader | one authored schema, many dialects; degradation is unit-testable |
@@ -1984,11 +1998,13 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 
 Building Phases 2, 3, and 4 against a local-only assumption invites rework, because each of them touches state that a server-authoritative topology relocates: relocation resolution becomes a question about the server's filesystem, quota scheduling spans clients, and the dashboard reads a mirror rather than a local log. Second, **device independence is a headline requirement and Phase 5 is where it lives** — the log already being the source of truth means a second device is a new windowed projection rather than a sync protocol, but only once the log is authoritative somewhere central. Third, computer use and multimodal both get materially safer afterwards: an agent driving a virtual display on an expendable server is a bounded blast radius, which is the only honest answer to `click(x, y)` being outside what §13 can gate.
 
-**This does not contradict Phase 3's "deliberately early" argument**, which is worth being precise about because it reads like it should. That argument is that an abstraction validated against one implementation is not validated, and it has already been satisfied: four runtimes run the contract suite — `echo`, the Claude SDK adapter, `AgbrteHarness` over a raw provider, and the same adapter reached through the agent-host protocol. What remains in Phase 3 is *breadth* — a second real provider — not validation. The installed-CLI branch and the support matrix have since landed; both are the pieces of that breadth that needed no credentials to be real. Breadth can follow the substrate; validation could not.
+**This does not contradict Phase 3's "deliberately early" argument**, which is worth being precise about because it reads like it should. That argument is that an abstraction validated against one implementation is not validated, and it is satisfied **for the runtime axis**: four candidates run the contract suite — `echo`, `AgbrteHarness` over a raw provider, `agent-cli-stdio` against a real subprocess, and a runtime reached through the agent-host protocol.
+
+**It is not satisfied for the provider axis, and this document said it was.** `ModelProvider` has exactly one implementation, and only one of those four candidates touches it at all. R8's sentence applies verbatim to `ModelProvider` today, so calling the gap *breadth* rather than *validation* conflated the two axes. What remains in Phase 3 is validation of the provider boundary, and it needs a natively different wire format — a second OpenAI-shaped endpoint proves nothing, being the same adapter pointed at another URL. The installed-CLI branch and the support matrix have since landed; both are the pieces of that breadth that needed no credentials to be real. Breadth can follow the substrate; validation could not.
 
 **Not in any phase: computer use / GUI control.** §12 is capture as *input* — you show the agent something, or the host screenshots a URL the agent serves. Nothing actuates a mouse or keyboard, and that is a scope decision rather than an omission. Three things must land before it is even expressible: tool results must carry content blocks instead of a `string` (a screenshot cannot be returned today), the tool model needs a notion of a provider-defined built-in tool that we do not author a schema for, and a frame must carry its coordinate space so downscaling cannot silently misplace every click. All three are in §16.
 
-**Phase 1 — Skeleton.** Electron shell, typed IPC, `AgentRuntime`, `claude-agent-sdk` adapter, `AgentHost` as a local `utilityProcess`, `.devagents/` layout, `events.jsonl` + checkpoints, single-session text-only view.
+**Phase 1 — Skeleton.** Electron shell, typed IPC, `AgentRuntime`, a first harness adapter, `AgentHost` as a local `utilityProcess`, `.devagents/` layout, `events.jsonl` + checkpoints, single-session text-only view.
 *Done when:* a text-only session edits a real repo and the transcript survives an app restart.
 
 *Status.* **Complete, both halves verified end to end.** `npm run e2e` drives the built app with Playwright's `_electron`: a session is created through the UI, an agent added, a turn sent, then the app is **closed and relaunched as a new process against the same folder** and the transcript is still there and still usable. The "edits a real repo" half runs a local `qwen2.5:7b` through the agent host against a `git init`-ed temp directory and asserts the file it wrote exists on disk.
@@ -2051,7 +2067,8 @@ Tests select on `data-testid`, never a styling class. That rule was earned: conv
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| The abstraction ossifies around one runtime | R8 is a marketing claim | three shapes proven in Phase 3, before dependent features; conformance in CI from then on |
+| **A second `ModelProvider` that never arrives** | `openai-compatible` is the only implementation, so the provider boundary describes one wire format rather than abstracting several. Every asymmetry it claims to absorb — system-prompt placement, tool-call pairing, `stop_reason` names, streaming shapes, usage fields — is absorbed against a single dialect | A natively different provider, not another OpenAI-shaped endpoint. **Open** — and §15 recorded it as satisfied until now, which is the more dangerous state: a validation gap filed as done |
+| The abstraction ossifies around one runtime | R8 is a marketing claim | Four candidates run the contract suite and are deliberately unalike — a text protocol over real pipes, a process boundary, our own loop. **The in-process vendor-library tier now has no implementation** (§3.14), so that shape is unproven; the branch itself is still exercised by the installed-CLI adapter |
 | **Coarse gating presented as real gating** | user believes a CLI agent is sandboxed when it isn't | `permissionFidelity` is a required capability, badged in the UI; `all-or-nothing` forced into worktree/container at creation |
 | **A §13 row that is not compiled into the shipped defaults** | network egress and `git push` reached only `defaultAction`, so one `Allow for this session` grant on a `bash` call took both from `ask` to allowed | **Closed.** Both defaults now carry explicit `ask` rules, and a test grants `bash` for the session then asserts `git push` and `curl` still ask. The residual risk moved rather than vanished: the `bash` rules are globs, defeated by indirection, so the sandbox remains the real egress boundary — see the row below |
 | **Pattern rules mistaken for an egress boundary** | someone adds `nc` to the egress list and believes outbound traffic is now gated, when any interpreter with a socket bypasses it | §13 states the bias explicitly (over-ask, never claim completeness) and names the sandbox as the control. The same caveat is written at the `EGRESS_COMMANDS` definition, next to the list someone would extend |

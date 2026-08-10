@@ -152,7 +152,7 @@ describe('EventLog', () => {
       { type: 'agent.text', text: 'hello' },
       {
         origin: {
-          runtimeId: 'claude-agent-sdk',
+          runtimeId: 'agbrte-harness',
           adapterVersion: '0.0.1',
           model: { providerId: 'anthropic', modelId: 'claude-opus-5' },
         },

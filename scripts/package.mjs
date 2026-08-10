@@ -61,11 +61,15 @@ for (const [name, from] of Object.entries(PAYLOAD)) {
 // This script produces the thing that gets *distributed*, so it is where a
 // licence violation would actually happen — not at build, not at install.
 //
-// `@anthropic-ai/claude-agent-sdk` is "© Anthropic PBC. All rights reserved". It
-// reaches no bundle today, but only because the adapter that imports it is not
-// registered in any headless entry point. Wire that adapter into the agent host
-// and this installer silently starts redistributing proprietary code, which no
-// licence of ours can authorise. An accident that holds is not a guarantee.
+// The dependency this was written for — `@anthropic-ai/claude-agent-sdk`,
+// "© Anthropic PBC. All rights reserved" — is gone, and the gate stays.
+//
+// It never fired: the adapter that imported it was not registered in any
+// headless entry point, so the proprietary code reached no bundle by accident
+// rather than by construction. That is exactly why the check should outlive the
+// thing it was checking for. The next proprietary SDK will arrive as a
+// convenience in one adapter, and this script is where redistribution would
+// actually happen — not at build, not at install.
 //
 // Refusing here rather than warning: a warning in build output is read once.
 const PROPRIETARY = ['@anthropic-ai/', 'claude-agent-sdk', 'Anthropic PBC'];
@@ -77,7 +81,7 @@ for (const [name, contents] of Object.entries(files)) {
 ` +
         `That dependency is not open source (see NOTICE), so it must not be redistributed.
 ` +
-        `Keep the claude-agent-sdk adapter out of the headless entry points, or load it dynamically.`,
+        `Keep proprietary adapters out of the headless entry points, or load them dynamically.`,
     );
   }
 }

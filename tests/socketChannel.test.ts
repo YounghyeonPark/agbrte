@@ -116,6 +116,9 @@ describe('framing', () => {
     const client = await connect<Ping, Ping>(path);
     const channel = await accepted;
     client.post({ n: 7 });
+    // A duration establishing the precondition rather than waiting on a result:
+    // the message has to have *arrived* before a handler attaches, which is the
+    // thing under test.
     await new Promise((r) => setTimeout(r, 30));
 
     // The handshake can land before the server wires its handler; dropping it

@@ -153,6 +153,7 @@ describe('running out of quota', () => {
 
     time.advance(24 * 60 * 60_000);
     wake(m);
+    // A duration: the session should stay parked, and an absence needs waiting.
     await new Promise((r) => setTimeout(r, 100));
 
     // Waking at a time nobody named would be a guess. Parked-forever is wrong,
