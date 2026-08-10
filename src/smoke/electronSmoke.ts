@@ -230,6 +230,31 @@ async function main(): Promise<number> {
     record('snapshot folds the projection', snapshot.agents === 1, snapshot);
     record('end_turn leaves awaiting_input', snapshot.state === 'awaiting_input', snapshot.state);
 
+    // 6b. Search reaches the logs and comes back with the machine attached.
+    //
+    //     The whole path in one call: preload → IPC → fleet fan-out → host →
+    //     a scan of the durable log → back through serialization. The turn sent
+    //     above is what it finds, so this also proves the log was written where
+    //     the searcher looks for it (§15 Phase 8).
+    const found = await evaluate<{ hits: Array<{ host: string; snippet: string }>; unreachable: string[] }>(
+      win,
+      // `smoke reply` is what the echo runtime says above, so this proves the
+      // *agent's* text reached the durable log and is findable — not merely
+      // that the turn we typed came back to us.
+      `window.agbrte.sessions.search('smoke reply')`,
+    );
+    record(
+      'search finds a real turn across the fleet',
+      found.hits.length > 0 && found.hits[0]!.snippet.includes('smoke reply'),
+      found.hits[0]?.snippet ?? 'no hits',
+    );
+    record(
+      'a hit names the machine it came from',
+      (found.hits[0]?.host ?? '').length > 0,
+      found.hits[0]?.host,
+    );
+    record('every attached host answered', found.unreachable.length === 0, found.unreachable);
+
     // 7. An error crosses the boundary with its message intact, rather than as
     //    Electron's opaque "Error invoking remote method".
     const failure = await evaluate<string>(

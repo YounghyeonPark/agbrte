@@ -29,6 +29,7 @@ import { AttachHost } from './AttachHost.js';
 import { Dashboard } from './Dashboard.js';
 import { SupportMatrix } from './SupportMatrix.js';
 import { Inbox } from './Inbox.js';
+import { Search } from './Search.js';
 import { Roster } from './Roster.js';
 import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
@@ -179,6 +180,13 @@ export function App(): JSX.Element {
             </button>
           </div>
         </header>
+
+        {/* Below the header rather than in it: a fleet-wide search is a thing you
+            do occasionally and deliberately, and a box in the toolbar competes
+            for attention with the sessions list every second it is not in use. */}
+        <div className="border-line border-b px-3.5 py-2.5">
+          <Search onOpen={(sessionId, instanceId) => void store.openSession(sessionId, instanceId)} />
+        </div>
 
         {attaching !== false && (
           <AttachHost

@@ -25,6 +25,7 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { basename } from 'node:path';
 
 import { byAttentionThenRecency } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
@@ -747,8 +748,11 @@ function labelOf(entry: Entry): string {
     target.alias ??
     target.host ??
     target.distro ??
-    entry.workspaceRoot.split(/[\/]/).filter(Boolean).pop() ??
-    entry.workspaceRoot
+    // `basename`, not a hand-rolled split. The first version split on a
+    // character class that lost its backslash through two layers of escaping, so
+    // a Windows path never split and every local host was labelled with its full
+    // path. The smoke check printed it, which is the only reason it was noticed.
+    basename(entry.workspaceRoot)
   );
 }
 
