@@ -128,7 +128,7 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  */
-export const SESSION_PROTOCOL_VERSION = 3;
+export const SESSION_PROTOCOL_VERSION = 4;
 
 /**
  * The oldest client a host will serve.
@@ -149,6 +149,12 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'blob.has': 2,
   'blob.put': 2,
   'preview.ports': 3,
+  // A host deployed at v3 has `preview.ports` and not these. Adding them at
+  // v3 would have made `supports` lie to every client that met one.
+  'preview.start': 4,
+  'preview.stop': 4,
+  'preview.servers': 4,
+  'preview.log': 4,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -174,6 +180,19 @@ export type SessionCommand =
    * people's privacy rather than about this client's role.
    */
   | { t: 'preview.ports'; id: RequestId }
+  /**
+   * Start a long-lived preview server on the host's machine (§6.8, §3.12).
+   *
+   * A write, because it runs a command. Deliberately **not** a tool: §3.12's
+   * reaping — whatever an agent starts, ends — is a real containment
+   * property, and an API that starts a persistent process would launder it if
+   * a model could reach it. This is the human client's request, gated on the
+   * human client's role.
+   */
+  | { t: 'preview.start'; id: RequestId; sessionId: string; command: string }
+  | { t: 'preview.stop'; id: RequestId; serverId: string }
+  | { t: 'preview.servers'; id: RequestId; sessionId?: string }
+  | { t: 'preview.log'; id: RequestId; serverId: string }
   | { t: 'session.list'; id: RequestId }
   | { t: 'session.listOnDisk'; id: RequestId }
   /**

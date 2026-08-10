@@ -32,6 +32,7 @@ import type { HostConnection } from './host/hostConnection.js';
 import { requireTransport } from './host/transports.js';
 import type { SearchHit } from './store/searchSessions.js';
 import type { ListeningPort } from './preview/ports.js';
+import type { PreviewServer, PreviewServerLog } from './preview/servers.js';
 import type { ModelNeed } from './runtime/registry.js';
 import type {
   AccessRole,
@@ -534,9 +535,53 @@ export class Fleet extends EventEmitter {
    * a picker, and unlike an exception does not replace a working feature with an
    * error the user cannot act on.
    */
-  async previewPorts(instanceId: InstanceId): Promise<ListeningPort[]> {
+  /**
+   * Preview servers on a host's machine (§6.8).
+   *
+   * Unlike `previewPorts`, a failure here is **not** swallowed. Asking what is
+   * running is a question a UI asks on open, so an empty answer is fine — but
+   * starting one is something a person did on purpose, and swallowing its
+   * failure would leave them looking at a list that never gains a row.
+   */
+  async previewServers(instanceId: InstanceId, sessionId?: SessionId): Promise<PreviewServer[]> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('preview.servers')) return [];
+    try {
+      return await entry.connection.previewServers(sessionId);
+    } catch {
+      return [];
+    }
+  }
+
+  async startPreviewServer(
+    instanceId: InstanceId,
+    sessionId: SessionId,
+    command: string,
+  ): Promise<PreviewServer> {
+    return this.host(instanceId).connection.startPreviewServer(sessionId, command);
+  }
+
+  async stopPreviewServer(instanceId: InstanceId, serverId: string): Promise<boolean> {
+    return this.host(instanceId).connection.stopPreviewServer(serverId);
+  }
+
+  async previewServerLog(
+    instanceId: InstanceId,
+    serverId: string,
+  ): Promise<PreviewServerLog | null> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('preview.log')) return null;
+    return entry.connection.previewServerLog(serverId);
+  }
+
+  private host(instanceId: InstanceId): Entry {
     const entry = this.entries.get(instanceId);
     if (entry === undefined) throw new Error(`no attached host ${instanceId}`);
+    return entry;
+  }
+
+  async previewPorts(instanceId: InstanceId): Promise<ListeningPort[]> {
+    const entry = this.host(instanceId);
     if (!entry.connection.supports('preview.ports')) return [];
     try {
       return await entry.connection.previewPorts();

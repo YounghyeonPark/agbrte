@@ -626,6 +626,22 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     return found.map((p) => ({ port: p.port, address: p.address, loopbackOnly: p.loopbackOnly }));
   });
 
+  handle(CH.previewServers, (r: { instanceId: string; sessionId?: string }) =>
+    fleet.previewServers(r.instanceId as InstanceId, r.sessionId as SessionId | undefined),
+  );
+
+  handle(CH.previewStart, (r: { instanceId: string; sessionId: string; command: string }) =>
+    fleet.startPreviewServer(r.instanceId as InstanceId, r.sessionId as SessionId, r.command),
+  );
+
+  handle(CH.previewStopServer, (r: { instanceId: string; serverId: string }) =>
+    fleet.stopPreviewServer(r.instanceId as InstanceId, r.serverId),
+  );
+
+  handle(CH.previewServerLog, (r: { instanceId: string; serverId: string }) =>
+    fleet.previewServerLog(r.instanceId as InstanceId, r.serverId),
+  );
+
   handle(
     CH.previewOpen,
     async (r: { instanceId: string; sessionId: string; port: number }): Promise<ForwardDto> => {

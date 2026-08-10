@@ -26,6 +26,7 @@
  */
 
 import { listListeningPorts, type ListeningPort } from '@main/preview/ports.js';
+import type { PreviewServers } from '@main/preview/servers.js';
 import {
   AccessDenied,
   newAgentId,
@@ -51,6 +52,8 @@ import type { SessionManager } from '@main/sessionManager.js';
 
 export interface SessionHostOptions {
   manager: SessionManager;
+  /** Runs preview servers for §6.8. Absent means this host will not start processes. */
+  servers?: PreviewServers;
   identity: Omit<HostIdentity, 'protocol' | 'pid'>;
   /**
    * Decides what role a client gets, and who the log will say it was.
@@ -265,6 +268,24 @@ export class SessionHostServer {
       switch (command.t) {
         case 'session.list':
           return manager.list();
+
+        case 'preview.start': {
+          // A write: it runs a command on this machine. The role check is the
+          // point — a read-only client watching from a phone must not be able
+          // to start processes on a build box.
+          this.requireWrite(client, 'start a preview server');
+          return this.servers().start(command.sessionId, command.command);
+        }
+
+        case 'preview.stop':
+          this.requireWrite(client, 'stop a preview server');
+          return this.servers().stop(command.serverId);
+
+        case 'preview.servers':
+          return this.servers().list(command.sessionId);
+
+        case 'preview.log':
+          return this.opts.servers?.log(command.serverId) ?? null;
 
         case 'preview.ports':
           // A read, like `session.search`: it answers about this machine, and
@@ -497,6 +518,20 @@ export class SessionHostServer {
     // ends the process; leaving that to only one caller is how a "stopped" host
     // kept answering.
     this.opts.onStopped?.(reason);
+  }
+
+  /**
+   * The preview-server supervisor, or a refusal that says why.
+   *
+   * Absent only where a host was constructed without one — tests, and any
+   * embedding that does not want to run commands. Saying so beats a `?.` that
+   * silently reports success for a server nobody started.
+   */
+  private servers(): PreviewServers {
+    if (this.opts.servers === undefined) {
+      throw new Error('this host does not run preview servers');
+    }
+    return this.opts.servers;
   }
 
   /**

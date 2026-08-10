@@ -28,6 +28,7 @@ import { HostSupervisor } from '@main/host/supervisor.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { listen, hostSocketPath } from '@shared/host/socketChannel.js';
 import { listenLoopback, newControlToken } from '@shared/host/loopback.js';
+import { PreviewServers } from '@main/preview/servers.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { HostCommand, HostMessage, MainSideChannel } from '@shared/host/protocol.js';
 import { SessionHostServer } from './sessionServer.js';
@@ -195,7 +196,15 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
   let server!: SessionHostServer;
   let listener!: Server;
 
+  // §6.8: preview servers belong to the host, not to a turn — that is the
+  // whole point of §3.12's reaping being something to work around.
+  const servers = new PreviewServers(workspaceRoot);
+
   const stop = async (): Promise<void> => {
+    // Before the listener closes: a preview server outliving the host that
+    // started it is a port answering with nothing to explain it, and nothing
+    // left that knows how to stop it.
+    servers.stopAll();
     server.stop('host stopping');
     supervisor.dispose();
     listener.close();
@@ -222,6 +231,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     // Read when asked rather than captured now: the listener has not bound yet,
     // so the port does not exist at this line. Offering to forward the channel a
     // request arrived on would be offering a loop.
+    servers,
     controlPort: () => port,
     lingerMs: opts.lingerMs ?? DEFAULT_LINGER_MS,
     // Whatever the reason — the idle timer, or a client asking — the process

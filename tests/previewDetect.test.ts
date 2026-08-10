@@ -22,8 +22,9 @@ import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
+import { PreviewServers } from '@main/preview/servers.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
-import type { InstanceId, LineageId } from '@shared/types/index.js';
+import type { InstanceId, LineageId, SessionId } from '@shared/types/index.js';
 
 const roots: string[] = [];
 const managers: SessionManager[] = [];
@@ -187,6 +188,98 @@ describe('the host answers about its own machine', () => {
     const ports = await client.previewPorts();
     expect(Array.isArray(ports)).toBe(true);
     if (process.platform !== 'linux') expect(ports).toEqual([]);
+
+    client.disconnect();
+    server.stop('done');
+  }, 30_000);
+});
+
+describe('starting a process is a person’s request, not a model’s', () => {
+  it('refuses a read-only client', async () => {
+    /**
+     * §3.12's reaping — whatever an agent starts, ends — is a real containment
+     * property, and an API that starts a *persistent* process launders it if the
+     * wrong caller can reach it. Two guards, and this is the one a test can
+     * assert: the role. The other is structural — `preview.start` is a protocol
+     * command and an IPC method, and is deliberately absent from the tool
+     * registry, so a model cannot ask for it at all.
+     */
+    const root = await mkdtemp(join(tmpdir(), 'agbrte-detect-'));
+    roots.push(root);
+    const identity = await openWorkspace(root);
+    const manager = new SessionManager({
+      registry: new RuntimeRegistry(),
+      workspaceRoot: root,
+      instanceId: identity.instanceId,
+    });
+    managers.push(manager);
+
+    const servers = new PreviewServers(root);
+    const { main, host } = memoryChannelPair<SessionCommand, SessionMessage>();
+    const server = new SessionHostServer({
+      manager,
+      servers,
+      identity: {
+        instanceId: identity.instanceId,
+        lineageId: identity.lineageId,
+        workspaceRoot: root,
+        runtimes: [],
+      },
+      // What a workspace policy pinning a phone to read-only produces.
+      grantRole: () => ({ role: 'read-only', actor: { id: 'phone', via: 'asserted' } }),
+      lingerMs: 0,
+    });
+    server.accept(host);
+
+    const client = new HostConnection({ channel: main, client: 'agbrte-app@phone-1' });
+    await client.ready;
+
+    await expect(
+      client.startPreviewServer('s1' as SessionId, 'node -e "process.exit(0)"'),
+    ).rejects.toThrow(/read-only|start a preview server/i);
+    // And nothing was spawned. The refusal is the point, not the message.
+    expect(servers.list()).toHaveLength(0);
+
+    // Reading what is running stays allowed: it is a read, like the transcript.
+    await expect(client.previewServers()).resolves.toEqual([]);
+
+    servers.stopAll();
+    client.disconnect();
+    server.stop('done');
+  }, 30_000);
+
+  it('says so when the host does not run processes at all', async () => {
+    // A host constructed without a supervisor — a test, or an embedding that
+    // does not want to run commands. Saying so beats an optional-chain that
+    // reports success for a server nobody started.
+    const root = await mkdtemp(join(tmpdir(), 'agbrte-detect-'));
+    roots.push(root);
+    const identity = await openWorkspace(root);
+    const manager = new SessionManager({
+      registry: new RuntimeRegistry(),
+      workspaceRoot: root,
+      instanceId: identity.instanceId,
+    });
+    managers.push(manager);
+
+    const { main, host } = memoryChannelPair<SessionCommand, SessionMessage>();
+    const server = new SessionHostServer({
+      manager,
+      identity: {
+        instanceId: identity.instanceId,
+        lineageId: identity.lineageId,
+        workspaceRoot: root,
+        runtimes: [],
+      },
+      lingerMs: 0,
+    });
+    server.accept(host);
+
+    const client = new HostConnection({ channel: main, client: 'test' });
+    await client.ready;
+    await expect(
+      client.startPreviewServer('s1' as SessionId, 'node -e "0"'),
+    ).rejects.toThrow(/does not run preview servers/);
 
     client.disconnect();
     server.stop('done');

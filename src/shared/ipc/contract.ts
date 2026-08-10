@@ -432,6 +432,20 @@ export interface AgbrteApi {
      */
     detect(instanceId: string): Promise<DetectedPortDto[]>;
     /**
+     * Preview servers this host is running (§6.8, §3.12).
+     *
+     * Started by us rather than by an agent, because a CLI harness reaps what
+     * its run started — so an agent-started dev server vanishes shortly after
+     * the turn that started it. These belong to the host and outlive both the
+     * turn and this app.
+     */
+    servers(r: { instanceId: string; sessionId?: string }): Promise<PreviewServerDto[]>;
+    /** Run a command on the host's machine. A person's request, never a model's. */
+    start(r: { instanceId: string; sessionId: string; command: string }): Promise<PreviewServerDto>;
+    stopServer(r: { instanceId: string; serverId: string }): Promise<boolean>;
+    /** The tail of what it printed — the answer to “nothing is listening”. */
+    serverLog(r: { instanceId: string; serverId: string }): Promise<PreviewServerLogDto | null>;
+    /**
      * Forward a port on the machine running this session.
      *
      * `reachable: false` is an answer, not a failure — a dev server that is
@@ -536,6 +550,22 @@ export interface DetectedPortDto {
   loopbackOnly: boolean;
 }
 
+/** A preview server the host is running for us (§6.8). */
+export interface PreviewServerDto {
+  id: string;
+  sessionId: string;
+  command: string;
+  pid: number | null;
+  startedAt: string;
+  exit: { code: number | null; signal: string | null } | null;
+}
+
+export interface PreviewServerLogDto {
+  id: string;
+  lines: string[];
+  dropped: number;
+}
+
 /** One forwarded port, as the renderer sees it (§6.8). */
 export interface ForwardDto {
   sessionId: string;
@@ -581,6 +611,10 @@ export const CH = {
   voiceSpeak: 'agbrte:voice.speak',
   voiceStopSpeaking: 'agbrte:voice.stopSpeaking',
   previewDetect: 'agbrte:preview.detect',
+  previewServers: 'agbrte:preview.servers',
+  previewStart: 'agbrte:preview.start',
+  previewStopServer: 'agbrte:preview.stopServer',
+  previewServerLog: 'agbrte:preview.serverLog',
   previewOpen: 'agbrte:preview.open',
   previewList: 'agbrte:preview.list',
   previewClose: 'agbrte:preview.close',

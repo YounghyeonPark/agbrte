@@ -83,6 +83,14 @@ const api: AgbrteApi = {
   },
   preview: {
     detect: (instanceId: string) => ipcRenderer.invoke(CH.previewDetect, instanceId),
+    servers: (r: { instanceId: string; sessionId?: string }) =>
+      ipcRenderer.invoke(CH.previewServers, r),
+    start: (r: { instanceId: string; sessionId: string; command: string }) =>
+      ipcRenderer.invoke(CH.previewStart, r),
+    stopServer: (r: { instanceId: string; serverId: string }) =>
+      ipcRenderer.invoke(CH.previewStopServer, r),
+    serverLog: (r: { instanceId: string; serverId: string }) =>
+      ipcRenderer.invoke(CH.previewServerLog, r),
     open: (r: { instanceId: string; sessionId: string; port: number }) =>
       ipcRenderer.invoke(CH.previewOpen, r),
     list: (sessionId: string) => ipcRenderer.invoke(CH.previewList, sessionId),

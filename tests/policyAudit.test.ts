@@ -398,6 +398,15 @@ describe('a browser must not be handed this machine', () => {
     await expect(api.handlers.get(CH.captureSources)!()).resolves.toEqual([]);
     await expect(api.handlers.get(CH.voiceClips)!()).resolves.toEqual([]);
     await expect(api.handlers.get(CH.previewList)!('s')).resolves.toEqual([]);
+    // But *starting* a server is not client-only, and the distinction is the
+    // point: it runs on the host, which is a machine a browser client is
+    // entitled to ask about. What it cannot have is the tunnel, because that
+    // would name the wrong computer. The gate for starting is the role, and it
+    // lives on the host where the role is decided.
+    expect(api.handlers.has(CH.previewStart), 'preview.start was stripped from the web API').toBe(
+      true,
+    );
+    expect(api.handlers.has(CH.previewServers)).toBe(true);
     api.dispose();
   });
 });

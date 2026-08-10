@@ -13,6 +13,7 @@
  */
 
 import type { ListeningPort } from '../preview/ports.js';
+import type { PreviewServer, PreviewServerLog } from '../preview/servers.js';
 import { EventEmitter } from 'node:events';
 import {
   COMMAND_SINCE,
@@ -314,6 +315,35 @@ export class HostConnection extends EventEmitter {
     // shape and was changed with it.
     this.require('preview.ports');
     return this.call<ListeningPort[]>({ t: 'preview.ports' });
+  }
+
+  /**
+   * Start a preview server on the host's machine (§6.8).
+   *
+   * `async` so the version gate rejects rather than throwing synchronously —
+   * see `previewPorts`.
+   */
+  async startPreviewServer(sessionId: SessionId, command: string): Promise<PreviewServer> {
+    this.require('preview.start');
+    return this.call<PreviewServer>({ t: 'preview.start', sessionId, command });
+  }
+
+  async stopPreviewServer(serverId: string): Promise<boolean> {
+    this.require('preview.stop');
+    return this.call<boolean>({ t: 'preview.stop', serverId });
+  }
+
+  async previewServers(sessionId?: SessionId): Promise<PreviewServer[]> {
+    this.require('preview.servers');
+    return this.call<PreviewServer[]>({
+      t: 'preview.servers',
+      ...(sessionId !== undefined ? { sessionId } : {}),
+    });
+  }
+
+  async previewServerLog(serverId: string): Promise<PreviewServerLog | null> {
+    this.require('preview.log');
+    return this.call<PreviewServerLog | null>({ t: 'preview.log', serverId });
   }
 
   supports(command: keyof typeof COMMAND_SINCE | string): boolean {

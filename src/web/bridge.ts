@@ -156,6 +156,10 @@ const api: AgbrteApi = {
    */
   preview: {
     detect: call(CH.previewDetect),
+    servers: call(CH.previewServers),
+    start: call(CH.previewStart),
+    stopServer: call(CH.previewStopServer),
+    serverLog: call(CH.previewServerLog),
     open: call(CH.previewOpen),
     list: call(CH.previewList),
     close: call(CH.previewClose),

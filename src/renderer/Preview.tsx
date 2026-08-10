@@ -24,7 +24,11 @@
  */
 
 import { useEffect, useState, type JSX } from 'react';
-import type { DetectedPortDto, ForwardDto } from '@shared/ipc/contract.js';
+import type {
+  DetectedPortDto,
+  ForwardDto,
+  PreviewServerDto,
+} from '@shared/ipc/contract.js';
 
 const FIELD =
   'bg-panel border-line focus:border-accent w-20 rounded border px-2 py-1 text-xs outline-none';
@@ -43,6 +47,9 @@ export function Preview({
   const [port, setPort] = useState('3000');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [servers, setServers] = useState<PreviewServerDto[]>([]);
+  const [command, setCommand] = useState('npm run dev');
+  const [log, setLog] = useState<{ id: string; lines: string[] } | null>(null);
 
   useEffect(() => {
     setError(null);
@@ -55,6 +62,22 @@ export function Preview({
   useEffect(() => {
     void window.agbrte.preview.detect(instanceId).then(setFound, () => setFound([]));
   }, [instanceId]);
+
+  // Polled rather than pushed: a preview server changes state on its own — it
+  // finishes compiling, or it dies — and there is no event for that. Slow,
+  // because nothing here is urgent and the alternative is a push channel for a
+  // panel that is usually closed.
+  useEffect(() => {
+    const refresh = (): void => {
+      void window.agbrte.preview
+        .servers({ instanceId, sessionId })
+        .then(setServers, () => setServers([]));
+      void window.agbrte.preview.detect(instanceId).then(setFound, () => setFound([]));
+    };
+    refresh();
+    const timer = setInterval(refresh, 4000);
+    return () => clearInterval(timer);
+  }, [instanceId, sessionId]);
 
   if (!remote) return null;
 
@@ -162,6 +185,73 @@ export function Preview({
       ))}
 
       {error === null ? null : <span className="text-warn">{error}</span>}
+
+      {/* §3.12: an agent's background processes are reaped shortly after its run
+          returns, so a dev server it starts vanishes under you. This one belongs
+          to the host and outlives the turn, the app, and the lid. */}
+      <div className="border-line flex w-full flex-wrap items-center gap-2 border-t pt-2">
+        <span className="text-muted">Run a dev server there</span>
+        <input
+          className="bg-panel border-line focus:border-accent min-w-48 flex-1 rounded border px-2 py-1 text-xs outline-none"
+          value={command}
+          aria-label="Command to run on that machine"
+          onChange={(e) => setCommand(e.target.value)}
+        />
+        <button
+          className="border-line hover:border-accent rounded border px-2 py-1"
+          disabled={busy || command.trim() === ''}
+          onClick={() => {
+            setError(null);
+            void window.agbrte.preview
+              .start({ instanceId, sessionId, command })
+              .then(() => window.agbrte.preview.servers({ instanceId, sessionId }))
+              .then(setServers)
+              .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)));
+          }}
+        >
+          Start
+        </button>
+
+        {servers.map((s) => (
+          <span key={s.id} className="border-line flex items-center gap-1 rounded border px-2 py-1">
+            <code className="text-muted">{s.command}</code>
+            <span className={s.exit === null ? 'text-ok' : 'text-warn'}>
+              {s.exit === null ? 'running' : `exited ${s.exit.code ?? s.exit.signal ?? '?'}`}
+            </span>
+            <button
+              className="text-muted hover:text-fg"
+              title="What it printed — where a server that never started says why"
+              onClick={() => {
+                void window.agbrte.preview
+                  .serverLog({ instanceId, serverId: s.id })
+                  .then((l) => setLog(l === null ? null : { id: l.id, lines: l.lines }));
+              }}
+            >
+              log
+            </button>
+            {s.exit === null && (
+              <button
+                className="text-muted hover:text-fg"
+                aria-label={`Stop ${s.command}`}
+                onClick={() => {
+                  void window.agbrte.preview
+                    .stopServer({ instanceId, serverId: s.id })
+                    .then(() => window.agbrte.preview.servers({ instanceId, sessionId }))
+                    .then(setServers);
+                }}
+              >
+                ×
+              </button>
+            )}
+          </span>
+        ))}
+      </div>
+
+      {log === null ? null : (
+        <pre className="bg-panel border-line max-h-40 w-full overflow-auto rounded border p-2 text-[11px] leading-snug">
+          {log.lines.join('\n') || '(nothing yet)'}
+        </pre>
+      )}
     </div>
   );
 }
