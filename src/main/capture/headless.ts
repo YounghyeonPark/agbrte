@@ -40,8 +40,22 @@ import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 
-/** How long a page gets. A hung dev server must not hold the turn open. */
-const CAPTURE_TIMEOUT_MS = 30_000;
+/**
+ * How long a page gets. A hung dev server must not hold the turn open.
+ *
+ * Sixty rather than thirty, and the thirty was measured wrong rather than chosen
+ * wrong: it budgeted for *rendering a page*, and most of the wall clock is
+ * Chrome starting — a cold binary, a fresh `--user-data-dir` profile, and on a
+ * busy machine a good deal of waiting for a disk. A Windows CI runner took
+ * **30282 ms** on a 400×300 solid-colour page, which is not a slow page by any
+ * reading.
+ *
+ * The asymmetry decides the number. Too short fails a capture that would have
+ * worked, on exactly the machines least able to spare a retry; too long makes
+ * somebody wait for a screenshot that was never coming. A minute is cheap
+ * against the first and tolerable against the second.
+ */
+const CAPTURE_TIMEOUT_MS = 60_000;
 
 export class NoBrowser extends Error {
   constructor(reason: string) {

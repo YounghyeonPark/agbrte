@@ -158,7 +158,7 @@ describe.skipIf(browser === null)('against a real browser', () => {
     } finally {
       server.close();
     }
-  }, 60_000);
+  }, 120_000);
 
   it('leaves no screenshot behind in the temp directory', async () => {
     const server = createServer((_req, res) => res.end('<body>ok</body>'));
@@ -179,5 +179,5 @@ describe.skipIf(browser === null)('against a real browser', () => {
     } finally {
       server.close();
     }
-  }, 60_000);
+  }, 120_000);
 });
