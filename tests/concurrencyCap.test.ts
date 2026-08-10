@@ -21,7 +21,8 @@ import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
-import type { AgentId, SessionId } from '@shared/types/index.js';
+import { until } from './support/until.js';
+import type { AgentId, SessionId, ToolPolicy } from '@shared/types/index.js';
 
 describe('the cap holds at every instant', () => {
   it('never runs more than it was given', async () => {
@@ -223,5 +224,144 @@ describe('turns queue behind the cap on a real host', () => {
       // whose turn ran where.
       expect(JSON.stringify(await manager.events(sessionId as SessionId))).toContain(`marker ${i}`);
     }
+  }, 60_000);
+});
+
+describe('a turn waiting for a person is not a turn using the machine', () => {
+  const roots: string[] = [];
+  const managers: SessionManager[] = [];
+
+  afterEach(async () => {
+    for (const m of managers.splice(0)) m.dispose();
+    for (const root of roots.splice(0)) {
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+
+  it('lets another agent run while one is blocked on a prompt, under a cap of one', async () => {
+    /**
+     * Found by CI on a small runner rather than by reading the code.
+     *
+     * `defaultTurnCap()` is `min(8, cores − 2)`, which is **1** on any machine
+     * with three cores or fewer — a modest VM, a CI runner, a Raspberry Pi. The
+     * slot used to be held across a permission prompt, so one unanswered
+     * question stopped every agent on the host, on every session, until a human
+     * came back. Every development machine here has four cores or more, so it
+     * passed everywhere it was ever run, and surfaced as an unrelated tree test
+     * timing out on all three CI platforms at once.
+     *
+     * The cap is pinned to 1 here rather than left to the hardware, because a
+     * test whose meaning depends on the core count of the machine running it is
+     * the thing that hid this in the first place.
+     */
+    const root = await mkdtemp(join(tmpdir(), 'agbrte-blockedslot-'));
+    roots.push(root);
+    const identity = await openWorkspace(root);
+
+    const registry = new RuntimeRegistry();
+    registry.register(
+      new EchoRuntime({
+        script: [
+          { kind: 'tool', tool: 'read', args: { file_path: 'a.ts' } },
+          { kind: 'stop', stop: { kind: 'end_turn' } },
+        ],
+      }),
+      { label: 'Echo', model: 'none' },
+    );
+    // §13's local defaults allow `read` outright, so an agent scripted to call
+    // it would finish its turn and never block — which would make this pass for
+    // the wrong reason. An empty rule list with `defaultAction: 'ask'` is what
+    // actually reaches a human.
+    const asks: ToolPolicy = { rules: [], defaultAction: 'ask' };
+    const manager = new SessionManager({
+      registry,
+      workspaceRoot: root,
+      instanceId: identity.instanceId,
+      maxConcurrentTurns: 1,
+      stallAfterMs: 0,
+    });
+    managers.push(manager);
+
+    // One agent, blocked on a prompt nobody is going to answer yet.
+    const blocked = await manager.createSession({ title: 'blocked', goal: 'g' });
+    const waiter = await manager.addAgent(blocked.sessionId, {
+      role: 'worker',
+      runtimeId: 'echo',
+      policy: asks,
+    });
+    void manager
+      .send(blocked.sessionId as SessionId, waiter.agentId as AgentId, {
+        content: [{ type: 'text', text: 'go' }],
+      })
+      .catch(() => undefined);
+    await until(() => manager.pendingPermissions().length > 0, 20_000);
+
+    // A different session entirely. Under the old behaviour this could not
+    // start: the only slot on the machine was held by a turn waiting for a human.
+    const other = await manager.createSession({ title: 'other', goal: 'g' });
+    const free = await manager.addAgent(other.sessionId, { role: 'worker', runtimeId: 'echo' });
+    const ran = manager.send(other.sessionId as SessionId, free.agentId as AgentId, {
+      content: [{ type: 'text', text: 'go' }],
+    });
+
+    // It *completing* is the assertion. Under the old behaviour it never
+    // resolved: the only slot on the machine was held by a turn waiting for a
+    // human, so this one queued behind an answer that was never coming.
+    await ran;
+    expect((await manager.get(other.sessionId as SessionId)).state).toBe('awaiting_input');
+    // And the blocked one is still blocked, not quietly abandoned.
+    expect(manager.pendingPermissions().length).toBe(1);
+  }, 60_000);
+
+  it('takes a slot back before running the tool it was given permission for', async () => {
+    // The other half. Handing the slot back must not mean the work that follows
+    // an answer runs outside the cap — a host that let every answered prompt
+    // through at once would be uncapped exactly when it is busiest.
+    const root = await mkdtemp(join(tmpdir(), 'agbrte-blockedslot-'));
+    roots.push(root);
+    const identity = await openWorkspace(root);
+
+    const registry = new RuntimeRegistry();
+    registry.register(
+      new EchoRuntime({
+        script: [
+          { kind: 'tool', tool: 'read', args: { file_path: 'a.ts' } },
+          { kind: 'stop', stop: { kind: 'end_turn' } },
+        ],
+      }),
+      { label: 'Echo', model: 'none' },
+    );
+    // §13's local defaults allow `read` outright, so an agent scripted to call
+    // it would finish its turn and never block — which would make this pass for
+    // the wrong reason. An empty rule list with `defaultAction: 'ask'` is what
+    // actually reaches a human.
+    const asks: ToolPolicy = { rules: [], defaultAction: 'ask' };
+    const manager = new SessionManager({
+      registry,
+      workspaceRoot: root,
+      instanceId: identity.instanceId,
+      maxConcurrentTurns: 1,
+      stallAfterMs: 0,
+    });
+    managers.push(manager);
+
+    const session = await manager.createSession({ title: 's', goal: 'g' });
+    const agent = await manager.addAgent(session.sessionId, {
+      role: 'worker',
+      runtimeId: 'echo',
+      policy: asks,
+    });
+    const turn = manager.send(session.sessionId as SessionId, agent.agentId as AgentId, {
+      content: [{ type: 'text', text: 'go' }],
+    });
+
+    await until(() => manager.pendingPermissions().length > 0, 20_000);
+    const [request] = manager.pendingPermissions();
+    await manager.respondPermission(request!.requestId, { result: 'allow', scope: 'once' });
+
+    // It finishes, which is what proves the slot was retaken rather than lost:
+    // a turn that never got one back would hang here forever.
+    await turn;
+    expect((await manager.get(session.sessionId as SessionId)).state).toBe('awaiting_input');
   }, 60_000);
 });

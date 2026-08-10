@@ -316,8 +316,22 @@ const MAX_MESSAGE_HOPS = 8;
  */
 const AUTO_ACTOR: Actor = { id: 'agbrte:split-grant', via: 'asserted', label: 'split grant' };
 
+/**
+ * One turn's concurrency slot, mutable so it can be given back and retaken.
+ *
+ * A plain `() => void` would be enough if a slot were held for the whole turn.
+ * It is not: a turn parked on a permission prompt returns its slot and takes a
+ * fresh one when answered, so what `send`'s `finally` must release is whichever
+ * one is current rather than the one it started with.
+ */
+interface SlotHolder {
+  release: () => void;
+}
+
 export class SessionManager extends EventEmitter {
   private readonly sessions = new Map<SessionId, LiveSession>();
+  /** The slot each running turn currently holds, so a prompt can hand it back. */
+  private readonly turnSlots = new Map<AgentId, SlotHolder>();
   private readonly pending = new Map<string, PendingPermission>();
   /**
    * Request ids already answered in this process.
@@ -769,22 +783,22 @@ export class SessionManager extends EventEmitter {
      * agents on a *different* credential that could have run. §8 keeps these as
      * "three independent limits" and this is what that separation buys.
      *
-     * Held for as long as the turn runs — including while it is blocked on a
-     * permission prompt, which is deliberate: the worker process is resident and
-     * costing memory whether or not a human has answered yet, and this cap
-     * exists to bound memory rather than activity.
+     * Held for as long as the turn runs, **except while a human is being waited
+     * for** — see `decide`. That exception was not here, and the reasoning
+     * against it ("the worker is resident and costing memory whether or not
+     * anyone has answered") is true and is outweighed: a permission prompt can
+     * go unanswered for hours, which is the entire premise of §11's inbox, and a
+     * quota wait is already outside this slot for exactly the same reason one
+     * line up.
      *
      * A parent waiting on children holds nothing: `propose_split` returns inside
      * the turn, so the parent's turn ends and its slot goes back before any child
      * asks for one. Without that a tree deeper than the cap would deadlock.
      */
-    const release = await this.slots.acquire((position) =>
-      this.contextFor(live, spec).reportProgress({
-        kind: 'phase',
-        detail: `queued behind ${position} turn${position === 1 ? '' : 's'} on this machine`,
-        at: this.now().toISOString(),
-      }),
-    );
+    const holder: SlotHolder = { release: await this.acquireSlot(live, spec) };
+    // Mutable and keyed by agent, because `decide` has to be able to hand this
+    // slot back mid-turn and take a fresh one afterwards.
+    this.turnSlots.set(agentId, holder);
 
     let outcome;
     try {
@@ -792,9 +806,12 @@ export class SessionManager extends EventEmitter {
       await handle.send({ content: fitted.content });
       outcome = await pumped;
     } finally {
-      // Whatever happened. A slot leaked by a thrown turn is a host that runs
-      // one fewer agent for the rest of its life, and nothing would report it.
-      release();
+      // Whatever happened, and whichever slot is current. A slot leaked by a
+      // thrown turn is a host that runs one fewer agent for the rest of its
+      // life, and nothing would report it. `release` is idempotent, so a turn
+      // that threw while parked on a prompt gives back nothing twice.
+      holder.release();
+      this.turnSlots.delete(agentId);
     }
 
     // What one agent learned about the credential, before the others send. This
@@ -1351,14 +1368,59 @@ export class SessionManager extends EventEmitter {
 
     await this.setState(live, 'awaiting_permission');
 
-    return new Promise<PermissionDecision>((resolve) => {
-      this.pending.set(request.requestId, {
-        ...request,
-        askedAt: this.now().toISOString(),
-        resolve,
+    /**
+     * Hand the concurrency slot back while a person is being waited for (§8).
+     *
+     * Found by CI on a small runner, not by reading: `defaultTurnCap()` is
+     * `min(8, cores − 2)`, which is **1** on any machine with three cores or
+     * fewer — a modest VM, a CI runner, a Raspberry Pi. Holding the slot across
+     * a prompt meant one unanswered question stopped every agent on the host,
+     * on every session, until a human came back. Every development machine here
+     * has four cores or more, so it passed everywhere it was ever run.
+     *
+     * The argument for holding it was that the worker is resident and costs
+     * memory whether or not anyone has answered. True, and outweighed twice
+     * over: a prompt can go unanswered for hours — that is the whole premise of
+     * §11's inbox — and the design already makes this exact call one line above
+     * the acquisition, where a quota wait sits *outside* the slot because
+     * "waiting on a shared allowance costs this host nothing". Waiting on a
+     * person costs it nothing either.
+     *
+     * The cost is that resuming queues again rather than continuing instantly.
+     * That is the correct price: a turn that has been idle for an hour has no
+     * claim on the machine ahead of one that has been waiting to start.
+     */
+    const holder = this.turnSlots.get(request.agentId);
+    holder?.release();
+
+    try {
+      return await new Promise<PermissionDecision>((resolve) => {
+        this.pending.set(request.requestId, {
+          ...request,
+          askedAt: this.now().toISOString(),
+          resolve,
+        });
+        this.emit('permission', request);
       });
-      this.emit('permission', request);
-    });
+    } finally {
+      // Retaken before the tool runs, so the work that follows an answer is
+      // still bounded by the cap. Reassigned rather than returned, so the
+      // `finally` in `send` releases whichever slot is current.
+      if (holder !== undefined) {
+        holder.release = await this.acquireSlot(live, spec);
+      }
+    }
+  }
+
+  /** Take a slot, explaining the wait if there is one. */
+  private async acquireSlot(live: LiveSession, spec: AgentSpec): Promise<() => void> {
+    return this.slots.acquire((position) =>
+      this.contextFor(live, spec).reportProgress({
+        kind: 'phase',
+        detail: `queued behind ${position} turn${position === 1 ? '' : 's'} on this machine`,
+        at: this.now().toISOString(),
+      }),
+    );
   }
 
   private async logDecision(
