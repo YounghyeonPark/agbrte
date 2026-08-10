@@ -31,7 +31,7 @@
  */
 
 import { createServer, Socket, type Server } from 'node:net';
-import { chmodSync } from 'node:fs';
+import { chmodSync, unlinkSync } from 'node:fs';
 import type { HostChannel } from './protocol.js';
 
 /** Split a buffer into whole lines, holding any trailing partial. */
@@ -174,8 +174,82 @@ export class SocketChannel<Out, In> implements HostChannel<Out, In> {
  *
  * Windows named pipes are not chmod-able and do not need to be: the default DACL
  * grants the creating user and administrators, not everyone.
+ *
+ * ## A socket left by a host that died is not a host
+ *
+ * `discovery.ts` states the rule for `host.json` and gives the reason: trusting a
+ * file left by a dead process "would mean an app that refuses to start a host
+ * because a record of a dead one exists — the classic stale-pidfile deadlock".
+ * The record was made a hint. **The socket was not**, and it is a file too.
+ *
+ * A unix socket is only unlinked when the server closes cleanly. Kill the host,
+ * lose power, run out of memory, and the path stays — after which every future
+ * host fails to bind and the workspace cannot be opened again. Measured on a real
+ * Linux host rather than reasoned about: killed with `SIGKILL`, the socket file
+ * remained, the next `listen` gave `EADDRINUSE`, and connecting to it gave
+ * `ECONNREFUSED`. Nothing was there; the path was simply in the way. What the
+ * user saw was "host did not start listening", fifteen seconds later, naming the
+ * host rather than the leftover.
+ *
+ * It has not been hit here because Windows named pipes have no filesystem entry
+ * to leave behind, so this is a bug that only exists on the machines this feature
+ * is *for*.
+ *
+ * So a bind conflict asks the question the record already knew to ask: **is
+ * anything actually there?** Nothing answering means the socket is debris and is
+ * removed; something answering means a real host owns this workspace, which is
+ * §6.6's single writer and is refused with that said plainly — including when the
+ * owner is another user on a shared box (§17 Q9).
  */
 export function listen<Out, In>(
+  path: string,
+  onConnection: (channel: SocketChannel<Out, In>) => void,
+): Promise<Server> {
+  return listenOnce<Out, In>(path, onConnection).catch(async (err: unknown) => {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== 'EADDRINUSE' || process.platform === 'win32') throw err;
+
+    // Windows is excluded above rather than handled: a named pipe name in use
+    // means a live pipe, not a leftover, so there is nothing to clear.
+    if (await answers(path)) {
+      throw new Error(
+        `another Agbrte host is already serving this workspace on ${path}. ` +
+          `Only one host may own a workspace at a time (§6.6 single writer). ` +
+          `If that host belongs to another user on this machine, use your own checkout.`,
+      );
+    }
+
+    try {
+      unlinkSync(path);
+    } catch (removeErr) {
+      // Cannot remove it, and nothing is listening. On a shared box that is
+      // somebody else's leftover in a directory we do not own, and saying which
+      // is the difference between a five-minute fix and a support thread.
+      throw new Error(
+        `${path} is in the way and nothing is listening on it, but it could not be ` +
+          `removed: ${removeErr instanceof Error ? removeErr.message : String(removeErr)}`,
+      );
+    }
+    return listenOnce<Out, In>(path, onConnection);
+  });
+}
+
+/** Is anything actually accepting connections there? */
+function answers(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = new Socket();
+    const done = (alive: boolean): void => {
+      probe.destroy();
+      resolve(alive);
+    };
+    probe.once('connect', () => done(true));
+    probe.once('error', () => done(false));
+    probe.setTimeout(1_000, () => done(false));
+    probe.connect(path);
+  });
+}
+
+function listenOnce<Out, In>(
   path: string,
   onConnection: (channel: SocketChannel<Out, In>) => void,
 ): Promise<Server> {
