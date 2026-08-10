@@ -260,3 +260,64 @@ describe('a child is a session', () => {
     });
   });
 });
+
+describe('a child that claims to be somewhere else (§4.3, §15 Phase 6)', () => {
+  /**
+   * §15 marks Phase 6 **done**, and its acceptance criterion includes a session
+   * that "spawns three children — one in a different repo and one on a different
+   * machine". §4.3 says the cross-host consequences are open. Both cannot be
+   * true, and this is which.
+   *
+   * `spawnChild` calls `this.createSession` — *this* manager, which owns one
+   * workspace on one host. A `target` naming another machine sets the child's
+   * `target` field and changes nothing about where it runs, so the record says
+   * `ssh` and the agent runs locally. That is worse than the feature being
+   * absent: an absent feature is noticed, and this one is only noticed by
+   * whoever later trusts the field.
+   */
+  it('refuses a target this host cannot actually reach', async () => {
+    const m = manager();
+    const parent = await m.createSession({ title: 'p', goal: 'g', budget: BUDGET });
+
+    await expect(
+      m.spawnChild(parent.sessionId, {
+        ...split(),
+        target: { kind: 'ssh', alias: 'build-box', host: 'build-box', useSystemConfig: true },
+      }),
+    ).rejects.toThrow(SplitRefused);
+  });
+
+  it('names the gap rather than blaming the caller', async () => {
+    // The user asked for something the design promises; the honest error says
+    // it is unbuilt and where the work lives, not that the request was wrong.
+    const m = manager();
+    const parent = await m.createSession({ title: 'p', goal: 'g', budget: BUDGET });
+
+    await expect(
+      m.spawnChild(parent.sessionId, {
+        ...split(),
+        target: { kind: 'ssh', alias: 'build-box', host: 'build-box', useSystemConfig: true },
+      }),
+    ).rejects.toThrow(/not built|same host/i);
+  });
+
+  it('still spawns a child that names the host it is actually on', async () => {
+    // Passing the parent's own target is not a request to go anywhere, and must
+    // keep working — it is what `proposeSplit` does when it carries one.
+    const m = manager();
+    const parent = await m.createSession({ title: 'p', goal: 'g', budget: BUDGET });
+
+    const child = await m.spawnChild(parent.sessionId, { ...split(), target: { kind: 'local' } });
+    expect(child.target.kind).toBe('local');
+  });
+
+  it('puts the child on the parent’s host when no target is named', async () => {
+    const m = manager();
+    const parent = await m.createSession({ title: 'p', goal: 'g', budget: BUDGET });
+
+    const child = await m.spawnChild(parent.sessionId, split());
+    // The `ChildRef` a parent holds must name a host that can actually be
+    // routed to, or roll-up asks a machine that never had the session.
+    expect(child.instanceId).toBe(parent.instanceId);
+  });
+});

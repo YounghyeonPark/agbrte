@@ -1590,6 +1590,31 @@ export class SessionManager extends EventEmitter {
       );
     }
 
+    /**
+     * A child runs on the host that spawned it, and saying otherwise is a lie
+     * in the record (§4.3, §15 Phase 6).
+     *
+     * `spawnChild` creates the child through `this.createSession` — *this*
+     * manager, which owns one workspace on one host. A `target` naming another
+     * machine set the child's `target` field and changed nothing about where it
+     * ran, so the log said `ssh` while the agent worked locally. That is worse
+     * than the feature being missing: an absent feature is noticed, and this one
+     * was only noticed by whoever later trusted the field — roll-up asking a
+     * machine that never had the session, or a person reading a transcript.
+     *
+     * §4.3 already says the cross-host consequences are open ("tree budget has
+     * no single owner", `needsAttention` bubbling across hosts). §15 marked the
+     * phase done anyway. Refusing is what makes the two agree until the fleet
+     * can own a spawn.
+     */
+    if (input.target !== undefined && !sameTarget(input.target, parent.session.target)) {
+      throw new SplitRefused(
+        `a child on a different machine is not built: this session runs on ` +
+          `${describeTarget(parent.session.target)} and the child would be created here anyway. ` +
+          `Attach that machine and start the work there, or spawn on the same host.`,
+      );
+    }
+
     const budget = parent.session.budget;
     if (budget === undefined) {
       // A parent with no ceiling cannot carve one out, and inventing one would
@@ -2214,6 +2239,28 @@ function attentionFor(state: SessionState, since: string): Session['needsAttenti
   // Sanity: every attention state must be a pause or a terminal failure.
   if (!isPaused(state) && state !== 'failed') return null;
   return { reason, since };
+}
+
+/**
+ * Whether two targets name the same place.
+ *
+ * Compared by the fields that decide *which machine*, not by deep equality: two
+ * `ssh` targets differing only in a port they both default are the same box, and
+ * refusing that would make an honest caller look like a liar.
+ */
+function sameTarget(a: ExecutionTarget, b: ExecutionTarget): boolean {
+  if (a.kind !== b.kind) return false;
+  const where = (t: ExecutionTarget): string => {
+    const x = t as { alias?: string; host?: string; distro?: string; container?: string };
+    return x.alias ?? x.host ?? x.distro ?? x.container ?? '';
+  };
+  return where(a) === where(b);
+}
+
+/** A target as a person would name it. */
+function describeTarget(target: ExecutionTarget): string {
+  const x = target as { alias?: string; host?: string; distro?: string };
+  return x.alias ?? x.host ?? x.distro ?? target.kind;
 }
 
 function mergeUsage(a: AgentRecord['usage'], b: AgentRecord['usage']): AgentRecord['usage'] {
