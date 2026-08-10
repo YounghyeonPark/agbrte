@@ -1,0 +1,125 @@
+# Desktop distributables for every OS and architecture, built where each must be.
+#
+# Separate from `ci.yml` and **not** run on every push. A full matrix downloads
+# five Electron runtimes and produces about a gigabyte of artifacts; on a private
+# repository macOS minutes bill at ten times the base rate. CI answers "does it
+# work"; this answers "make something people can install", which is a thing
+# somebody decides to do.
+#
+# ## What can be cross-built and what cannot
+#
+# There are no native runtime dependencies — the whole list is React, `react-dom`,
+# zustand and one Radix component, and §14 chose `node:sqlite` over
+# `better-sqlite3` precisely so nothing compiles per platform. So an architecture
+# is a different Electron download and nothing else:
+#
+#   * **Linux x64 + arm64** both build on an x64 Linux runner.
+#   * **Windows x64 + arm64** both build on a Windows runner. Verified locally:
+#     `Agbrte Setup 0.0.1.exe` carries both, plus portable zips for each.
+#   * **macOS x64 + arm64** need a Mac. `dmg` is made with `hdiutil`, signing
+#     needs Apple's toolchain, and notarisation needs an Apple account. None of
+#     those exist elsewhere, and a zip built off-Mac would be unsigned in a way
+#     macOS increasingly refuses to open at all.
+#
+# ## Signing is deliberately absent, and says so
+#
+# No certificates are referenced. An unsigned build is honest: macOS will report
+# an unidentified developer and Windows SmartScreen will warn, which is exactly
+# what an unsigned build *is*. Wiring the secrets in later needs no change here
+# beyond providing them — electron-builder picks up `CSC_LINK`, `CSC_KEY_PASSWORD`,
+# `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD` and `APPLE_TEAM_ID` on its own.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: Which to build
+        type: choice
+        default: all
+        options: [all, linux, mac, windows]
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Never fail-fast: a macOS signing problem must not throw away a finished
+      # Linux build somebody is waiting for.
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux (x64 + arm64)
+            os: ubuntu-latest
+            flag: --linux
+            id: linux
+          - name: windows (x64 + arm64)
+            os: windows-latest
+            flag: --win
+            id: windows
+          - name: macos (x64 + arm64)
+            os: macos-latest
+            flag: --mac
+            id: mac
+
+    steps:
+      - uses: actions/checkout@v4
+        # electron-builder derives the version from package.json, but a release
+        # built from a shallow clone cannot describe where it came from.
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # The same gate CI applies. A distributable built from code that does not
+      # typecheck is a distributable nobody should have.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build renderer and bundles
+        run: npm run build
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Package
+        if: >-
+          github.event_name != 'workflow_dispatch' ||
+          inputs.platforms == 'all' ||
+          inputs.platforms == matrix.id
+        run: npx electron-builder ${{ matrix.flag }} --publish never
+        env:
+          # electron-builder tries to publish when it sees a token, whatever the
+          # flag says. Not having one is the simplest way to mean it.
+          GH_TOKEN: ''
+
+      - uses: actions/upload-artifact@v4
+        if: >-
+          github.event_name != 'workflow_dispatch' ||
+          inputs.platforms == 'all' ||
+          inputs.platforms == matrix.id
+        with:
+          name: agbrte-${{ matrix.id }}
+          # The unpacked trees are the same bytes as the archives beside them and
+          # would triple the upload for nothing.
+          path: |
+            release/*.exe
+            release/*.zip
+            release/*.dmg
+            release/*.AppImage
+            release/*.deb
+            release/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: What was built
+        if: always()
+        shell: bash
+        run: ls -lh release/ 2>/dev/null | grep -vE '^total|unpacked' || echo 'nothing packaged'

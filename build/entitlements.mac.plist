@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    The hardened runtime refuses these by default, and notarisation requires the
+    hardened runtime. Each is here because something in the app stops working
+    without it, and nothing is here speculatively.
+  -->
+
+  <!-- Electron ships a JIT. Without this the renderer will not start at all. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+
+  <!-- §12.4 records short voice notes. Denied silently otherwise: the file is
+       written and contains silence, which is the worst way to fail. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+
+  <!-- §6.2 reaches remote hosts, §6.5 routes model traffic, and §14 serves a
+       browser client on loopback. -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.network.server</key>
+  <true/>
+
+  <!-- §3.12 runs the user's own installed CLI, and §6.8 starts their dev server.
+       Both are separate executables this app did not sign. -->
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!-- An agent edits a repository the user chose, which is by definition
+       somewhere the sandbox would not have granted. -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+</dict>
+</plist>

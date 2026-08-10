@@ -2182,6 +2182,18 @@ It refuses now, naming the gap rather than the caller. §4.3 already recorded th
 
 **What "done" means in this table, learned the hard way.** §12.3 read as built for some time — the vector model, the describer and the flattener all existed, all tested — and **nothing outside `content/` called any of them**. A user could not point at anything. A row that means "the pieces exist" is a row that lies, so a component counts here only when something a person touches reaches it. Two of this session's three §13 findings and both §12 bugs were of that family: code that was correct, tested, and unreachable or unreached.
 
+**Desktop distributables, one per OS and architecture.** `electron-builder` produces Windows x64 + arm64 (NSIS installer and portable zip), macOS x64 + arm64 (dmg and zip), and Linux x64 + arm64 (AppImage, deb, tar.gz).
+
+**It is this cheap because §14 refused a native dependency.** The whole runtime dependency list is React, `react-dom`, zustand and one Radix component — all pure JavaScript — and §14 chose `node:sqlite` over `better-sqlite3` so that storage compiles nowhere. An architecture is therefore a different Electron download and nothing else: no `node-gyp`, no rebuild step, no emulated build container, and Linux arm64 builds on an x64 runner. That decision is being paid back here, five matrix rows at a time.
+
+**One thing must leave the archive.** The session host and the agent host are *forked as processes*, and a path inside an `asar` is not a path a process can be given, so both are `asarUnpack`ed. Verified against a real packaged build rather than reasoned about: the app starts, forks its host out of `app.asar.unpacked`, and writes `host.json` with `protocol: 5`.
+
+**macOS needs a Mac and cannot be cross-built.** `dmg` is made with `hdiutil`, signing needs Apple's toolchain, and notarisation needs an Apple Developer account. Windows and Linux each build on their own runner. The release workflow is a three-runner matrix, `fail-fast: false`, and deliberately **not** run on every push: a full matrix is about a gigabyte of artifacts, and on a private repository macOS minutes bill at ten times the base rate.
+
+**Nothing is signed, and the build says so rather than pretending.** No certificates are referenced, so macOS reports an unidentified developer and Windows SmartScreen warns — which is what an unsigned build *is*. The credentials are the owner's to obtain (an Apple Developer account, a Windows code-signing certificate); electron-builder picks them up from the environment with no change to the workflow.
+
+**macOS entitlements are part of the product, not boilerplate.** The hardened runtime that notarisation requires refuses audio input, unsigned executable memory and library validation by default — which would make §12.4's dictation record silence, and §3.12's "run the user's own installed CLI" fail outright. `Info.plist` carries the usage strings for screen capture and the microphone for the same reason: macOS denies both *silently* without them, and §12.1 already warns that the failure looks like a black frame.
+
 **Phase 8 — Breadth + polish.** Remaining providers, `hosted-agent-http` with the inverted-persistence path (§6.9), WSL/container/k8s transports, cross-provider fallback chains, cross-machine search, usage/cost reporting, session export, auto-update.
 
 *Started.* **Usage and cost reporting** are built (§10's three fidelities, with `'unknown'` said out loud), and **per-agent ceilings are enforced** rather than merely recorded.

@@ -1,0 +1,111 @@
+# Desktop distributables, one per OS and architecture.
+#
+# ## Why this is unusually simple, and worth saying
+#
+# **There are no native runtime dependencies.** The whole dependency list is
+# React, `react-dom`, zustand and one Radix component — all pure JavaScript — and
+# §14's storage choice was `node:sqlite`, which is inside Node, precisely so that
+# nothing has to be compiled per platform. So cross-architecture packaging is
+# downloading the right Electron and zipping: no `node-gyp`, no rebuild step, no
+# emulated build container.
+#
+# That is a decision paying off rather than luck. `better-sqlite3` was considered
+# and rejected in §14, and this file is where the alternative would have cost
+# five build matrices and a toolchain per row.
+#
+# ## What still needs a machine of its own
+#
+# macOS. `dmg` is made with `hdiutil`, signing needs the Apple toolchain, and
+# notarisation needs an Apple account — none of which exist off a Mac. Windows
+# and Linux can each be built from their own runner, and Linux arm64 is built on
+# an x64 runner because, again, there is nothing to compile.
+
+appId: dev.agbrte.app
+productName: Agbrte
+copyright: Copyright © Younghyeon Park
+
+directories:
+  output: release
+  buildResources: build
+
+# Only what the app runs. `dist/web` and `dist/smoke` are a server and a test
+# harness — shipping them would put a second entry point in every install for
+# nobody's benefit.
+files:
+  - dist/main/**
+  - dist/renderer/**
+  - dist/cli/**
+  - package.json
+  - LICENSE
+  - NOTICE
+
+# The session host and the agent host are **forked as processes**, not imported.
+# A path inside an asar is not a path a process can be given, so these two are
+# left on disk — the one place the archive would turn a working spawn into
+# "cannot find module" at runtime and nowhere else.
+asarUnpack:
+  - dist/main/agbrteHost.js
+  - dist/main/agentHost.js
+
+# -------------------------------------------------------------------- Windows
+win:
+  target:
+    - target: nsis
+      arch: [x64, arm64]
+    # Portable as well as an installer: a build box or a locked-down machine is
+    # exactly where somebody wants an agent workbench and cannot run a setup.
+    - target: zip
+      arch: [x64, arm64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  # Sessions live in the workspace (§5), not in the install, so removing the app
+  # removes the app. Deleting transcripts on uninstall would be the one
+  # irreversible thing this program does.
+  deleteAppDataOnUninstall: false
+
+# ---------------------------------------------------------------------- macOS
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  # §12.1 captures the screen and §12.4 listens to a microphone; macOS refuses
+  # both silently unless the app says why it wants them. Without these the
+  # capture is a black frame and the dictation is silence — the failure §12.1
+  # already warns about, arriving as a plist omission.
+  extendInfo:
+    NSCameraUsageDescription: Agbrte does not use the camera.
+    NSMicrophoneUsageDescription: Agbrte records short voice notes for dictation, on this machine only (§12.4).
+    NSScreenCaptureUsageDescription: Agbrte captures a window or screen you choose, to show an agent what you are looking at (§12.1).
+  # Hardened runtime is required for notarisation, and notarisation needs an
+  # Apple Developer account. Left on so that a build made *with* credentials is
+  # correct; without them the artifact is unsigned and macOS will say so.
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
+dmg:
+  writeUpdateInfo: false
+
+# ---------------------------------------------------------------------- Linux
+linux:
+  category: Development
+  synopsis: Durable, bridge-owned agent sessions you attach to from any terminal
+  target:
+    # AppImage runs anywhere without a package manager, which suits a machine
+    # somebody was lent rather than given — the same argument §6.2 makes for
+    # unpacking a private Node instead of installing one.
+    - target: AppImage
+      arch: [x64, arm64]
+    - target: deb
+      arch: [x64, arm64]
+    - target: tar.gz
+      arch: [x64, arm64]
+
+# Nothing here publishes on its own. A release is a person deciding to make one.
+publish: null
