@@ -22,6 +22,9 @@ import type {
 export interface UsageTotals {
   inputTokens: number;
   outputTokens: number;
+  /** Separate because they are priced separately (§3.6a, §10). */
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
   /**
    * `'unknown'` is a first-class value, not a missing number. Under an opaque
    * windowed allowance the cost is real but unobservable, and the UI must say
@@ -109,7 +112,7 @@ export function emptyProjection(sessionId: SessionId): SessionProjection {
     checklist: [],
     artifacts: [],
     children: [],
-    usage: { inputTokens: 0, outputTokens: 0, cost: 0 },
+    usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 },
     needsAttention: null,
     pendingPermissions: [],
     stats: {

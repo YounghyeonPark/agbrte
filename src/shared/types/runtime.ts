@@ -91,7 +91,28 @@ export interface RuntimeCapabilities {
   imageMaxCount?: number;
 
   // economics
-  pricing?: { inputPerMTok: number; outputPerMTok: number; currency: string } | 'free' | 'opaque';
+  /**
+   * What a million tokens costs, when that is a knowable number.
+   *
+   * `'free'` is a real answer — a local model costs nothing per token — and is
+   * distinct from `'opaque'`, which means a price exists and we cannot see it.
+   * §10 turns on that distinction: showing `$0.00` for a subscription-backed
+   * agent would be a lie.
+   *
+   * The cache rates are optional because most price lists omit them; absent,
+   * cached tokens are billed at the input rate, which is what a provider that
+   * does not price them separately actually does.
+   */
+  pricing?:
+    | {
+        inputPerMTok: number;
+        outputPerMTok: number;
+        cacheReadPerMTok?: number;
+        cacheWritePerMTok?: number;
+        currency: string;
+      }
+    | 'free'
+    | 'opaque';
   costReporting: CostReporting;
   tokenCounter: 'provider-endpoint' | 'local-estimate' | 'none';
   quotaModel: QuotaModel;
@@ -321,7 +342,21 @@ export type RuntimeEvent =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; tool: string; args: unknown }
   | { type: 'tool_result'; id: string; ok: boolean; summary: string }
-  | { type: 'usage'; inputTokens: number; outputTokens: number; cost?: number }
+  /**
+   * What a turn spent.
+   *
+   * `cost` carries `'unknown'` rather than going absent, because absent is a
+   * third state anything summing usage has to guess about — and §10 needs
+   * "a cost exists and we cannot see it" said out loud rather than inferred.
+   */
+  | {
+      type: 'usage';
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      cost?: number | 'unknown';
+    }
   | { type: 'stopped'; stop: StopReason };
 
 export interface AgentRuntime {

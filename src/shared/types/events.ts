@@ -145,7 +145,15 @@ export type EventBody =
       subject?: string | null;
       toolUseId?: string;
     }
-  | { type: 'usage'; inputTokens: number; outputTokens: number; cost?: number | 'unknown' }
+  | {
+      type: 'usage';
+      inputTokens: number;
+      outputTokens: number;
+      /** Separate because they are priced separately (§3.6a, §10). */
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      cost?: number | 'unknown';
+    }
   | { type: 'content.downgraded'; note: DowngradeNote }
   | { type: 'capture.attached'; sha256: Sha256; mime: string }
   | { type: 'checklist.updated'; itemId: string; state: string; text?: string }

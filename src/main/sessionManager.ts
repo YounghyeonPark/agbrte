@@ -57,6 +57,7 @@ import {
 } from '@shared/types/index.js';
 import { SessionStore, type SessionMeta } from './store/sessionStore.js';
 import { workspaceLayout } from './store/layout.js';
+import { addCost } from '@shared/cost.js';
 import { ensureBlob } from './store/blobTransfer.js';
 import { rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
@@ -520,7 +521,7 @@ export class SessionManager extends EventEmitter {
       isolation,
       resumeToken: null,
       lastEventSeq: 0,
-      usage: { inputTokens: 0, outputTokens: 0, cost: 0 },
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 },
     };
 
     live.session.agents.push(record);
@@ -2166,6 +2167,8 @@ export class SessionManager extends EventEmitter {
         usage: {
           inputTokens: projectedUsage.inputTokens,
           outputTokens: projectedUsage.outputTokens,
+          cacheReadTokens: projectedUsage.cacheReadTokens,
+          cacheWriteTokens: projectedUsage.cacheWriteTokens,
           cost: projectedUsage.cost,
         },
       });
@@ -2214,12 +2217,14 @@ function attentionFor(state: SessionState, since: string): Session['needsAttenti
 }
 
 function mergeUsage(a: AgentRecord['usage'], b: AgentRecord['usage']): AgentRecord['usage'] {
-  const cost =
-    a.cost === 'unknown' || b.cost === 'unknown' ? ('unknown' as const) : a.cost + b.cost;
   return {
     inputTokens: a.inputTokens + b.inputTokens,
     outputTokens: a.outputTokens + b.outputTokens,
-    cost,
+    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+    cacheWriteTokens: a.cacheWriteTokens + b.cacheWriteTokens,
+    // The one rule for adding costs (§10): not knowing is contagious, because a
+    // total that quietly drops an unobservable agent is smaller than the truth.
+    cost: addCost(a.cost, b.cost),
   };
 }
 

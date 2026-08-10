@@ -7,6 +7,7 @@
  * derived" (§5.4, invariant 8) and is property-tested.
  */
 
+import { addCost } from '@shared/cost.js';
 import {
   emptyProjection,
   type AttentionReason,
@@ -107,7 +108,12 @@ export function reduceEvents(
       case 'usage':
         p.usage.inputTokens += ev.inputTokens;
         p.usage.outputTokens += ev.outputTokens;
-        p.usage.cost = addCost(p.usage.cost, ev.cost);
+        p.usage.cacheReadTokens += ev.cacheReadTokens ?? 0;
+        p.usage.cacheWriteTokens += ev.cacheWriteTokens ?? 0;
+        // Absent is "this runtime said nothing about cost", which leaves the
+        // total alone. `'unknown'` is a runtime saying a cost exists and cannot
+        // be seen, and that is contagious (§10).
+        if (ev.cost !== undefined) p.usage.cost = addCost(p.usage.cost, ev.cost);
         break;
 
       case 'content.downgraded':
@@ -188,12 +194,6 @@ export function reduceEvents(
  * unobservable. Reporting a partial sum as if it were complete would understate
  * spend, which is worse than admitting we cannot see it.
  */
-function addCost(total: number | 'unknown', delta: number | 'unknown' | undefined): number | 'unknown' {
-  if (total === 'unknown' || delta === 'unknown') return 'unknown';
-  if (delta === undefined) return total;
-  return total + delta;
-}
-
 function upsertChecklistItem(
   list: ChecklistItem[],
   itemId: string,

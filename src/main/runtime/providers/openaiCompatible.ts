@@ -40,7 +40,16 @@ interface ChatChoice {
 
 interface ChatResponse {
   choices?: ChatChoice[];
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    /**
+     * Reads only. This dialect caches automatically and reports what it served
+     * from cache; there is no notion of a *write* to charge for, which is why
+     * `cacheWriteTokens` stays absent rather than zero (§3.6a).
+     */
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
 }
 
 export interface OpenAiCompatibleOptions {
@@ -197,6 +206,9 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       usage: {
         inputTokens: res.usage?.prompt_tokens ?? 0,
         outputTokens: res.usage?.completion_tokens ?? 0,
+        ...(res.usage?.prompt_tokens_details?.cached_tokens !== undefined
+          ? { cacheReadTokens: res.usage.prompt_tokens_details.cached_tokens }
+          : {}),
       },
       raw: res,
     };

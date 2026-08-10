@@ -241,6 +241,21 @@ export interface SessionBrief {
   budget: SessionBudget;
 }
 
+/**
+ * What an agent has spent (§10).
+ *
+ * Cache reads and writes are separate because they are priced separately, and
+ * `cost` is a union rather than an optional number so "we cannot see it" cannot
+ * be summed as zero.
+ */
+export interface AgentUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cost: number | 'unknown';
+}
+
 export interface AgentRecord {
   agentId: AgentId;
   role: AgentRole;
@@ -252,7 +267,7 @@ export interface AgentRecord {
   isolation: 'shared' | 'worktree';
   resumeToken: string | null;
   lastEventSeq: number;
-  usage: { inputTokens: number; outputTokens: number; cost: number | 'unknown' };
+  usage: AgentUsage;
 }
 
 export interface Session {

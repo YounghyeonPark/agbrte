@@ -18,6 +18,7 @@
  * depended on it (§5.4).
  */
 
+import { costOf } from '@shared/cost.js';
 import {
   type AgentHandle,
   type AgentRuntime,
@@ -173,11 +174,26 @@ class AgbrteHarnessHandle implements AgentHandle {
         { signal: this.ctx.abortSignal },
       );
 
+      /**
+       * A cost on every turn, including `'unknown'` (§10).
+       *
+       * This used to emit a cost only when the model was free, so everything
+       * else arrived with the field absent — and absent is a third state that
+       * anything summing usage has to guess about. `'unknown'` says the thing
+       * §10 requires out loud: a cost exists and we cannot see it, which is not
+       * the same as zero and not the same as missing.
+       */
       this.emit({
         type: 'usage',
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
-        ...(this.caps.pricing === 'free' ? { cost: 0 } : {}),
+        ...(result.usage.cacheReadTokens !== undefined
+          ? { cacheReadTokens: result.usage.cacheReadTokens }
+          : {}),
+        ...(result.usage.cacheWriteTokens !== undefined
+          ? { cacheWriteTokens: result.usage.cacheWriteTokens }
+          : {}),
+        cost: costOf(result.usage, this.caps),
       });
 
       const text = textOf(result.content);

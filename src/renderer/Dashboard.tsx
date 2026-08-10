@@ -23,13 +23,17 @@
  * No progress bars. `checklist` exists on the session and nothing writes to it
  * yet — no tool emits `checklist.updated` — so a bar here would read 0/0 on every
  * card forever, which is worse than no bar: it looks like nothing is happening.
- * The same goes for cost, which needs a budget nobody sets. When those become
- * real they belong here; until then their absence is the honest report.
+ * Cost *was* in that category and no longer is: a price list reaches the
+ * capability model, the harness prices every turn, and `'unknown'` says so out
+ * loud where a subscription hides the figure (§10). So it is shown — including
+ * the sentence for the case nobody can price, because `$0.00` there would be a
+ * lie and a blank would look like a bug.
  */
 
 import type { JSX } from 'react';
 import type { HostInfo } from '../shared/ipc/contract.js';
 import { byAttentionThenRecency } from '../shared/types/index.js';
+import { formatCost, sumCost } from '../shared/cost.js';
 import type { AttentionReason, Session } from '../shared/types/index.js';
 import { LABEL, stateTone } from './App.js';
 
@@ -49,6 +53,17 @@ const ASKS: Record<AttentionReason, string> = {
 
 function tokens(session: Session): number {
   return session.agents.reduce((n, a) => n + a.usage.inputTokens + a.usage.outputTokens, 0);
+}
+
+/**
+ * What a session has spent, across its agents.
+ *
+ * `sumCost` rather than a reduce with `+`, because one agent nobody can price
+ * makes the whole total unknowable — and a figure that quietly drops it is
+ * smaller than the truth, which is the one direction this must not be wrong in.
+ */
+function spend(session: Session): ReturnType<typeof sumCost> {
+  return sumCost(session.agents.map((a) => a.usage.cost));
 }
 
 /** `1.2k` rather than `1234`: the magnitude is the information on a card. */
@@ -207,10 +222,10 @@ function Card({
       {session.agents.length > 0 && (
         <span className="text-muted truncate-line text-[11px]">
           {session.agents.map((a) => a.spec.runtimeId).join(', ')}
-          {/* Tokens rather than cost. `usage` is genuinely populated by every
-              runtime; cost needs a per-model price nothing supplies yet, and a
-              currency figure that is quietly always zero is worse than none. */}
           {tokens(session) > 0 ? ` · ${format(tokens(session))} tokens` : ''}
+          {/* §10's three fidelities, and the third is why this is a function
+              rather than a `toFixed`: an unobservable cost has to say so. */}
+          {spend(session) !== 0 ? ` · ${formatCost(spend(session))}` : ''}
         </span>
       )}
     </button>

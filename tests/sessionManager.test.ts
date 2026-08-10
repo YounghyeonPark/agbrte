@@ -163,7 +163,13 @@ describe('SessionManager — turns', () => {
     await sm.send(session.sessionId, agent.agentId, TEXT('b'));
 
     const record = sm.get(session.sessionId).agents[0];
-    expect(record?.usage).toEqual({ inputTokens: 80, outputTokens: 20, cost: 0.04 });
+    expect(record?.usage).toEqual({
+      inputTokens: 80,
+      outputTokens: 20,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      cost: 0.04,
+    });
   });
 
   it('pauses on quota exhaustion and never reports failure', async () => {

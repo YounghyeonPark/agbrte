@@ -81,7 +81,16 @@ describe('reduceEvents', () => {
         { type: 'usage', inputTokens: 50, outputTokens: 10, cost: 0.25 },
       ),
     );
-    expect(p.usage).toEqual({ inputTokens: 150, outputTokens: 30, cost: 0.75 });
+    expect(p.usage).toEqual({
+      inputTokens: 150,
+      outputTokens: 30,
+      // Separate because they are priced separately (§3.6a): reads are far
+      // cheaper than input tokens and writes dearer, so one field could not
+      // carry both prices.
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      cost: 0.75,
+    });
   });
 
   it("treats 'unknown' cost as absorbing rather than reporting a partial sum", () => {
@@ -248,5 +257,38 @@ describe('reduceEvents', () => {
   it('carries a skipped-line count through so corruption is visible', () => {
     const p = reduceEvents(SID, [], emptyProjection(SID), { skippedLines: 2 });
     expect(p.skippedLines).toBe(2);
+  });
+});
+
+describe('cache tokens accumulate separately (§3.6a, §10)', () => {
+  it('keeps reads and writes apart, because their prices are apart', () => {
+    const p = reduceEvents(
+      SID,
+      log(
+        { type: 'usage', inputTokens: 10, outputTokens: 5, cacheReadTokens: 900, cost: 0.01 },
+        { type: 'usage', inputTokens: 10, outputTokens: 5, cacheWriteTokens: 100, cost: 0.02 },
+      ),
+    );
+
+    expect(p.usage.cacheReadTokens).toBe(900);
+    expect(p.usage.cacheWriteTokens).toBe(100);
+  });
+
+  it('leaves the total alone when a runtime says nothing about cost', () => {
+    /**
+     * Absent and `'unknown'` are different facts and this is where collapsing
+     * them would bite. A runtime that reports no cost field has not told us a
+     * cost is unobservable — it has told us nothing — and treating silence as
+     * `'unknown'` would make every `echo` turn poison a session's total.
+     */
+    const p = reduceEvents(
+      SID,
+      log(
+        { type: 'usage', inputTokens: 1, outputTokens: 1, cost: 0.5 },
+        { type: 'usage', inputTokens: 1, outputTokens: 1 },
+      ),
+    );
+
+    expect(p.usage.cost).toBe(0.5);
   });
 });

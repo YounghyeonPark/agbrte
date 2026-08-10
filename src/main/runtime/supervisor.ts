@@ -22,6 +22,8 @@ import {
   type StopReason,
 } from '@shared/types/index.js';
 import type { SessionStore } from '../store/sessionStore.js';
+import { addCost, type Cost } from '@shared/cost.js';
+import type { AgentUsage } from '@shared/types/index.js';
 
 export interface PumpOptions {
   origin: EventOrigin;
@@ -39,7 +41,7 @@ export interface PumpOutcome {
   nextState: SessionState;
   eventsWritten: number;
   resumeToken: string | null;
-  usage: { inputTokens: number; outputTokens: number; cost: number | 'unknown' };
+  usage: AgentUsage;
 }
 
 /**
@@ -98,7 +100,9 @@ export async function pumpAgent(
   let eventsWritten = 0;
   let inputTokens = 0;
   let outputTokens = 0;
-  let cost: number | 'unknown' = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let cost: Cost = 0;
 
   for await (const ev of handle.events) {
     opts.onEvent?.(ev);
@@ -128,12 +132,20 @@ export async function pumpAgent(
       case 'usage':
         inputTokens += ev.inputTokens;
         outputTokens += ev.outputTokens;
-        cost = ev.cost === undefined ? cost : cost === 'unknown' ? 'unknown' : cost + ev.cost;
+        cacheReadTokens += ev.cacheReadTokens ?? 0;
+        cacheWriteTokens += ev.cacheWriteTokens ?? 0;
+        // `addCost` rather than the hand-rolled contagion this used to carry —
+        // which handled an unknown *accumulator* but not an unknown arriving on
+        // the event, a case that could not happen until turns started reporting
+        // one. One rule, in one place (§10).
+        cost = ev.cost === undefined ? cost : addCost(cost, ev.cost);
         await store.append(
           {
             type: 'usage',
             inputTokens: ev.inputTokens,
             outputTokens: ev.outputTokens,
+            ...(ev.cacheReadTokens !== undefined ? { cacheReadTokens: ev.cacheReadTokens } : {}),
+            ...(ev.cacheWriteTokens !== undefined ? { cacheWriteTokens: ev.cacheWriteTokens } : {}),
             ...(ev.cost !== undefined ? { cost: ev.cost } : {}),
           },
           meta,
@@ -157,7 +169,7 @@ export async function pumpAgent(
     nextState: stateForStop(finalStop),
     eventsWritten,
     resumeToken: handle.resumeToken(),
-    usage: { inputTokens, outputTokens, cost },
+    usage: { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, cost },
   };
 }
 

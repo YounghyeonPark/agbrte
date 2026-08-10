@@ -79,7 +79,20 @@ export interface ProviderRequest {
 export interface ProviderUsage {
   inputTokens: number;
   outputTokens: number;
-  cachedInputTokens?: number;
+  /**
+   * Tokens written into a prompt cache, and tokens served from one.
+   *
+   * Two fields because they are **priced differently** — writing a cache
+   * typically costs more than an uncached input token and reading one costs far
+   * less. This was a single `cachedInputTokens`, which cannot express either
+   * price and makes any cost built on it wrong in a direction that varies with
+   * how the caller happened to use the cache. Found auditing the provider
+   * boundary against APIs that report them separately (§3.6a).
+   *
+   * Absent means the provider does not report it, which is not the same as zero.
+   */
+  cacheWriteTokens?: number;
+  cacheReadTokens?: number;
 }
 
 export interface ProviderResult {
