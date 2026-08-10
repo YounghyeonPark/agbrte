@@ -62,6 +62,7 @@ import { ensureBlob } from './store/blobTransfer.js';
 import { rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
+import { TurnSlots } from './concurrency.js';
 import { entriesFrom, merge, ReadMarker } from './inbox.js';
 import { fitContent } from './content/fit.js';
 import { flattenAnnotations, scaleToFit, sizeOf } from './content/pixels.js';
@@ -261,6 +262,8 @@ export interface SessionManagerDeps {
    * that a bypassable gate is not a gate applies to this one too.
    */
   quota?: QuotaScheduler;
+  /** Turns run at once on this host. Defaults to §8's `min(8, cores − 2)`. */
+  maxConcurrentTurns?: number;
   /**
    * Set when this workspace was opened somewhere other than where it last was.
    *
@@ -327,6 +330,8 @@ export class SessionManager extends EventEmitter {
 
   /** Shared with nothing by default: one host, its own view of each credential. */
   private readonly quota: QuotaScheduler;
+  /** How many turns this host runs at once (§8). */
+  private readonly slots: TurnSlots;
 
   constructor(private readonly deps: SessionManagerDeps) {
     super();
@@ -342,6 +347,10 @@ export class SessionManager extends EventEmitter {
     // share a timer, so turning stall detection off also stopped every quota
     // window from ever resuming. `sweepStalled` disables itself instead.
     this.quota = deps.quota ?? new QuotaScheduler();
+    // Injectable so a test is not at the mercy of the core count of whatever
+    // machine it runs on — the cap is a property of the host, and a test about
+    // queueing needs to be able to make one.
+    this.slots = new TurnSlots(deps.maxConcurrentTurns);
     const after = deps.stallAfterMs ?? DEFAULT_STALL_AFTER_MS;
     this.sweeper = setInterval(
       () => {
@@ -725,9 +734,41 @@ export class SessionManager extends EventEmitter {
       live.waitingOnQuota.delete(agentId);
     }
 
-    const pumped = pumpAgent(handle, live.store, { origin: this.originFor(spec), agentId });
-    await handle.send({ content: fitted.content });
-    const outcome = await pumped;
+    /**
+     * A slot on this machine, taken **after** the credential wait (§8).
+     *
+     * The order is the decision. Waiting on a shared allowance costs this host
+     * nothing, so holding one of its scarce slots through that wait would starve
+     * agents on a *different* credential that could have run. §8 keeps these as
+     * "three independent limits" and this is what that separation buys.
+     *
+     * Held for as long as the turn runs — including while it is blocked on a
+     * permission prompt, which is deliberate: the worker process is resident and
+     * costing memory whether or not a human has answered yet, and this cap
+     * exists to bound memory rather than activity.
+     *
+     * A parent waiting on children holds nothing: `propose_split` returns inside
+     * the turn, so the parent's turn ends and its slot goes back before any child
+     * asks for one. Without that a tree deeper than the cap would deadlock.
+     */
+    const release = await this.slots.acquire((position) =>
+      this.contextFor(live, spec).reportProgress({
+        kind: 'phase',
+        detail: `queued behind ${position} turn${position === 1 ? '' : 's'} on this machine`,
+        at: this.now().toISOString(),
+      }),
+    );
+
+    let outcome;
+    try {
+      const pumped = pumpAgent(handle, live.store, { origin: this.originFor(spec), agentId });
+      await handle.send({ content: fitted.content });
+      outcome = await pumped;
+    } finally {
+      // Whatever happened. A slot leaked by a thrown turn is a host that runs
+      // one fewer agent for the rest of its life, and nothing would report it.
+      release();
+    }
 
     // What one agent learned about the credential, before the others send. This
     // is the entire reason a group exists: eight agents on one allowance should
