@@ -16,8 +16,12 @@
 import { describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createServer } from 'node:net';
 import {
   listListeningPorts,
+  ownedByUs,
+  parseLsof,
+  parseNetstat,
   parseProcNetTcp,
   PortsUnavailable,
 } from '@main/preview/ports.js';
@@ -135,15 +139,28 @@ describe('other people’s ports are not a feature', () => {
 describe('“cannot tell” is not “nothing is running”', () => {
   it('refuses on a platform it cannot read', async () => {
     /**
-     * A `netstat` parser written blind for macOS would be a guess about an
-     * output format nobody here can run. Returning `[]` instead would be worse
-     * than refusing: the user concludes their dev server did not start, and goes
-     * looking in the wrong place.
+     * This asserted that macOS and Windows were refused, and failed the moment
+     * they were implemented — which is the assertion working. What is left is
+     * the genuine case: a platform with no enumerator at all.
+     *
+     * Refusing rather than returning `[]` is the point. "No dev server is
+     * running" and "this host cannot tell you" are different answers, and the
+     * second dressed as the first sends a user to debug a server that started
+     * fine.
      */
-    await expect(listListeningPorts({ platform: 'darwin' })).rejects.toBeInstanceOf(
-      PortsUnavailable,
-    );
-    await expect(listListeningPorts({ platform: 'win32' })).rejects.toThrow(/win32/);
+    await expect(listListeningPorts({ platform: 'aix' })).rejects.toBeInstanceOf(PortsUnavailable);
+    await expect(listListeningPorts({ platform: 'freebsd' })).rejects.toThrow(/freebsd/);
+  });
+
+  it('says so when the platform’s own tool is missing or fails', async () => {
+    // `lsof` is on every macOS and `netstat` on every Windows, but a stripped
+    // container or a locked-down image is a real thing — and it is the same
+    // answer as an unknown platform: cannot tell, not nothing there.
+    for (const platform of ['darwin', 'win32'] as const) {
+      await expect(
+        listListeningPorts({ platform, run: () => Promise.reject(new Error('ENOENT')) }),
+      ).rejects.toBeInstanceOf(PortsUnavailable);
+    }
   });
 
   it('refuses when neither file can be read', async () => {
@@ -159,5 +176,120 @@ describe('“cannot tell” is not “nothing is running”', () => {
       '  sl  local_address\n   0: short\n   1: 0100007F:0BB8 00000000:0000 0A a b c 1000 extra extra\n';
     const ports = await listListeningPorts({ platform: 'linux', uid: 1000, read });
     expect(ports.map((p) => p.port)).toEqual([3000]);
+  });
+});
+
+describe('each OS is asked in its own language', () => {
+  it('finds a listener this process actually owns, wherever it runs', async () => {
+    /**
+     * The one test that matters for "it controls the OS it runs on": a real
+     * server on a real port, found by whatever mechanism this platform has —
+     * `/proc/net/tcp` on Linux, `lsof -F` on macOS, `netstat -ano` on Windows.
+     *
+     * It is deliberately not skipped anywhere. A platform that cannot answer
+     * fails here rather than quietly returning nothing, which is the whole
+     * difference between "no dev server is running" and "this host cannot tell
+     * you" — and CI runs it on all three.
+     */
+    const server = createServer(() => undefined);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const address = server.address();
+    const port = typeof address === 'object' && address !== null ? address.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    try {
+      const ports = await listListeningPorts();
+      const found = ports.find((p) => p.port === port);
+      expect(found, `${process.platform} did not find its own listener on ${port}`).toBeDefined();
+      expect(found?.loopbackOnly, 'a 127.0.0.1 listener was not reported as loopback').toBe(true);
+    } finally {
+      server.close();
+    }
+  }, 30_000);
+
+  it('does not offer a port nothing is listening on any more', async () => {
+    const server = createServer(() => undefined);
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const address = server.address();
+    const port = typeof address === 'object' && address !== null ? address.port : 0;
+    await new Promise<void>((r) => server.close(() => r()));
+
+    // Not an assertion about timing: the socket is closed before this runs, and
+    // an enumerator that still reported it would be reading a cache.
+    expect((await listListeningPorts()).some((p) => p.port === port)).toBe(false);
+  }, 30_000);
+});
+
+describe('macOS speaks lsof', () => {
+  it('reads the field output lsof documents for programs', () => {
+    // `-F pn` gives a `p<pid>` line per process and an `n<address>` line per
+    // socket. The default table is aligned for humans and its columns move.
+    const out = ['p412', 'n127.0.0.1:3000', 'n[::1]:8080', 'p900', 'n*:5000', ''].join('\n');
+    expect(parseLsof(out)).toEqual([
+      { port: 3000, address: '127.0.0.1', loopbackOnly: true, family: 'ipv4' },
+      { port: 8080, address: '::1', loopbackOnly: true, family: 'ipv6' },
+      // `*` is lsof's way of writing what `/proc` writes as `0.0.0.0`, and it
+      // has to mean the same thing to `loopbackOnly` or the two platforms would
+      // disagree about who can reach a server.
+      { port: 5000, address: '0.0.0.0', loopbackOnly: false, family: 'ipv4' },
+    ]);
+  });
+
+  it('asks lsof to do the owner filtering', async () => {
+    // `/proc` needed a uid column for this and Windows has no cheap way at all;
+    // `lsof -u` is given the answer for free, so it is used.
+    const seen: string[][] = [];
+    await listListeningPorts({
+      platform: 'darwin',
+      uid: 501,
+      run: (_bin, args) => {
+        seen.push(args);
+        return Promise.resolve('p1\nn127.0.0.1:3000\n');
+      },
+    });
+    expect(seen[0]).toContain('-u');
+    expect(seen[0]).toContain('501');
+    expect(seen[0]).toContain('-sTCP:LISTEN');
+  });
+});
+
+describe('Windows speaks netstat', () => {
+  it('keeps listeners and drops connections', () => {
+    const out = [
+      '  Proto  Local Address          Foreign Address        State           PID',
+      '  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       2288',
+      '  TCP    127.0.0.1:3000         0.0.0.0:0              LISTENING       4242',
+      '  TCP    192.168.0.35:52310     93.184.216.34:443      ESTABLISHED     4242',
+      '  UDP    0.0.0.0:5353           *:*                                    900',
+    ].join('\n');
+    expect(parseNetstat(out, () => true).map((p) => p.port)).toEqual([135, 3000]);
+  });
+
+  it('shows only processes this user can reach', () => {
+    /**
+     * The Windows answer to the uid column, and the only affordable one. The
+     * obvious route — `tasklist /FI "USERNAME eq …"` — was **measured at 83
+     * seconds** against `netstat`'s 68 ms, so it is not a filter, it is a hang.
+     *
+     * `kill(pid, 0)` opens the process, so `EPERM` means "exists and is not
+     * ours". Three hundred probes took a millisecond.
+     */
+    const out = [
+      '  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       4',
+      '  TCP    127.0.0.1:3000         0.0.0.0:0              LISTENING       4242',
+    ].join('\n');
+    const ours = new Set([4242]);
+    expect(parseNetstat(out, (pid) => ours.has(pid)).map((p) => p.port)).toEqual([3000]);
+  });
+
+  it('reports another user’s process as not ours, and our own as ours', () => {
+    // Against the real OS rather than a fake, since the whole claim is about
+    // what `kill(pid, 0)` does here. Skipped off Windows, where `EPERM` for a
+    // foreign process is not the mechanism.
+    expect(ownedByUs(process.pid)).toBe(true);
+    if (process.platform === 'win32') {
+      // pid 4 is the Windows `System` process, which no ordinary user can open.
+      expect(ownedByUs(4)).toBe(false);
+    }
   });
 });

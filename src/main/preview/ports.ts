@@ -47,6 +47,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 
 export interface ListeningPort {
   port: number;
@@ -150,6 +151,95 @@ function isLoopback(address: string): boolean {
   return address === '::1' || address.startsWith('127.');
 }
 
+/**
+ * `lsof -F` field output, which is what macOS has instead of `/proc`.
+ *
+ * A process block is a `p<pid>` line followed by `n<address>` lines. The field
+ * form is used rather than the default table because the table is aligned for
+ * humans and its columns move; `-F` is the form `lsof` documents for programs.
+ */
+export function parseLsof(text: string): ListeningPort[] {
+  const found: ListeningPort[] = [];
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('n')) continue;
+    const address = line.slice(1).trim();
+    const at = address.lastIndexOf(':');
+    if (at < 0) continue;
+
+    const port = Number.parseInt(address.slice(at + 1), 10);
+    if (!Number.isFinite(port) || port <= 0) continue;
+
+    const rawHost = address.slice(0, at);
+    // `*` is every interface, which `lsof` prints where `/proc` gives `0.0.0.0`.
+    // Normalised so `loopbackOnly` means the same thing on both.
+    const host = rawHost === '*' ? '0.0.0.0' : rawHost.replace(/^\[|\]$/g, '');
+    found.push({
+      port,
+      address: host,
+      loopbackOnly: isLoopback(host),
+      family: host.includes(':') ? 'ipv6' : 'ipv4',
+    });
+  }
+  return found;
+}
+
+/**
+ * `netstat -ano`, which is what Windows has.
+ *
+ * Measured before being chosen: 68 ms, against 83 **seconds** for
+ * `tasklist /FI "USERNAME eq …"` — so the obvious way to answer "whose process
+ * is this" is not available at any acceptable cost. See `ownedByUs`.
+ */
+export function parseNetstat(text: string, mine: (pid: number) => boolean): ListeningPort[] {
+  const found: ListeningPort[] = [];
+  for (const line of text.split('\n')) {
+    const cols = line.trim().split(/\s+/);
+    if (cols[0] !== 'TCP' || cols[3] !== 'LISTENING') continue;
+
+    const local = cols[1];
+    const pid = Number(cols[4]);
+    if (local === undefined || !Number.isFinite(pid)) continue;
+
+    const at = local.lastIndexOf(':');
+    if (at < 0) continue;
+    const port = Number.parseInt(local.slice(at + 1), 10);
+    if (!Number.isFinite(port) || port <= 0) continue;
+    if (!mine(pid)) continue;
+
+    const host = local.slice(0, at).replace(/^\[|\]$/g, '');
+    found.push({
+      port,
+      address: host,
+      loopbackOnly: isLoopback(host),
+      family: host.includes(':') ? 'ipv6' : 'ipv4',
+    });
+  }
+  return found;
+}
+
+/**
+ * Whether a pid belongs to us, cheaply.
+ *
+ * `kill(pid, 0)` tests for existence without signalling, and on Windows it opens
+ * the process — so `EPERM` means "exists, and is not reachable by this user".
+ * Measured: three hundred probes in a millisecond, against `tasklist`'s eighty
+ * three seconds for one filtered listing.
+ *
+ * It errs toward showing **less**: a process of ours running elevated is also
+ * `EPERM`, so an admin dev server would be missing from the list. That is the
+ * right direction for a filter whose purpose is not showing other people's
+ * things — the failure is "my elevated server is not offered", not "somebody
+ * else's is".
+ */
+export function ownedByUs(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== 'EPERM';
+  }
+}
+
 export interface ListPortsOptions {
   /** Whose ports. Defaults to the user this process runs as. */
   uid?: number;
@@ -157,8 +247,24 @@ export interface ListPortsOptions {
   exclude?: number[];
   /** Overridable so a test can drive real captured files. */
   read?: (path: string) => Promise<string>;
+  /** Overridable so a test can drive captured command output. */
+  run?: (bin: string, args: string[]) => Promise<string>;
+  /** Overridable so a Windows test need not spawn processes to own. */
+  owned?: (pid: number) => boolean;
   platform?: NodeJS.Platform;
 }
+
+/** Run a listing command. A failure is "cannot tell", which the caller reports. */
+const defaultRun = (bin: string, args: string[]): Promise<string> =>
+  new Promise((resolve, reject) => {
+    execFile(bin, args, { windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+      // `lsof` exits non-zero when it finds nothing, which is not an error — so
+      // stdout wins whenever there is any.
+      if (stdout !== '') resolve(stdout);
+      else if (err !== null) reject(err);
+      else resolve('');
+    });
+  });
 
 /**
  * What is listening here, that belongs to us, that could be a preview.
@@ -169,22 +275,67 @@ export interface ListPortsOptions {
  */
 export async function listListeningPorts(opts: ListPortsOptions = {}): Promise<ListeningPort[]> {
   const platform = opts.platform ?? process.platform;
+  const excluded = new Set(opts.exclude ?? []);
+
+  /** Dedupe, filter and order — the part every platform shares. */
+  const finish = (all: ListeningPort[]): ListeningPort[] => {
+    const seen = new Set<number>();
+    const ports: ListeningPort[] = [];
+    for (const entry of all) {
+      if (excluded.has(entry.port) || NEVER_A_PREVIEW.has(entry.port)) continue;
+      // A server bound to both stacks appears twice. One port is one server to
+      // the person choosing from a list, so the first wins and v4 is listed
+      // first.
+      if (seen.has(entry.port)) continue;
+      seen.add(entry.port);
+      ports.push(entry);
+    }
+    return ports.sort((a, b) => a.port - b.port);
+  };
+
+  const run = opts.run ?? defaultRun;
+
+  if (platform === 'darwin') {
+    // `-u` does the owner filtering for us, which `/proc` needed a column for
+    // and Windows has no cheap way to do at all.
+    const uid = opts.uid ?? process.getuid?.() ?? -1;
+    try {
+      const out = await run('lsof', [
+        '-nP', // no name resolution, numeric ports: faster and unambiguous
+        '-iTCP',
+        '-sTCP:LISTEN',
+        '-u',
+        String(uid),
+        '-F',
+        'pn',
+      ]);
+      return finish(parseLsof(out));
+    } catch (err) {
+      throw new PortsUnavailable(
+        `could not list listening ports with lsof: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  if (platform === 'win32') {
+    const owned = opts.owned ?? ownedByUs;
+    try {
+      return finish(parseNetstat(await run('netstat', ['-ano']), owned));
+    } catch (err) {
+      throw new PortsUnavailable(
+        `could not list listening ports with netstat: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   if (platform !== 'linux') {
-    // Deliberately not a `netstat` fallback written blind. §6.8 exists for a
-    // machine you cannot see, and every target that reaches this — ssh, and the
-    // WSL/container/pod transports queued behind it — is Linux. A macOS or
-    // Windows parser nobody could run would be four kinds of guess about an
-    // output format.
-    throw new PortsUnavailable(
-      `detecting listening ports is implemented for Linux hosts; this one is ${platform}`,
-    );
+    throw new PortsUnavailable(`detecting listening ports is not implemented for ${platform}`);
   }
 
   const read = opts.read ?? ((path: string) => readFile(path, 'utf8'));
   // `process.getuid` is absent on Windows, which this branch has already ruled
   // out — but typing says otherwise, so the fallback keeps it honest.
   const uid = opts.uid ?? process.getuid?.() ?? -1;
-  const excluded = new Set(opts.exclude ?? []);
 
   const files = await Promise.all([
     read('/proc/net/tcp').catch(() => null),
@@ -197,21 +348,8 @@ export async function listListeningPorts(opts: ListPortsOptions = {}): Promise<L
     throw new PortsUnavailable('could not read /proc/net/tcp on this host');
   }
 
-  const all = [
+  return finish([
     ...(files[0] === null ? [] : parseProcNetTcp(files[0], uid, 'ipv4')),
     ...(files[1] === null ? [] : parseProcNetTcp(files[1], uid, 'ipv6')),
-  ];
-
-  const seen = new Set<number>();
-  const ports: ListeningPort[] = [];
-  for (const entry of all) {
-    if (excluded.has(entry.port) || NEVER_A_PREVIEW.has(entry.port)) continue;
-    // A server bound to both stacks appears twice. One port is one server to the
-    // person choosing from a list, so the first wins and v4 is listed first.
-    if (seen.has(entry.port)) continue;
-    seen.add(entry.port);
-    ports.push(entry);
-  }
-
-  return ports.sort((a, b) => a.port - b.port);
+  ]);
 }

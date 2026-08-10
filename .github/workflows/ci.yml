@@ -1,0 +1,64 @@
+# Runs the suite on all three operating systems Agbrte claims to run on.
+#
+# The reason this exists is narrow and specific. Agbrte was developed on Windows
+# and proven against a Linux host over ssh; **macOS had never executed a line of
+# it.** Every `darwin` branch — `say` for speech, the Screen Recording permission
+# gate, the Chrome path, the unix-socket paths — was written from documentation.
+# This session alone found five platform bugs by running things, three of them
+# cases where Windows and POSIX behave in opposite ways, so "written from
+# documentation" is not a state to leave a third of the product in.
+#
+# What this does **not** cover is stated so nobody reads more into a green tick
+# than is there: the Electron smoke checks need a real window, and the remote
+# tests need a machine to ssh into. Both stay manual.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A newer push supersedes an older run on the same branch. The old one is
+  # answering a question nobody is asking any more.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Never `fail-fast`. The whole point is finding where the platforms differ,
+      # and cancelling the other two the moment one fails hides exactly that.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches `REMOTE_NODE_VERSION`, so a bug that depends on the runtime
+          # shows up here rather than only on a remote host.
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # A record of which platform-specific paths actually ran, so a green tick
+      # can be read rather than trusted. Prints on failure too.
+      - name: What this platform can see
+        if: always()
+        run: node scripts/platform-report.mjs

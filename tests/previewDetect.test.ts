@@ -10,6 +10,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { createServer } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -150,13 +151,19 @@ describe('an older host costs one command, not the connection', () => {
 });
 
 describe('the host answers about its own machine', () => {
-  it('says “nothing” rather than failing where it cannot look', async () => {
+  it('answers about the machine it is actually on', async () => {
     /**
-     * This suite runs on Windows, where `/proc/net/tcp` does not exist — so this
-     * exercises the branch a macOS host would take too. Empty is the right
-     * answer for a picker: asking what is available is a question a UI asks on
-     * open, and an error banner is not an answer to it. The client learns the
-     * *other* kind of "cannot tell" from `supports`, above.
+     * This asserted `[]` on anything but Linux, and failed the moment Windows
+     * and macOS got enumerators — which is the assertion working. The claim now
+     * is the one that matters for "each OS controls itself": a host reports the
+     * ports of the machine it runs on, whichever machine that is, and CI runs
+     * this on all three.
+     *
+     * `[]` remains the answer where it genuinely cannot look — a platform with
+     * no enumerator, or a tool that is missing. Empty is right for a picker:
+     * asking what is available is a question a UI asks on open, and an error
+     * banner is not an answer to it. The *other* kind of "cannot tell" — a host
+     * too old to have the command — comes from `supports`, above.
      */
     const root = await mkdtemp(join(tmpdir(), 'agbrte-detect-'));
     roots.push(root);
@@ -185,9 +192,20 @@ describe('the host answers about its own machine', () => {
     await client.ready;
     expect(client.supports('preview.ports')).toBe(true);
 
-    const ports = await client.previewPorts();
-    expect(Array.isArray(ports)).toBe(true);
-    if (process.platform !== 'linux') expect(ports).toEqual([]);
+    // A real listener, so "it answered" is not the same as "it answered empty".
+    const listener = createServer(() => undefined);
+    await new Promise<void>((r) => listener.listen(0, '127.0.0.1', r));
+    const address = listener.address();
+    const port = typeof address === 'object' && address !== null ? address.port : 0;
+
+    try {
+      const ports = await client.previewPorts();
+      expect(ports.some((p) => p.port === port), `${process.platform} could not see its own listener`).toBe(
+        true,
+      );
+    } finally {
+      listener.close();
+    }
 
     client.disconnect();
     server.stop('done');
