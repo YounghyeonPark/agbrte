@@ -1981,7 +1981,7 @@ Each endpoint records provider, region, and retention posture (`dataHandling`, �
 | State | Zustand + windowed log projection | avoids holding whole transcripts in renderer memory |
 | Styling | Tailwind + Radix primitives | accessible dialogs/menus without hand-rolled focus management |
 | Durable log | JSONL + periodic JSON checkpoints | crash-safe appends, replayable, greppable, **byte-offset mirrorable** |
-| Index/search | better-sqlite3 + FTS5 | synchronous and fast in a utility process; no server |
+| Index/search | **`node:sqlite`**, when an index is needed at all | Corrected: `better-sqlite3` is a *native module*, and this project ships plain JS to a Node the installer downloads — the same constraint that refuses to vendor a CLI (§3.12), a browser (§12.1) and a speech model (§12.4). `node:sqlite` is in the pinned Node 22, needs no build step, and costs nothing on a host that never searches. **Nothing is indexed yet**: cross-machine search scans the logs, which answers the question in milliseconds for the session counts that exist (§15 Phase 8). The index is what buys the thousandth session |
 | File watching | chokidar (local), host-side inotify (remote) | move detection, external edits |
 | Harness adapters | the user's installed CLI (§3.12); no vendor SDK bundled or depended on (§3.14) | their auth, their licence, their upgrade cadence — and nothing proprietary in what we distribute |
 | CLI harness | subprocess + per-CLI manifest (§3.12) | supports the user's installed tooling under their own auth |
@@ -2091,6 +2091,10 @@ Tests select on `data-testid`, never a styling class. That rule was earned: conv
 *Started.* **Usage and cost reporting** are built (§10's three fidelities, with `'unknown'` said out loud), and **per-agent ceilings are enforced** rather than merely recorded.
 
 **Session export** is a Markdown document rather than a JSON bundle — a bundle would be the log again, renamed, and the log is already greppable. The design decision worth recording is what the document *says*: an export is the moment a transcript leaves the `0700` directory §13 protects it in, so it names what it contains every time, including full tool arguments and the paths an agent touched. That is disclosure, not redaction — silently stripping things would make the export a misleading record, which is worse for both of the jobs it exists to do. Attachments are referenced by hash and never embedded, and the header says how many were left out and where they are, so a reader knows the file is a view of a session rather than the whole of one.
+
+**Cross-machine search** runs where the logs are — §6 already requires that of a remote search ("one `find`-equivalent on the host rather than N round trips"), and shipping logs to the app to grep them would move megabytes over ssh to answer a question about kilobytes. The fleet asks every host in parallel, because the slow one is a remote and asking in turn would cost the sum rather than the max.
+
+Two decisions carry it. A hit is something a **person wrote or ran** — matching the raw JSONL would hit ids, hashes and field names, so searching `image` would return every event carrying an `imageMaxCount` capability, and the result list would be noise. And a host that cannot be reached does not fail the search: it is **named** in the response, because "no results" and "we could not look" are different answers and only one of them means stop looking.
 
 Generating one and reading it found the defect no assertion had: turns were headed with the agent's UUID. They carry the role now, disambiguated by a short id only when a session has two agents sharing one.
 

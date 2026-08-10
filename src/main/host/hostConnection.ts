@@ -40,6 +40,7 @@ import type {
 } from '@shared/types/index.js';
 import { sha256Of } from '@main/store/blobs.js';
 import { CHUNK_BYTES } from '@main/store/blobTransfer.js';
+import type { SearchHit } from '@main/store/searchSessions.js';
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -362,6 +363,14 @@ export class HostConnection extends EventEmitter {
       t: 'session.interrupt',
       sessionId,
       ...(agentId !== undefined ? { agentId } : {}),
+    });
+  }
+
+  search(query: string, limit?: number): Promise<SearchHit[]> {
+    return this.call({
+      t: 'session.search',
+      query,
+      ...(limit !== undefined ? { limit } : {}),
     });
   }
 

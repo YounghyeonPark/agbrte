@@ -98,6 +98,7 @@ const api: AgbrteApi = {
       ipcRenderer.invoke(CH.sessionsInterrupt, sessionId, agentId),
     exportMarkdown: (sessionId: string, opts?: { toolArgs?: 'full' | 'summary' }) =>
       ipcRenderer.invoke(CH.sessionsExport, sessionId, opts),
+    search: (query: string, limit?: number) => ipcRenderer.invoke(CH.sessionsSearch, query, limit),
     since: (sessionId: string, fromSeq: number) =>
       ipcRenderer.invoke(CH.sessionsSince, sessionId, fromSeq),
   },

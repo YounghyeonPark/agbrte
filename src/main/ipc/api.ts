@@ -630,6 +630,8 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     },
   );
 
+  handle(CH.sessionsSearch, (query: string, limit?: number) => fleet.search(query, limit));
+
   handle(CH.permissionsPending, async () =>
     (await fleet.pendingPermissions()).map((p) => p.request),
   );

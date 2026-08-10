@@ -37,6 +37,7 @@ import {
   type Sha256,
 } from '@shared/types/index.js';
 import { BlobIntake } from '@main/store/blobTransfer.js';
+import { searchWorkspace } from '@main/store/searchSessions.js';
 import {
   MIN_CLIENT_PROTOCOL,
   SESSION_PROTOCOL_VERSION,
@@ -255,6 +256,13 @@ export class SessionHostServer {
       switch (command.t) {
         case 'session.list':
           return manager.list();
+
+        case 'session.search':
+          // A read, so no `requireWrite`: it answers from logs a client with
+          // any role can already read one at a time.
+          return searchWorkspace(this.opts.identity.workspaceRoot, command.query, {
+            ...(command.limit !== undefined ? { limit: command.limit } : {}),
+          });
 
         case 'session.listOnDisk':
           return manager.listOnDisk();

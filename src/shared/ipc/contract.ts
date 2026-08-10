@@ -203,6 +203,24 @@ export interface StoredClipDto {
   model?: string;
 }
 
+/** One hit, with the machine it came from. */
+export interface SearchHitDto {
+  sessionId: string;
+  instanceId: string;
+  host: string;
+  title: string;
+  seq: number;
+  at: string;
+  kind: string;
+  snippet: string;
+}
+
+export interface SearchResults {
+  hits: SearchHitDto[];
+  /** Hosts that could not be asked, by label. Not the same as no results. */
+  unreachable: string[];
+}
+
 export interface VoiceStatusDto {
   available: boolean;
   /** Names what to install. Absent when it works. */
@@ -422,6 +440,14 @@ export interface AgbrteApi {
      * the moment a transcript leaves the `0700` directory §13 protects it in.
      */
     exportMarkdown(sessionId: string, opts?: { toolArgs?: 'full' | 'summary' }): Promise<string>;
+    /**
+     * Search every attached host at once (§15 Phase 8).
+     *
+     * `unreachable` names the machines that could not be asked, because "no
+     * results" and "we could not look" are different answers and only one of
+     * them means you should stop looking.
+     */
+    search(query: string, limit?: number): Promise<SearchResults>;
   };
   permissions: {
     pending(): Promise<PermissionRequest[]>;
@@ -498,6 +524,7 @@ export const CH = {
   sessionsInterrupt: 'agbrte:sessions.interrupt',
   sessionsSince: 'agbrte:sessions.since',
   sessionsExport: 'agbrte:sessions.export',
+  sessionsSearch: 'agbrte:sessions.search',
   permissionsPending: 'agbrte:permissions.pending',
   permissionsRespond: 'agbrte:permissions.respond',
   ack: 'agbrte:ack',

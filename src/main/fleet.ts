@@ -28,6 +28,7 @@ import { EventEmitter } from 'node:events';
 
 import { byAttentionThenRecency } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
+import type { SearchHit } from './store/searchSessions.js';
 import type { ModelNeed } from './runtime/registry.js';
 import type {
   AccessRole,
@@ -48,6 +49,18 @@ import type {
   SessionProjection,
   Sha256,
 } from '@shared/types/index.js';
+
+/** A hit, with the machine it came from attached. */
+export interface FleetSearchHit extends SearchHit {
+  instanceId: InstanceId;
+  host: string;
+}
+
+export interface FleetSearch {
+  hits: FleetSearchHit[];
+  /** Hosts that could not be asked, by label. Not the same as no results. */
+  unreachable: string[];
+}
 
 /** A runtime a host offers, as advertised to the UI. */
 export interface FleetRuntime {
@@ -483,6 +496,42 @@ export class Fleet extends EventEmitter {
    * interleaving themselves. A host that cannot be reached contributes nothing
    * rather than failing the whole list — its events are still on its disk.
    */
+  /**
+   * Search every attached host at once (§15 Phase 8).
+   *
+   * In parallel, because the slow one is a remote over ssh and doing them in
+   * turn would make the search take as long as the sum rather than the max.
+   *
+   * A host that fails does not fail the search. An unreachable machine is an
+   * ordinary state of a fleet — §6 already says an unreachable workspace stays
+   * "visible and searchable but not resumable" — and a search box that returns
+   * an error because one of four hosts is asleep is a search box nobody trusts.
+   * The caller is told which hosts answered, so "no results" and "we could not
+   * ask" stay distinguishable.
+   */
+  async search(query: string, limit = 50): Promise<FleetSearch> {
+    const entries = [...this.entries.values()];
+    const asked = await Promise.all(
+      entries.map(async (entry) => {
+        try {
+          const hits = await entry.connection.search(query, limit);
+          return { entry, hits, ok: true as const };
+        } catch {
+          return { entry, hits: [] as SearchHit[], ok: false as const };
+        }
+      }),
+    );
+
+    return {
+      hits: asked.flatMap(({ entry, hits }) =>
+        hits.map((hit) => ({ ...hit, instanceId: entry.instanceId, host: labelOf(entry) })),
+      ),
+      // Named rather than counted: "3 of 4 hosts answered" needs to say *which*
+      // one did not, or the user cannot tell whether to go and wake it.
+      unreachable: asked.filter((a) => !a.ok).map(({ entry }) => labelOf(entry)),
+    };
+  }
+
   async inbox(limit = 50): Promise<InboxEntry[]> {
     const parts = await Promise.all(
       [...this.entries.values()].map(async (entry) => {
@@ -683,6 +732,24 @@ export class Fleet extends EventEmitter {
     if (!entry) throw new Error(`no attached host ${instanceId}`);
     return entry;
   }
+}
+
+/**
+ * A short name for a machine, for saying which one a hit came from.
+ *
+ * The alias over the hostname, because the alias is what the user chose and
+ * what they would type; the folder for a local workspace, because "local"
+ * repeated across four rows says nothing.
+ */
+function labelOf(entry: Entry): string {
+  const target = entry.target as { alias?: string; host?: string; distro?: string };
+  return (
+    target.alias ??
+    target.host ??
+    target.distro ??
+    entry.workspaceRoot.split(/[\/]/).filter(Boolean).pop() ??
+    entry.workspaceRoot
+  );
 }
 
 function snapshot(entry: Entry): AttachedHost {

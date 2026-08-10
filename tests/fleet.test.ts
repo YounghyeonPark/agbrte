@@ -511,3 +511,54 @@ describe('a host that found its workspace somewhere else', () => {
     expect(host.movedFrom).toBe(root);
   });
 });
+
+describe('searching every machine at once (§15 Phase 8)', () => {
+  it('merges hits and says which host each came from', async () => {
+    // The whole point of "cross-machine": a result list is useless if you cannot
+    // tell which machine to go and look at.
+    const fleet = makeFleet();
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
+
+    for (const host of [a, b]) {
+      const s = await fleet.createSession(host.instanceId, { title: 'T', goal: 'g' });
+      const agent = await fleet.addAgent(s.sessionId, { role: 'worker', runtimeId: 'echo' });
+      await fleet.send(s.sessionId, agent.agentId as never, 'a distinctive phrase');
+    }
+
+    const found = await fleet.search('distinctive phrase');
+    expect(found.hits.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(found.hits.map((h) => h.instanceId))).toEqual(
+      new Set([a.instanceId, b.instanceId]),
+    );
+    expect(found.hits.every((h) => h.host.length > 0)).toBe(true);
+    expect(found.unreachable).toEqual([]);
+  });
+
+  it('is not failed by one host being asleep', async () => {
+    /**
+     * An unreachable machine is an ordinary state of a fleet — §6 already says
+     * an unreachable workspace stays "visible and searchable but not
+     * resumable". A search box that errors because one of four hosts is asleep
+     * is a search box nobody trusts.
+     */
+    const fleet = makeFleet();
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
+
+    const s = await fleet.createSession(a.instanceId, { title: 'T', goal: 'g' });
+    const agent = await fleet.addAgent(s.sessionId, { role: 'worker', runtimeId: 'echo' });
+    await fleet.send(s.sessionId, agent.agentId as never, 'findable text');
+
+    // The second host stops answering, the way a dropped link does.
+    const entry = (fleet as unknown as { entries: Map<string, { connection: { search: unknown } }> })
+      .entries;
+    entry.get(b.instanceId)!.connection.search = () => Promise.reject(new Error('link is down'));
+
+    const found = await fleet.search('findable text');
+    expect(found.hits).toHaveLength(1);
+    // Named rather than counted: "3 of 4 answered" cannot tell you which
+    // machine to go and wake.
+    expect(found.unreachable).toHaveLength(1);
+  });
+});

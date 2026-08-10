@@ -165,6 +165,15 @@ export type SessionCommand =
   | { t: 'hello'; id: RequestId; role: AccessRole; client: string; protocol?: number }
   | { t: 'session.list'; id: RequestId }
   | { t: 'session.listOnDisk'; id: RequestId }
+  /**
+   * Search this host's logs (§15 Phase 8).
+   *
+   * Runs where the logs are, which §6 already requires of remote search: "one
+   * `find`-equivalent on the host rather than N round trips". Shipping the logs
+   * to the app to grep them would move megabytes over ssh to answer a question
+   * about kilobytes.
+   */
+  | { t: 'session.search'; id: RequestId; query: string; limit?: number }
   | { t: 'session.get'; id: RequestId; sessionId: string }
   | { t: 'session.create'; id: RequestId; title: string; goal: string }
   | { t: 'session.resume'; id: RequestId; sessionId: string }
