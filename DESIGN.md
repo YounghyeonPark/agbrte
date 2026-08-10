@@ -2088,6 +2088,12 @@ Tests select on `data-testid`, never a styling class. That rule was earned: conv
 
 **Phase 8 — Breadth + polish.** Remaining providers, `hosted-agent-http` with the inverted-persistence path (§6.9), WSL/container/k8s transports, cross-provider fallback chains, cross-machine search, usage/cost reporting, session export, auto-update.
 
+*Started.* **Usage and cost reporting** are built (§10's three fidelities, with `'unknown'` said out loud), and **per-agent ceilings are enforced** rather than merely recorded.
+
+**Session export** is a Markdown document rather than a JSON bundle — a bundle would be the log again, renamed, and the log is already greppable. The design decision worth recording is what the document *says*: an export is the moment a transcript leaves the `0700` directory §13 protects it in, so it names what it contains every time, including full tool arguments and the paths an agent touched. That is disclosure, not redaction — silently stripping things would make the export a misleading record, which is worse for both of the jobs it exists to do. Attachments are referenced by hash and never embedded, and the header says how many were left out and where they are, so a reader knows the file is a view of a session rather than the whole of one.
+
+Generating one and reading it found the defect no assertion had: turns were headed with the agent's UUID. They carry the role now, disambiguated by a short id only when a session has two agents sharing one.
+
 ---
 
 ## 16. Risks

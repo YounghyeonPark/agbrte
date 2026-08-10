@@ -64,6 +64,7 @@ import type { Rect } from '../content/redact.js';
 import { findEngine, transcribe, wavDurationMs, type SpeechEngine } from '../voice/stt.js';
 import type { ClipStore } from '../voice/clips.js';
 import { buildMatrix } from '@main/conformance.js';
+import { exportSessionMarkdown } from '@main/store/exportSession.js';
 import type { ConformanceReport, MatrixCell } from '@shared/types/index.js';
 import { readSshHosts } from '../host/sshConfig.js';
 import type { AttachedHost, Fleet, FleetRuntime } from '../fleet.js';
@@ -614,6 +615,19 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
 
   handle(CH.sessionsSince, (sessionId: string, fromSeq: number) =>
     fleet.events(sessionId as SessionId, fromSeq),
+  );
+
+  handle(
+    CH.sessionsExport,
+    async (sessionId: string, opts?: { toolArgs?: 'full' | 'summary' }) => {
+      const id = sessionId as SessionId;
+      // Both from the owning host, in parallel: it holds the log and the record,
+      // and serializing them shows as lag on a long session.
+      const [session, events] = await Promise.all([fleet.get(id), fleet.events(id)]);
+      return exportSessionMarkdown(session, events, {
+        ...(opts?.toolArgs !== undefined ? { toolArgs: opts.toolArgs } : {}),
+      });
+    },
   );
 
   handle(CH.permissionsPending, async () =>

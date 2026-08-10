@@ -156,6 +156,7 @@ const api: AgbrteApi = {
     send: call(CH.sessionsSend),
     interrupt: call(CH.sessionsInterrupt),
     since: call(CH.sessionsSince),
+    exportMarkdown: call(CH.sessionsExport),
   },
   permissions: {
     pending: call(CH.permissionsPending),

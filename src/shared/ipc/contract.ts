@@ -413,6 +413,15 @@ export interface AgbrteApi {
     interrupt(sessionId: string, agentId?: string): Promise<void>;
     /** Events since `fromSeq`, for filling a gap the renderer detected. */
     since(sessionId: string, fromSeq: number): Promise<AgbrteEvent[]>;
+    /**
+     * The session as a Markdown document (§15 Phase 8).
+     *
+     * Returns the text rather than writing a file: where it goes is the
+     * client's business, and the desktop app has a save dialog while a browser
+     * has a download. The document names what it contains, because an export is
+     * the moment a transcript leaves the `0700` directory §13 protects it in.
+     */
+    exportMarkdown(sessionId: string, opts?: { toolArgs?: 'full' | 'summary' }): Promise<string>;
   };
   permissions: {
     pending(): Promise<PermissionRequest[]>;
@@ -488,6 +497,7 @@ export const CH = {
   voiceForget: 'agbrte:voice.forget',
   sessionsInterrupt: 'agbrte:sessions.interrupt',
   sessionsSince: 'agbrte:sessions.since',
+  sessionsExport: 'agbrte:sessions.export',
   permissionsPending: 'agbrte:permissions.pending',
   permissionsRespond: 'agbrte:permissions.respond',
   ack: 'agbrte:ack',

@@ -554,9 +554,37 @@ function SessionHeader({
             Interrupt
           </button>
         )}
+        <button
+          className="btn-quiet text-xs"
+          data-testid="export-session"
+          title="Save this session as a Markdown transcript"
+          onClick={() => void saveTranscript(session)}
+        >
+          Export
+        </button>
       </div>
     </div>
   );
+}
+
+/**
+ * Save the transcript as a file the user can open anywhere (§15 Phase 8).
+ *
+ * A download rather than a native save dialog, because the same code serves the
+ * browser client and `showSaveFilePicker` does not exist everywhere. The
+ * document itself explains what it contains — that disclosure belongs in the
+ * file, not in a toast the user closes before reading.
+ */
+async function saveTranscript(session: Session): Promise<void> {
+  const markdown = await window.agbrte.sessions.exportMarkdown(session.sessionId);
+  const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown' }));
+  const link = document.createElement('a');
+  link.href = url;
+  // The title, so a folder of these is readable; the id, so two sessions with
+  // the same title are two files.
+  link.download = `${session.title.replace(/[^\w.-]+/g, '-')}-${session.sessionId.slice(0, 8)}.md`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function AgentPicker({
