@@ -182,6 +182,19 @@ export class SessionHostServer {
             `this host serves session protocol v${MIN_CLIENT_PROTOCOL} and above; ` +
             `that client speaks v${speaks} — upgrade it`,
         });
+        /**
+         * Refused means disconnected, not "told no and left listening".
+         *
+         * Without this the client kept a channel whose role is the default
+         * `read-only` and whose dispatch still served `session.list` and
+         * `session.events` — so a client this host had just declined to serve
+         * could read every transcript on it. §6.4 says a mismatch is "refused at
+         * handshake"; a message is not a refusal.
+         *
+         * Found auditing §13 against today's code rather than by anything
+         * failing, which is how the last two holes in this section turned up.
+         */
+        client.channel.close();
         return;
       }
 
@@ -335,6 +348,21 @@ export class SessionHostServer {
           );
 
         case 'blob.has':
+          /**
+           * A write, despite the name — and that is why it is gated.
+           *
+           * `hasBlob` does not only answer; on a miss it *copies* the blob from
+           * a sibling session on this host into the target session's
+           * attachments, which is §6.7's "transfers once". A read-only client
+           * could therefore cause the host to write files. It leaks nothing —
+           * a client that can reach this can already read those sessions — but
+           * "read-only" has to mean it, and disk consumed on someone else's
+           * machine is not a read.
+           *
+           * Gated identically to `blob.put`, which is also the only caller: a
+           * client asks this to decide whether to send bytes.
+           */
+          this.requireWrite(client, 'transfer a blob');
           return manager.hasBlob(
             command.sessionId as SessionId,
             command.sha256 as Sha256,

@@ -40,9 +40,26 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { CH } from '@shared/ipc/contract.js';
 import { createApi, type IpcDeps } from '@main/ipc/api.js';
 
+/**
+ * What a browser client must never be handed.
+ *
+ * All of these are *this machine's* hardware or storage, and the web server is
+ * reached over a network by whoever can address it (§13: "Anyone who can reach
+ * this can drive this session. There is no login."). Passing `screen` here
+ * would let a browser on the tailnet capture the **server's** desktop; `clips`
+ * would record somebody's dictation onto the server's disk; `selectRegion`
+ * would open an overlay on a display nobody is sitting at.
+ *
+ * Excluded by type rather than by remembering. The list was previously "the two
+ * Electron-only capabilities" and there are now five — which is the sort of
+ * comment that goes stale silently, and the sort of mistake that is one line to
+ * make and catastrophic to ship.
+ */
+type ClientOnly = 'broadcast' | 'pickFolder' | 'screen' | 'selectRegion' | 'clips';
+
 export interface WebServerOptions {
-  /** Everything `createApi` needs, minus the two Electron-only capabilities. */
-  api: Omit<IpcDeps, 'broadcast' | 'pickFolder'>;
+  /** Everything `createApi` needs, minus what belongs to the machine it runs on. */
+  api: Omit<IpcDeps, ClientOnly>;
   /** Directory holding the built renderer. */
   rendererDir: string;
   port: number;
@@ -94,8 +111,15 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
     // Every push this connection's API produces goes to this socket and no
     // other. Electron broadcasts to all windows because they are one client;
     // two browsers are two clients.
+    // Stripped rather than trusted. The type above already makes these
+    // unrepresentable, so this is for the caller who reached for a cast: a
+    // browser must not end up holding this machine's screen or microphone
+    // because somebody silenced a compiler error.
+    const { screen: _screen, selectRegion: _region, clips: _clips, ...safe } =
+      opts.api as IpcDeps;
+
     const api = createApi({
-      ...opts.api,
+      ...safe,
       broadcast: (channel, payload) => post({ push: channel, payload }),
     });
 
