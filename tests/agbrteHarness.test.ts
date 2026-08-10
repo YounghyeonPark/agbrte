@@ -454,3 +454,100 @@ describe('a tool that returns an image (§12.1, §3.6)', () => {
     expect(carried).toBe(true);
   });
 });
+
+describe('ceilings the user set are ceilings (§3.9, §16)', () => {
+  /**
+   * `AgentSpec.limits` was stored, logged, projected and rehydrated, and read
+   * by nothing. `maxTurns` in particular was accepted by `addAgent`, written to
+   * the transcript, and then ignored in favour of the adapter's own default.
+   *
+   * A limit that is recorded and not enforced is worse than no limit: it is a
+   * promise in the log. §16's "cost sprawl" row named per-agent ceilings as the
+   * mitigation, and that half of it did not exist.
+   */
+  const toolCall = { id: 't', name: 'read', args: { file_path: 'a.ts' } };
+
+  it('stops at the turn ceiling the user asked for', async () => {
+    // Ten scripted replies, a ceiling of two.
+    //
+    // The count is the assertion. Checking only the stop reason would pass
+    // whether or not the ceiling was read: without it the loop runs to the
+    // adapter's own default and emits the *same* `limit_reached: turns`. The
+    // first version of this test did exactly that.
+    const provider = new StubProvider(
+      Array.from({ length: 10 }, () => ({ toolCalls: [toolCall] })),
+    );
+    const events = await run(provider, context(), { limits: { maxTurns: 2 } });
+
+    expect(provider.requests).toHaveLength(2);
+    const stopped = events.find((e) => e.type === 'stopped') as { stop: { kind: string; limit?: string } };
+    expect(stopped.stop).toMatchObject({ kind: 'limit_reached', limit: 'turns' });
+  });
+
+  it('stops at the tool-call ceiling', async () => {
+    const events = await run(
+      new StubProvider(Array.from({ length: 10 }, () => ({ toolCalls: [toolCall] }))),
+      context(),
+      { limits: { maxToolCalls: 3 } },
+    );
+
+    const stopped = events.find((e) => e.type === 'stopped') as { stop: { limit?: string } };
+    expect(stopped.stop.limit).toBe('tool_calls');
+    expect(events.filter((e) => e.type === 'tool_use')).toHaveLength(3);
+  });
+
+  it('stops at the token ceiling', async () => {
+    const events = await run(
+      new StubProvider(
+        Array.from({ length: 10 }, () => ({
+          toolCalls: [toolCall],
+          usage: { inputTokens: 400, outputTokens: 100 },
+        })),
+      ),
+      context(),
+      { limits: { tokenCeiling: 1_000 } },
+    );
+
+    const stopped = events.find((e) => e.type === 'stopped') as { stop: { limit?: string } };
+    expect(stopped.stop.limit).toBe('tokens');
+  });
+
+  it('reports a ceiling as reached, never as a spent quota', async () => {
+    /**
+     * §3.9's distinction, and it is load-bearing: `quota_exhausted` parks the
+     * session in `awaiting_quota` whose contract is "resume at `resetsAt`".
+     * Nothing here resets — the user chose the number — so it pauses for a
+     * person instead.
+     */
+    const provider = new StubProvider(
+      Array.from({ length: 5 }, () => ({ toolCalls: [toolCall] })),
+    );
+    const events = await run(provider, context(), { limits: { maxTurns: 1 } });
+
+    expect(provider.requests).toHaveLength(1);
+    const stopped = events.find((e) => e.type === 'stopped') as { stop: { kind: string } };
+    expect(stopped.stop.kind).toBe('limit_reached');
+    expect(stopped.stop.kind).not.toBe('quota_exhausted');
+  });
+
+  it('does not enforce a cost ceiling it cannot measure', async () => {
+    /**
+     * `'unknown'` means a cost exists and is not observable (§10). Comparing it
+     * to a number would either stop a session that is well under budget or let
+     * one run that is well over — both worse than letting the turn and token
+     * ceilings do the bounding, which is exactly why §10 pairs its third
+     * fidelity with those caps.
+     */
+    const provider = new StubProvider(
+      Array.from({ length: 3 }, () => ({ toolCalls: [toolCall] })),
+      { costReporting: 'none' },
+    );
+    const events = await run(provider, context(), {
+      limits: { costCeiling: 0.000001, maxTurns: 3 },
+    });
+
+    // Ran to the turn ceiling rather than tripping on an unmeasurable cost.
+    const stopped = events.find((e) => e.type === 'stopped') as { stop: { limit?: string } };
+    expect(stopped.stop.limit).toBe('turns');
+  });
+});

@@ -141,7 +141,17 @@ export type StopReason =
    * `resetsAt`", for a limit the user set themselves. The work is incomplete but
    * nothing is broken, so it pauses for a human decision.
    */
-  | { kind: 'limit_reached'; limit: 'turns' | 'cost' | 'wallclock'; detail?: string }
+  | {
+      kind: 'limit_reached';
+      /**
+       * Which ceiling. One value per limit `AgentSpec.limits` can express —
+       * this was `'turns' | 'cost' | 'wallclock'` while the spec carried four
+       * limits, so two of them had no way to report themselves and would have
+       * had to lie about which one fired.
+       */
+      limit: 'turns' | 'tool_calls' | 'tokens' | 'cost' | 'wallclock';
+      detail?: string;
+    }
   /**
    * A permanent configuration fault — an unknown model id, a malformed request.
    * Retrying cannot help, which is why it is not folded into `invalid_tool_args`.
@@ -190,10 +200,19 @@ export interface AgentSpec {
   reasoning?: ReasoningRequest;
   systemPrompt?: string;
   toolPolicy: ToolPolicy;
+  /**
+   * Ceilings this agent stops at, rather than fails at (§3.9).
+   *
+   * Every one produces `limit_reached`, which is deliberately not
+   * `quota_exhausted`: nothing here resets, so the session pauses for a person
+   * instead of parking for a window that will never come.
+   */
   limits: {
     maxTurns?: number;
     maxToolCalls?: number;
     tokenCeiling?: number;
+    /** Only meaningful where cost is observable at all — §10's third row. */
+    costCeiling?: number;
     wallClockMs?: number;
   };
   /**

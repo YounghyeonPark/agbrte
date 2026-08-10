@@ -18,7 +18,7 @@
  * depended on it (§5.4).
  */
 
-import { costOf } from '@shared/cost.js';
+import { addCost, costOf, formatCost, type Cost } from '@shared/cost.js';
 import {
   type AgentHandle,
   type AgentRuntime,
@@ -151,7 +151,23 @@ class AgbrteHarnessHandle implements AgentHandle {
   }
 
   private async loop(): Promise<void> {
-    const maxIterations = this.opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+    /**
+     * The user's ceiling wins over the adapter's own.
+     *
+     * `spec.limits` was stored, logged, projected and rehydrated, and read by
+     * nothing — `maxTurns` in particular was accepted by `addAgent`, written to
+     * the transcript, and then ignored in favour of this adapter's default. A
+     * limit that is recorded and not enforced is worse than no limit: it is a
+     * promise in the log.
+     */
+    const maxIterations = Math.min(
+      this.spec.limits.maxTurns ?? Number.POSITIVE_INFINITY,
+      this.opts.maxIterations ?? DEFAULT_MAX_ITERATIONS,
+    );
+    const startedAt = Date.now();
+    let toolCalls = 0;
+    let tokens = 0;
+    let spent: Cost = 0;
     const declared = this.declaredTools();
     const recent: string[] = [];
 
@@ -159,6 +175,14 @@ class AgbrteHarnessHandle implements AgentHandle {
       if (this.ctx.abortSignal.aborted) {
         this.emit({ type: 'stopped', stop: { kind: 'end_turn' } });
         return this.close();
+      }
+
+      // Checked before the request rather than after it: a wall clock exists to
+      // bound spending, and noticing you are over it *having just paid for
+      // another turn* is noticing too late.
+      const elapsed = Date.now() - startedAt;
+      if (this.spec.limits.wallClockMs !== undefined && elapsed >= this.spec.limits.wallClockMs) {
+        return this.stopAtLimit('wallclock', `${Math.round(elapsed / 1000)}s elapsed`);
       }
 
       const result = await this.opts.provider.invoke(
@@ -196,6 +220,29 @@ class AgbrteHarnessHandle implements AgentHandle {
         cost: costOf(result.usage, this.caps),
       });
 
+      tokens += result.usage.inputTokens + result.usage.outputTokens;
+      spent = addCost(spent, costOf(result.usage, this.caps));
+
+      if (this.spec.limits.tokenCeiling !== undefined && tokens >= this.spec.limits.tokenCeiling) {
+        return this.stopAtLimit('tokens', `${tokens} tokens`);
+      }
+      /**
+       * An unobservable cost cannot breach a ceiling.
+       *
+       * `'unknown'` means a cost exists and we cannot see it (§10), so comparing
+       * it to a number would either stop a session that may be well under
+       * budget or let one run that is well over. The honest behaviour is to
+       * enforce nothing and let the turn and token ceilings do the bounding —
+       * which is exactly why §10 pairs the third fidelity with those caps.
+       */
+      if (
+        this.spec.limits.costCeiling !== undefined &&
+        spent !== 'unknown' &&
+        spent >= this.spec.limits.costCeiling
+      ) {
+        return this.stopAtLimit('cost', formatCost(spent));
+      }
+
       const text = textOf(result.content);
       if (text.length > 0) this.emit({ type: 'text', text });
 
@@ -218,17 +265,32 @@ class AgbrteHarnessHandle implements AgentHandle {
       }
 
       for (const call of result.toolCalls) {
+        if (
+          this.spec.limits.maxToolCalls !== undefined &&
+          toolCalls >= this.spec.limits.maxToolCalls
+        ) {
+          return this.stopAtLimit('tool_calls', `${toolCalls} tool calls`);
+        }
+        toolCalls += 1;
         await this.runTool(call);
       }
     }
 
-    // A configured ceiling, not a provider fault (§3.9). Reporting this as a
-    // spent quota parked the session in `awaiting_quota` waiting on a window
-    // that would never reset.
-    this.emit({
-      type: 'stopped',
-      stop: { kind: 'limit_reached', limit: 'turns', detail: `${maxIterations} iterations` },
-    });
+    this.stopAtLimit('turns', `${maxIterations} iterations`);
+  }
+
+  /**
+   * A configured ceiling, not a provider fault (§3.9).
+   *
+   * Reporting these as a spent quota parked the session in `awaiting_quota`
+   * whose contract is "resume at `resetsAt`". Nothing here resets — the user
+   * chose the number — so the work pauses for a person instead.
+   */
+  private stopAtLimit(
+    limit: 'turns' | 'tool_calls' | 'tokens' | 'cost' | 'wallclock',
+    detail: string,
+  ): void {
+    this.emit({ type: 'stopped', stop: { kind: 'limit_reached', limit, detail } });
     this.close();
   }
 
