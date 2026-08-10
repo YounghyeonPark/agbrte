@@ -11,13 +11,18 @@
  * sitting in `awaiting_children` looks patient, and the question underneath it
  * goes unanswered forever unless it is carried to where someone is looking.
  *
- * ## Every test here carries an explicit 30s budget
+ * ## Every wait here carries an explicit budget, at both levels
  *
- * Not vitest's default 5. Each one spawns real child sessions and runs real
- * turns through a real permission gate, which fits comfortably on a developer's
- * machine and did not on a loaded macOS CI runner. A budget that only holds on
- * fast hardware is a test that fails for the weather, and a suite that fails for
- * the weather is one people stop reading.
+ * Each test spawns real child sessions and runs real turns through a real
+ * permission gate, which fits comfortably on a developer's machine and did not
+ * on a loaded CI runner. Raising vitest's 5s test timeout moved the failure
+ * exactly one level down, to `until`'s own 5s default — `condition never held
+ * within 5000ms`, same test, same two runners. Both are 20-30s now.
+ *
+ * The lesson is not about a number. A timeout that only holds on fast hardware
+ * is a test that fails for the weather, and a suite that fails for the weather
+ * is one people stop reading — so when raising one, raise the wait it wraps as
+ * well, or the next run tells you about the other one.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -122,7 +127,10 @@ describe('a blockage travels to where someone is looking', () => {
     // A prompt nobody answers, three levels down.
     const agent = await m.addAgent(deep.sessionId, { role: 'worker', runtimeId: 'echo', policy: ASKS });
     void m.send(deep.sessionId, agent.agentId, { content: [{ type: 'text', text: 'go' }] });
-    await until(() => liveOf(m, rootSession.sessionId).session.needsAttention?.from !== undefined);
+    await until(
+      () => liveOf(m, rootSession.sessionId).session.needsAttention?.from !== undefined,
+      20_000,
+    );
 
     const at = liveOf(m, rootSession.sessionId).session.needsAttention;
     expect(at?.reason).toBe('needs_permission');
@@ -140,7 +148,10 @@ describe('a blockage travels to where someone is looking', () => {
 
     const agent = await m.addAgent(deep.sessionId, { role: 'worker', runtimeId: 'echo', policy: ASKS });
     void m.send(deep.sessionId, agent.agentId, { content: [{ type: 'text', text: 'go' }] });
-    await until(() => liveOf(m, mid.sessionId).session.needsAttention?.from !== undefined);
+    await until(
+      () => liveOf(m, mid.sessionId).session.needsAttention?.from !== undefined,
+      20_000,
+    );
 
     // The middle session relayed it. Re-attributing to the relay would send the
     // user to a session with nothing to answer.
@@ -158,11 +169,14 @@ describe('a blockage travels to where someone is looking', () => {
     // is about precedence and not about which turn happened to win.
     const below = await m.addAgent(child.sessionId, { role: 'worker', runtimeId: 'echo', policy: ASKS });
     void m.send(child.sessionId, below.agentId, { content: [{ type: 'text', text: 'go' }] });
-    await until(() => liveOf(m, parent.sessionId).session.needsAttention?.from !== undefined);
+    await until(
+      () => liveOf(m, parent.sessionId).session.needsAttention?.from !== undefined,
+      20_000,
+    );
 
     const here = await m.addAgent(parent.sessionId, { role: 'lead', runtimeId: 'echo', policy: ASKS });
     void m.send(parent.sessionId, here.agentId, { content: [{ type: 'text', text: 'go' }] });
-    await until(() => liveOf(m, parent.sessionId).session.state === 'awaiting_permission');
+    await until(() => liveOf(m, parent.sessionId).session.state === 'awaiting_permission', 20_000);
 
     // The thing in front of you is the thing you can answer.
     expect(liveOf(m, parent.sessionId).session.needsAttention?.from).toBeUndefined();
