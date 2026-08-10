@@ -2013,7 +2013,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | # | Phase | Order | State |
 |---|---|---|---|
 | 1 | Skeleton | 1st | **done**, verified end to end |
-| 5 | Remote execution | **2nd** | three of four criteria met (the fourth now passes; see below); **the remote half of "keeps running with your laptop shut" is inferred, not verified**; ModelGateway deliberately not built |
+| 5 | Remote execution | **2nd** | criteria met, with one honest edge: the detached-remote mechanism is verified against the real server, but the *model* half of "an agent on a GPU box using that box's own model server" is untested because that box has none. ModelGateway deliberately not built |
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | runtime axis validated (four candidates); **the provider axis is not** — `ModelProvider` has one implementation, and that is validation rather than breadth |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox, and the per-host concurrency cap |
@@ -2078,7 +2078,11 @@ The second is met, and was covered in the easier direction only — the link was
 
 The first is covered **in pieces and not as one flow**: a host survives its client leaving (`detachedHost`), a transcript replays on reconnect (`reconnect`), and an unread entry is rebuilt from the log in a fresh process (`inbox`). Nobody has run the sentence.
 
-The third is the one furthest from checked. Today's remote work exercised the transport for real — ssh, protocol negotiation, a 2.16 MB chunked transfer, a polite shutdown — but "keeps running with your laptop shut" has only ever been verified against a **local** detached host. The remote half of that criterion is inference.
+The third has now been run against the real server, and the part that was inference is not any more. A session was created over ssh, a turn handed to the host, and the client **disconnected without waiting for it**. Four seconds later a fresh connection found the *same host process* (pid unchanged), the turn completed with nobody attached, and the full transcript was there to read.
+
+What that establishes is the shape of the criterion on a real remote: a host outliving its client, work finishing unwatched, and the record surviving the round trip. What it does not establish is the rest of the sentence — that box has **no model server**, so the agent was `echo`; four seconds is not eight hours; and "a result notification waiting" needs a session reaching `done`, which needs a real result rather than a turn ending at `awaiting_input`. The inbox was correctly empty, because §11 is deliberately silent about a turn merely ending.
+
+So: the remote-detached mechanism is verified, and the criterion's model half stays open behind the same missing piece as Phase 3 — a model this project can reach without a paid key.
 
 **The reverse tunnel may turn out to be unnecessary here.** §6.5's ModelGateway exists because the app holds the API key and the remote should not. If the *server* is what has model access — its own credential, or a `target-local` endpoint such as a model server on the same box — there is nothing to tunnel and `portForwardIn` stops mattering. Worth establishing before building the gateway, since it is one of the more intricate pieces of this phase and this deployment may not need it at all.
 
