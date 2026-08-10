@@ -1972,12 +1972,12 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | # | Phase | Order | State |
 |---|---|---|---|
 | 1 | Skeleton | 1st | **done**, verified end to end |
-| 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built |
+| 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built; protocol versions now negotiate (§17.16) |
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
 | 6 | Multi-agent + hierarchy | 6th | **done** |
-| 7 | Multimodal | 7th | fitting, redaction, annotations, pixel operations and headless remote capture done; client capture surfaces, glyph rendering, OCR and voice remain |
+| 7 | Multimodal | 7th | everything but OCR and TTS is built and exercised on real hardware; **the acceptance flow has not been run as one flow** |
 | 8 | Breadth + polish | 8th | not started |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow.
@@ -2030,6 +2030,14 @@ Tests select on `data-testid`, never a styling class. That rule was earned: conv
 
 **Phase 7 — Multimodal (R6).** Capture overlay, annotation canvas, redaction with OCR pre-pass, capability-driven image sizing, blob push, headless-browser remote capture, whisper.cpp STT with push-to-talk, OS TTS.
 *Done when:* you capture a broken UI region from a forwarded remote preview, circle it, say what's wrong, and the remote agent fixes it and screenshots its own fix.
+
+*Status.* **Every component exists and each has been run against the real thing rather than a fake.** Blob push (§6.7) moved 2.16 MB in 9 chunks over ssh with both machines agreeing on the hash; `capture/electron.ts` grabbed a real display through the Electron smoke check, at 2560×1600 from a 1707×1067 @1.5 screen, which is what asking in device pixels rather than DIPs is for; the two-step annotator paints a blackout into the bytes before anything is stored; and whisper.cpp v1.9.2 transcribed a SAPI-synthesized sentence word for word.
+
+**The acceptance criterion above is still not met, and the gap is the interesting part.** Capture a region, circle it, say what is wrong, and have a *remote agent* fix it and screenshot its own fix — every one of those works, and nobody has run them as a single flow with a real model at the far end. The remote exercise used `echo`. That is exactly the shape of gap this phase kept producing: pieces that pass their own tests and a seam nobody crossed.
+
+**Not built, each with a stated reason rather than a backlog entry:** OCR, which is a native model and stays injected — without it the explicit-rectangle path works and the sweep honestly reports `scanned: false`; TTS; live STT partials, because `whisper-cli` transcribes a finished file and exits; and glyph rendering, which is now a *checked* refusal rather than an assumption, since the description carries the words verbatim and travels beside the picture on every path.
+
+**What "done" means in this table, learned the hard way.** §12.3 read as built for some time — the vector model, the describer and the flattener all existed, all tested — and **nothing outside `content/` called any of them**. A user could not point at anything. A row that means "the pieces exist" is a row that lies, so a component counts here only when something a person touches reaches it. Two of this session's three §13 findings and both §12 bugs were of that family: code that was correct, tested, and unreachable or unreached.
 
 **Phase 8 — Breadth + polish.** Remaining providers, `hosted-agent-http` with the inverted-persistence path (§6.9), WSL/container/k8s transports, cross-provider fallback chains, cross-machine search, usage/cost reporting, session export, auto-update.
 

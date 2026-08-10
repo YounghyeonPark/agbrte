@@ -23,12 +23,25 @@ splitting into a child with its own log and a slice of its budget — a person
 approves it — and a permission prompt raised three levels down surfaces at the
 top of the dashboard.
 
-**Not built yet:** a second cloud provider (phase 3), and most of the multimodal
-surface (phase 7) — screen capture, glyph rendering, OCR and voice. What phase 7
-*does* have is the part that needs no GUI: images fitted to each agent's declared
-limits, redaction applied before anything reaches disk, annotations with the
-description that travels beside them, and a headless-browser screenshot an agent
-can take of its own output.
+You can point at things. Drag a region of your own screen, black out the parts
+that should not leave the machine, circle what is wrong, and send it — the
+blackout is painted into the pixels *before* anything is written, so the original
+never exists on disk to be pushed anywhere. Every other mark stays editable and
+arrives with a sentence describing it, because a weaker vision model often reads
+only the sentence. An agent can screenshot a page it is serving and look at its
+own output. And you can hold a key and talk: the transcription runs on your
+machine, the recording never leaves it, and the text lands in the composer for
+you to edit rather than being sent.
+
+**Not built yet:** a second cloud provider (phase 3); OCR and text-to-speech
+(phase 7). Glyph rendering is refused rather than pending — annotation text
+travels as words beside the picture, which is the part a model actually reads.
+
+**Built but never run as one flow:** capture a region of a remote preview, circle
+it, say what is wrong, and have the remote agent fix it and screenshot its own
+fix. Every piece of that works and has been exercised against real hardware — a
+real display, a real ssh transfer, a real speech engine — but the whole sentence
+has only been run with a stub agent at the far end.
 
 [DESIGN.md §15](DESIGN.md) says what each phase covers and what is deliberately
 unfinished; where something is only partly true, it says which part.
