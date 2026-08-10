@@ -252,3 +252,73 @@ describe('a dropped link', () => {
     await until(() => sessions.some((s) => s.sessionId === session.sessionId));
   });
 });
+
+describe('the cable comes out mid-turn (§15 Phase 5)', () => {
+  /**
+   * Phase 5's second criterion is "pull the network cable **mid-turn** with zero
+   * event loss or duplication", and the tests above cut the link and *then* run
+   * a turn. That exercises catch-up, which is most of it — but not the harder
+   * half: events already in flight when the link drops, and a batch that may
+   * have been half delivered.
+   *
+   * Checked by trying it rather than by reasoning about `fromSeq`, because the
+   * failure this guards is a session that quietly shows a line twice or not at
+   * all, and nobody reads a transcript closely enough to catch either.
+   */
+  const CHATTY: EchoStep[] = [
+    { kind: 'text', text: 'one' },
+    { kind: 'text', text: 'two' },
+    { kind: 'text', text: 'three' },
+    { kind: 'text', text: 'four' },
+    { kind: 'stop', stop: { kind: 'end_turn' } },
+  ];
+
+  it('loses nothing and repeats nothing when cut mid-stream', async () => {
+    const r = await rig(CHATTY);
+    await r.fleet.attach({ target: { kind: 'local' }, workspaceRoot: r.root });
+
+    const session = await r.fleet.createSession(r.instanceId, { title: 's', goal: 'g' });
+    const agent = await r.fleet.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    const seen: AgbrteEvent[] = [];
+    let cut = false;
+    r.fleet.on('event', (_i: unknown, _s: unknown, e: unknown) => {
+      seen.push(e as AgbrteEvent);
+      // Cut it the moment the first line of the reply arrives — the turn is
+      // running, the host is mid-push, and this client stops being reachable.
+      //
+      // A one-shot flag rather than reading the link state: the state is what
+      // the cut is *about*, and conditioning on it made the unplug fire or not
+      // depending on where the reconnect happened to be. That is how this test
+      // timed out one run in three before anything was wrong with the code.
+      if (!cut && (e as AgbrteEvent).type === 'agent.text') {
+        cut = true;
+        r.unplug();
+      }
+    });
+
+    await r.manager.send(session.sessionId, agent.agentId as AgentId, {
+      content: [{ type: 'text', text: 'go' }],
+    });
+
+    await until(() => r.fleet.hosts()[0]?.link === 'reconnecting');
+    r.restore();
+    await until(() => r.fleet.hosts()[0]?.link === 'connected');
+    await until(() => seen.some((e) => e.type === 'agent.stopped'));
+
+    /**
+     * The log is the truth, and the claim is about what happened *after this
+     * client started watching* — `session.created` and `agent.created` precede
+     * the subscription and were never this client's to receive. Comparing
+     * against the whole log said two events were lost when they were not; the
+     * first version of this test did exactly that.
+     */
+    const durable = await r.manager.events(session.sessionId);
+    const bySeq = seen.map((e) => e.seq);
+    const from = Math.min(...bySeq);
+    const owed = durable.map((e) => e.seq).filter((n) => n >= from);
+
+    expect(new Set(bySeq).size, `duplicated: ${bySeq.join(',')}`).toBe(bySeq.length);
+    expect(bySeq.slice().sort((a, b) => a - b), `gap: ${bySeq.join(',')}`).toEqual(owed);
+  }, 30_000);
+});

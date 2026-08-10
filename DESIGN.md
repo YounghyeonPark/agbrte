@@ -2013,7 +2013,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | # | Phase | Order | State |
 |---|---|---|---|
 | 1 | Skeleton | 1st | **done**, verified end to end |
-| 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built; protocol versions now negotiate (§17.16) |
+| 5 | Remote execution | **2nd** | three of four criteria met (the fourth now passes; see below); **the remote half of "keeps running with your laptop shut" is inferred, not verified**; ModelGateway deliberately not built |
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
 | 3 | Three-shape proof | 4th | runtime axis validated (four candidates); **the provider axis is not** — `ModelProvider` has one implementation, and that is validation rather than breadth |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
@@ -2062,7 +2062,15 @@ Tests select on `data-testid`, never a styling class. That rule was earned: conv
 
 *Done when:* you start a remote session, **close your laptop lid mid-run, reopen eight hours later, and find it completed** with a full transcript mirrored and a result notification waiting. Second: pull the network cable mid-turn with zero event loss or duplication. Third: an agent on a GPU box using that box's own model server keeps running with your laptop shut.
 
-*Fourth, and new:* **open the same live session on a second device, answer a permission prompt there, and watch the first device show it resolved rather than keep asking.** This is the criterion that proves the topology, because it is the one the current shape cannot pass — see §16's row on prompts only one process can answer.
+*Fourth, and new:* **open the same live session on a second device, answer a permission prompt there, and watch the first device show it resolved rather than keep asking.** This is the criterion that proves the topology, because it was the one the shape at the time could not pass — see §16's row on prompts only one process can answer.
+
+*Status of the four, checked rather than assumed.* The fourth is **met**: `attribution.test.ts` drives two clients against one host, both see the prompt, one answers, and the other is told it resolved. That sentence above still said it could not be passed, which had been true when it was written and stopped being true when §16's row closed.
+
+The second is met, and was covered in the easier direction only — the link was cut and *then* a turn ran, which exercises catch-up but not events already in flight. Cutting mid-stream now has its own test, asserting no gap and no repeat against the durable log from the point the client began watching.
+
+The first is covered **in pieces and not as one flow**: a host survives its client leaving (`detachedHost`), a transcript replays on reconnect (`reconnect`), and an unread entry is rebuilt from the log in a fresh process (`inbox`). Nobody has run the sentence.
+
+The third is the one furthest from checked. Today's remote work exercised the transport for real — ssh, protocol negotiation, a 2.16 MB chunked transfer, a polite shutdown — but "keeps running with your laptop shut" has only ever been verified against a **local** detached host. The remote half of that criterion is inference.
 
 **The reverse tunnel may turn out to be unnecessary here.** §6.5's ModelGateway exists because the app holds the API key and the remote should not. If the *server* is what has model access — its own credential, or a `target-local` endpoint such as a model server on the same box — there is nothing to tunnel and `portForwardIn` stops mattering. Worth establishing before building the gateway, since it is one of the more intricate pieces of this phase and this deployment may not need it at all.
 
