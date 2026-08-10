@@ -37,6 +37,7 @@ import { RuntimeSelect } from './RuntimeSelect.js';
 import { useAgbrte } from './store.js';
 import { Composer, EventRow, PermissionPrompt, SplitPrompt, Transcript, summarize } from './Transcript.js';
 import { Preview } from './Preview.js';
+import type { SessionTemplateDto } from '@shared/ipc/contract.js';
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
 import type { MatrixCell, Session, SessionState } from '../shared/types/index.js';
 
@@ -401,6 +402,15 @@ function HostGroup({
   const store = useAgbrte();
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState('');
+  const [templates, setTemplates] = useState<SessionTemplateDto[]>([]);
+
+  // Fetched when the form opens rather than on mount: a host that has none is
+  // the common case, and asking every host on every render to populate a list
+  // that is usually empty is work nobody sees.
+  useEffect(() => {
+    if (!adding) return;
+    void window.agbrte.templates.list(host.instanceId).then(setTemplates, () => setTemplates([]));
+  }, [adding, host.instanceId]);
 
   const submit = (): void => {
     if (title.trim() === '') return;
@@ -508,6 +518,41 @@ function HostGroup({
           <button className="btn" data-testid="new-submit" type="submit" disabled={title.trim() === ''}>
             Create
           </button>
+
+          {/* §17 Q12: templates are taken from sessions that worked, so this list
+              is empty until somebody saves one — and says so rather than
+              offering an empty picker. */}
+          {templates.length > 0 && (
+            <div className="grid gap-1">
+              <span className={LABEL}>or from a template</span>
+              {templates.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className="btn text-left"
+                  data-testid="template-apply"
+                  title={`${t.roles.length} agent${t.roles.length === 1 ? '' : 's'}: ${t.roles
+                    .map((r) => `${r.role} (${r.runtimeId})`)
+                    .join(', ')}`}
+                  onClick={() => {
+                    void window.agbrte.templates
+                      .apply({
+                        instanceId: host.instanceId,
+                        templateId: t.id,
+                        ...(title.trim() === '' ? {} : { title: title.trim() }),
+                      })
+                      .then(() => {
+                        setTitle('');
+                        setAdding(false);
+                      });
+                  }}
+                >
+                  {t.name}
+                  <span className="text-muted"> · {t.roles.length}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </form>
       )}
 

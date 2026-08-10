@@ -154,6 +154,12 @@ const api: AgbrteApi = {
    * to know what the server is holding, and because a method that exists and
    * explains itself beats one that is silently absent.
    */
+  templates: {
+    list: call(CH.templatesList),
+    save: call(CH.templatesSave),
+    apply: call(CH.templatesApply),
+    remove: call(CH.templatesDelete),
+  },
   preview: {
     detect: call(CH.previewDetect),
     servers: call(CH.previewServers),

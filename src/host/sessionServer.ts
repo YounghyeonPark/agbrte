@@ -28,6 +28,13 @@
 import { listListeningPorts, type ListeningPort } from '@main/preview/ports.js';
 import type { PreviewServers } from '@main/preview/servers.js';
 import {
+  deleteTemplate,
+  fromSession,
+  listTemplates,
+  readTemplate,
+  saveTemplate,
+} from '@main/store/templates.js';
+import {
   AccessDenied,
   newAgentId,
   type AccessRole,
@@ -286,6 +293,51 @@ export class SessionHostServer {
 
         case 'preview.log':
           return this.opts.servers?.log(command.serverId) ?? null;
+
+        case 'template.list':
+          return listTemplates(this.opts.identity.workspaceRoot);
+
+        case 'template.save': {
+          // A write: it puts a file in the repo that colleagues will pull.
+          this.requireWrite(client, 'save a session template');
+          const session = await manager.get(command.sessionId as SessionId);
+          return saveTemplate(
+            this.opts.identity.workspaceRoot,
+            fromSession(session, command.name),
+          );
+        }
+
+        case 'template.delete':
+          this.requireWrite(client, 'delete a session template');
+          return deleteTemplate(this.opts.identity.workspaceRoot, command.templateId);
+
+        case 'template.apply': {
+          this.requireWrite(client, 'start a session from a template');
+          const template = await readTemplate(
+            this.opts.identity.workspaceRoot,
+            command.templateId,
+          );
+          if (template === null) {
+            throw new Error(`no template "${command.templateId}" in this workspace`);
+          }
+          const created = await manager.createSession({
+            title: command.title ?? template.name,
+            goal: template.goal ?? template.name,
+          });
+          for (const seat of template.roles) {
+            // One at a time and not in parallel: `addAgent` is admission (§3.10),
+            // and a roster that half-applies should stop at the seat that was
+            // refused rather than racing three more past it.
+            await manager.addAgent(created.sessionId, {
+              role: seat.role,
+              runtimeId: seat.runtimeId,
+              ...(seat.model !== undefined ? { model: seat.model } : {}),
+              ...(seat.systemPrompt !== undefined ? { systemPrompt: seat.systemPrompt } : {}),
+              isolation: seat.isolation,
+            });
+          }
+          return manager.get(created.sessionId as SessionId);
+        }
 
         case 'preview.ports':
           // A read, like `session.search`: it answers about this machine, and

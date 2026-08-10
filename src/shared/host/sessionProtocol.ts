@@ -128,7 +128,7 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  */
-export const SESSION_PROTOCOL_VERSION = 4;
+export const SESSION_PROTOCOL_VERSION = 5;
 
 /**
  * The oldest client a host will serve.
@@ -155,6 +155,10 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'preview.stop': 4,
   'preview.servers': 4,
   'preview.log': 4,
+  'template.save': 5,
+  'template.list': 5,
+  'template.apply': 5,
+  'template.delete': 5,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -179,6 +183,20 @@ export type SessionCommand =
    * belonging to the user the host runs as, which is a filter about other
    * people's privacy rather than about this client's role.
    */
+  /**
+   * Session templates (§17 Q12), owned by the host because they live in the
+   * workspace beside `memory/` — committed, so a colleague gets them by
+   * cloning.
+   *
+   * `apply` is a host operation rather than a client loop of create-then-add,
+   * so the roster that runs is the one in the file the host read. A client
+   * assembling it from a template it fetched would be a client that can
+   * quietly assemble a different one.
+   */
+  | { t: 'template.save'; id: RequestId; sessionId: string; name: string }
+  | { t: 'template.list'; id: RequestId }
+  | { t: 'template.apply'; id: RequestId; templateId: string; title?: string }
+  | { t: 'template.delete'; id: RequestId; templateId: string }
   | { t: 'preview.ports'; id: RequestId }
   /**
    * Start a long-lived preview server on the host's machine (§6.8, §3.12).

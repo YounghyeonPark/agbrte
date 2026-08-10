@@ -33,6 +33,7 @@ import { requireTransport } from './host/transports.js';
 import type { SearchHit } from './store/searchSessions.js';
 import type { ListeningPort } from './preview/ports.js';
 import type { PreviewServer, PreviewServerLog } from './preview/servers.js';
+import type { SessionTemplate } from './store/templates.js';
 import type { ModelNeed } from './runtime/registry.js';
 import type {
   AccessRole,
@@ -572,6 +573,40 @@ export class Fleet extends EventEmitter {
     const entry = this.host(instanceId);
     if (!entry.connection.supports('preview.log')) return null;
     return entry.connection.previewServerLog(serverId);
+  }
+
+  /**
+   * Templates a host offers (§17 Q12).
+   *
+   * Empty for a host too old to answer, like `previewPorts`: a picker asking on
+   * open must render rather than raise. Saving and applying are different — a
+   * person did those on purpose, and swallowing their failure would leave them
+   * looking at a list that never gains a row.
+   */
+  async templates(instanceId: InstanceId): Promise<SessionTemplate[]> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('template.list')) return [];
+    try {
+      return await entry.connection.templates();
+    } catch {
+      return [];
+    }
+  }
+
+  async saveTemplate(
+    instanceId: InstanceId,
+    sessionId: SessionId,
+    name: string,
+  ): Promise<SessionTemplate> {
+    return this.host(instanceId).connection.saveTemplate(sessionId, name);
+  }
+
+  async applyTemplate(instanceId: InstanceId, templateId: string, title?: string): Promise<Session> {
+    return this.host(instanceId).connection.applyTemplate(templateId, title);
+  }
+
+  async deleteTemplate(instanceId: InstanceId, templateId: string): Promise<boolean> {
+    return this.host(instanceId).connection.deleteTemplate(templateId);
   }
 
   private host(instanceId: InstanceId): Entry {

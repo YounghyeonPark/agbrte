@@ -618,6 +618,22 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     return deps.previews;
   };
 
+  handle(CH.templatesList, (instanceId: string) =>
+    fleet.templates(instanceId as InstanceId),
+  );
+
+  handle(CH.templatesSave, (r: { instanceId: string; sessionId: string; name: string }) =>
+    fleet.saveTemplate(r.instanceId as InstanceId, r.sessionId as SessionId, r.name),
+  );
+
+  handle(CH.templatesApply, (r: { instanceId: string; templateId: string; title?: string }) =>
+    fleet.applyTemplate(r.instanceId as InstanceId, r.templateId, r.title),
+  );
+
+  handle(CH.templatesDelete, (r: { instanceId: string; templateId: string }) =>
+    fleet.deleteTemplate(r.instanceId as InstanceId, r.templateId),
+  );
+
   handle(CH.previewDetect, async (instanceId: string): Promise<DetectedPortDto[]> => {
     // Not client-only: this asks the *host* what it can see, which is a question
     // a browser is entitled to ask. Only the tunnel that would follow belongs to

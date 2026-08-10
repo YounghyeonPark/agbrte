@@ -14,6 +14,7 @@
 
 import type { ListeningPort } from '../preview/ports.js';
 import type { PreviewServer, PreviewServerLog } from '../preview/servers.js';
+import type { SessionTemplate } from '../store/templates.js';
 import { EventEmitter } from 'node:events';
 import {
   COMMAND_SINCE,
@@ -344,6 +345,31 @@ export class HostConnection extends EventEmitter {
   async previewServerLog(serverId: string): Promise<PreviewServerLog | null> {
     this.require('preview.log');
     return this.call<PreviewServerLog | null>({ t: 'preview.log', serverId });
+  }
+
+  /** Templates in this host's workspace (§17 Q12). */
+  async templates(): Promise<SessionTemplate[]> {
+    this.require('template.list');
+    return this.call<SessionTemplate[]>({ t: 'template.list' });
+  }
+
+  async saveTemplate(sessionId: SessionId, name: string): Promise<SessionTemplate> {
+    this.require('template.save');
+    return this.call<SessionTemplate>({ t: 'template.save', sessionId, name });
+  }
+
+  async applyTemplate(templateId: string, title?: string): Promise<Session> {
+    this.require('template.apply');
+    return this.call<Session>({
+      t: 'template.apply',
+      templateId,
+      ...(title !== undefined ? { title } : {}),
+    });
+  }
+
+  async deleteTemplate(templateId: string): Promise<boolean> {
+    this.require('template.delete');
+    return this.call<boolean>({ t: 'template.delete', templateId });
   }
 
   supports(command: keyof typeof COMMAND_SINCE | string): boolean {

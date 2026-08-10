@@ -422,6 +422,21 @@ export interface AgbrteApi {
    * be a URL pointing at the wrong computer — a subtler wrongness than a missing
    * feature, so it is excluded by type rather than left to fail politely.
    */
+  /**
+   * Session templates (§17 Q12), derived from sessions rather than authored.
+   *
+   * Owned by the host because they live in the workspace, beside `memory/`
+   * and on the committed side of `.devagents/`'s `.gitignore` — so a
+   * colleague gets them by cloning rather than by being told.
+   */
+  templates: {
+    list(instanceId: string): Promise<SessionTemplateDto[]>;
+    /** Take one from a session that worked. */
+    save(r: { instanceId: string; sessionId: string; name: string }): Promise<SessionTemplateDto>;
+    /** Start a session from one. The roster comes from the host's copy. */
+    apply(r: { instanceId: string; templateId: string; title?: string }): Promise<Session>;
+    remove(r: { instanceId: string; templateId: string }): Promise<boolean>;
+  };
   preview: {
     /**
      * What is listening on the machine this session runs on (§6.8).
@@ -542,6 +557,16 @@ export interface AgbrteApi {
 
 // -------------------------------------------------------------------- channels
 
+/** A session template, as the renderer sees it (§17 Q12). */
+export interface SessionTemplateDto {
+  id: string;
+  name: string;
+  goal?: string;
+  roles: Array<{ role: string; runtimeId: string; isolation: string }>;
+  checklist: string[];
+  createdAt: string;
+}
+
 /** A port the host found listening on its own machine (§6.8). */
 export interface DetectedPortDto {
   port: number;
@@ -610,6 +635,10 @@ export const CH = {
   voiceForget: 'agbrte:voice.forget',
   voiceSpeak: 'agbrte:voice.speak',
   voiceStopSpeaking: 'agbrte:voice.stopSpeaking',
+  templatesList: 'agbrte:templates.list',
+  templatesSave: 'agbrte:templates.save',
+  templatesApply: 'agbrte:templates.apply',
+  templatesDelete: 'agbrte:templates.delete',
   previewDetect: 'agbrte:preview.detect',
   previewServers: 'agbrte:preview.servers',
   previewStart: 'agbrte:preview.start',

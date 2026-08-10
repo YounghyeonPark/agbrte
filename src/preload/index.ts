@@ -81,6 +81,15 @@ const api: AgbrteApi = {
     speak: (text: string) => ipcRenderer.invoke(CH.voiceSpeak, text),
     stopSpeaking: () => ipcRenderer.invoke(CH.voiceStopSpeaking),
   },
+  templates: {
+    list: (instanceId: string) => ipcRenderer.invoke(CH.templatesList, instanceId),
+    save: (r: { instanceId: string; sessionId: string; name: string }) =>
+      ipcRenderer.invoke(CH.templatesSave, r),
+    apply: (r: { instanceId: string; templateId: string; title?: string }) =>
+      ipcRenderer.invoke(CH.templatesApply, r),
+    remove: (r: { instanceId: string; templateId: string }) =>
+      ipcRenderer.invoke(CH.templatesDelete, r),
+  },
   preview: {
     detect: (instanceId: string) => ipcRenderer.invoke(CH.previewDetect, instanceId),
     servers: (r: { instanceId: string; sessionId?: string }) =>
