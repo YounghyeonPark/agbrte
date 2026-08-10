@@ -24,7 +24,7 @@
  */
 
 import { useEffect, useState, type JSX } from 'react';
-import type { ForwardDto } from '@shared/ipc/contract.js';
+import type { DetectedPortDto, ForwardDto } from '@shared/ipc/contract.js';
 
 const FIELD =
   'bg-panel border-line focus:border-accent w-20 rounded border px-2 py-1 text-xs outline-none';
@@ -39,6 +39,7 @@ export function Preview({
   remote: boolean;
 }): JSX.Element | null {
   const [forwards, setForwards] = useState<ForwardDto[]>([]);
+  const [found, setFound] = useState<DetectedPortDto[]>([]);
   const [port, setPort] = useState('3000');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +48,13 @@ export function Preview({
     setError(null);
     void window.agbrte.preview.list(sessionId).then(setForwards, () => setForwards([]));
   }, [sessionId]);
+
+  // Asked of the host, which is where the answer is. Empty is ordinary — nothing
+  // is running there, or the host predates the command — so the typed field
+  // stays rather than being replaced by a picker that might have nothing in it.
+  useEffect(() => {
+    void window.agbrte.preview.detect(instanceId).then(setFound, () => setFound([]));
+  }, [instanceId]);
 
   if (!remote) return null;
 
@@ -81,6 +89,37 @@ export function Preview({
       >
         Forward
       </button>
+
+      {found
+        .filter((f) => !forwards.some((open) => open.remotePort === f.port))
+        .map((f) => (
+          <button
+            key={f.port}
+            className="border-line hover:border-accent text-muted rounded border border-dashed px-2 py-1"
+            title={
+              f.loopbackOnly
+                ? `Listening on ${f.address} over there — only reachable through a tunnel`
+                : `Listening on ${f.address} over there — already reachable from off that machine`
+            }
+            onClick={() => {
+              setPort(String(f.port));
+              void (async () => {
+                setBusy(true);
+                try {
+                  await window.agbrte.preview.open({ instanceId, sessionId, port: f.port });
+                  setForwards(await window.agbrte.preview.list(sessionId));
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setBusy(false);
+                }
+              })();
+            }}
+          >
+            {f.loopbackOnly ? '' : '⚠ '}
+            :{f.port}
+          </button>
+        ))}
 
       {forwards.map((f) => (
         <span key={f.remotePort} className="border-line flex items-center gap-1 rounded border px-2 py-1">

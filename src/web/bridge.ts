@@ -155,6 +155,7 @@ const api: AgbrteApi = {
    * explains itself beats one that is silently absent.
    */
   preview: {
+    detect: call(CH.previewDetect),
     open: call(CH.previewOpen),
     list: call(CH.previewList),
     close: call(CH.previewClose),

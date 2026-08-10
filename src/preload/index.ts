@@ -82,6 +82,7 @@ const api: AgbrteApi = {
     stopSpeaking: () => ipcRenderer.invoke(CH.voiceStopSpeaking),
   },
   preview: {
+    detect: (instanceId: string) => ipcRenderer.invoke(CH.previewDetect, instanceId),
     open: (r: { instanceId: string; sessionId: string; port: number }) =>
       ipcRenderer.invoke(CH.previewOpen, r),
     list: (sessionId: string) => ipcRenderer.invoke(CH.previewList, sessionId),

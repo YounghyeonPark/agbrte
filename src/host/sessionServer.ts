@@ -25,6 +25,7 @@
  * the same class serves a unix socket, a named pipe, or an SSH stream in Phase 5.
  */
 
+import { listListeningPorts, type ListeningPort } from '@main/preview/ports.js';
 import {
   AccessDenied,
   newAgentId,
@@ -75,6 +76,14 @@ export interface SessionHostOptions {
    * socket found the zombie rather than starting a replacement.
    */
   onStopped?: (reason: string) => void;
+  /**
+   * This host's own control port, when it listens on one (§6.2's loopback mode).
+   *
+   * A function because the server is constructed before the listener binds, and
+   * the port is whatever the OS chose. Passing a number here would have meant
+   * passing `undefined` forever — which is what it did until something looked.
+   */
+  controlPort?: () => number | undefined;
   /** Milliseconds with no client and no work before exiting. 0 disables. */
   lingerMs?: number;
   now?: () => number;
@@ -256,6 +265,12 @@ export class SessionHostServer {
       switch (command.t) {
         case 'session.list':
           return manager.list();
+
+        case 'preview.ports':
+          // A read, like `session.search`: it answers about this machine, and
+          // the narrowing that matters is by uid rather than by role — a
+          // read-only client and a read-write one are the same person here.
+          return this.listeningPorts();
 
         case 'session.search':
           // A read, so no `requireWrite`: it answers from logs a client with
@@ -482,6 +497,30 @@ export class SessionHostServer {
     // ends the process; leaving that to only one caller is how a "stopped" host
     // kept answering.
     this.opts.onStopped?.(reason);
+  }
+
+  /**
+   * Ports on this machine that could be a preview (§6.8).
+   *
+   * Returns `[]` rather than throwing where it cannot look. This is the
+   * asymmetry `capture/client.ts` already draws and for the same reason: asking
+   * what is available is a question a UI asks on open, so an unanswerable one
+   * must not turn into an error banner. The client learns the difference from
+   * `preview.ports` being unavailable on an older host, which it checks first.
+   */
+  private async listeningPorts(): Promise<ListeningPort[]> {
+    try {
+      // The host's own control port is excluded where there is one: offering to
+      // forward the channel this request arrived on is offering a loop.
+      return await listListeningPorts(
+        (() => {
+          const own = this.opts.controlPort?.();
+          return own === undefined ? {} : { exclude: [own] };
+        })(),
+      );
+    } catch {
+      return [];
+    }
   }
 
   /** Test and diagnostic view. */

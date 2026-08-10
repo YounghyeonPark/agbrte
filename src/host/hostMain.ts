@@ -186,6 +186,12 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
   const accessPolicy = await loadAccessPolicy(workspaceRoot);
   const identityOf = localIdentity();
 
+  // Declared here rather than beside the listener below: the server closes over
+  // `port` to exclude its own control channel from the preview list, and a `let`
+  // declared after the closure is written is legal but reads like a bug.
+  let port: number | undefined;
+  let token: string | undefined;
+
   let server!: SessionHostServer;
   let listener!: Server;
 
@@ -213,6 +219,10 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       role: decideRole(accessPolicy, requested, client, identityOf.ceiling),
       actor: identityOf.actor,
     }),
+    // Read when asked rather than captured now: the listener has not bound yet,
+    // so the port does not exist at this line. Offering to forward the channel a
+    // request arrived on would be offering a loop.
+    controlPort: () => port,
     lingerMs: opts.lingerMs ?? DEFAULT_LINGER_MS,
     // Whatever the reason — the idle timer, or a client asking — the process
     // goes. A host that stops serving but keeps its socket is worse than one
@@ -236,8 +246,6 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
    * token inside `hello`, would leave a connection that never says hello able to
    * issue `session.list` and `session.events`.
    */
-  let port: number | undefined;
-  let token: string | undefined;
   if (opts.control === 'loopback') {
     token = newControlToken();
     const bound = await listenLoopback<SessionMessage, SessionCommand>(token, (channel) =>

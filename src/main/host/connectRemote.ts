@@ -26,7 +26,7 @@ import {
   type SshRunner,
 } from './sshTransport.js';
 import { connect } from '@shared/host/socketChannel.js';
-import { SESSION_PROTOCOL_VERSION, type SessionCommand, type SessionMessage } from '@shared/host/sessionProtocol.js';
+import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import { HostConnection } from './hostConnection.js';
 
 export interface RemoteConnectOptions {
@@ -89,14 +89,32 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
 
   let record = await readRemoteHostRecord(runner, opts.alias, opts.workspaceRoot);
 
-  if (record !== null && record.protocol !== SESSION_PROTOCOL_VERSION) {
-    // A host left running by an older app. Refusing here is the same rule the
-    // handshake enforces, applied before a forward is set up for nothing.
-    throw new RemoteBootstrapFailed(
-      `the host on ${opts.alias} speaks session protocol v${record.protocol}, this app speaks v${SESSION_PROTOCOL_VERSION}`,
-      'stop it there, or update this app',
-    );
-  }
+  /**
+   * A version difference is **not** a reason to refuse, and this used to think
+   * it was.
+   *
+   * The check here was `record.protocol !== SESSION_PROTOCOL_VERSION`, described
+   * as "the same rule the handshake enforces, applied before a forward is set up
+   * for nothing". It was not the same rule. The handshake refuses a client older
+   * than the host's `MIN_CLIENT_PROTOCOL`; this refused *any* difference, in
+   * either direction, before the handshake got to speak — so an additive bump
+   * stranded every host already running, telling the user to "stop it there".
+   * For a host holding a live agent that means losing the work, and §17.16 exists
+   * precisely because a version bump must not require killing the thing it is
+   * upgrading.
+   *
+   * Reproduced against a real remote host running v2 with this app at v3, rather
+   * than argued: `REFUSED: the host on cbk_ws_one speaks session protocol v2,
+   * this app speaks v3`.
+   *
+   * The client is already equipped for the difference. `HostConnection.supports`
+   * consults `COMMAND_SINCE` against the version the host reports in `welcome`,
+   * so an older host costs one command rather than the connection — and a host
+   * newer than this app decides for itself whether to serve it, which is the
+   * host's call for the same reason roles are granted rather than claimed. Both
+   * answers arrive from the handshake, which produces a better message than this
+   * could: it knows what the host actually said rather than what a file claimed.
+   */
 
   if (record === null) {
     report('starting the host');

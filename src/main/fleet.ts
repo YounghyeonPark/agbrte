@@ -31,6 +31,7 @@ import { byAttentionThenRecency } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
 import { requireTransport } from './host/transports.js';
 import type { SearchHit } from './store/searchSessions.js';
+import type { ListeningPort } from './preview/ports.js';
 import type { ModelNeed } from './runtime/registry.js';
 import type {
   AccessRole,
@@ -524,6 +525,26 @@ export class Fleet extends EventEmitter {
    * The caller is told which hosts answered, so "no results" and "we could not
    * ask" stay distinguishable.
    */
+  /**
+   * Ports listening on the machine a host runs on (§6.8).
+   *
+   * Returns `[]` for a host too old to answer, rather than propagating. The
+   * caller's question is "what could I preview", and an older host's honest
+   * answer to that is "I cannot tell you" — which looks the same as "nothing" to
+   * a picker, and unlike an exception does not replace a working feature with an
+   * error the user cannot act on.
+   */
+  async previewPorts(instanceId: InstanceId): Promise<ListeningPort[]> {
+    const entry = this.entries.get(instanceId);
+    if (entry === undefined) throw new Error(`no attached host ${instanceId}`);
+    if (!entry.connection.supports('preview.ports')) return [];
+    try {
+      return await entry.connection.previewPorts();
+    } catch {
+      return [];
+    }
+  }
+
   async search(query: string, limit = 50): Promise<FleetSearch> {
     const entries = [...this.entries.values()];
     const asked = await Promise.all(

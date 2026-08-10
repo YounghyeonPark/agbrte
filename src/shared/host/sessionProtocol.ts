@@ -128,7 +128,7 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  */
-export const SESSION_PROTOCOL_VERSION = 2;
+export const SESSION_PROTOCOL_VERSION = 3;
 
 /**
  * The oldest client a host will serve.
@@ -148,6 +148,7 @@ export const MIN_CLIENT_PROTOCOL = 1;
 export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'blob.has': 2,
   'blob.put': 2,
+  'preview.ports': 3,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -163,6 +164,16 @@ export type SessionCommand =
    * thing for it to mean.
    */
   | { t: 'hello'; id: RequestId; role: AccessRole; client: string; protocol?: number }
+  /**
+   * What is listening on the machine this host runs on (§6.8).
+   *
+   * Asked of the host because the host is where the answer is: the whole
+   * point of the feature is a port on a build box that this machine cannot
+   * see. A read, so any role may ask — and it reports only the ports
+   * belonging to the user the host runs as, which is a filter about other
+   * people's privacy rather than about this client's role.
+   */
+  | { t: 'preview.ports'; id: RequestId }
   | { t: 'session.list'; id: RequestId }
   | { t: 'session.listOnDisk'; id: RequestId }
   /**

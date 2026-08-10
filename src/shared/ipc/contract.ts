@@ -424,6 +424,14 @@ export interface AgbrteApi {
    */
   preview: {
     /**
+     * What is listening on the machine this session runs on (§6.8).
+     *
+     * Answered by the host, because the host is where the answer is. Empty is an
+     * ordinary answer — nothing is running, or the host predates the command —
+     * so a picker renders rather than showing an error nobody can act on.
+     */
+    detect(instanceId: string): Promise<DetectedPortDto[]>;
+    /**
      * Forward a port on the machine running this session.
      *
      * `reachable: false` is an answer, not a failure — a dev server that is
@@ -520,6 +528,14 @@ export interface AgbrteApi {
 
 // -------------------------------------------------------------------- channels
 
+/** A port the host found listening on its own machine (§6.8). */
+export interface DetectedPortDto {
+  port: number;
+  address: string;
+  /** `false` means it is already reachable from off that machine. */
+  loopbackOnly: boolean;
+}
+
 /** One forwarded port, as the renderer sees it (§6.8). */
 export interface ForwardDto {
   sessionId: string;
@@ -564,6 +580,7 @@ export const CH = {
   voiceForget: 'agbrte:voice.forget',
   voiceSpeak: 'agbrte:voice.speak',
   voiceStopSpeaking: 'agbrte:voice.stopSpeaking',
+  previewDetect: 'agbrte:preview.detect',
   previewOpen: 'agbrte:preview.open',
   previewList: 'agbrte:preview.list',
   previewClose: 'agbrte:preview.close',

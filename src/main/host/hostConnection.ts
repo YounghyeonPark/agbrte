@@ -12,6 +12,7 @@
  * session and makes a second device a new connection rather than a second copy.
  */
 
+import type { ListeningPort } from '../preview/ports.js';
 import { EventEmitter } from 'node:events';
 import {
   COMMAND_SINCE,
@@ -298,6 +299,23 @@ export class HostConnection extends EventEmitter {
    * Public because a UI should be able to grey a button rather than offer one
    * that will explain itself only after being pressed.
    */
+  /**
+   * Ports listening on the machine this host runs on (§6.8).
+   *
+   * `require` first, so meeting a host deployed before this command existed
+   * costs one feature and says which — rather than a request that hangs or an
+   * error about a message type nobody recognises.
+   */
+  async previewPorts(): Promise<ListeningPort[]> {
+    // `async` so the gate below *rejects* rather than throwing synchronously.
+    // A method typed `Promise<T>` that can throw before returning one is a trap:
+    // `previewPorts().catch(...)` would never see it, and the caller gets an
+    // uncaught exception from a line that looks handled. `hasBlob` had the same
+    // shape and was changed with it.
+    this.require('preview.ports');
+    return this.call<ListeningPort[]>({ t: 'preview.ports' });
+  }
+
   supports(command: keyof typeof COMMAND_SINCE | string): boolean {
     return (this.identity?.protocol ?? 1) >= (COMMAND_SINCE[command] ?? 1);
   }
@@ -310,7 +328,9 @@ export class HostConnection extends EventEmitter {
   }
 
   /** Whether this session can already resolve the hash (§6.7). */
-  hasBlob(sessionId: SessionId, sha256: Sha256, mime: string): Promise<boolean> {
+  async hasBlob(sessionId: SessionId, sha256: Sha256, mime: string): Promise<boolean> {
+    // `async` for the same reason as `previewPorts`: `require` throws, and a
+    // synchronous throw out of a `Promise`-typed method escapes `.catch`.
     this.require('blob.has');
     return this.call({ t: 'blob.has', sessionId, sha256, mime });
   }

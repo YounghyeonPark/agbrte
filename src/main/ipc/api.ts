@@ -32,6 +32,7 @@ import {
   type TranscriptDto,
   type VoiceStatusDto,
   type CaptureResultDto,
+  type DetectedPortDto,
   type ForwardDto,
   type CaptureSourceInfo,
   type SendRequest,
@@ -616,6 +617,14 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     }
     return deps.previews;
   };
+
+  handle(CH.previewDetect, async (instanceId: string): Promise<DetectedPortDto[]> => {
+    // Not client-only: this asks the *host* what it can see, which is a question
+    // a browser is entitled to ask. Only the tunnel that would follow belongs to
+    // the machine with the browser on it.
+    const found = await fleet.previewPorts(instanceId as InstanceId);
+    return found.map((p) => ({ port: p.port, address: p.address, loopbackOnly: p.loopbackOnly }));
+  });
 
   handle(
     CH.previewOpen,
