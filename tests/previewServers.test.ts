@@ -190,28 +190,38 @@ describe('stopping reaches the process that holds the port', () => {
     );
 
     const parent = servers.start('s1', cmd);
-    await until(
-      async () => {
-        try {
-          return (await readFile(marker, 'utf8')) !== '';
-        } catch {
-          return false;
-        }
-      }, 20_000,
-    );
+    const stamp = async (): Promise<string> => {
+      try {
+        return await readFile(marker, 'utf8');
+      } catch {
+        return '';
+      }
+    };
 
-    const before = await readFile(marker, 'utf8');
+    /**
+     * Liveness is established by *waiting for it*, not by sleeping and hoping.
+     *
+     * The first version read the marker once, slept, read again and asserted it
+     * had changed — which on a loaded CI runner meant asserting the grandchild
+     * had got going inside a window it had not. The guard caught that rather
+     * than passing vacuously, which is the guard working and the wait being
+     * wrong. Waiting for the value to *change* proves the writer is running,
+     * whatever the machine's mood.
+     */
+    await until(async () => (await stamp()) !== '', 20_000);
+    const first = await stamp();
+    await until(async () => (await stamp()) !== first, 20_000);
+
     expect(servers.stop(parent.id)).toBe(true);
 
-    // Long enough for the kill to land and for several writes to have happened
-    // if it did not.
+    // A sleep is right *here* and nowhere else in this test: the claim is that
+    // nothing happens for a while, and there is no fact to poll for. An absence
+    // only means something if you waited.
     await new Promise((r) => setTimeout(r, 1_500));
-    const after = await readFile(marker, 'utf8');
-    expect(after, 'the grandchild was never alive, so this proves nothing').not.toBe(before);
+    const after = await stamp();
 
     await new Promise((r) => setTimeout(r, 800));
-    const later = await readFile(marker, 'utf8');
-    expect(later, 'the grandchild outlived the kill and still holds the port').toBe(after);
+    expect(await stamp(), 'the grandchild outlived the kill and still holds the port').toBe(after);
   }, 60_000);
 
   it('stops everything a session started', async () => {

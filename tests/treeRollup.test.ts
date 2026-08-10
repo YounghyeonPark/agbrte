@@ -186,7 +186,11 @@ describe('a blockage travels to where someone is looking', () => {
     // A summons left standing after it was answered is how the rail stops being
     // read at all.
     expect(liveOf(m, parent.sessionId).session.needsAttention?.from).toBeUndefined();
-  });
+    // 30s rather than vitest's default 5: this spawns a child session and runs a
+    // real turn through a permission prompt, which fits comfortably on a
+    // developer's machine and did not on a loaded macOS CI runner. A budget that
+    // only holds on fast hardware is a test that fails for the weather.
+  }, 30_000);
 });
 
 describe('what deliberately does not travel', () => {
