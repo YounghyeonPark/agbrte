@@ -367,6 +367,33 @@ The two types stay separate on purpose. `NormalizedTurn` is **persisted** and ve
 
 **The scope of that ban is pre-flight request sizing**, and stating the boundary matters because a second kind of counting exists. Deciding *how much history to carry into a seed* (§5.4) is not sizing a request against a provider's limit: it selects how much of our own log to include, and its two failure modes are asymmetric — over-estimating carries less history than it could, which the next turn recovers; under-estimating overflows the window, which it cannot. So the seed builder uses a deliberately pessimistic character heuristic and that is **not** a violation of this rule. Anything that decides whether a request will fit still needs a provider-native count or a recorded margin.
 
+### 3.6a What the provider boundary cannot express
+
+`ModelProvider` has one implementation, so the interface has only ever been shaped against one wire format. Rather than wait for a second implementation — which needs a paid key — the shapes of two genuinely different APIs were read against these types directly: **Anthropic Messages** and **Google `generateContent`**. Both are free to read, and the audit found more than expected.
+
+The point of listing these is not that the interface is wrong. It is that **every one of them is a place where one dialect's convenience was written down as if it were universal**, and none of them would be visible from inside `openai-compatible`.
+
+| # | What a second API needs | What we have | Forced? |
+|---|---|---|---|
+| 1 | A tool result carrying **content blocks**, images included — Anthropic's `tool_result.content` accepts `ImageBlockParam` outright | `ProviderMessage`'s tool role is `result: string` | **Yes** — our own §12 already works around it |
+| 2 | Opaque reasoning echoed back verbatim: Anthropic returns `thinking` + `signature` (or `redacted_thinking` + `data`), Gemini a `thoughtSignature`, and multi-turn continuity **requires returning them** | `{ role: 'assistant'; text?; toolCalls? }` — nowhere to put them | Not yet |
+| 3 | A thinking **budget** — Anthropic's `budget_tokens` (≥1024, counted against `max_tokens`) | `ReasoningRequest` is `{ mode: 'off' \| 'low' \| … }` | Not yet |
+| 4 | **Per-block** cache markers — `cache_control` sits on individual content blocks, with a TTL | `ProviderUsage.cachedInputTokens` can *report* caching; nothing can *ask* for it | Not yet |
+| 5 | Streaming | `invoke` returns `Promise<ProviderResult>`. §3.6 above specifies `ProviderStream`, and the only provider declares `streaming: false` | Not yet |
+| 6 | `pause_turn` — a long turn the model asks to continue by sending back | No `StopReason` for "resumable". `end_turn` truncates the work; `limit_reached` parks it for a human | Not yet |
+| 7 | Usage split by **cache creation vs cache read**, which are priced differently, plus thinking tokens | One `cachedInputTokens` conflating both | Not yet, but any cost reporting built on it is wrong |
+| 8 | System prompt as an array of blocks, cacheable | `system?: string` | Not yet |
+
+**Two of these are worth more than the rest.**
+
+**Row 1 was justified by a claim that is false.** `agbrteHarness` pushes tool-produced images as a following *user* message, and the comment gives the reason as "providers reliably accept images in a user turn and many reject them in a tool role". Anthropic's `tool_result.content` takes image blocks natively. The claim was true of the dialect in front of us and was written as a fact about providers — which is exactly the failure this audit was looking for.
+
+**And that workaround had a race.** The push was `void fitContent(...).then(...)`, fire-and-forget, landing in `messages` before the next request only because the loop happens to `await runTool` and the fitting happens to await nothing real. §12.2 says that call should eventually be given a resizer; the day it is, the screenshot arrives *after* the request meant to carry it and the agent sees its own output a turn late — which would read as a model ignoring an image. Now awaited, with a test that fails when the fitting does real work and the push is not awaited.
+
+**Row 5 is a documented deviation that has quietly become a capability claim.** `RuntimeCapabilities.streaming` is a field an adapter declares; through this boundary no provider can honestly declare it true.
+
+**What this does *not* establish.** Nothing here proves the interface can be fixed, only that it currently describes one dialect. Fixing rows 2–8 without a second implementation to check against would be guessing at shapes — which is the same mistake one layer up. They are recorded so the eventual second provider is a check rather than a discovery.
+
 ### 3.7 `AgbrteHarness` — our own loop
 
 For every `ModelProvider`, `AgbrteHarness` supplies what a harness would have:
@@ -2067,7 +2094,7 @@ Tests select on `data-testid`, never a styling class. That rule was earned: conv
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| **A second `ModelProvider` that never arrives** | `openai-compatible` is the only implementation, so the provider boundary describes one wire format rather than abstracting several. Every asymmetry it claims to absorb — system-prompt placement, tool-call pairing, `stop_reason` names, streaming shapes, usage fields — is absorbed against a single dialect | A natively different provider, not another OpenAI-shaped endpoint. **Open** — and §15 recorded it as satisfied until now, which is the more dangerous state: a validation gap filed as done |
+| **A second `ModelProvider` that never arrives** | `openai-compatible` is the only implementation, so the provider boundary describes one wire format rather than abstracting several | **Measured rather than suspected** (§3.6a): eight things two real APIs need and this interface cannot express, found by reading their published shapes — no key, no cost. One is already forced by our own §12 and was justified in a comment by a claim about "providers" that is false for the API checked. The remaining seven are recorded and deliberately unfixed, because inventing shapes without an implementation to check against is the same mistake one layer up. **Open** — and §15 recorded it as satisfied until this session, which is the more dangerous state: a validation gap filed as done |
 | The abstraction ossifies around one runtime | R8 is a marketing claim | Four candidates run the contract suite and are deliberately unalike — a text protocol over real pipes, a process boundary, our own loop. **The in-process vendor-library tier now has no implementation** (§3.14), so that shape is unproven; the branch itself is still exercised by the installed-CLI adapter |
 | **Coarse gating presented as real gating** | user believes a CLI agent is sandboxed when it isn't | `permissionFidelity` is a required capability, badged in the UI; `all-or-nothing` forced into worktree/container at creation |
 | **A §13 row that is not compiled into the shipped defaults** | network egress and `git push` reached only `defaultAction`, so one `Allow for this session` grant on a `bash` call took both from `ask` to allowed | **Closed.** Both defaults now carry explicit `ask` rules, and a test grants `bash` for the session then asserts `git push` and `curl` still ask. The residual risk moved rather than vanished: the `bash` rules are globs, defeated by indirection, so the sandbox remains the real egress boundary — see the row below |

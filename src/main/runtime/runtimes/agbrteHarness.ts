@@ -256,20 +256,20 @@ class AgbrteHarnessHandle implements AgentHandle {
           ? { proposeSplit: this.ctx.proposeSplit.bind(this.ctx) }
           : {}),
       });
-      this.finishTool(call, result.ok, result.summary, result.content, result.blocks);
+      await this.finishTool(call, result.ok, result.summary, result.content, result.blocks);
     } catch (err) {
       const message = (err as Error).message;
-      this.finishTool(call, false, `tool threw: ${message}`, message);
+      await this.finishTool(call, false, `tool threw: ${message}`, message);
     }
   }
 
-  private finishTool(
+  private async finishTool(
     call: NormalizedToolCall,
     ok: boolean,
     summary: string,
     payload: string,
     blocks?: ContentBlock[],
-  ): void {
+  ): Promise<void> {
     this.emit({ type: 'tool_result', id: call.id, ok, summary });
     // The model must see the outcome, including a denial and its reason, so it
     // can adapt instead of retrying blindly (§13).
@@ -298,16 +298,27 @@ class AgbrteHarnessHandle implements AgentHandle {
      * failure.
      */
     if (blocks !== undefined && blocks.length > 0) {
-      void fitContent(blocks, this.caps).then((fitted) => {
-        for (const note of fitted.downgrades) {
-          this.ctx.reportProgress({
-            kind: 'phase',
-            detail: note.detail,
-            at: new Date().toISOString(),
-          });
-        }
-        this.messages.push({ role: 'user', content: fitted.content });
-      });
+      /**
+       * Awaited, so the image is in `messages` before the next request is built.
+       *
+       * This was `void fitContent(...).then(...)` — fire and forget — and it
+       * worked, by microtask ordering rather than by construction: the loop
+       * awaits `runTool`, which drained the queued push just in time. That holds
+       * only while the fitting awaits nothing real, and §12.2 says this call
+       * *should* eventually be given a resizer. The day it is, the screenshot
+       * lands after the request that was meant to carry it, and the agent looks
+       * at its own output one turn late — a bug that would read as a model
+       * ignoring an image.
+       */
+      const fitted = await fitContent(blocks, this.caps);
+      for (const note of fitted.downgrades) {
+        this.ctx.reportProgress({
+          kind: 'phase',
+          detail: note.detail,
+          at: new Date().toISOString(),
+        });
+      }
+      this.messages.push({ role: 'user', content: fitted.content });
     }
   }
 

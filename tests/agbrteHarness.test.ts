@@ -398,3 +398,59 @@ describe('degradeSchema', () => {
     expect(flat.required).toEqual(['name']);
   });
 });
+
+describe('a tool that returns an image (§12.1, §3.6)', () => {
+  /**
+   * Found auditing the provider boundary against a second API's shape.
+   *
+   * `ProviderMessage`'s tool role is `result: string`, so non-text a tool
+   * produced cannot ride inside the tool result and is pushed as a following
+   * **user** message instead. That push was fire-and-forget — `void
+   * fitContent(...).then(...)` — and it worked by microtask ordering rather than
+   * by construction: the loop awaits `runTool`, which happened to drain the
+   * queued push before the next request was built.
+   *
+   * It holds only while the fitting awaits nothing real, and §12.2 says this
+   * call should eventually be handed a resizer. The day it is, the screenshot
+   * lands *after* the request meant to carry it and the agent sees its own
+   * output one turn late — which would read as a model ignoring an image.
+   */
+  it('has the image in the very next request, not the one after', async () => {
+    const provider = new StubProvider([
+      { toolCalls: [{ id: 't1', name: 'screenshot', args: { url: 'http://localhost:1' } }] },
+      {},
+    ]);
+    const runtime = new AgbrteHarnessRuntime({ provider, endpointFor: () => ENDPOINT });
+
+    const handle = await runtime.start(spec(), {
+      ...context(),
+      // The tool the harness will call, returning a block the way §12.1's
+      // screenshot tool does.
+      capture: async () => ({
+        type: 'image',
+        sha256: 'a'.repeat(64) as never,
+        mime: 'image/png',
+        width: 100,
+        height: 80,
+        provenance: { kind: 'headless_browser', origin: 'remote' },
+      }),
+    });
+
+    const seen = (async () => {
+      for await (const _ of handle.events) void _;
+    })();
+    await handle.send({ content: [{ type: 'text', text: 'look at it' }] });
+    await seen;
+
+    // Two requests: the one that asked for the tool, and the one after it.
+    expect(provider.requests.length).toBeGreaterThanOrEqual(2);
+    const second = provider.requests[1]!;
+
+    // The tool result is there, and so is what the tool actually produced.
+    expect(second.messages.some((m) => m.role === 'tool')).toBe(true);
+    const carried = second.messages.some(
+      (m) => m.role === 'user' && m.content.some((b) => b.type === 'image' || /image/i.test((b as { text?: string }).text ?? '')),
+    );
+    expect(carried).toBe(true);
+  });
+});
