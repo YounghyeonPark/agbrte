@@ -29,6 +29,7 @@ import { basename } from 'node:path';
 
 import { byAttentionThenRecency } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
+import { requireTransport } from './host/transports.js';
 import type { SearchHit } from './store/searchSessions.js';
 import type { ModelNeed } from './runtime/registry.js';
 import type {
@@ -179,6 +180,19 @@ export class Fleet extends EventEmitter {
    */
   async attach(location: HostLocation): Promise<AttachedHost> {
     const { workspaceRoot, target } = location;
+
+    /**
+     * Refuse a locality that does not work, before anything is dialled.
+     *
+     * Here rather than in the connector, which is where this was missing: the
+     * connector is a dependency, so a check inside the app's copy is a check the
+     * CLI does not have and the next one will not have either. The failure it
+     * replaces is the quiet kind — an unimplemented kind fell through to the
+     * local branch and ran the work on this machine under a badge saying
+     * otherwise.
+     */
+    requireTransport(target);
+
     let connection;
     try {
       connection = await this.deps.connect(location);

@@ -23,6 +23,7 @@ import { Notifier } from './notify.js';
 import { Fleet, type FleetRuntime } from './fleet.js';
 import { connectOrSpawnHost } from './host/connectOrSpawn.js';
 import { connectRemoteHost } from './host/connectRemote.js';
+import { transportFor, TransportUnsupported } from './host/transports.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -89,7 +90,19 @@ function buildFleet(): Fleet {
         });
         return connection;
       }
-      return connectOrSpawnHost({ workspaceRoot, hostEntry: join(HERE, 'agbrteHost.js') });
+      if (target.kind === 'local') {
+        return connectOrSpawnHost({ workspaceRoot, hostEntry: join(HERE, 'agbrteHost.js') });
+      }
+      // Not a fallback. `Fleet.attach` has already refused every kind that is not
+      // implemented, so reaching this means a kind became implemented in the
+      // registry and nobody taught the connector to dial it — which must be an
+      // error, because the alternative is what this replaced: an unhandled kind
+      // silently running on the user's own machine under a badge saying it was
+      // somewhere else.
+      throw new TransportUnsupported(
+        target.kind,
+        `${transportFor(target).label} is listed as supported but this connector cannot dial it`,
+      );
     },
   });
 }
