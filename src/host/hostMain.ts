@@ -18,6 +18,7 @@
  */
 
 import { fork, type ChildProcess } from 'node:child_process';
+import type { ModelNeed } from '@main/runtime/registry.js';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Server } from 'node:net';
@@ -36,9 +37,9 @@ import { clearHostRecord, writeHostRecord } from './discovery.js';
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 /** Runtimes the forked agent host is expected to register. */
-const RUNTIMES = [
-  { id: 'agbrte-harness', label: 'Agbrte harness (local model)', version: '0.0.1', requiresModel: true },
-  { id: 'echo', label: 'Echo (no model)', version: '0.0.1', requiresModel: false },
+const RUNTIMES: Array<{ id: string; label: string; version: string; model: ModelNeed }> = [
+  { id: 'agbrte-harness', label: 'Agbrte harness (local model)', version: '0.0.1', model: 'required' },
+  { id: 'echo', label: 'Echo (no model)', version: '0.0.1', model: 'none' },
 ];
 
 /** Quiet time with no client and no work before exiting. */
@@ -128,7 +129,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
 
   const registry = new RuntimeRegistry();
   for (const entry of supervisor.runtimes()) {
-    registry.register(entry.runtime, { label: entry.label, requiresModel: entry.requiresModel });
+    registry.register(entry.runtime, { label: entry.label, model: entry.model });
   }
 
   const manager = new SessionManager({

@@ -25,6 +25,7 @@ import type {
   RuntimeContext,
 } from '@shared/types/index.js';
 import type { MainSideChannel } from '@shared/host/protocol.js';
+import type { ModelNeed } from '../runtime/registry.js';
 import type { HostAdvertisement } from './hostRuntime.js';
 import { HostBackedRuntime, HostClient } from './hostRuntime.js';
 
@@ -32,7 +33,7 @@ export interface HostSupervisorOptions {
   /** Creates a fresh channel to a new host process. */
   spawn: () => { channel: MainSideChannel };
   /** Descriptors to advertise. Must match what the host actually registers. */
-  runtimes: Array<{ id: string; label: string; version: string; requiresModel: boolean }>;
+  runtimes: Array<{ id: string; label: string; version: string; model: ModelNeed }>;
   onRestart?: (attempt: number, reason?: string) => void;
 }
 
@@ -69,10 +70,10 @@ export class HostSupervisor {
   }
 
   /** Runtime façades to register. Stable for the workspace's lifetime. */
-  runtimes(): Array<{ runtime: AgentRuntime; label: string; requiresModel: boolean }> {
+  runtimes(): Array<{ runtime: AgentRuntime; label: string; model: ModelNeed }> {
     return this.opts.runtimes.map((descriptor) => ({
       label: descriptor.label,
-      requiresModel: descriptor.requiresModel,
+      model: descriptor.model,
       runtime: new HostedFacade(() => this.current(), descriptor.id, descriptor.version),
     }));
   }

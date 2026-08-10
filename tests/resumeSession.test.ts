@@ -38,7 +38,7 @@ function manager(script?: EchoStep[], opts: { withEcho?: boolean } = {}) {
   if (opts.withEcho !== false) {
     registry.register(new EchoRuntime(script ? { script } : {}), {
       label: 'Echo',
-      requiresModel: false,
+      model: 'none',
     });
   }
   return new SessionManager({ registry, workspaceRoot: root, instanceId });

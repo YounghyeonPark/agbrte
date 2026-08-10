@@ -147,11 +147,11 @@ export async function buildHostRegistry(endpoints: EndpointRegistry): Promise<Ru
       provider: new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) }),
       endpointFor: (endpointId) => endpoints.resolve(endpointId),
     }),
-    { label: 'Agbrte harness', requiresModel: true },
+    { label: 'Agbrte harness', model: 'required' },
   );
   registry.alias(RETIRED_HARNESS_RUNTIME_ID, AGBRTE_HARNESS_RUNTIME_ID);
 
-  registry.register(new EchoRuntime(), { label: 'Echo (no model)', requiresModel: false });
+  registry.register(new EchoRuntime(), { label: 'Echo (no model)', model: 'none' });
 
   /**
    * Installed CLIs, offered only where they exist (§3.12).
@@ -175,7 +175,10 @@ export async function buildHostRegistry(endpoints: EndpointRegistry): Promise<Ru
       // change, and "which build produced this transcript" is the first question
       // asked when one does.
       label: `${manifest.label} ${found.version}`,
-      requiresModel: false,
+      // Optional, which is the answer a boolean could not give. These CLIs
+      // authenticate themselves and have their own default; `-m` is a choice a
+      // user is entitled to make, and `false` had admission reject it.
+      model: 'optional',
     });
   }
 

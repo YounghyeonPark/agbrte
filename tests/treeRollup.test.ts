@@ -47,7 +47,7 @@ const ASKS: ToolPolicy = { rules: [], defaultAction: 'ask' };
 
 function manager(script: EchoStep[] = DONE): SessionManager {
   const registry = new RuntimeRegistry();
-  registry.register(new EchoRuntime({ script }), { label: 'Echo', requiresModel: false });
+  registry.register(new EchoRuntime({ script }), { label: 'Echo', model: 'none' });
   const m = new SessionManager({ registry, workspaceRoot: root, instanceId, stallAfterMs: 0 });
   managers.push(m);
   return m;

@@ -376,7 +376,7 @@ describe('end to end: point at something, and the agent sees it', () => {
         script: [{ kind: 'stop', stop: { kind: 'end_turn' } }],
         capabilities: { input: { image: seesImages, audio: false, pdf: false, video: false } },
       }),
-      { label: 'Echo', requiresModel: false },
+      { label: 'Echo', model: 'none' },
     );
     const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
     managers.push(manager);
@@ -496,7 +496,7 @@ describe('what you drew reaches the model (§12.3, end to end)', () => {
         script: [{ kind: 'stop', stop: { kind: 'end_turn' } }],
         capabilities: { input: { image: true, audio: false, pdf: false, video: false } },
       }),
-      { label: 'Echo', requiresModel: false },
+      { label: 'Echo', model: 'none' },
     );
     const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
     managers.push(manager);

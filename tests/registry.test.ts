@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeRegistry, UnknownRuntimeError } from '@main/runtime/registry.js';
+import type { ModelNeed } from '@main/runtime/registry.js';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { newAgentId, type AgentSpec, type ToolPolicy } from '@shared/types/index.js';
 
@@ -18,9 +19,9 @@ function spec(over: Partial<AgentSpec> = {}): AgentSpec {
   };
 }
 
-function registryWith(runtime: EchoRuntime, requiresModel = false): RuntimeRegistry {
+function registryWith(runtime: EchoRuntime, model: ModelNeed = 'none'): RuntimeRegistry {
   const r = new RuntimeRegistry();
-  r.register(runtime, { label: 'Echo', requiresModel });
+  r.register(runtime, { label: 'Echo', model });
   return r;
 }
 
@@ -80,7 +81,7 @@ describe('RuntimeRegistry', () => {
         return super.capabilities(s);
       }
     }
-    const r = registryWith(new Counting(), true);
+    const r = registryWith(new Counting(), 'required');
 
     const a = spec({ model: { providerId: 'p', modelId: 'small' } });
     const b = spec({ model: { providerId: 'p', modelId: 'large' } });
@@ -187,7 +188,7 @@ describe('admission', () => {
   it('collects every failure in one pass', async () => {
     const r = registryWith(
       new EchoRuntime({ capabilities: { permissionFidelity: 'all-or-nothing', subagents: false } }),
-      true,
+      'required',
     );
     // Missing model, wrong isolation for the fidelity, and a missing capability.
     const result = await r.admit(spec(), 'shared', { needsSubagents: true });
@@ -197,13 +198,13 @@ describe('admission', () => {
   });
 
   it('requires a model when the runtime drives a provider', async () => {
-    const r = registryWith(new EchoRuntime(), true);
+    const r = registryWith(new EchoRuntime(), 'required');
     const result = await r.admit(spec(), 'worktree');
     expect(result.ok === false && result.failures.map((f) => f.code)).toContain('model_required');
   });
 
   it('rejects a model on a runtime that brings its own', async () => {
-    const r = registryWith(new EchoRuntime(), false);
+    const r = registryWith(new EchoRuntime(), 'none');
     const result = await r.admit(spec({ model: { providerId: 'p', modelId: 'm' } }), 'worktree');
     expect(result.ok === false && result.failures.map((f) => f.code)).toContain(
       'model_not_applicable',
@@ -231,5 +232,51 @@ describe('admission', () => {
     const r = new RuntimeRegistry();
     const result = await r.admit(spec(), 'shared');
     expect(result.ok === false && result.failures[0]?.code).toBe('unknown_runtime');
+  });
+});
+
+describe('a model is required, optional, or meaningless (§17.11)', () => {
+  /**
+   * `requiresModel` was a boolean answering a three-valued question, and the two
+   * answers it could give were the wrong two. `AgbrteHarness` **requires** a
+   * model; `echo` has **none**; an installed CLI takes one **optionally** — it
+   * authenticates itself and has its own default, and `-m` is a legitimate
+   * choice.
+   *
+   * As a boolean, "optional" had to be spelled `false`, which admission read as
+   * "not applicable" and rejected. Model selection for installed CLIs was
+   * therefore unreachable, and `modelArgs` was left out of the manifest rather
+   * than shipped as code admission guarantees never runs.
+   */
+  const model = { providerId: 'p', modelId: 'm' };
+
+  it('refuses a spec with no model where one is required', async () => {
+    const r = registryWith(new EchoRuntime(), 'required');
+    const result = await r.admit(spec({ runtimeId: 'echo' }), 'shared');
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.failures.map((f) => f.code)).toContain('model_required');
+  });
+
+  it('refuses a spec carrying a model where a model is meaningless', async () => {
+    // Still refused, and it should be: a field nothing reads is worse than an
+    // error, because it looks like it worked.
+    const r = registryWith(new EchoRuntime(), 'none');
+    const result = await r.admit(spec({ runtimeId: 'echo', model }), 'shared');
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.failures.map((f) => f.code)).toContain('model_not_applicable');
+  });
+
+  it('accepts a model where one is optional — the case that was unreachable', async () => {
+    const r = registryWith(new EchoRuntime(), 'optional');
+    await expect(r.admit(spec({ runtimeId: 'echo', model }), 'shared')).resolves.toMatchObject({ ok: true });
+  });
+
+  it('accepts the absence of one too, because the CLI has its own default', async () => {
+    // The vendor's tuned choice for their own harness is a real answer, so an
+    // unset model means "yours" rather than "none".
+    const r = registryWith(new EchoRuntime(), 'optional');
+    await expect(r.admit(spec({ runtimeId: 'echo' }), 'shared')).resolves.toMatchObject({ ok: true });
   });
 });

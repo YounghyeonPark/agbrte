@@ -36,7 +36,7 @@ function manager(script?: EchoStep[]): SessionManager {
   const registry = new RuntimeRegistry();
   registry.register(new EchoRuntime(script ? { script } : {}), {
     label: 'Echo',
-    requiresModel: false,
+    model: 'none',
   });
   return new SessionManager({ registry, workspaceRoot: root, instanceId });
 }

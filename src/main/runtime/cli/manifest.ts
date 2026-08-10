@@ -71,16 +71,15 @@ export interface CliAgentManifest {
     promptMode: 'argv' | 'stdin';
     baseArgs: string[];
     /**
-     * No `modelArgs`, deliberately.
+     * How this CLI is told which model to use, when the user names one.
      *
-     * These CLIs take `-m <model>` and choosing one is legitimate, but
-     * `RuntimeDescriptor.requiresModel` is a boolean answering a three-valued
-     * question — required for AgbrteHarness, *optional* here, meaningless for
-     * echo — and admission rejects a spec carrying a model whenever
-     * `requiresModel` is false. Shipping the field now would mean shipping code
-     * that admission guarantees never runs. Recorded in §3.12 as the follow-up
-     * instead.
+     * Absent means the CLI offers no such flag and its own default stands.
+     * Optional even when present: these tools authenticate themselves and pick
+     * a sensible default, so naming a model is a choice rather than a
+     * requirement — which is exactly what `RuntimeDescriptor.model:
+     * 'optional'` now expresses and a boolean could not.
      */
+    modelArgs?: (modelId: string) => string[];
     /**
      * Absent means this CLI cannot continue a previous run.
      *

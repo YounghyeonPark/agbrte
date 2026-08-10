@@ -115,7 +115,7 @@ describe('delivery through the session', () => {
 
   function manager(script: EchoStep[] = QUIET): SessionManager {
     const registry = new RuntimeRegistry();
-    registry.register(new EchoRuntime({ script }), { label: 'Echo', requiresModel: false });
+    registry.register(new EchoRuntime({ script }), { label: 'Echo', model: 'none' });
     const m = new SessionManager({ registry, workspaceRoot: root, instanceId, stallAfterMs: 0 });
     managers.push(m);
     return m;
@@ -241,7 +241,7 @@ describe('two agents talking in circles', () => {
     const registry = new RuntimeRegistry();
     registry.register(new EchoRuntime({ script: [{ kind: 'stop', stop: { kind: 'end_turn' } }] }), {
       label: 'Echo',
-      requiresModel: false,
+      model: 'none',
     });
     const m = new SessionManager({ registry, workspaceRoot: root, instanceId, stallAfterMs: 0 });
     managers.push(m);

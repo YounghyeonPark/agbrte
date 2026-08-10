@@ -611,9 +611,11 @@ function AgentPicker({
               moment the answer changes a decision. */}
           <SupportMatrix cells={conformance} runtimeId={runtimeId} />
 
-          {/* Only when the runtime is AgbrteHarness. A wrapped harness brings its
-              own model, and offering a field it ignores invites a silent no-op. */}
-          {selected?.requiresModel === true && (
+          {/* Shown unless the runtime takes no model at all. A wrapped harness
+              that ignores the field invites a silent no-op — but an installed
+              CLI takes one *optionally*, and hiding the field there made the
+              choice unreachable rather than unavailable (§3.12). */}
+          {selected !== undefined && selected.model !== 'none' && (
             <label className="text-muted grid gap-1 text-xs">
               Model
               <input
@@ -670,7 +672,7 @@ function AgentPicker({
             onClick={() =>
               void onAdd(
                 runtimeId,
-                selected?.requiresModel === true ? modelId : null,
+                selected !== undefined && selected.model !== 'none' ? modelId : null,
                 endpoint?.id,
               )
             }

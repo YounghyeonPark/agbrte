@@ -68,7 +68,7 @@ const BOB: Actor = { id: 'uid:1001', via: 'peer-credential', label: 'bob@box' };
  */
 function rig(script: EchoStep[] = QUIET) {
   const registry = new RuntimeRegistry();
-  registry.register(new EchoRuntime({ script }), { label: 'Echo', requiresModel: false });
+  registry.register(new EchoRuntime({ script }), { label: 'Echo', model: 'none' });
   const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
   const people = new Map<string, Actor>([
     ['alice', ALICE],

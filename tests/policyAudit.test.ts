@@ -145,7 +145,7 @@ describe('splitting is not a way to get permissions back', () => {
     const registry = new RuntimeRegistry();
     registry.register(new EchoRuntime({ script: [{ kind: 'stop', stop: { kind: 'end_turn' } }] }), {
       label: 'Echo',
-      requiresModel: false,
+      model: 'none',
     });
     const m = new SessionManager({ registry, workspaceRoot: root, instanceId, stallAfterMs: 0 });
     managers.push(m);
@@ -249,7 +249,7 @@ describe('a read-only client is read-only, including where the name lies', () =>
     const registry = new RuntimeRegistry();
     registry.register(new EchoRuntime({ script: [{ kind: 'stop', stop: { kind: 'end_turn' } }] }), {
       label: 'Echo',
-      requiresModel: false,
+      model: 'none',
     });
     const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
     managers.push(manager);
@@ -307,7 +307,7 @@ describe('refused at the handshake means disconnected', () => {
       const registry = new RuntimeRegistry();
       registry.register(
         new EchoRuntime({ script: [{ kind: 'stop', stop: { kind: 'end_turn' } }] }),
-        { label: 'Echo', requiresModel: false },
+        { label: 'Echo', model: 'none' },
       );
       const manager = new SessionManager({
         registry,

@@ -27,7 +27,7 @@ import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtoco
 import type { InstanceId, SessionId } from '@shared/types/index.js';
 
 const RUNTIMES: FleetRuntime[] = [
-  { id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false },
+  { id: 'echo', label: 'Echo', version: '0.0.1', model: 'none' },
 ];
 
 const DONE: EchoStep[] = [
@@ -68,7 +68,7 @@ function makeFleet(opts: HostOptions = {}): Fleet {
         const registry = new RuntimeRegistry();
         registry.register(new EchoRuntime({ script: opts.script ?? DONE }), {
           label: 'Echo',
-          requiresModel: false,
+          model: 'none',
         });
         server = new SessionHostServer({
           manager: new SessionManager({
@@ -483,7 +483,7 @@ describe('a host that found its workspace somewhere else', () => {
       connect: async () => {
         const identity = await openWorkspace(moved);
         const registry = new RuntimeRegistry();
-        registry.register(new EchoRuntime({ script: DONE }), { label: 'Echo', requiresModel: false });
+        registry.register(new EchoRuntime({ script: DONE }), { label: 'Echo', model: 'none' });
         const server = new SessionHostServer({
           manager: new SessionManager({
             registry,

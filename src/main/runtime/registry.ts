@@ -15,11 +15,29 @@ import type {
   RuntimeCapabilities,
 } from '@shared/types/index.js';
 
+/**
+ * Whether a runtime takes a model, and how strongly (§3.12, §17).
+ *
+ * Three-valued because the question is, and a boolean forced two of the three
+ * answers together. `AgbrteHarness` **requires** one — it has no loop without a
+ * provider. `echo` has **none** — a model would be ignored, and admission should
+ * say so rather than let a spec carry a field nothing reads. An installed CLI is
+ * **optional**: it brings its own auth and its own default, and `-m` is a
+ * legitimate thing to pass.
+ *
+ * As a boolean, `optional` had to be spelled `false`, which admission then read
+ * as "a model is not applicable" and rejected any spec carrying one. Model
+ * selection for installed CLIs was therefore unreachable — and `modelArgs` was
+ * left out of the CLI manifest rather than shipped as code that admission
+ * guarantees never runs.
+ */
+export type ModelNeed = 'required' | 'optional' | 'none';
+
 export interface RuntimeDescriptor {
   id: string;
   label: string;
-  /** `true` for AgbrteHarness, which needs a ModelProvider to drive (§3.7). */
-  requiresModel: boolean;
+  /** `required` for AgbrteHarness, which needs a ModelProvider to drive (§3.7). */
+  model: ModelNeed;
 }
 
 export type Isolation = 'shared' | 'worktree';
@@ -169,13 +187,16 @@ export class RuntimeRegistry {
     const descriptor = this.describe(spec.runtimeId);
     const failures: AdmissionFailure[] = [];
 
-    if (descriptor.requiresModel && !spec.model) {
+    if (descriptor.model === 'required' && !spec.model) {
       failures.push({
         code: 'model_required',
         detail: `${descriptor.id} drives a model provider, so spec.model is required`,
       });
     }
-    if (!descriptor.requiresModel && spec.model) {
+    // Only `none` refuses one. `optional` is the case a boolean could not hold:
+    // an installed CLI has its own default and will also take `-m`, so a spec
+    // that names a model is a choice rather than a mistake.
+    if (descriptor.model === 'none' && spec.model) {
       failures.push({
         code: 'model_not_applicable',
         detail: `${descriptor.id} brings its own model plumbing; spec.model would be ignored`,

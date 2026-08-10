@@ -271,7 +271,7 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     fleet.runtimesOn(instanceId as InstanceId).map((r) => ({
       id: r.id,
       version: r.version,
-      requiresModel: r.requiresModel,
+      model: r.model,
     })),
   );
 

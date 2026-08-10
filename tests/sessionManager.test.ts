@@ -30,7 +30,7 @@ function manager(script?: EchoStep[], caps?: Partial<RuntimeCapabilities>) {
   const registry = new RuntimeRegistry();
   registry.register(
     new EchoRuntime({ ...(script ? { script } : {}), ...(caps ? { capabilities: caps } : {}) }),
-    { label: 'Echo', requiresModel: false },
+    { label: 'Echo', model: 'none' },
   );
   return new SessionManager({ registry, workspaceRoot: root, instanceId });
 }

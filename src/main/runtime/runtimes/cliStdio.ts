@@ -451,6 +451,15 @@ class CliStdioHandle implements AgentHandle {
     if (inv.deterministicArgs && this.spec.auth.kind !== 'vendor-cli-session') {
       argv.push(...inv.deterministicArgs);
     }
+    /**
+     * Only when the user actually named one.
+     *
+     * The CLI's own default is a real answer — it is the vendor's tuned choice
+     * for their own harness — so an unset model means "yours", not "ours".
+     */
+    if (inv.modelArgs && this.spec.model !== undefined) {
+      argv.push(...inv.modelArgs(this.spec.model.modelId));
+    }
     if (inv.permissionModeArgs) argv.push(...inv.permissionModeArgs);
     if (inv.workspaceArgs) argv.push(...inv.workspaceArgs(this.spec.workspacePath));
 

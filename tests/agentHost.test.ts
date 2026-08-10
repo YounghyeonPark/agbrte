@@ -211,7 +211,7 @@ interface Rig {
 function rig(hooks: ProbeHooks = {}): Rig {
   const runtime = new ProbeRuntime(hooks);
   const registry = new RuntimeRegistry();
-  registry.register(runtime, { label: 'probe', requiresModel: false });
+  registry.register(runtime, { label: 'probe', model: 'none' });
 
   const pair = memoryChannelPair<HostCommand, HostMessage>();
   new AgentHostServer(pair.host, registry);
@@ -522,7 +522,7 @@ describe('the host dies', () => {
   it('notifies the owner so it can respawn', async () => {
     const runtime = new ProbeRuntime();
     const registry = new RuntimeRegistry();
-    registry.register(runtime, { label: 'probe', requiresModel: false });
+    registry.register(runtime, { label: 'probe', model: 'none' });
 
     const pair = memoryChannelPair<HostCommand, HostMessage>();
     new AgentHostServer(pair.host, registry);
@@ -555,7 +555,7 @@ describe('the real adapter over the protocol', () => {
           { kind: 'stop', stop: { kind: 'end_turn' } },
         ],
       }),
-      { label: 'echo', requiresModel: false },
+      { label: 'echo', model: 'none' },
     );
 
     const pair = memoryChannelPair<HostCommand, HostMessage>();

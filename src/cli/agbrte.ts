@@ -179,8 +179,8 @@ async function main(): Promise<number> {
     // filesystem is, and `hosts.add` says so rather than offering a path field.
     const fleet = new Fleet({
       runtimes: [
-        { id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false },
-        { id: 'agbrte-harness', label: 'Agbrte harness', version: '0.0.1', requiresModel: true },
+        { id: 'echo', label: 'Echo', version: '0.0.1', model: 'none' },
+        { id: 'agbrte-harness', label: 'Agbrte harness', version: '0.0.1', model: 'required' },
       ],
       connect: async () =>
         connectOrSpawnHost({

@@ -81,7 +81,7 @@ describe('take, draw, then store — in that order', () => {
     const registry = new RuntimeRegistry();
     registry.register(new EchoRuntime({ script: [{ kind: 'stop', stop: { kind: 'end_turn' } }] }), {
       label: 'Echo',
-      requiresModel: false,
+      model: 'none',
     });
     const manager = new SessionManager({
       registry,
@@ -99,7 +99,7 @@ describe('take, draw, then store — in that order', () => {
     });
 
     const fleet = new Fleet({
-      runtimes: [{ id: 'echo', label: 'Echo', version: '1', requiresModel: false }],
+      runtimes: [{ id: 'echo', label: 'Echo', version: '1', model: 'none' }],
       connect: async () => {
         const pair = memoryChannelPair<SessionCommand, SessionMessage>();
         server.accept(pair.host);

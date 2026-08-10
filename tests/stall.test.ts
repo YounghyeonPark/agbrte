@@ -38,7 +38,7 @@ function clock(start = Date.parse('2026-01-01T00:00:00Z')): { now: () => Date; a
 
 function manager(script: EchoStep[], opts: { stallAfterMs?: number; now?: () => Date } = {}): SessionManager {
   const registry = new RuntimeRegistry();
-  registry.register(new EchoRuntime({ script }), { label: 'Echo', requiresModel: false });
+  registry.register(new EchoRuntime({ script }), { label: 'Echo', model: 'none' });
   const m = new SessionManager({
     registry,
     workspaceRoot: root,

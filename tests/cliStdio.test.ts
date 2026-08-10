@@ -486,3 +486,45 @@ describe('small decisions', () => {
     });
   });
 });
+
+describe('naming a model for an installed CLI (§3.12, §17.11)', () => {
+  /**
+   * `modelArgs` was left out of the manifest on purpose: admission rejected any
+   * spec carrying a model whenever `requiresModel` was false, so the flag would
+   * have been code that could never run. With `model: 'optional'` the case is
+   * reachable, and the flag is worth shipping.
+   */
+  it('passes the model through when the user named one', async () => {
+    const seen: string[][] = [];
+    const runtime = new CliStdioRuntime({
+      manifest: CLAUDE_CODE_MANIFEST,
+      toolVersion: '1.0.0',
+      spawnFn: scriptedSpawn([[]], seen),
+    });
+    const handle = await runtime.start(
+      spec({ model: { providerId: 'vendor', modelId: 'some-model' } }),
+      context(),
+    );
+    await handle.send({ content: [{ type: 'text', text: 'hi' }] });
+    await drain(handle.events);
+
+    expect(seen[0]).toContain('--model');
+    expect(seen[0]).toContain('some-model');
+  });
+
+  it('leaves the CLI its own default when the user named none', async () => {
+    // The vendor's tuned choice for their own harness is a real answer, so an
+    // unset model means "yours" rather than "none".
+    const seen: string[][] = [];
+    const runtime = new CliStdioRuntime({
+      manifest: CLAUDE_CODE_MANIFEST,
+      toolVersion: '1.0.0',
+      spawnFn: scriptedSpawn([[]], seen),
+    });
+    const handle = await runtime.start(spec(), context());
+    await handle.send({ content: [{ type: 'text', text: 'hi' }] });
+    await drain(handle.events);
+
+    expect(seen[0]).not.toContain('--model');
+  });
+});

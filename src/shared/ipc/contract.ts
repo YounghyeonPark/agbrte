@@ -102,7 +102,8 @@ export interface RuntimeInfo {
   version: string;
   toolVersion?: string;
   /** Whether this runtime needs a `model`, i.e. whether it is AgbrteHarness. */
-  requiresModel: boolean;
+  /** Three-valued: an installed CLI takes a model *optionally* (§3.12). */
+  model: 'required' | 'optional' | 'none';
 }
 
 export interface CreateSessionRequest {

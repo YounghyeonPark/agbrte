@@ -230,7 +230,7 @@ describe('two sessions on one credential', () => {
 
   function manager(script: EchoStep[], quota: QuotaScheduler): SessionManager {
     const registry = new RuntimeRegistry();
-    registry.register(new EchoRuntime({ script }), { label: 'Echo', requiresModel: false });
+    registry.register(new EchoRuntime({ script }), { label: 'Echo', model: 'none' });
     const m = new SessionManager({ registry, workspaceRoot: root, instanceId, stallAfterMs: 0, quota });
     managers.push(m);
     return m;

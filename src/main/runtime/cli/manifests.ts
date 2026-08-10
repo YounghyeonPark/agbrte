@@ -194,6 +194,7 @@ export const CLAUDE_CODE_MANIFEST: CliAgentManifest = {
   invoke: {
     promptMode: 'argv',
     baseArgs: ['-p', '--output-format', 'stream-json', '--verbose'],
+    modelArgs: (modelId) => ['--model', modelId],
     resumeArgs: (token) => ['--resume', token],
     allowArgs: (rules) => ['--allowedTools', rules.join(',')],
     denyArgs: (rules) => ['--disallowedTools', rules.join(',')],

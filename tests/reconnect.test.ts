@@ -36,7 +36,7 @@ const DONE: EchoStep[] = [
   { kind: 'stop', stop: { kind: 'end_turn' } },
 ];
 
-const RUNTIMES = [{ id: 'echo', label: 'Echo', version: '1', requiresModel: false }];
+const RUNTIMES = [{ id: 'echo', label: 'Echo', version: '1', model: 'none' as const }];
 
 let roots: string[] = [];
 
@@ -65,7 +65,7 @@ async function rig(script: EchoStep[] = DONE) {
   const root = await makeRoot();
   const identity = await openWorkspace(root);
   const registry = new RuntimeRegistry();
-  registry.register(new EchoRuntime({ script }), { label: 'Echo', requiresModel: false });
+  registry.register(new EchoRuntime({ script }), { label: 'Echo', model: 'none' });
   const manager = new SessionManager({ registry, workspaceRoot: root, instanceId: identity.instanceId });
   const server = new SessionHostServer({
     manager,

@@ -171,7 +171,7 @@ describe('through the session manager', () => {
     const registry = new RuntimeRegistry();
     registry.register(new EchoRuntime({ script: [{ kind: 'stop', stop: { kind: 'end_turn' } }] }), {
       label: 'Echo',
-      requiresModel: false,
+      model: 'none',
     });
     const m = new SessionManager({ registry, workspaceRoot: root, instanceId, stallAfterMs: 0 });
     managers.push(m);
@@ -213,7 +213,7 @@ describe('through the session manager', () => {
         script: [{ kind: 'stop', stop: { kind: 'end_turn' } }],
         capabilities: { permissionFidelity: 'all-or-nothing' },
       }),
-      { label: 'Coarse', requiresModel: false },
+      { label: 'Coarse', model: 'none' },
     );
     const m = new SessionManager({ registry, workspaceRoot: root, instanceId, stallAfterMs: 0 });
     managers.push(m);

@@ -32,7 +32,7 @@ function build(config: EchoConfig = {}, caps?: Partial<RuntimeCapabilities>) {
   const registry = new RuntimeRegistry();
   registry.register(new EchoRuntime({ ...config, ...(caps ? { capabilities: caps } : {}) }), {
     label: 'Echo',
-    requiresModel: false,
+    model: 'none',
   });
   return new SessionManager({ registry, workspaceRoot: root, instanceId });
 }

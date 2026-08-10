@@ -107,7 +107,7 @@ async function main(): Promise<void> {
   const registry = new RuntimeRegistry();
   registry.register(new AgbrteHarnessRuntime({ provider, endpointFor: () => endpoint }), {
     label: `AgbrteHarness → ${args.model}`,
-    requiresModel: true,
+    model: 'required',
   });
   registry.alias(RETIRED_HARNESS_RUNTIME_ID, AGBRTE_HARNESS_RUNTIME_ID);
 

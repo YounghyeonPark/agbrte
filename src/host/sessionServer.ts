@@ -514,7 +514,9 @@ async function probeCapabilities(
 ): Promise<RuntimeCapabilities | null> {
   const registry = manager.registry;
   if (!registry.has(runtimeId)) return null;
-  if (registry.describe(runtimeId).requiresModel) return null;
+  // Only a runtime that *must* have a model is unprobeable without one.
+  // An installed CLI takes one optionally and probes fine with its own default.
+  if (registry.describe(runtimeId).model === 'required') return null;
 
   const spec: AgentSpec = {
     agentId: newAgentId(),

@@ -67,7 +67,7 @@ function oncePoor(resetsAt?: string): EchoRuntime {
 
 function manager(runtime: EchoRuntime, now: () => Date): SessionManager {
   const registry = new RuntimeRegistry();
-  registry.register(runtime, { label: 'Echo', requiresModel: false });
+  registry.register(runtime, { label: 'Echo', model: 'none' });
   // The sweeper is driven by hand below; a live timer would make this a race.
   const m = new SessionManager({ registry, workspaceRoot: root, instanceId, stallAfterMs: 0, now });
   managers.push(m);

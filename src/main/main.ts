@@ -53,9 +53,9 @@ const HOST_RUNTIMES: FleetRuntime[] = [
     id: 'agbrte-harness',
     label: 'Agbrte harness (local model)',
     version: '0.0.1',
-    requiresModel: true,
+    model: 'required',
   },
-  { id: 'echo', label: 'Echo (no model)', version: '0.0.1', requiresModel: false },
+  { id: 'echo', label: 'Echo (no model)', version: '0.0.1', model: 'none' },
 ];
 
 /**

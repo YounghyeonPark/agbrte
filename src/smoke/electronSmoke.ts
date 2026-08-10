@@ -101,7 +101,7 @@ async function main(): Promise<number> {
           { kind: 'stop', stop: { kind: 'end_turn' } },
         ],
       }),
-      { label: 'Echo', requiresModel: false },
+      { label: 'Echo', model: 'none' },
     );
     const identity = await openWorkspace(root);
     const manager = new SessionManager({ registry, workspaceRoot: root, instanceId: identity.instanceId });
@@ -116,7 +116,7 @@ async function main(): Promise<number> {
     });
 
     const fleet = new Fleet({
-      runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false }],
+      runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', model: 'none' }],
       connect: async () => {
         const pair = memoryChannelPair<SessionCommand, SessionMessage>();
         sessionHost.accept(pair.host);
@@ -126,7 +126,7 @@ async function main(): Promise<number> {
 
     const ipc = registerIpc({
       fleet,
-      runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false }],
+      runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', model: 'none' }],
       // No report in a smoke run, so the matrix degrades to declared/not-run --
       // which is precisely what it should say when nothing has been run.
       loadConformance: async () => null,
@@ -278,7 +278,7 @@ async function main(): Promise<number> {
 async function hostChecks(root: string): Promise<void> {
   const supervisor = new HostSupervisor({
     spawn: () => spawnAgentHost({ entry: join(HERE, '../main/agentHost.js'), workspaceRoot: root }),
-    runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', requiresModel: false }],
+    runtimes: [{ id: 'echo', label: 'Echo', version: '0.0.1', model: 'none' }],
   });
 
   try {

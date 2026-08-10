@@ -28,6 +28,7 @@ import { EventEmitter } from 'node:events';
 
 import { byAttentionThenRecency } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
+import type { ModelNeed } from './runtime/registry.js';
 import type {
   AccessRole,
   AgentId,
@@ -53,7 +54,8 @@ export interface FleetRuntime {
   id: string;
   label: string;
   version: string;
-  requiresModel: boolean;
+  /** Three-valued, because "optional" is a real answer for an installed CLI. */
+  model: ModelNeed;
 }
 
 /**

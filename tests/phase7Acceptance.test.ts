@@ -157,7 +157,7 @@ describe.skipIf(!READY)('capture it, circle it, say it, and let the agent fix it
         provider: new OpenAiCompatibleProvider(),
         endpointFor: () => endpoint,
       }),
-      { label: 'harness', requiresModel: true },
+      { label: 'harness', model: 'required' },
     );
     const manager = new SessionManager({
       registry,
@@ -183,7 +183,7 @@ describe.skipIf(!READY)('capture it, circle it, say it, and let the agent fix it
       },
     });
     const fleet = new Fleet({
-      runtimes: [{ id: 'agbrte-harness', label: 'harness', version: '1', requiresModel: true }],
+      runtimes: [{ id: 'agbrte-harness', label: 'harness', version: '1', model: 'required' }],
       connect: async () => {
         const pair = memoryChannelPair<SessionCommand, SessionMessage>();
         host.accept(pair.host);

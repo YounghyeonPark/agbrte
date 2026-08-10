@@ -257,7 +257,7 @@ describe('over the protocol, end to end', () => {
     const registry = new RuntimeRegistry();
     registry.register(new EchoRuntime({ script: [{ kind: 'stop', stop: { kind: 'end_turn' } }] }), {
       label: 'Echo',
-      requiresModel: false,
+      model: 'none',
     });
     const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
     managers.push(manager);

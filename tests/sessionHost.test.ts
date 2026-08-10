@@ -62,7 +62,7 @@ interface Rig {
 
 function rig(script: EchoStep[] = ECHOES, opts: { lingerMs?: number } = {}): Rig {
   const registry = new RuntimeRegistry();
-  registry.register(new EchoRuntime({ script }), { label: 'Echo', requiresModel: false });
+  registry.register(new EchoRuntime({ script }), { label: 'Echo', model: 'none' });
   const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
 
   const server = new SessionHostServer({
@@ -263,7 +263,7 @@ describe('asking a runtime what it declares', () => {
     const registry = new RuntimeRegistry();
     registry.register(new Counting({ id: 'needs-model' }), {
       label: 'Harness',
-      requiresModel: true,
+      model: 'required',
     });
     const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
     const server = new SessionHostServer({
@@ -316,7 +316,7 @@ describe('roles are granted by the owner', () => {
 
   it('lets the host grant less than was asked', async () => {
     const registry = new RuntimeRegistry();
-    registry.register(new EchoRuntime({ script: ECHOES }), { label: 'Echo', requiresModel: false });
+    registry.register(new EchoRuntime({ script: ECHOES }), { label: 'Echo', model: 'none' });
     const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
     const server = new SessionHostServer({
       manager,

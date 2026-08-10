@@ -53,7 +53,7 @@ function hostBacked(inner: AgentRuntime): AgentRuntime {
   const relabeled = new Proxy(inner, {
     get: (target, prop, recv) => (prop === 'id' ? 'test' : Reflect.get(target, prop, recv)),
   });
-  registry.register(relabeled as AgentRuntime, { label: 'hosted', requiresModel: false });
+  registry.register(relabeled as AgentRuntime, { label: 'hosted', model: 'none' });
 
   const pair = memoryChannelPair<HostCommand, HostMessage>();
   new AgentHostServer(pair.host, registry);

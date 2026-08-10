@@ -156,7 +156,7 @@ describe('resuming after a move', () => {
       new EchoRuntime({ capabilities: { nativeResume: true } });
     const build = (root: string, relocatedFrom?: string): InstanceType<typeof SessionManager> => {
       const registry = new RuntimeRegistry();
-      registry.register(runtime(), { label: 'Echo', requiresModel: false });
+      registry.register(runtime(), { label: 'Echo', model: 'none' });
       return new SessionManager({
         registry,
         workspaceRoot: root,
@@ -210,7 +210,7 @@ describe('resuming after a move', () => {
       const registry = new RuntimeRegistry();
       registry.register(new EchoRuntime({ capabilities: { nativeResume: true } }), {
         label: 'Echo',
-        requiresModel: false,
+        model: 'none',
       });
       return new SessionManager({
         registry,

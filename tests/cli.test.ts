@@ -60,7 +60,7 @@ const ASKS: EchoStep[] = [
 
 function rig(script: EchoStep[] = QUIET): { connect(): HostConnection; manager: SessionManager } {
   const registry = new RuntimeRegistry();
-  registry.register(new EchoRuntime({ script }), { label: 'Echo', requiresModel: false });
+  registry.register(new EchoRuntime({ script }), { label: 'Echo', model: 'none' });
   const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
   const server = new SessionHostServer({
     manager,
