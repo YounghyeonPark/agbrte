@@ -171,6 +171,23 @@ jobs:
       # these are signed. Without a signature the only thing a person can check
       # is that the bytes they hold are the bytes CI produced, and that is worth
       # having even though it proves less than a signature would.
+      #
+      # ## Why there is no attestation here
+      #
+      # `actions/attest-build-provenance` would sign these cryptographically and
+      # costs nothing, and it does not work on this repository. Asked directly
+      # rather than assumed, with a throwaway probe:
+      #
+      #   Failed to persist attestation: Feature not available for user-owned
+      #   private repositories. To enable this feature, please make this
+      #   repository public.
+      #
+      # So the condition is the repository being private and user-owned, not the
+      # plan being wrong or the workflow being misconfigured. Two things would
+      # change it, and both are the owner's call rather than a build detail:
+      # making the repository public, or signing with Sigstore's `cosign`
+      # directly — which works from any private repo but writes the repository's
+      # identity into a public transparency log.
       - name: Checksums
         working-directory: artifacts
         run: |
@@ -213,9 +230,20 @@ jobs:
           Windows code-signing certificate, and neither exists for this project
           yet.
 
-          `SHA256SUMS` is attached. Without a signature, checking that the bytes
-          you have are the bytes CI built is the only verification available —
-          less than a signature proves, and much better than nothing.
+          `SHA256SUMS` is attached, and the same digests are printed below so they
+          exist somewhere other than beside the files they describe. Without a
+          signature this is the only verification available — less than a
+          signature proves, and much better than nothing.
+
+          Built by RUN_URL from commit RUN_SHA.
+
+          <details><summary>SHA256SUMS</summary>
+
+          ```
+          CHECKSUMS
+          ```
+
+          </details>
 
           ## What this is
 
@@ -225,6 +253,23 @@ jobs:
           nothing installed there beyond what Agbrte unpacks into `~/.agbrte`.
           EOF
           sed -i "s/VERSION/$v/g" notes.md
+
+          # The digests go in the notes as well as in the file. An attacker who
+          # can replace an asset can replace `SHA256SUMS` beside it; the notes are
+          # a different object, edited through a different permission, and every
+          # edit to them is in the repository's audit log. That is traceability
+          # rather than proof, and the sentence above says which it is.
+          python3 - <<'PYEOF'
+          import pathlib, os
+          notes = pathlib.Path('notes.md')
+          sums = pathlib.Path('artifacts/SHA256SUMS').read_text().strip()
+          run = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          text = notes.read_text()
+          text = text.replace('RUN_URL', f'[run {os.environ["GITHUB_RUN_ID"]}]({run})')
+          text = text.replace('RUN_SHA', f'`{os.environ["GITHUB_SHA"][:12]}`')
+          text = text.replace('CHECKSUMS', sums)
+          notes.write_text(text)
+          PYEOF
 
           # Draft, deliberately. The tag was a decision to *build*; publishing is
           # a second decision, taken after looking at what came out. Eleven files

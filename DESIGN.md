@@ -2190,6 +2190,14 @@ It refuses now, naming the gap rather than the caller. §4.3 already recorded th
 
 **macOS needs a Mac and cannot be cross-built.** `dmg` is made with `hdiutil`, signing needs Apple's toolchain, and notarisation needs an Apple Developer account. Windows and Linux each build on their own runner. The release workflow is a three-runner matrix, `fail-fast: false`, and deliberately **not** run on every push: a full matrix is about a gigabyte of artifacts, and on a private repository macOS minutes bill at ten times the base rate.
 
+**Free cryptographic provenance was asked for and refused, by GitHub rather than by me.** `actions/attest-build-provenance` would sign every artifact with Sigstore at no cost, and a throwaway probe — ten seconds of CI rather than a fifteen-minute matrix — got a specific answer:
+
+> `Failed to persist attestation: Feature not available for user-owned private repositories. To enable this feature, please make this repository public.`
+
+So the blocker is the repository being private *and* user-owned, not a misconfiguration and not the wrong plan. Two things would change it and both are the owner's decision rather than a build detail: making the repository public, or signing with Sigstore's `cosign` directly — which works from a private repository and writes the repository's identity into a public transparency log, trading one kind of exposure for another.
+
+What is done instead is **traceability, named as such rather than dressed up as proof.** The digests are printed into the release notes as well as attached as `SHA256SUMS`, because somebody who can replace an asset can replace the checksum file sitting beside it; the notes are a different object behind a different permission, and every edit to them is in the repository's audit log. The notes also name the run and commit that built them. None of that is a signature and the notes say which it is.
+
 **Nothing is signed, and the build says so rather than pretending.** No certificates are referenced, so macOS reports an unidentified developer and Windows SmartScreen warns — which is what an unsigned build *is*. The credentials are the owner's to obtain (an Apple Developer account, a Windows code-signing certificate); electron-builder picks them up from the environment with no change to the workflow.
 
 **macOS entitlements are part of the product, not boilerplate.** The hardened runtime that notarisation requires refuses audio input, unsigned executable memory and library validation by default — which would make §12.4's dictation record silence, and §3.12's "run the user's own installed CLI" fail outright. `Info.plist` carries the usage strings for screen capture and the microphone for the same reason: macOS denies both *silently* without them, and §12.1 already warns that the failure looks like a black frame.
