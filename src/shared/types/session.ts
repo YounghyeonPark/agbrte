@@ -163,6 +163,44 @@ export interface SessionBudget {
   inheritedFrom?: SessionId;
 }
 
+/**
+ * Permission to split without asking, granted in advance (§17 Q8).
+ *
+ * §4.3 keeps splits user-approved because "a decomposition mistake made at 3am
+ * is expensive". The expense, though, is in **not being able to see it** — and
+ * requiring approval at 3am does not prevent the mistake, it prevents the run.
+ * A long overnight session stalls at exactly the moment it most needs to
+ * decompose, and stalls until morning.
+ *
+ * So the grant is made when the person is present and thinking about the run,
+ * and it is a **budget rather than a mode**. Three properties make that the
+ * difference:
+ *
+ * - It is **spent**. Two of three used is visible, and the third is the last.
+ *   A mode has no such edge and quietly applies forever.
+ * - Every automatic split still writes `session.split_proposed` *and*
+ *   `session.split_decided`, so the transcript reads exactly as a manual one
+ *   does and a decomposition can be reviewed in the morning. What it does not
+ *   do is raise `needsAttention` — that is the stall being removed, and the
+ *   only thing being removed.
+ * - It lives on the session, so it cannot leak into the next one by being a
+ *   setting somebody turned on once.
+ */
+export interface SplitGrant {
+  /** Splits still allowed without asking. Zero means every split asks again. */
+  remaining: number;
+  /** How many were granted, so the UI can say "2 of 3". */
+  granted: number;
+  /**
+   * Deepest tree position an automatic split may create.
+   *
+   * Separate from §4.3's `maxDepth`, which is the hard ceiling for every split.
+   * This is the depth a *person* was willing to be absent for, and it is
+   * normally shallower.
+   */
+  maxDepth: number;
+}
+
 /** Budget actually available to this session's own agents right now. */
 export function availableTokens(b: SessionBudget): number {
   return Math.max(0, b.tokenCeiling - b.spent - b.reservedForChildren);
@@ -283,6 +321,8 @@ export interface Session {
   checklist: ChecklistItem[];
   artifacts: ArtifactRef[];
   budget?: SessionBudget;
+  /** Splits this session may make without asking (§17 Q8). Absent means none. */
+  splitGrant?: SplitGrant;
   /**
    * What is blocking here, or beneath here (§4.3, §10).
    *

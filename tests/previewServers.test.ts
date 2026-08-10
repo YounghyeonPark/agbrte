@@ -131,7 +131,14 @@ describe('the log is the answer to “nothing is listening”', () => {
     );
     const s = servers.start('s1', cmd);
 
-    await until(() => (servers.log(s.id)?.dropped ?? 0) > 0, 20_000);
+    // Wait for the *last* line, not for dropping to have started. The first
+    // version waited on `dropped > 0`, which becomes true while the process is
+    // still writing — so it asserted on a log that was two hundred lines short.
+    // It passed on a fast run and failed on a slow one, which is the worst rate.
+    await until(
+      () => (servers.log(s.id)?.lines ?? []).some((l) => l.includes(`line ${many - 1}`)),
+      20_000,
+    );
     const log = servers.log(s.id)!;
     expect(log.lines.length).toBeLessThanOrEqual(LOG_LINES + 1);
     expect(log.lines.join('\n')).toContain(`line ${many - 1}`);

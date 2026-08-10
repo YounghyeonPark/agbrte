@@ -94,6 +94,13 @@ export interface CreateSessionInput {
    * subtree.
    */
   budget?: SessionBudget;
+  /**
+   * Splits this session may make without asking (§17 Q8).
+   *
+   * Set when the run is created, which is when the person is present. Absent
+   * means every split asks, which is §4.3's rule and stays the default.
+   */
+  splitGrant?: { count: number; maxDepth: number };
 }
 
 export interface NewAgentInput {
@@ -298,6 +305,17 @@ const INBOX_EVENT_WINDOW = 500;
  */
 const MAX_MESSAGE_HOPS = 8;
 
+/**
+ * Who the log says approved an automatic split.
+ *
+ * `via: 'asserted'` and an id that is plainly not a person: §5.1's rule is that
+ * an actor says what established it and therefore what it is worth, and "the
+ * grant you set earlier" is worth exactly as much as the grant. Attributing it
+ * to the user who created the session would be true in spirit and would make
+ * the transcript unable to answer "did I approve this one".
+ */
+const AUTO_ACTOR: Actor = { id: 'agbrte:split-grant', via: 'asserted', label: 'split grant' };
+
 export class SessionManager extends EventEmitter {
   private readonly sessions = new Map<SessionId, LiveSession>();
   private readonly pending = new Map<string, PendingPermission>();
@@ -416,6 +434,15 @@ export class SessionManager extends EventEmitter {
       artifacts: [],
       needsAttention: null,
       ...(input.budget !== undefined ? { budget: input.budget } : {}),
+      ...(input.splitGrant !== undefined && input.splitGrant.count > 0
+        ? {
+            splitGrant: {
+              remaining: input.splitGrant.count,
+              granted: input.splitGrant.count,
+              maxDepth: input.splitGrant.maxDepth,
+            },
+          }
+        : {}),
       // A session created directly is a root of its own tree (§4.3).
       tree: { rootSessionId: sessionId, depth: 0, ancestry: [] },
       children: [],
@@ -1947,12 +1974,56 @@ export class SessionManager extends EventEmitter {
       { ...(agentId !== undefined ? { agentId } : {}) },
     );
 
+    /**
+     * Spend a grant if there is one (§17 Q8).
+     *
+     * The proposal is written **first**, unconditionally, so an automatic split
+     * leaves exactly the transcript a manual one does — proposed, then decided.
+     * A path that skipped straight to spawning would produce a child with no
+     * record of what was suggested, which is the half §4.3 says is the more
+     * interesting one when a session goes badly.
+     *
+     * What is skipped is `needsAttention`. That is the stall being removed, and
+     * it is the only thing being removed.
+     */
+    if (this.mayAutoSplit(live)) {
+      // Through the ordinary decision path, so approval means the same thing
+      // however it was reached — including `spawnChild` refusing on a limit or a
+      // bad brief, which must still be able to refuse.
+      await this.respondSplit(sessionId, full.proposalId, { approved: true }, AUTO_ACTOR);
+      // Spent **after** the child exists, not before. Decrementing first charges
+      // the grant for a split that did not happen: `respondSplit` throws when
+      // the spawn is refused, and a run would then lose an allowance to a
+      // malformed proposal it never got a child out of.
+      const grant = live.session.splitGrant;
+      if (grant !== undefined) {
+        live.session.splitGrant = { ...grant, remaining: grant.remaining - 1 };
+        this.touch(live);
+      }
+      return full;
+    }
+
     live.session.needsAttention = this.ownAttention(live);
     this.touch(live);
     // Up to the root, like any other blockage: a proposal three levels down is
     // as easy to lose as a permission prompt.
     this.rollUp(live);
     return full;
+  }
+
+  /**
+   * Whether this proposal may be approved without asking.
+   *
+   * Depth is checked here and not only in `spawnChild`, because the two answer
+   * different questions. §4.3's `maxDepth` is the hard ceiling for any split at
+   * all; the grant's is how deep a *person was willing to be absent for*, which
+   * is normally shallower. Reaching it means the next split asks, which is the
+   * grant working rather than failing.
+   */
+  private mayAutoSplit(live: LiveSession): boolean {
+    const grant = live.session.splitGrant;
+    if (grant === undefined || grant.remaining <= 0) return false;
+    return live.session.tree.depth + 1 <= grant.maxDepth;
   }
 
   /** Answer a proposal. Approval spawns; refusal is recorded and is not a failure. */
