@@ -259,7 +259,7 @@ describe('Windows speaks netstat', () => {
       '  Proto  Local Address          Foreign Address        State           PID',
       '  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       2288',
       '  TCP    127.0.0.1:3000         0.0.0.0:0              LISTENING       4242',
-      '  TCP    192.168.0.35:52310     93.184.216.34:443      ESTABLISHED     4242',
+      '  TCP    203.0.113.9:52310      93.184.216.34:443      ESTABLISHED     4242',
       '  UDP    0.0.0.0:5353           *:*                                    900',
     ].join('\n');
     expect(parseNetstat(out, () => true).map((p) => p.port)).toEqual([135, 3000]);

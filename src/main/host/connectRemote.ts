@@ -104,7 +104,7 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
    * upgrading.
    *
    * Reproduced against a real remote host running v2 with this app at v3, rather
-   * than argued: `REFUSED: the host on cbk_ws_one speaks session protocol v2,
+   * than argued: `REFUSED: the host on build-01 speaks session protocol v2,
    * this app speaks v3`.
    *
    * The client is already equipped for the difference. `HostConnection.supports`

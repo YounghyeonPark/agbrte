@@ -69,7 +69,7 @@ describe('a version difference is not a reason to refuse', () => {
      * Reproduced against a real host before it was written: a v2 host that had
      * been running since the previous day, and an app at v3, produced
      *
-     *   REFUSED: the host on cbk_ws_one speaks session protocol v2,
+     *   REFUSED: the host on build-01 speaks session protocol v2,
      *            this app speaks v3: stop it there, or update this app
      *
      * "Stop it there" for a host holding a live agent means losing the work, and

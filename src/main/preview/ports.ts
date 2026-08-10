@@ -114,7 +114,7 @@ export function parseProcNetTcp(
   return found;
 }
 
-/** `36177B64` → `100.123.23.54`. Little-endian, one 32-bit word. */
+/** `7100003A` → `58.0.0.113`. Little-endian, one 32-bit word. */
 function ipv4(hex: string): string | null {
   if (hex.length !== 8) return null;
   const bytes = [6, 4, 2, 0].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
