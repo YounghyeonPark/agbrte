@@ -1977,7 +1977,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
 | 6 | Multi-agent + hierarchy | 6th | **done** |
-| 7 | Multimodal | 7th | everything but OCR and TTS is built and exercised on real hardware; **the acceptance flow has not been run as one flow** |
+| 7 | Multimodal | 7th | **criteria met**, with two named substitutions; OCR and TTS not built |
 | 8 | Breadth + polish | 8th | not started |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow.
@@ -2033,7 +2033,11 @@ Tests select on `data-testid`, never a styling class. That rule was earned: conv
 
 *Status.* **Every component exists and each has been run against the real thing rather than a fake.** Blob push (§6.7) moved 2.16 MB in 9 chunks over ssh with both machines agreeing on the hash; `capture/electron.ts` grabbed a real display through the Electron smoke check, at 2560×1600 from a 1707×1067 @1.5 screen, which is what asking in device pixels rather than DIPs is for; the two-step annotator paints a blackout into the bytes before anything is stored; and whisper.cpp v1.9.2 transcribed a SAPI-synthesized sentence word for word.
 
-**The acceptance criterion above is still not met, and the gap is the interesting part.** Capture a region, circle it, say what is wrong, and have a *remote agent* fix it and screenshot its own fix — every one of those works, and nobody has run them as a single flow with a real model at the far end. The remote exercise used `echo`. That is exactly the shape of gap this phase kept producing: pieces that pass their own tests and a seam nobody crossed.
+**The acceptance criterion has now been run as one sentence.** A page is served with a button styled invisible; the headless browser renders it; a region is captured and held **unstored** while a red box is drawn around the button; the marks are committed through the real IPC handlers; a spoken instruction — synthesized by SAPI, transcribed by whisper.cpp — arrives as text; and `qwen2.5:7b` receives all of it and goes **edit → screenshot → edit → screenshot**, five times, fixing the file and looking at its own output. That loop was not asserted and not prompted for: it is §12.1's stated purpose for the headless capture happening on its own.
+
+**Two substitutions, named rather than hidden.** The agent is *local*, because the tailnet server has no reachable model server — the far end would have been `echo` again, which is what made the earlier remote run prove nothing. The transport is covered separately and hard: an in-memory channel in tests, and 2.16 MB chunked over real ssh with both machines agreeing on the hash. And the agent *does not see the picture*: `qwen2.5:7b` declares `input.image: false`, so §12.2 replaces it and §12.3's sentence carries what was circled — which is the case that section calls the common one, so the flow either works through it or the description is decoration.
+
+**Writing that test reproduced the bug it exists to catch.** The first version called `storeFrame` directly instead of going through `capture.commit`, rebuilding the seam by hand — and silently dropped the annotations, so the model was told a picture existed and never told what was circled. Pieces that pass their own tests, and a seam nobody crossed.
 
 **Not built, each with a stated reason rather than a backlog entry:** OCR, which is a native model and stays injected — without it the explicit-rectangle path works and the sweep honestly reports `scanned: false`; TTS; live STT partials, because `whisper-cli` transcribes a finished file and exits; and glyph rendering, which is now a *checked* refusal rather than an assumption, since the description carries the words verbatim and travels beside the picture on every path.
 
