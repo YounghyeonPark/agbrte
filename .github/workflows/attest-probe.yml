@@ -1,0 +1,41 @@
+# Throwaway: does artifact attestation work on this repository at all?
+#
+# Artifact attestations are documented as available for public repositories, and
+# for private ones only on some GitHub plans. This repository is private, so the
+# answer is a fact about the account rather than about the code — and finding it
+# out by running the full release matrix would cost fifteen minutes and a
+# gigabyte to learn one boolean.
+#
+# Deleted once it has answered.
+name: attest probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      attestations: write
+
+    steps:
+      - name: Something to attest
+        run: echo "probe $GITHUB_SHA" > probe.txt
+
+      - id: attest
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: probe.txt
+
+      - name: What happened
+        run: |
+          echo "outcome: ${{ steps.attest.outcome }}"
+          echo "bundle:  ${{ steps.attest.outputs.bundle-path || '(none)' }}"
+          if [ "${{ steps.attest.outcome }}" = "success" ]; then
+            echo "attestation works on this private repository"
+          else
+            echo "attestation is NOT available here — the plan does not include it"
+          fi
