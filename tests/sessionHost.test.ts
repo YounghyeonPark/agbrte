@@ -12,6 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { until } from './support/until.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -126,7 +127,7 @@ describe('the host owns the session', () => {
 
     // The app closes. Leaving is not stopping.
     first.disconnect();
-    await new Promise((res) => setTimeout(res, 20));
+    await until(() => r.server.clientCount === 0);
     expect(r.server.clientCount).toBe(0);
 
     // A different app instance — a second device, or the same one relaunched.
@@ -156,7 +157,7 @@ describe('the host owns the session', () => {
     const seen: string[] = [];
     b.on('event', (_s, e: { type: string }) => seen.push(e.type));
     await a.send(sessionId, agentId as never, 'from a');
-    await new Promise((res) => setTimeout(res, 20));
+    await until(() => seen.length > 0);
 
     // b watches a's turn without having asked for it.
     expect(seen).toContain('user.turn');
@@ -177,7 +178,7 @@ describe('the host owns the session', () => {
       a.send(sessionId, agentId as never, 'one'),
       a.send(sessionId, agentId as never, 'two'),
     ]);
-    await new Promise((res) => setTimeout(res, 20));
+    await until(() => depths.length > 0);
 
     // With several clients the backlog may not be yours, so it has to be pushed
     // rather than inferred from your own sends.
@@ -511,11 +512,3 @@ describe('protocol version is a range, not an equality', () => {
   });
 });
 
-/** Wait on a condition rather than a sleep. */
-async function until(what: () => boolean, ms = 3_000): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (!what()) {
-    if (Date.now() > deadline) throw new Error('condition never held');
-    await new Promise((r) => setTimeout(r, 5));
-  }
-}

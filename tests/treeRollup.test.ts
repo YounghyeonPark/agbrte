@@ -13,6 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { until } from './support/until.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -60,20 +61,6 @@ const split = (title: string, ceiling = 10_000) => ({
   tokenCeiling: ceiling,
 });
 
-/**
- * Wait for a condition instead of for a duration.
- *
- * A fixed sleep encodes a guess about how long an async turn takes, and the
- * guess is wrong on a loaded machine — which shows up as a test that fails
- * occasionally and proves nothing when it passes.
- */
-async function until(what: () => boolean, ms = 2_000): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (!what()) {
-    if (Date.now() > deadline) throw new Error('condition never became true');
-    await new Promise((r) => setTimeout(r, 5));
-  }
-}
 
 /** Reach a live session, which is where roll-up lands. */
 const liveOf = (m: SessionManager, id: string): { session: Session } =>

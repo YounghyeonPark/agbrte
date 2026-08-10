@@ -16,6 +16,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { until } from './support/until.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -117,14 +118,6 @@ async function rig(script: EchoStep[] = DONE) {
   };
 }
 
-/** Wait for a predicate, so a test never sleeps a fixed amount. */
-async function until(predicate: () => boolean, ms = 3_000): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error('timed out waiting');
-    await new Promise((r) => setTimeout(r, 5));
-  }
-}
 
 describe('a dropped link', () => {
   it('keeps the host and says it is reconnecting, rather than erasing it', async () => {
@@ -194,7 +187,9 @@ describe('a dropped link', () => {
     await until(() => r.fleet.hosts()[0]?.link === 'reconnecting');
     r.restore();
     await until(() => r.fleet.hosts()[0]?.link === 'connected');
-    // Long enough for a duplicate to have shown up if one were coming.
+    // A duration, and correctly so: "no duplicate arrived" is a claim about a
+    // period of time, and there is nothing to poll for when the assertion is an
+    // absence.
     await new Promise((res) => setTimeout(res, 100));
 
     // The high-water mark is what makes this exact: `fromSeq` is exclusive, so

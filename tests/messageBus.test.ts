@@ -12,6 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { until } from './support/until.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -150,7 +151,12 @@ describe('delivery through the session', () => {
       kind: 'task',
       content: [{ type: 'text', text: 'rename the parser' }],
     });
-    await new Promise((r) => setTimeout(r, 50));
+    // The fact, not fifty milliseconds. This is the test that flaked: delivery
+    // appends the message and *then* wakes the recipient, so a sleep raced the
+    // second half and reported an empty log as a missing feature.
+    await until(async () =>
+      (await m.events(sessionId as never)).some((e) => e.type === 'user.turn'),
+    );
 
     const events = await m.events(sessionId as never);
     const logged = events.find((e) => e.type === 'agent.message') as unknown as {
@@ -167,7 +173,9 @@ describe('delivery through the session', () => {
     const m = manager();
     const { sessionId, lead, worker } = await pair(m);
     await deliver(m, sessionId, lead, { to: worker, kind: 'task', content: [{ type: 'text', text: 'go' }] });
-    await new Promise((r) => setTimeout(r, 50));
+    await until(async () =>
+      (await m.events(sessionId as never)).some((e) => e.type === 'user.turn'),
+    );
 
     const turn = (await m.events(sessionId as never)).find((e) => e.type === 'user.turn');
     // §5.1: an absent actor means no person acted. Attributing this to whoever
@@ -211,14 +219,6 @@ describe('delivery through the session', () => {
   });
 });
 
-/** Wait for a fact rather than for a duration. */
-async function until(what: () => boolean, ms = 5_000): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (!what()) {
-    if (Date.now() > deadline) throw new Error('condition never became true');
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
 
 describe('two agents talking in circles', () => {
   let root: string;

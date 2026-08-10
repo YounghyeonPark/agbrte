@@ -14,6 +14,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { until } from './support/until.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -111,7 +112,10 @@ describe('running out of quota', () => {
 
     time.advance(61 * 60_000);
     wake(m);
-    await new Promise((r) => setTimeout(r, 200));
+    // The end state, not merely "no longer parked". Waiting for the park to
+    // clear was my first attempt and it is too early — unparking sets `working`,
+    // and the assertions below are about the replayed turn having *finished*.
+    await until(async () => (await m.get(session.sessionId)).state === 'awaiting_input');
 
     const events = await m.events(session.sessionId);
     // Announced, because the turn that follows is a repeat and two identical
@@ -132,6 +136,9 @@ describe('running out of quota', () => {
 
     time.advance(30 * 60_000);
     wake(m);
+    // A duration, deliberately: the claim is that nothing happens, and an
+    // absence only means something if you waited for it. There is no fact to
+    // poll for when the expected outcome is that no fact appears.
     await new Promise((r) => setTimeout(r, 100));
     // Half an hour into an hour-long window is still inside it.
     expect((await m.get(session.sessionId)).state).toBe('awaiting_quota');
@@ -165,7 +172,7 @@ describe('running out of quota', () => {
     time.advance(61 * 60_000);
     wake(m);
     wake(m);
-    await new Promise((r) => setTimeout(r, 200));
+    await until(async () => (await m.get(session.sessionId)).state === 'awaiting_input');
 
     // The park is cleared before the turn is sent, or every sweep after the
     // reset would fire it again.
