@@ -1988,7 +1988,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 1 | Skeleton | 1st | **done**, verified end to end |
 | 5 | Remote execution | **2nd** | criteria met; ModelGateway deliberately not built; protocol versions now negotiate (§17.16) |
 | 2 | Persistence hardening | 3rd | **done** — identity, `PathCodec`, `rehydrate`, blobs, detection, and the notice |
-| 3 | Three-shape proof | 4th | validation satisfied early; `agent-cli-stdio` and the UI matrix landed; **a second real provider remains** |
+| 3 | Three-shape proof | 4th | runtime axis validated (four candidates); **the provider axis is not** — `ModelProvider` has one implementation, and that is validation rather than breadth |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox |
 | 6 | Multi-agent + hierarchy | 6th | **done** |
 | 7 | Multimodal | 7th | **criteria met**, with two named substitutions; OCR and TTS not built |
