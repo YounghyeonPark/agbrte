@@ -40,7 +40,8 @@
     "cli": "node scripts/build.mjs && node dist/cli/agbrte.js",
     "package": "node scripts/package.mjs",
     "dist": "npm run build && electron-builder --publish never",
-    "dist:dir": "npm run build && electron-builder --dir --publish never"
+    "dist:dir": "npm run build && electron-builder --dir --publish never",
+    "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.3.7",
