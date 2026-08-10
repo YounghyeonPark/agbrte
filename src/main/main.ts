@@ -24,6 +24,8 @@ import { Fleet, type FleetRuntime } from './fleet.js';
 import { connectOrSpawnHost } from './host/connectOrSpawn.js';
 import { connectRemoteHost } from './host/connectRemote.js';
 import { transportFor, TransportUnsupported } from './host/transports.js';
+import { PreviewForwards } from './preview/forwards.js';
+import { freeLoopbackPort, systemSshRunner } from './host/sshTransport.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -39,6 +41,7 @@ if (process.platform === 'win32') app.setAppUserModelId('dev.agbrte.app');
 
 let fleet: Fleet | null = null;
 let ipc: { dispose: () => void } | null = null;
+let previews: PreviewForwards | null = null;
 
 /**
  * What an agent host is expected to offer, mirrored here because the renderer
@@ -179,9 +182,37 @@ app.whenReady().then(async () => {
       .catch(() => undefined);
   });
 
+  /**
+   * Preview forwarding (§6.8), on this machine because the URL it produces names
+   * this machine.
+   *
+   * The opener dispatches the same way the connector does, and for the same
+   * reason: an unimplemented locality must not fall through to something that
+   * silently works differently.
+   */
+  previews = new PreviewForwards({
+    freePort: freeLoopbackPort,
+    open: (target, localPort, remotePort) => {
+      if (target.kind !== 'ssh') {
+        throw new TransportUnsupported(
+          target.kind,
+          `${transportFor(target).label} cannot forward a port yet`,
+        );
+      }
+      // `127.0.0.1:<port>` on the far side: the dev server is bound to the
+      // remote's loopback, which is exactly why it needs a tunnel at all.
+      return systemSshRunner().forward(
+        target.alias ?? target.host,
+        localPort,
+        `127.0.0.1:${remotePort}`,
+      );
+    },
+  });
+
   ipc = registerIpc({
     fleet,
     runtimes: HOST_RUNTIMES,
+    previews,
     // Beside the app, so a build ships the report that describes that build.
     loadConformance: () => loadReport(join(app.getAppPath(), 'conformance')),
   });
@@ -211,6 +242,9 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  // Every `ssh -N` this app started. A forward outliving the app is a port that
+  // keeps answering with nothing to explain it.
+  previews?.closeAll();
   ipc?.dispose();
   // Disconnect, do **not** stop. A host outliving the app is the feature, not a
   // leak: a session started here keeps running, and the next app to open — on

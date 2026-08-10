@@ -78,8 +78,15 @@ export interface SshRunner {
   exec(alias: string, command: string): Promise<{ code: number; stdout: string; stderr: string }>;
   /** Copy local bytes to a remote path. */
   upload(alias: string, remotePath: string, contents: Buffer): Promise<void>;
-  /** Start `ssh -L`, resolving once the forward is usable. */
-  forward(alias: string, localPort: number, remoteSocket: string): Promise<{ close(): void }>;
+  /**
+   * Start `ssh -L`, resolving once the forward is usable.
+   *
+   * `remoteTarget` is either a socket path — how the host itself is reached —
+   * or `host:port`, which is what §6.8's preview forwarding needs. OpenSSH takes
+   * both in the same position, so one runner serves both and there is no second
+   * code path to keep in step.
+   */
+  forward(alias: string, localPort: number, remoteTarget: string): Promise<{ close(): void }>;
 }
 
 export class RemoteBootstrapFailed extends Error {
@@ -497,10 +504,10 @@ export function systemSshRunner(sshPath = 'ssh'): SshRunner {
       child.stdin.end(contents);
     });
 
-  const forward: SshRunner['forward'] = async (alias, localPort, remoteSocket) => {
+  const forward: SshRunner['forward'] = async (alias, localPort, remoteTarget) => {
     const child = spawn(
       sshPath,
-      [...base, '-N', '-L', `127.0.0.1:${localPort}:${remoteSocket}`, alias],
+      [...base, '-N', '-L', `127.0.0.1:${localPort}:${remoteTarget}`, alias],
       { stdio: ['ignore', 'ignore', 'pipe'] },
     );
     let stderr = '';

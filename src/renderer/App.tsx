@@ -36,6 +36,7 @@ import { StartGuide } from './StartGuide.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import { useAgbrte } from './store.js';
 import { Composer, EventRow, PermissionPrompt, SplitPrompt, Transcript, summarize } from './Transcript.js';
+import { Preview } from './Preview.js';
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
 import type { MatrixCell, Session, SessionState } from '../shared/types/index.js';
 
@@ -302,6 +303,18 @@ export function App(): JSX.Element {
               host={hosts.find((h) => h.instanceId === active.instanceId) ?? null}
               onInterrupt={() => void store.interrupt()}
               onBack={() => store.closeSession()}
+            />
+
+            {/* §6.8. Remote only: a local dev server is already on localhost, and
+                a button that does nothing visible teaches people the feature
+                does nothing. */}
+            <Preview
+              sessionId={active.sessionId}
+              instanceId={active.instanceId}
+              remote={
+                (hosts.find((h) => h.instanceId === active.instanceId)?.targetKind ?? 'local') !==
+                'local'
+              }
             />
 
             {active.agents.length === 0 ? (

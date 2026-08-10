@@ -147,6 +147,19 @@ const api: AgbrteApi = {
     speak: call(CH.voiceSpeak),
     stopSpeaking: call(CH.voiceStopSpeaking),
   },
+  /**
+   * Routed like everything else, and the server has no `previews` to route it
+   * to — `preview.open` says so and `preview.list` answers empty. The refusal
+   * lives on the server rather than here because the browser cannot be trusted
+   * to know what the server is holding, and because a method that exists and
+   * explains itself beats one that is silently absent.
+   */
+  preview: {
+    open: call(CH.previewOpen),
+    list: call(CH.previewList),
+    close: call(CH.previewClose),
+    recheck: call(CH.previewRecheck),
+  },
   sessions: {
     list: call(CH.sessionsList),
     create: call(CH.sessionsCreate),

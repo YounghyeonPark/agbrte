@@ -55,7 +55,14 @@ import { createApi, type IpcDeps } from '@main/ipc/api.js';
  * comment that goes stale silently, and the sort of mistake that is one line to
  * make and catastrophic to ship.
  */
-type ClientOnly = 'broadcast' | 'pickFolder' | 'screen' | 'selectRegion' | 'clips' | 'speaker';
+type ClientOnly =
+  | 'broadcast'
+  | 'pickFolder'
+  | 'screen'
+  | 'selectRegion'
+  | 'clips'
+  | 'speaker'
+  | 'previews';
 
 export interface WebServerOptions {
   /** Everything `createApi` needs, minus what belongs to the machine it runs on. */
@@ -120,6 +127,7 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
       selectRegion: _region,
       clips: _clips,
       speaker: _speaker,
+      previews: _previews,
       ...safe
     } = opts.api as IpcDeps;
 

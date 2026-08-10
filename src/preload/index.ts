@@ -81,6 +81,13 @@ const api: AgbrteApi = {
     speak: (text: string) => ipcRenderer.invoke(CH.voiceSpeak, text),
     stopSpeaking: () => ipcRenderer.invoke(CH.voiceStopSpeaking),
   },
+  preview: {
+    open: (r: { instanceId: string; sessionId: string; port: number }) =>
+      ipcRenderer.invoke(CH.previewOpen, r),
+    list: (sessionId: string) => ipcRenderer.invoke(CH.previewList, sessionId),
+    close: (r: { sessionId: string; port: number }) => ipcRenderer.invoke(CH.previewClose, r),
+    recheck: (r: { sessionId: string; port: number }) => ipcRenderer.invoke(CH.previewRecheck, r),
+  },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),
     create: (r: CreateSessionRequest) => ipcRenderer.invoke(CH.sessionsCreate, r),

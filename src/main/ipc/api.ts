@@ -32,11 +32,13 @@ import {
   type TranscriptDto,
   type VoiceStatusDto,
   type CaptureResultDto,
+  type ForwardDto,
   type CaptureSourceInfo,
   type SendRequest,
   type SessionSnapshot,
   type SshHostInfo,
 } from '@shared/ipc/contract.js';
+import type { PreviewForwards } from '../preview/forwards.js';
 import type {
   AgentId,
   InstanceId,
@@ -129,6 +131,15 @@ export interface IpcDeps {
    * room.
    */
   speaker?: Speaker;
+  /**
+   * Open port forwards for previews (§6.8).
+   *
+   * Client-only: what it hands back is a `127.0.0.1` URL, which names the
+   * machine that opened the tunnel. A browser reaching a headless server would
+   * be told to open a port on the *server* — a URL pointing at the wrong
+   * computer, which is worse than an absent button.
+   */
+  previews?: PreviewForwards;
 }
 
 /** The transport-free API: a channel map, an ack sink, and its teardown. */
@@ -591,6 +602,48 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   handle(CH.voiceForget, async (sha256: string) => {
     await deps.clips?.forget(sha256 as Sha256);
   });
+
+  /**
+   * Preview forwarding (§6.8).
+   *
+   * The target comes from the fleet rather than from the caller: which machine a
+   * session runs on is the host's fact, and letting the renderer name it would
+   * be letting it ask for a tunnel to somewhere the session is not.
+   */
+  const previewsFor = (): PreviewForwards => {
+    if (deps.previews === undefined) {
+      throw new Error('previews are opened by the app on this machine, not by this client');
+    }
+    return deps.previews;
+  };
+
+  handle(
+    CH.previewOpen,
+    async (r: { instanceId: string; sessionId: string; port: number }): Promise<ForwardDto> => {
+      // The client-only check runs **first**. It was second, and a browser got
+      // "no attached host i" — a refusal whose wording depended on an unrelated
+      // lookup happening to fail, which is the sort of thing that later gets
+      // "fixed" by reordering and quietly loses the refusal.
+      const previews = previewsFor();
+      const host = fleet.hosts().find((h) => h.instanceId === r.instanceId);
+      if (host === undefined) throw new Error(`no attached host ${r.instanceId}`);
+      return previews.forward(r.sessionId as SessionId, host.target, r.port);
+    },
+  );
+
+  handle(CH.previewList, (sessionId: string): ForwardDto[] =>
+    deps.previews === undefined ? [] : deps.previews.list(sessionId as SessionId),
+  );
+
+  handle(CH.previewClose, (r: { sessionId: string; port: number }) =>
+    deps.previews === undefined ? false : deps.previews.close(r.sessionId as SessionId, r.port),
+  );
+
+  handle(CH.previewRecheck, (r: { sessionId: string; port: number }) =>
+    deps.previews === undefined
+      ? null
+      : deps.previews.recheck(r.sessionId as SessionId, r.port),
+  );
 
   handle(CH.captureRegion, async (sessionId: string): Promise<CaptureResultDto | null> => {
     if (deps.selectRegion === undefined) {

@@ -413,6 +413,28 @@ export interface AgbrteApi {
     speak(text: string): Promise<boolean>;
     stopSpeaking(): Promise<void>;
   };
+  /**
+   * Bringing a remote dev server to a local port (§6.8).
+   *
+   * Client-only, like `screen` and `speaker`, and for the same class of reason:
+   * what comes back is `http://127.0.0.1:<port>`, which is an address on the
+   * machine that opened the tunnel. Handing that to a browser on a phone would
+   * be a URL pointing at the wrong computer — a subtler wrongness than a missing
+   * feature, so it is excluded by type rather than left to fail politely.
+   */
+  preview: {
+    /**
+     * Forward a port on the machine running this session.
+     *
+     * `reachable: false` is an answer, not a failure — a dev server that is
+     * still compiling reports exactly that, and the tunnel is genuinely open.
+     */
+    open(r: { instanceId: string; sessionId: string; port: number }): Promise<ForwardDto>;
+    list(sessionId: string): Promise<ForwardDto[]>;
+    close(r: { sessionId: string; port: number }): Promise<boolean>;
+    /** Ask again whether anything is answering, keeping the same local port. */
+    recheck(r: { sessionId: string; port: number }): Promise<ForwardDto | null>;
+  };
   sessions: {
     list(): Promise<Session[]>;
     create(r: CreateSessionRequest): Promise<Session>;
@@ -498,6 +520,15 @@ export interface AgbrteApi {
 
 // -------------------------------------------------------------------- channels
 
+/** One forwarded port, as the renderer sees it (§6.8). */
+export interface ForwardDto {
+  sessionId: string;
+  remotePort: number;
+  localPort: number;
+  url: string;
+  reachable: boolean;
+}
+
 /**
  * Invoke channels. Values are namespaced strings so a stray listener in a
  * devtools console is at least legible in a log.
@@ -533,6 +564,10 @@ export const CH = {
   voiceForget: 'agbrte:voice.forget',
   voiceSpeak: 'agbrte:voice.speak',
   voiceStopSpeaking: 'agbrte:voice.stopSpeaking',
+  previewOpen: 'agbrte:preview.open',
+  previewList: 'agbrte:preview.list',
+  previewClose: 'agbrte:preview.close',
+  previewRecheck: 'agbrte:preview.recheck',
   sessionsInterrupt: 'agbrte:sessions.interrupt',
   sessionsSince: 'agbrte:sessions.since',
   sessionsExport: 'agbrte:sessions.export',

@@ -374,6 +374,12 @@ describe('a browser must not be handed this machine', () => {
     ).rejects.toThrow(/cannot record/i);
     // And it must not be able to make the *server* talk to an empty room.
     await expect(api.handlers.get(CH.voiceSpeak)!('hello there')).resolves.toBe(false);
+    // Nor hand a browser a `127.0.0.1` URL naming the server rather than the
+    // machine the browser is on — a URL pointing at the wrong computer is a
+    // subtler wrongness than an absent button (§6.8).
+    await expect(
+      api.handlers.get(CH.previewOpen)!({ instanceId: 'i', sessionId: 's', port: 3000 }),
+    ).rejects.toThrow(/not by this client/i);
 
     api.dispose();
   });
@@ -391,6 +397,7 @@ describe('a browser must not be handed this machine', () => {
 
     await expect(api.handlers.get(CH.captureSources)!()).resolves.toEqual([]);
     await expect(api.handlers.get(CH.voiceClips)!()).resolves.toEqual([]);
+    await expect(api.handlers.get(CH.previewList)!('s')).resolves.toEqual([]);
     api.dispose();
   });
 });
