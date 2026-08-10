@@ -158,6 +158,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Provenance signing. `id-token` is what proves to Sigstore which workflow
+      # in which repository at which commit is asking, and it is the whole basis
+      # of the claim — a token scoped to anything less would let a different
+      # workflow sign as this one.
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@v4
@@ -172,22 +178,10 @@ jobs:
       # is that the bytes they hold are the bytes CI produced, and that is worth
       # having even though it proves less than a signature would.
       #
-      # ## Why there is no attestation here
-      #
-      # `actions/attest-build-provenance` would sign these cryptographically and
-      # costs nothing, and it does not work on this repository. Asked directly
-      # rather than assumed, with a throwaway probe:
-      #
-      #   Failed to persist attestation: Feature not available for user-owned
-      #   private repositories. To enable this feature, please make this
-      #   repository public.
-      #
-      # So the condition is the repository being private and user-owned, not the
-      # plan being wrong or the workflow being misconfigured. Two things would
-      # change it, and both are the owner's call rather than a build detail:
-      # making the repository public, or signing with Sigstore's `cosign`
-      # directly — which works from any private repo but writes the repository's
-      # identity into a public transparency log.
+      # Signed provenance sits beside them — see below. The checksums stay
+      # anyway: `gh attestation verify` needs a working `gh` and a network, and a
+      # digest somebody can compare by hand is the fallback for when neither is
+      # available.
       - name: Checksums
         working-directory: artifacts
         run: |
@@ -200,6 +194,35 @@ jobs:
       # already installed on every runner and maintained by the same people as
       # the API it calls. One fewer third party in the path of a credential is
       # worth a few more lines of shell.
+      # **Signed provenance for every artifact, at no cost.**
+      #
+      # This binds each file's digest to the repository, the workflow, the commit
+      # and the run that produced it, signed through Sigstore with a short-lived
+      # certificate rather than a key anybody has to hold. Anyone can check it:
+      #
+      #     gh attestation verify Agbrte-<version>.dmg --repo YounghyeonPark/agbrte
+      #
+      # It does **not** quiet Gatekeeper or SmartScreen — neither looks at this,
+      # and code signing is a separate thing that costs money. What it answers is
+      # the question the checksum file cannot: not "do these bytes match a list"
+      # but "who produced this, from what source". A list of digests can be
+      # replaced by whoever can replace the file beside it; this cannot.
+      #
+      # It was refused while the repository was private — "Feature not available
+      # for user-owned private repositories" — which is why it appears in the
+      # same change as the repository becoming public.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          # Everything except the digest list itself, which describes the
+          # artifacts rather than being one.
+          subject-path: |
+            artifacts/*.exe
+            artifacts/*.zip
+            artifacts/*.dmg
+            artifacts/*.AppImage
+            artifacts/*.deb
+            artifacts/*.tar.gz
+
       - name: Draft the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -230,10 +253,23 @@ jobs:
           Windows code-signing certificate, and neither exists for this project
           yet.
 
-          `SHA256SUMS` is attached, and the same digests are printed below so they
-          exist somewhere other than beside the files they describe. Without a
-          signature this is the only verification available — less than a
-          signature proves, and much better than nothing.
+          ## What you can verify
+
+          Every file carries **signed build provenance**. It says which repository,
+          workflow, commit and run produced it, signed through Sigstore:
+
+          ```
+          gh attestation verify <file> --repo REPO
+          ```
+
+          That is not the same as code signing, and it does not stop the warnings
+          above — nothing in the operating system looks at it. What it answers is
+          the question a checksum cannot: not "do these bytes match a list", but
+          "who built this, from what source". A list of digests can be replaced by
+          whoever can replace the file beside it; this cannot.
+
+          `SHA256SUMS` is attached as well, and printed below, for comparing by
+          hand when `gh` and a network are not to hand.
 
           Built by RUN_URL from commit RUN_SHA.
 
@@ -253,6 +289,7 @@ jobs:
           nothing installed there beyond what Agbrte unpacks into `~/.agbrte`.
           EOF
           sed -i "s/VERSION/$v/g" notes.md
+          sed -i "s|REPO|$GITHUB_REPOSITORY|g" notes.md
 
           # The digests go in the notes as well as in the file. An attacker who
           # can replace an asset can replace `SHA256SUMS` beside it; the notes are
