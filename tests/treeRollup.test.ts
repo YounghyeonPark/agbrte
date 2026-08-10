@@ -10,6 +10,14 @@
  * says it is never authoritative. `needsAttention` is a **summons**: a parent
  * sitting in `awaiting_children` looks patient, and the question underneath it
  * goes unanswered forever unless it is carried to where someone is looking.
+ *
+ * ## Every test here carries an explicit 30s budget
+ *
+ * Not vitest's default 5. Each one spawns real child sessions and runs real
+ * turns through a real permission gate, which fits comfortably on a developer's
+ * machine and did not on a loaded macOS CI runner. A budget that only holds on
+ * fast hardware is a test that fails for the weather, and a suite that fails for
+ * the weather is one people stop reading.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -87,7 +95,7 @@ describe('a parent cannot finish ahead of its children', () => {
     // `end_turn` would ordinarily leave it `awaiting_input`. A dashboard saying
     // finished is the one thing nobody looks at again, so it holds instead.
     expect(m.get(parent.sessionId).state).toBe('awaiting_children');
-  });
+  }, 30_000);
 
   it('settles once the children have', async () => {
     const m = manager();
@@ -101,7 +109,7 @@ describe('a parent cannot finish ahead of its children', () => {
     await m.send(parent.sessionId, lead.agentId, { content: [{ type: 'text', text: 'go' }] });
 
     expect(m.get(parent.sessionId).state).toBe('awaiting_input');
-  });
+  }, 30_000);
 });
 
 describe('a blockage travels to where someone is looking', () => {
@@ -122,7 +130,7 @@ describe('a blockage travels to where someone is looking', () => {
     // actionable on its own.
     expect(at?.from?.sessionId).toBe(deep.sessionId as SessionId);
     expect(at?.from?.path).toEqual(['middle', 'the deep one']);
-  });
+  }, 30_000);
 
   it('keeps the origin rather than blaming the relay', async () => {
     const m = manager([{ kind: 'tool', tool: 'read', args: { file_path: 'a.ts' } }]);
@@ -139,7 +147,7 @@ describe('a blockage travels to where someone is looking', () => {
     expect(liveOf(m, mid.sessionId).session.needsAttention?.from?.sessionId).toBe(
       deep.sessionId as SessionId,
     );
-  });
+  }, 30_000);
 
   it('prefers a session own blockage over one beneath it', async () => {
     const m = manager([{ kind: 'tool', tool: 'read', args: { file_path: 'a.ts' } }]);
@@ -158,7 +166,7 @@ describe('a blockage travels to where someone is looking', () => {
 
     // The thing in front of you is the thing you can answer.
     expect(liveOf(m, parent.sessionId).session.needsAttention?.from).toBeUndefined();
-  });
+  }, 30_000);
 
   it('stops showing once the thing it pointed at is answered', async () => {
     const m = manager([{ kind: 'tool', tool: 'read', args: { file_path: 'a.ts' } }]);
@@ -214,7 +222,7 @@ describe('what deliberately does not travel', () => {
     // True on the child, where looking at it is a choice.
     expect(m.get(child.sessionId).needsAttention?.reason).toBe('needs_input');
     expect(liveOf(m, parent.sessionId).session.needsAttention?.from).toBeUndefined();
-  });
+  }, 30_000);
 });
 
 describe('the cached projection', () => {
@@ -230,7 +238,7 @@ describe('the cached projection', () => {
     // authoritative, which is why the child's own log stays the truth.
     const [ref] = liveOf(m, parent.sessionId).session.children;
     expect(ref?.lastKnown.state).toBe('awaiting_input');
-  });
+  }, 30_000);
 });
 
 describe('cancelling a parent', () => {
@@ -247,7 +255,7 @@ describe('cancelling a parent', () => {
     expect(adopted.tree).toMatchObject({ rootSessionId: child.sessionId, depth: 0, ancestry: [] });
     expect(adopted.tree.parentSessionId).toBeUndefined();
     expect(m.get(parent.sessionId).children).toEqual([]);
-  });
+  }, 30_000);
 
   it('records the adoption on the child log', async () => {
     const m = manager();
@@ -261,7 +269,7 @@ describe('cancelling a parent', () => {
     // history.
     const events = await m.events(child.sessionId);
     expect(events.some((e) => e.type === 'session.orphaned')).toBe(true);
-  });
+  }, 30_000);
 
   it('leaves the orphan runnable', async () => {
     const m = manager();
@@ -273,5 +281,5 @@ describe('cancelling a parent', () => {
     await expect(
       m.send(child.sessionId, agent.agentId, { content: [{ type: 'text', text: 'carry on' }] }),
     ).resolves.toBeUndefined();
-  });
+  }, 30_000);
 });
