@@ -100,14 +100,18 @@ describe('the table covers every locality', () => {
     expect(custom.fileTransfer).toBe(false);
   });
 
-  it('records the unix socket as the reason the next transports are not a runner swap', () => {
+  it('records the unix socket as the thing four transports have in common', () => {
     /**
-     * The finding this table was written to hold onto. `SshRunner` is
-     * `exec`/`upload`/`forward`, and the first two are nearly free for WSL or a
-     * container. `forward` is not: the host listens on a unix socket, and none
-     * of these can carry one out. §6.1 already names the fallback — a loopback
-     * control port plus a bearer token — and it does not exist, so "not written
-     * yet" is the wrong description of all four.
+     * The finding this table was written to hold onto, and the reason it was
+     * worth writing down: four transports were blocked on *one* thing. The host
+     * listened on a unix socket, none of these can carry one out, and §6.1's
+     * stated fallback — a loopback control port plus a bearer token — existed
+     * nowhere.
+     *
+     * It exists now, so `unixSockets: false` is still true of all four and is no
+     * longer what stops them. The rows say what is actually left, which is the
+     * table's job; a row that keeps citing a blocker somebody removed is how a
+     * document starts lying.
      */
     for (const kind of ['wsl', 'container', 'k8s', 'devcontainer'] as const) {
       expect(TRANSPORTS[kind].capabilities.unixSockets, kind).toBe(false);
@@ -177,10 +181,14 @@ describe('an unbuilt locality is refused, not redirected', () => {
   });
 
   it('carries the sentence a user reads, not ssh’s or docker’s', async () => {
+    // This asserted `/unix socket/` and failed the moment the loopback control
+    // channel landed and the reason changed — which is the assertion working.
+    // What a user is told about an unbuilt locality is a fact about today, so
+    // pinning it is how a stale reason gets noticed rather than shipped.
     const fleet = new Fleet({ connect: vi.fn(), runtimes: [] });
     await expect(
       fleet.attach({ target: EXAMPLES.wsl, workspaceRoot: '/w' }),
-    ).rejects.toThrow(/unix socket/);
+    ).rejects.toThrow(/what is left is the runner itself/);
   });
 });
 

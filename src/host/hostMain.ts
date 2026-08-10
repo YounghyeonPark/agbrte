@@ -27,6 +27,7 @@ import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { HostSupervisor } from '@main/host/supervisor.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { listen, hostSocketPath } from '@shared/host/socketChannel.js';
+import { listenLoopback, newControlToken } from '@shared/host/loopback.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { HostCommand, HostMessage, MainSideChannel } from '@shared/host/protocol.js';
 import { SessionHostServer } from './sessionServer.js';
@@ -97,10 +98,33 @@ export interface StartHostOptions {
   lingerMs?: number;
   /** Overridable so a test can point at a built agent-host bundle. */
   agentHostEntry?: string;
+  /**
+   * How clients reach this host (§6.2).
+   *
+   * `'socket'` is the default and stays the default everywhere it works: a unix
+   * socket or named pipe is authenticated by the OS, and a loopback port is
+   * reachable by every process on the machine. `'loopback'` exists for the
+   * transports that cannot carry a socket across their boundary — WSL2, a
+   * container, a pod — and pays for the difference with a bearer token.
+   */
+  control?: 'socket' | 'loopback';
+  /**
+   * What to do when the host stops serving. Defaults to ending the process.
+   *
+   * The default is the correct behaviour and stays it: a host that stops serving
+   * but keeps its socket is worse than one that never stopped, because the next
+   * client finds it and believes it is live. But `process.exit` in a function
+   * that is also `import`-able makes it untestable in process — a test that
+   * calls `stop()` takes the runner down with it — so the exit is injected
+   * rather than assumed. Both real callers get it by omission.
+   */
+  onStopped?: (reason: string) => void;
 }
 
 export interface RunningHost {
   socket: string;
+  /** Set when `control: 'loopback'`. The token is not returned — read the record. */
+  port?: number;
   stop(): Promise<void>;
 }
 
@@ -193,14 +217,39 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     // Whatever the reason — the idle timer, or a client asking — the process
     // goes. A host that stops serving but keeps its socket is worse than one
     // that never stopped: the next client finds it and believes it is live.
-    onStopped: () => {
+    onStopped: (reason) => {
+      if (opts.onStopped !== undefined) {
+        void stop().then(() => opts.onStopped?.(reason));
+        return;
+      }
       void stop().then(() => process.exit(0));
     },
   });
 
-  listener = await listen<SessionMessage, SessionCommand>(socket, (channel) =>
-    server.accept(channel),
-  );
+  /**
+   * Authentication happens below `accept`, whichever transport is used.
+   *
+   * `listenLoopback` calls back only for connections that presented the token,
+   * so `SessionHostServer` sees the same thing either way: a channel belonging
+   * to somebody entitled to it. That is what makes the loopback path a
+   * substitute rather than a second, weaker door — the alternative, checking a
+   * token inside `hello`, would leave a connection that never says hello able to
+   * issue `session.list` and `session.events`.
+   */
+  let port: number | undefined;
+  let token: string | undefined;
+  if (opts.control === 'loopback') {
+    token = newControlToken();
+    const bound = await listenLoopback<SessionMessage, SessionCommand>(token, (channel) =>
+      server.accept(channel),
+    );
+    listener = bound.server;
+    port = bound.port;
+  } else {
+    listener = await listen<SessionMessage, SessionCommand>(socket, (channel) =>
+      server.accept(channel),
+    );
+  }
 
   // Written only once we are actually listening. A record pointing at a socket
   // nobody answers sends every client down the stale path for no reason.
@@ -209,9 +258,11 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     socket,
     startedAt: new Date().toISOString(),
     instanceId: identity.instanceId,
+    ...(port !== undefined ? { port } : {}),
+    ...(token !== undefined ? { token } : {}),
   });
 
-  return { socket, stop };
+  return { socket, ...(port !== undefined ? { port } : {}), stop };
 }
 
 /**

@@ -36,15 +36,22 @@
  *
  * That distinction is concrete. `SshRunner` is `exec` / `upload` / `forward`,
  * and the first two are a one-line change for WSL (`wsl -d <distro> -- sh -c …`)
- * or a container (`docker exec`). `forward` is not, because the host listens on
- * a **unix socket** and the app reaches it with `ssh -L`. Nothing forwards a
- * Linux unix socket out of a WSL2 VM to Windows — the `\\wsl$` share is 9p, and
- * an `AF_UNIX` path does not survive it. §6.1 already anticipated this ("Else
- * fall back to a loopback TCP control port plus a bearer token") and that
- * fallback does not exist. So the honest statement about WSL is not "not written
- * yet" but "needs the control channel §6.1 describes and nothing implements",
- * and the capability table is where that is written down instead of being
- * rediscovered by whoever tries next.
+ * or a container (`docker exec`). `forward` was not, because the host listened
+ * on a **unix socket** and the app reached it with `ssh -L`, and nothing carries
+ * a Linux unix socket out of a WSL2 VM to Windows — the `\\wsl$` share is 9p and
+ * an `AF_UNIX` path does not survive it. §6.1 had anticipated exactly this
+ * ("Else fall back to a loopback TCP control port plus a bearer token") and the
+ * fallback existed nowhere, which is why four transports were blocked on one
+ * thing rather than on four.
+ *
+ * **That control channel now exists** (`shared/host/loopback.ts`), so the rows
+ * below say what is actually left instead. `unixSockets: false` is still true of
+ * all four and is no longer what stops them: WSL is now the runner and nothing
+ * else, a container additionally needs its port published when it starts, and a
+ * pod needs `kubectl port-forward` held open. Writing the blocker down is what
+ * made it visible that it was *one* blocker — which is the argument for keeping
+ * these rows current rather than letting them ossify into the state of the world
+ * on the day they were written.
  *
  * **These declarations are researched, not measured.** The two implemented rows
  * are observed — the ssh row is what a real host does. The six unimplemented
@@ -133,9 +140,9 @@ export const TRANSPORTS: Record<TargetKind, TransportDescriptor> = {
       latencyClass: 'local',
     },
     unimplemented:
-      'running in WSL needs the loopback control port §6.1 describes — the host ' +
-      'listens on a unix socket, and a Linux socket inside WSL2 cannot be reached ' +
-      'from Windows.',
+      'running in WSL is not built yet — the control channel it needed now exists, ' +
+      'so what is left is the runner itself: `wsl -d <distro>` for exec and upload, ' +
+      'and bootstrapping a host inside the distribution.',
   },
 
   container: {
@@ -156,8 +163,9 @@ export const TRANSPORTS: Record<TargetKind, TransportDescriptor> = {
       latencyClass: 'local',
     },
     unimplemented:
-      'running in a container is not built yet — it needs the loopback control ' +
-      'port §6.1 describes, and a way for the container to reach the model gateway.',
+      'running in a container is not built yet — beyond the runner, its control ' +
+      'port has to be published when the container starts, which is not ours to ' +
+      'arrange, and the container still needs a route to the model gateway.',
   },
 
   k8s: {
@@ -176,9 +184,9 @@ export const TRANSPORTS: Record<TargetKind, TransportDescriptor> = {
       latencyClass: 'wan',
     },
     unimplemented:
-      'running in a Kubernetes pod is not built yet — it needs the loopback ' +
-      'control port §6.1 describes, and a pod that can be rescheduled underneath a ' +
-      'detached run.',
+      'running in a Kubernetes pod is not built yet — beyond the runner, its ' +
+      'control port needs `kubectl port-forward` held open, and a pod can be ' +
+      'rescheduled out from under a detached run.',
   },
 
   devcontainer: {

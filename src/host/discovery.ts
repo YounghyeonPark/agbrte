@@ -26,6 +26,23 @@ export interface HostRecord {
   protocol: number;
   startedAt: string;
   instanceId: string;
+  /**
+   * Loopback control port, when the host could not use a unix socket (§6.2).
+   *
+   * Present together with `token` or not at all — they are one fact about how to
+   * reach this host, and half of it is useless.
+   */
+  port?: number;
+  /**
+   * The bearer token for that port.
+   *
+   * **This file is a credential when this field is set.** A loopback port is
+   * reachable by every process on the machine, so the token is what stands in
+   * for the `0600` unix socket's OS-enforced proof of who you are — which is why
+   * the record is written `0600` inside `.devagents/`'s `0700` (§13), and why
+   * nothing may copy this field into a log, an event, or an error string.
+   */
+  token?: string;
 }
 
 /** Where a workspace's host record lives. Inside `.devagents/`, 0700 (§13). */

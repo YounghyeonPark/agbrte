@@ -51,6 +51,19 @@ class LineFramer {
 interface SocketChannelOptions {
   /** Called for a line that will not parse, so corruption is visible. */
   onMalformed?: (line: string, err: unknown) => void;
+  /**
+   * Bytes already read off the socket that belong to this conversation.
+   *
+   * Needed by the loopback listener, which reads an auth line before deciding
+   * whether there will *be* a conversation. TCP does not preserve write
+   * boundaries, so a client that writes its token and its `hello` in the same
+   * tick delivers both in one segment — and the second one would be dropped on
+   * the floor by a reader that stopped at the newline. Handed over explicitly
+   * rather than pushed back onto the stream: `unshift` on a socket that has
+   * already been switched to flowing mode with an encoding set is exactly the
+   * kind of clever that works until it does not.
+   */
+  pending?: string;
 }
 
 /**
@@ -77,31 +90,38 @@ export class SocketChannel<Out, In> implements HostChannel<Out, In> {
     // drops the connection and neither side learns until it writes.
     socket.setKeepAlive(true, 30_000);
 
-    socket.on('data', (chunk: string) => {
-      for (const line of this.framer.push(chunk)) {
-        let message: In;
-        try {
-          message = JSON.parse(line) as In;
-        } catch (err) {
-          // Skipped, not fatal: one unreadable frame must not take down a
-          // connection carrying a running session.
-          this.opts.onMalformed?.(line, err);
-          continue;
-        }
-        if (this.handler === null) {
-          // The handshake can arrive before a handler attaches, and losing it
-          // leaves the peer waiting forever for a reply to a message it never
-          // saw delivered.
-          this.backlog.push(message);
-          continue;
-        }
-        this.handler(message);
-      }
-    });
+    socket.on('data', (chunk: string) => this.ingest(chunk));
+
+    // Anything the caller already read goes through the same framer and the same
+    // backlog, so a pipelined message is indistinguishable from one that arrived
+    // a moment later — which is the only way it can be, since on the wire it is.
+    if (opts.pending !== undefined && opts.pending !== '') this.ingest(opts.pending);
 
     socket.on('error', (err) => this.die(err.message));
     socket.on('close', () => this.die('socket closed'));
     socket.on('end', () => this.die('peer ended the connection'));
+  }
+
+  private ingest(chunk: string): void {
+    for (const line of this.framer.push(chunk)) {
+      let message: In;
+      try {
+        message = JSON.parse(line) as In;
+      } catch (err) {
+        // Skipped, not fatal: one unreadable frame must not take down a
+        // connection carrying a running session.
+        this.opts.onMalformed?.(line, err);
+        continue;
+      }
+      if (this.handler === null) {
+        // The handshake can arrive before a handler attaches, and losing it
+        // leaves the peer waiting forever for a reply to a message it never
+        // saw delivered.
+        this.backlog.push(message);
+        continue;
+      }
+      this.handler(message);
+    }
   }
 
   post(message: Out): void {
