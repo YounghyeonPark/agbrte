@@ -78,6 +78,8 @@ const api: AgbrteApi = {
       ipcRenderer.invoke(CH.voiceTranscribe, r),
     clips: (sessionId?: string) => ipcRenderer.invoke(CH.voiceClips, sessionId),
     forget: (sha256: string) => ipcRenderer.invoke(CH.voiceForget, sha256),
+    speak: (text: string) => ipcRenderer.invoke(CH.voiceSpeak, text),
+    stopSpeaking: () => ipcRenderer.invoke(CH.voiceStopSpeaking),
   },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),

@@ -144,6 +144,8 @@ const api: AgbrteApi = {
     transcribe: call(CH.voiceTranscribe),
     clips: call(CH.voiceClips),
     forget: call(CH.voiceForget),
+    speak: call(CH.voiceSpeak),
+    stopSpeaking: call(CH.voiceStopSpeaking),
   },
   sessions: {
     list: call(CH.sessionsList),

@@ -402,6 +402,16 @@ export interface AgbrteApi {
     /** What was dictated here, for going back to a transcript that came out wrong. */
     clips(sessionId?: string): Promise<StoredClipDto[]>;
     forget(sha256: string): Promise<void>;
+    /**
+     * Read something out loud, on this machine's own synthesiser (§12.4).
+     *
+     * Resolves when it finishes or is replaced. `false` means this client has no
+     * voice — a fact about the machine rather than an error, so a caller can
+     * hide the control instead of showing one that explains itself after being
+     * pressed.
+     */
+    speak(text: string): Promise<boolean>;
+    stopSpeaking(): Promise<void>;
   };
   sessions: {
     list(): Promise<Session[]>;
@@ -521,6 +531,8 @@ export const CH = {
   voiceTranscribe: 'agbrte:voice.transcribe',
   voiceClips: 'agbrte:voice.clips',
   voiceForget: 'agbrte:voice.forget',
+  voiceSpeak: 'agbrte:voice.speak',
+  voiceStopSpeaking: 'agbrte:voice.stopSpeaking',
   sessionsInterrupt: 'agbrte:sessions.interrupt',
   sessionsSince: 'agbrte:sessions.since',
   sessionsExport: 'agbrte:sessions.export',

@@ -372,6 +372,8 @@ describe('a browser must not be handed this machine', () => {
     await expect(
       api.handlers.get(CH.voiceTranscribe)!({ wavBase64: '', sessionId: 's' }),
     ).rejects.toThrow(/cannot record/i);
+    // And it must not be able to make the *server* talk to an empty room.
+    await expect(api.handlers.get(CH.voiceSpeak)!('hello there')).resolves.toBe(false);
 
     api.dispose();
   });

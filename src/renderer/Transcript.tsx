@@ -267,6 +267,7 @@ export function Composer({
   disabled,
   queued = 0,
   sessionId,
+  lastAgentText,
 }: {
   onSend: (text: string, blocks?: ContentBlock[]) => void;
   disabled: boolean;
@@ -274,6 +275,8 @@ export function Composer({
   queued?: number;
   /** Which session a capture is stored against (§12.1). Absent hides the button. */
   sessionId?: string;
+  /** The newest agent reply, for reading aloud when that is switched on (§12.4). */
+  lastAgentText?: string;
 }): JSX.Element {
   const [text, setText] = useState('');
   const [picking, setPicking] = useState(false);
@@ -342,6 +345,9 @@ export function Composer({
       />
       </div>
       {sessionId !== undefined && (
+        <Speak {...(lastAgentText !== undefined ? { agentText: lastAgentText } : {})} />
+      )}
+      {sessionId !== undefined && (
         <Dictate
           sessionId={sessionId}
           // Appended rather than replacing: dictating after typing is adding to
@@ -378,6 +384,66 @@ export function Composer({
         Send
       </button>
     </form>
+  );
+}
+
+/**
+ * Read replies aloud, off unless you ask (§12.4).
+ *
+ * The speaker follows the microphone's rule: *never hot by default*. Ten
+ * sessions each announcing themselves is not a feature, and a machine that
+ * starts talking because you opened an app is a machine people mute once and
+ * never unmute.
+ *
+ * So it is per-session and opt-in, which is the arrangement §12.4 pairs with
+ * push-to-talk — you turn it on for the thing you are actually working on, and
+ * it stays off everywhere else.
+ */
+function Speak({ agentText }: { agentText?: string }): JSX.Element | null {
+  const [on, setOn] = useState(false);
+  const [mute, setMute] = useState(false);
+  const spoken = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!on || agentText === undefined || agentText === spoken.current) return;
+    spoken.current = agentText;
+    void window.agbrte.voice.speak(agentText).then((could) => {
+      // A client with no synthesiser says so once, by turning itself off, rather
+      // than silently doing nothing every time a reply lands.
+      if (!could) {
+        setMute(true);
+        setOn(false);
+      }
+    });
+  }, [on, agentText]);
+
+  // Stop the moment this goes away — a voice that outlives the pane it was
+  // started from is the one failure a user cannot chase down.
+  useEffect(() => () => void window.agbrte.voice.stopSpeaking(), []);
+
+  if (mute) {
+    return (
+      <span className="text-muted shrink-0 self-center text-xs" title="No speech synthesis here">
+        no voice
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      data-testid="speak-replies"
+      className={`btn-quiet shrink-0 self-center text-xs ${on ? 'text-accent' : ''}`}
+      title="Read replies aloud. Off by default, and only for this session."
+      onClick={() => {
+        // Turning it off stops mid-sentence rather than finishing: the reason to
+        // press it is usually that you want the talking to end now.
+        if (on) void window.agbrte.voice.stopSpeaking();
+        setOn((was) => !was);
+      }}
+    >
+      {on ? '🔊 reading' : 'Read aloud'}
+    </button>
   );
 }
 

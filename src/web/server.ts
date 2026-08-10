@@ -55,7 +55,7 @@ import { createApi, type IpcDeps } from '@main/ipc/api.js';
  * comment that goes stale silently, and the sort of mistake that is one line to
  * make and catastrophic to ship.
  */
-type ClientOnly = 'broadcast' | 'pickFolder' | 'screen' | 'selectRegion' | 'clips';
+type ClientOnly = 'broadcast' | 'pickFolder' | 'screen' | 'selectRegion' | 'clips' | 'speaker';
 
 export interface WebServerOptions {
   /** Everything `createApi` needs, minus what belongs to the machine it runs on. */
@@ -115,8 +115,13 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
     // unrepresentable, so this is for the caller who reached for a cast: a
     // browser must not end up holding this machine's screen or microphone
     // because somebody silenced a compiler error.
-    const { screen: _screen, selectRegion: _region, clips: _clips, ...safe } =
-      opts.api as IpcDeps;
+    const {
+      screen: _screen,
+      selectRegion: _region,
+      clips: _clips,
+      speaker: _speaker,
+      ...safe
+    } = opts.api as IpcDeps;
 
     const api = createApi({
       ...safe,

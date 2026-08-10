@@ -90,6 +90,15 @@ export function App(): JSX.Element {
   const { hosts, runtimesByHost, conformanceByHost, inbox, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
     store;
 
+  /**
+   * The newest agent line in the open session (§12.4).
+   *
+   * A derivation rather than state: the transcript is already here, and a second
+   * copy of "what was said last" is a second thing that can fall out of step
+   * with the first.
+   */
+  const lastAgentText = [...events].reverse().find((e) => e.type === 'agent.text')?.text;
+
   useEffect(() => {
     void store.boot();
     void useAgbrte.getState().refreshInbox();
@@ -344,11 +353,16 @@ export function App(): JSX.Element {
                     onDecide={(approved) => void store.respondSplit(p.proposalId, approved)}
                   />
                 ))}
+                {/* The newest thing an agent said, for reading aloud (§12.4).
+                    Derived here rather than tracked in the store: it is a view
+                    of the transcript already in hand, and a second copy of
+                    "what was said last" is a second thing to keep in step. */}
                 <Composer
                   onSend={(t, blocks) => void store.send(t, focusedAgent ?? undefined, blocks)}
                   disabled={active.state === 'working'}
                   queued={queued}
                   sessionId={active.sessionId}
+                  {...(lastAgentText !== undefined ? { lastAgentText } : {})}
                 />
               </>
             )}

@@ -63,6 +63,7 @@ import { scaleAnnotations, splitRedactions } from '../content/annotate.js';
 import type { Rect } from '../content/redact.js';
 import { findEngine, transcribe, wavDurationMs, type SpeechEngine } from '../voice/stt.js';
 import type { ClipStore } from '../voice/clips.js';
+import type { Speaker } from '../voice/tts.js';
 import { buildMatrix } from '@main/conformance.js';
 import { exportSessionMarkdown } from '@main/store/exportSession.js';
 import type { ConformanceReport, MatrixCell } from '@shared/types/index.js';
@@ -120,6 +121,14 @@ export interface IpcDeps {
    * clip, and keeping it anywhere else is the thing that section rules out.
    */
   clips?: ClipStore;
+  /**
+   * This machine's speakers (§12.4).
+   *
+   * Client-only for the same reason `screen` and `clips` are: a browser reaching
+   * a headless server must not be able to make the *server* talk to an empty
+   * room.
+   */
+  speaker?: Speaker;
 }
 
 /** The transport-free API: a channel map, an ack sink, and its teardown. */
@@ -569,6 +578,16 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     deps.clips === undefined ? [] : deps.clips.list(sessionId),
   );
 
+  handle(CH.voiceSpeak, async (text: string): Promise<boolean> => {
+    if (deps.speaker === undefined || !deps.speaker.available) return false;
+    await deps.speaker.speak(text);
+    return true;
+  });
+
+  handle(CH.voiceStopSpeaking, () => {
+    deps.speaker?.stop();
+  });
+
   handle(CH.voiceForget, async (sha256: string) => {
     await deps.clips?.forget(sha256 as Sha256);
   });
@@ -649,6 +668,9 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
       // Held frames are unstored screenshots of somebody's desktop. Nothing
       // outlives the API host that took them.
       pending.clear();
+      // A voice that outlives the window it was started from is the one
+      // failure mode of this feature that a user cannot stop.
+      deps.speaker?.stop();
       fleet.off('event', onEvent);
       fleet.off('session', onSession);
       fleet.off('permission', onPermission);

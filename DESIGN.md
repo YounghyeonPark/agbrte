@@ -1886,7 +1886,14 @@ interface TtsProvider { id: string; speak(t: string, o?: TtsOptions): Promise<vo
 
 Notable in passing: v1.9.2 decodes with miniaudio and so accepts more than WAV. The refusal stays, because it is a guarantee about what *we* send and a build without miniaudio transcribes noise confidently instead of erroring — a property of the caller should not depend on which build of a detected dependency happens to be installed.
 
-**Not built:** live partials, TTS, and cloud STT.
+**TTS is built, OS-native as specified.** `say` on macOS, SAPI through PowerShell on Windows, `spd-say`/`espeak` where a Linux desktop has one — detected, never bundled, which is the fourth time this project makes that choice (§3.12, §12.1, and STT above). *Offline* is the load-bearing word: reading a reply aloud through a cloud service would undo this section's argument from the other end, since the care taken to keep your voice on the machine is wasted if the conversation goes out to be spoken.
+
+- **The speaker follows the microphone's rule — never on by default.** Ten sessions announcing themselves is not a feature, and an app that starts talking when opened is one people mute once and never unmute. So it is per-session and opt-in, which is the arrangement this section already pairs with push-to-talk.
+- **Stopping kills rather than finishes.** The reason somebody presses stop is that something is being said aloud they did not want said aloud, and every word after the press is the failure continuing. Speaking again replaces what is in progress rather than queueing behind it, so two sessions finishing together produce the newer announcement instead of both at once.
+- **The text travels in the environment on Windows.** Interpolating a reply into a PowerShell script is a quoting hazard the first time an agent says `it's`; passing it as a trailing argument and reading `$args[0]` does not work at all, because `-Command` appends anything after the script *to the script*, so PowerShell parses the reply as code. Found by running it against real SAPI rather than by reasoning about it.
+- **Client-only, by type.** A browser reaching a headless server must not be able to make the *server* talk to an empty room, so `speaker` joins `screen`, `selectRegion` and `clips` in what §14's web path cannot be handed.
+
+**Not built:** live partials, and cloud STT.
 
 ---
 
@@ -2018,7 +2025,7 @@ Live-model tests **skip loudly** when no local server is present rather than pas
 | 3 | Three-shape proof | 4th | runtime axis validated (four candidates); **the provider axis is not** — `ModelProvider` has one implementation, and that is validation rather than breadth |
 | 4 | Multi-session + dashboard | 5th | **done** — dashboard, Needs-you rail, stall detection, parking, notifications, QuotaScheduler, inbox, and the per-host concurrency cap |
 | 6 | Multi-agent + hierarchy | 6th | done, **except a child on another machine** — spawning is single-host and now refuses a target it cannot reach rather than mislabelling one |
-| 7 | Multimodal | 7th | **criteria met**, with two named substitutions; OCR and TTS not built |
+| 7 | Multimodal | 7th | **criteria met**, with two named substitutions; OCR not built |
 | 8 | Breadth + polish | 8th | not started |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow.
@@ -2106,7 +2113,7 @@ It refuses now, naming the gap rather than the caller. §4.3 already recorded th
 
 **Writing that test reproduced the bug it exists to catch.** The first version called `storeFrame` directly instead of going through `capture.commit`, rebuilding the seam by hand — and silently dropped the annotations, so the model was told a picture existed and never told what was circled. Pieces that pass their own tests, and a seam nobody crossed.
 
-**Not built, each with a stated reason rather than a backlog entry:** OCR, which is a native model and stays injected — without it the explicit-rectangle path works and the sweep honestly reports `scanned: false`; TTS; live STT partials, because `whisper-cli` transcribes a finished file and exits; and glyph rendering, which is now a *checked* refusal rather than an assumption, since the description carries the words verbatim and travels beside the picture on every path.
+**Not built, each with a stated reason rather than a backlog entry:** OCR, which is a native model and stays injected — without it the explicit-rectangle path works and the sweep honestly reports `scanned: false`; live STT partials, because `whisper-cli` transcribes a finished file and exits; and glyph rendering, which is now a *checked* refusal rather than an assumption, since the description carries the words verbatim and travels beside the picture on every path.
 
 **What "done" means in this table, learned the hard way.** §12.3 read as built for some time — the vector model, the describer and the flattener all existed, all tested — and **nothing outside `content/` called any of them**. A user could not point at anything. A row that means "the pieces exist" is a row that lies, so a component counts here only when something a person touches reaches it. Two of this session's three §13 findings and both §12 bugs were of that family: code that was correct, tested, and unreachable or unreached.
 
