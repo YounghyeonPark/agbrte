@@ -408,3 +408,38 @@ describe('annotations reach the model, in pixels and in words (§12.3)', () => {
     expect(result.content).toHaveLength(1);
   });
 });
+
+describe('a scaled frame remembers how big it was (§16)', () => {
+  /**
+   * §16 predicted this failure and said it was cheapest to fix *before* capture
+   * existed: a model returns coordinates in the frame it was shown, an actuator
+   * clicks in display space, every click lands slightly wrong and worse toward
+   * the edges, and it reads as a bad model rather than a scaling bug.
+   *
+   * Capture then got built and the number was not recorded. Nothing consumes it
+   * yet — computer use is in no phase — but recording it now is five lines and
+   * reconstructing it later is impossible, which is the entire point that row
+   * was making.
+   */
+  it('records the source size when it downscales', async () => {
+    const resize: Resizer = async () => ({ sha256: 'small' as Sha256, width: 400, height: 300 });
+    const result = await fitContent(
+      [image({ width: 2000, height: 1500 })],
+      caps({ imageMaxLongEdge: 400 }),
+      resize,
+    );
+
+    const out = result.content[0] as ImageBlock;
+    expect(out.provenance.scaledFrom).toEqual({ width: 2000, height: 1500 });
+    // Enough to map a point back: the sent size is on the block itself.
+    expect([out.width, out.height]).toEqual([400, 300]);
+  });
+
+  it('says nothing about scaling for an image that was not scaled', async () => {
+    // An absent field means "this is the size it was taken at". A `scaledFrom`
+    // equal to the current size would be indistinguishable from a 1:1 downscale
+    // and would invite a factor of one being computed from a coincidence.
+    const result = await fitContent([image({ width: 100, height: 80 })], caps());
+    expect((result.content[0] as ImageBlock).provenance.scaledFrom).toBeUndefined();
+  });
+});

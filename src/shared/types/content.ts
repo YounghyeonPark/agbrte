@@ -61,6 +61,21 @@ export interface ImageProvenance {
   viewport?: { w: number; h: number; dpr: number };
   /** sha256 of the unannotated original; annotations are stored as vectors. */
   annotatedFrom?: Sha256;
+  /**
+   * The size this frame was before §12.2 scaled it for an agent.
+   *
+   * Recorded because a coordinate a model returns is in the frame it was
+   * *shown*, and without the source size there is no way back. §16 names the
+   * failure precisely: an actuator clicks in display space while the model
+   * reasoned in resized space, every click lands slightly wrong, worse toward
+   * the edges, and it reads as a bad model rather than a scaling bug.
+   *
+   * Nothing consumes it yet — computer use is deliberately in no phase (§15).
+   * It is here because §16 said this was cheapest to fix before capture existed,
+   * capture now exists, and the difference between recording a number and
+   * reconstructing it later is the whole of that row.
+   */
+  scaledFrom?: { width: number; height: number };
   /** Applied to the stored blob, never only to the view (§12.1). */
   redactions?: ReadonlyArray<{ x: number; y: number; w: number; h: number }>;
 }

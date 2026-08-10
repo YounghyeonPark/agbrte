@@ -161,8 +161,14 @@ export async function fitContent(
         width: resized.width,
         height: resized.height,
         // The original is never destroyed (§12.3's rule for annotations, and the
-        // same reasoning): the scaled copy points back at what it came from.
-        provenance: { ...block.provenance, annotatedFrom: block.sha256 },
+        // same reasoning): the scaled copy points back at what it came from —
+        // and now also at how big it was, so a coordinate expressed in this
+        // frame can be mapped back to the one a display uses (§16).
+        provenance: {
+          ...block.provenance,
+          annotatedFrom: block.sha256,
+          scaledFrom: { width: block.width, height: block.height },
+        },
       };
       const marked = await burnIn(scaled, block.annotations, resized.width / block.width, flatten);
       out.push(...marked.blocks);
