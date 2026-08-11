@@ -1203,6 +1203,14 @@ So the four remaining transports are no longer blocked on one shared thing, and 
 
 Each row carries `evidence: 'observed' | 'documented'`. `local` and `ssh` were measured against real hosts; the other six are what the mechanism is documented to allow and each needs confirming when it is built. A table that mixes the two is a table nobody can trust a row of, so the split is asserted in tests rather than left as a comment — promoting a row while *writing* a transport instead of after running one is exactly the temptation.
 
+**The far end has to be POSIX, and the table said otherwise.** §6.3 puts the loop *on the remote* — the agent host is installed on the machine it controls, which is what buys microsecond tool calls and a run that survives a closed laptop. That is the design working, and it has a consequence: the bootstrap is a POSIX shell script in five independent places. The probe runs `uname`, `command -v` and `[ -x … ]`; `nodeTarballUrl` fetches a `linux` or `darwin` build as a `.tar.xz`; the launch uses `nohup setsid`; the bundle arrives by `cat > …`; and the host listens on a **unix socket**, which `ssh -L` cannot forward if it is a Windows named pipe.
+
+So **a Windows server cannot be attached at all**, and the transport row read "a machine over SSH" — a claim broader than the truth. It reads "a Linux or macOS machine over SSH" now.
+
+**It was also being reported as the wrong machine's fault.** `diagnoseSshFailure` matched `not recognized` and `command not found` under `no-ssh-client`, and those are the *remote* shell's words: a Windows server answers the probe's `uname` with `'uname' is not recognized as an internal or external command`, so the user was told "No ssh client was found on this machine" and sent to install OpenSSH locally. A confident sentence about the wrong computer is worse than an unhelpful one. That branch is now `ENOENT` only — what Node reports when the binary is genuinely missing — and a non-POSIX remote gets its own classification saying the connection and the credentials are both fine.
+
+**Windows as a target is buildable and unbuilt.** Every piece now exists: §6.2's loopback control channel replaces the unix socket, and the rest is a second bootstrap — a PowerShell probe, a `.zip` Node, a detached launch. What is missing is a Windows machine to verify it against, and this project has twice declined to ship a transport nobody could cross.
+
 **Two SSH transports, on purpose:**
 
 | Transport | Mechanism | Use when |

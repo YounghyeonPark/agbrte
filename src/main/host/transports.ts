@@ -107,7 +107,13 @@ export const TRANSPORTS: Record<TargetKind, TransportDescriptor> = {
 
   ssh: {
     kind: 'ssh',
-    label: 'a machine over SSH',
+    // Named with its condition, because "over SSH" is a claim about how you
+    // reach a machine and this transport also has a requirement about *what*
+    // machine. §6.3 puts the loop on the remote, so the bootstrap is a POSIX
+    // shell script — a Windows server answers ssh perfectly well and cannot be
+    // attached at all. The table said "a machine over SSH", which is broader
+    // than the truth.
+    label: 'a Linux or macOS machine over SSH',
     evidence: 'observed',
     capabilities: {
       // All observed against a real host: the process outlives the session that

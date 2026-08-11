@@ -1,6 +1,30 @@
 /**
  * Reaching a session host over SSH (DESIGN.md §6.2, §6.4, §14).
  *
+ * ## The far end has to be POSIX, and that is not a detail
+ *
+ * §6.3 puts the loop **on the remote**: the agent host is installed on the
+ * machine it controls, which is what makes tool calls microseconds rather than a
+ * round trip and what lets a run survive a closed laptop. That is the design
+ * working as intended, and it has a consequence worth stating rather than
+ * leaving to be discovered — **everything below assumes a POSIX shell on the
+ * other side.**
+ *
+ * Five independent places, none of which degrade gracefully:
+ *
+ *   * the probe runs `uname`, `command -v` and `[ -x … ]`
+ *   * `nodeTarballUrl` fetches a `linux` or `darwin` build, as a `.tar.xz`
+ *   * the launch uses `nohup setsid`, `mkdir -p`, `seq` and `sleep 0.5`
+ *   * the bundle is uploaded with `cat > …`
+ *   * the host listens on a **unix socket**, and `ssh -L` cannot forward a
+ *     Windows named pipe
+ *
+ * So a Linux or macOS server works and **a Windows server cannot be attached at
+ * all**. Every piece needed to change that now exists — §6.2's loopback control
+ * channel replaces the unix socket, and the rest is a second bootstrap — but it
+ * is unbuilt, and until it is this refuses with a sentence naming the reason
+ * instead of a shell error somebody has to interpret.
+ *
  * Shells out to the user's own `ssh` rather than speaking the protocol in
  * process. §14 specifies `ssh2` as the default and this as the fallback; the
  * order is reversed here deliberately, and the reason is the one thing that
@@ -114,6 +138,8 @@ export class RemoteBootstrapFailed extends Error {
  */
 export type SshFailureKind =
   | 'no-ssh-client'
+  /** Reached, authenticated, and not a machine this bootstrap can run on. */
+  | 'non-posix-remote'
   | 'unknown-host-key'
   | 'auth-refused'
   | 'name-resolution'
@@ -133,13 +159,51 @@ export interface SshDiagnosis {
 export function diagnoseSshFailure(alias: string, detail: string): SshDiagnosis {
   const text = detail.toLowerCase();
 
-  if (text.includes('enoent') || text.includes('not recognized') || text.includes('command not found')) {
+  /**
+   * A **local** ssh that will not start. Narrowed to `ENOENT`, which is what
+   * Node reports when the binary is missing.
+   *
+   * This also matched `not recognized` and `command not found`, and those are
+   * the *remote* shell's words rather than ours — a Windows server answers
+   * `'uname' is not recognized as an internal or external command`, and the user
+   * was told "No ssh client was found on this machine" and sent to install
+   * OpenSSH locally. The only thing worse than an unhelpful error is one that
+   * names the wrong machine with confidence.
+   */
+  if (text.includes('enoent')) {
     return {
       kind: 'no-ssh-client',
       summary: 'No ssh client was found on this machine.',
       fix:
         'Install OpenSSH — it ships with macOS and most Linux, and on Windows it is ' +
         'an optional feature (Settings › Apps › Optional features › OpenSSH Client).',
+    };
+  }
+
+  /**
+   * The connection worked and the shell on the other side is not a POSIX one.
+   *
+   * `cmd.exe` says "is not recognized as an internal or external command";
+   * PowerShell says "is not recognized as the name of a cmdlet". Either way ssh
+   * authenticated fine and the machine simply cannot run what was sent, which is
+   * a different problem from everything else in this list and deserves its own
+   * sentence rather than the nearest one.
+   */
+  if (
+    text.includes('not recognized') ||
+    text.includes('command not found') ||
+    text.includes('cmdlet')
+  ) {
+    return {
+      kind: 'non-posix-remote',
+      summary: `${alias} answered, but it is not a POSIX machine.`,
+      // Deliberately not phrased as a fault. The connection is fine and the
+      // credentials are fine; what is missing is a bootstrap for that operating
+      // system, and the user should not go looking at their keys for it.
+      fix:
+        'Agbrte bootstraps a remote host through a POSIX shell, so Linux and macOS ' +
+        'targets work and a Windows one is not supported yet. Nothing is wrong with ' +
+        'the connection or your credentials.',
     };
   }
 

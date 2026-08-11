@@ -311,3 +311,50 @@ describe('diagnosing a failed connection', () => {
     expect(rendered).not.toContain('more chatter');
   });
 });
+
+describe('a Windows server is a different problem from a missing ssh client', () => {
+  /**
+   * §6.3 puts the loop on the remote — the host is installed on the machine it
+   * controls — so the bootstrap is a POSIX shell script and a Windows target
+   * cannot be attached. That is a real limit and it was being reported as
+   * something else entirely.
+   *
+   * `diagnoseSshFailure` matched `not recognized` and `command not found` under
+   * `no-ssh-client`, and those are the **remote** shell's words. A Windows
+   * server answers the probe's `uname` with exactly that, so the user was told
+   * "No ssh client was found on this machine" and sent to install OpenSSH
+   * locally — a confident sentence about the wrong computer.
+   */
+  const CMD = "'uname' is not recognized as an internal or external command,\r\noperable program or batch file.";
+  const POWERSHELL =
+    "uname : The term 'uname' is not recognized as the name of a cmdlet, function, script file, or operable program.";
+
+  it('names the far machine, not this one', () => {
+    for (const said of [CMD, POWERSHELL]) {
+      const d = diagnoseSshFailure('build-win', said);
+      expect(d.kind, said.slice(0, 30)).toBe('non-posix-remote');
+      expect(d.summary).toContain('build-win');
+      expect(d.summary).not.toMatch(/this machine/i);
+      // The connection and the credentials are fine, and the message has to say
+      // so — otherwise the next hour goes on keys and known_hosts.
+      expect(`${d.summary} ${d.fix}`).toMatch(/nothing is wrong with the connection/i);
+    }
+  });
+
+  it('still catches a genuinely missing local ssh', () => {
+    // Which is what Node reports when the binary is not there, and the only
+    // signal that actually means it.
+    const d = diagnoseSshFailure('build-01', 'spawn ssh ENOENT');
+    expect(d.kind).toBe('no-ssh-client');
+    expect(d.summary).toMatch(/this machine/i);
+  });
+
+  it('does not swallow the failures that come after it', () => {
+    // The old branch sat first and matched three phrases, so anything whose
+    // stderr happened to contain them was diagnosed as a missing client. These
+    // are the ones that matter most.
+    expect(diagnoseSshFailure('h', 'Host key verification failed.').kind).toBe('unknown-host-key');
+    expect(diagnoseSshFailure('h', 'Permission denied (publickey).').kind).toBe('auth-refused');
+    expect(diagnoseSshFailure('h', 'ssh: Could not resolve hostname h').kind).toBe('name-resolution');
+  });
+});
