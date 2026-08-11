@@ -15,6 +15,7 @@
  * of a dead one exists — the classic stale-pidfile deadlock.
  */
 
+import { spawn } from 'node:child_process';
 import { readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { workspaceLayout } from '@main/store/layout.js';
@@ -77,7 +78,7 @@ export async function writeHostRecord(
      * containing directory is already `0700`, so this changes nothing for other
      * users — but a record that is sometimes a credential and sometimes not
      * would depend on every future caller remembering which, and always costs
-     * nothing. Ignored on Windows, where the pipe path it carries is not secret.
+     * nothing. On Windows it is close to a no-op — see `restrictOnWindows`.
      *
      * **This was written once and did not take.** The edit that added it landed
      * in the interface's documentation and not in this call, so the file went
@@ -89,6 +90,68 @@ export async function writeHostRecord(
      */
     { encoding: 'utf8', mode: 0o600 },
   );
+
+  await restrictOnWindows(hostRecordPath(workspaceRoot), record);
+}
+
+/**
+ * Give the record a Windows ACL, because `mode` does not.
+ *
+ * The comment above used to end "ignored on Windows, where the pipe path it
+ * carries is not secret". That was true of the host it described, and stopped
+ * being true when Windows became a supported target: a Windows host cannot
+ * listen on a unix socket, so it listens on loopback and this file carries the
+ * **bearer token that is the entire authentication** for it. A premise falsified
+ * by a change three files away, with nothing to recheck it.
+ *
+ * `mode: 0o600` is close to a no-op there — the file inherits its parent
+ * directory's ACL. Measured, not assumed: a record written by Node with
+ * `mode: 0o600` under a directory granting `Users:(OI)(CI)R` comes out
+ * `BUILTIN\Users:(I)(R)`, and `C:\dev` on this machine grants exactly that to
+ * `Users` and `Modify` to `Authenticated Users`. A checkout in an ordinary place
+ * therefore leaves the token readable by every local account, which can then
+ * attach with a read-write ceiling. Whether the code protected anything depended
+ * on where the user happened to put their repository.
+ *
+ * `icacls` because Node has no API for a DACL — `chmod` cannot express one.
+ * Inheritance is removed and a single grant issued, so the result does not
+ * depend on the parent directory at all.
+ *
+ * **Throws, and only when there is a token.** A record without one is not a
+ * credential, and a volume with no ACLs must not stop a host from starting over
+ * a file that is public anyway. When the token *is* present, continuing would
+ * mean running with the secret readable while everything else looked fine.
+ */
+async function restrictOnWindows(
+  path: string,
+  record: Omit<HostRecord, 'protocol'>,
+): Promise<void> {
+  if (process.platform !== 'win32' || record.token === undefined) return;
+
+  const user = process.env['USERNAME'];
+  if (user === undefined || user === '') {
+    throw new Error(`cannot secure ${path}: USERNAME is unset, so the grant has no subject`);
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('icacls', [path, '/inheritance:r', '/grant:r', `${user}:F`], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
+    });
+    let stderr = '';
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('error', reject);
+    child.on('close', (code) =>
+      code === 0
+        ? resolve()
+        : reject(
+            new Error(
+              `could not restrict ${path} to ${user}: it holds this host's bearer token and ` +
+                `would be readable by other accounts on this machine. ${stderr.trim()}`,
+            ),
+          ),
+    );
+  });
 }
 
 export async function clearHostRecord(workspaceRoot: string): Promise<void> {
