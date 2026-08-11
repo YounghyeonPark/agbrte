@@ -56,7 +56,7 @@ export function AttachHost({
   };
 
   return (
-    <div className="border-line grid gap-3 border-b p-3.5" data-testid="attach-panel">
+    <div className="border-line grid gap-3 border-b p-4" data-testid="attach-panel">
       <div className="flex gap-2">
         {(['local', 'remote'] as const).map((m) => (
           <button

@@ -109,11 +109,11 @@
 }
 
 @utility field {
-  @apply bg-sunken border-line text-ink w-full rounded-[2px] border px-2.5 py-2;
+  @apply bg-sunken border-line text-ink w-full rounded-[2px] border px-3 py-2;
 }
 
 @utility btn {
-  @apply bg-raised border-line text-ink cursor-pointer rounded-[2px] border px-2.5 py-1.5;
+  @apply bg-raised border-line text-ink cursor-pointer rounded-[2px] border px-3 py-2;
   @apply hover:border-accent disabled:cursor-default disabled:opacity-45 disabled:hover:border-line;
 }
 

@@ -13,7 +13,7 @@ import { AttachmentChip, CapturePicker, type Attachment } from './Capture.js';
 import { Dictate } from './Dictate.js';
 
 const META_ROW = 'text-muted flex items-baseline gap-2 text-xs';
-const CODE = 'text-accent rounded bg-[#202029] px-1.5 py-px font-mono text-[11px]';
+const CODE = 'text-accent rounded-[2px] bg-raised px-2 py-px font-mono text-[11px]';
 
 export function Transcript({
   events,
@@ -50,7 +50,7 @@ export function Transcript({
        * a column that floats in the middle of its pane is a second alignment for
        * no reason.
        */
-      className="grid min-h-0 w-full max-w-[72ch] flex-1 content-start gap-2.5 overflow-y-auto p-4.5"
+      className="grid min-h-0 w-full max-w-[72ch] flex-1 content-start gap-3 overflow-y-auto p-4"
       onScroll={(e) => {
         const el = e.currentTarget;
         atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
@@ -88,7 +88,7 @@ export function EventRow({
       return (
         <div
           data-testid="row-user"
-          className="bg-user-bubble border-user-edge max-w-[78%] justify-self-end rounded-[10px_10px_2px_10px] border px-3 py-2"
+          className="bg-user-bubble border-user-edge max-w-[78%] justify-self-end rounded-[2px] border px-3 py-2"
         >
           {event.content.map((block, i) =>
             block.type === 'text' ? (
@@ -106,7 +106,7 @@ export function EventRow({
       return (
         <div
           data-testid="row-agent"
-          className="bg-panel border-line max-w-[82%] rounded-[10px_10px_10px_2px] border px-3 py-2"
+          className="bg-panel border-line max-w-[82%] rounded-[2px] border px-3 py-2"
         >
           {who}
           <p className="wrap-anywhere">{event.text}</p>
@@ -188,9 +188,9 @@ export function PermissionPrompt({
       role="alertdialog"
       aria-label={`Permission requested for ${tool}`}
       data-testid="prompt"
-      className="border-state-paused mx-4.5 flex items-center justify-between gap-4 rounded-lg border bg-[#2a2418] px-3.5 py-3"
+      className="border-state-paused mx-4 flex items-center justify-between gap-4 rounded-[2px] border bg-panel px-4 py-3"
     >
-      <div className="grid min-w-0 gap-0.5">
+      <div className="grid min-w-0 gap-1">
         <strong data-testid="prompt-tool">{tool}</strong>
         <span className="text-muted truncate-line font-mono text-[11px]">{args}</span>
       </div>
@@ -238,9 +238,9 @@ export function SplitPrompt({
       aria-label={`Split proposed: ${proposal.title}`}
       data-testid="split-prompt"
       data-proposal={proposal.proposalId}
-      className="border-accent mx-4.5 grid gap-2 rounded-lg border bg-[#16202a] px-3.5 py-3"
+      className="border-accent mx-4 grid gap-2 rounded-[2px] border bg-panel px-4 py-3"
     >
-      <div className="grid gap-0.5">
+      <div className="grid gap-1">
         <strong data-testid="split-title">Split off: {proposal.title}</strong>
         {/* The reason, because someone asked to approve with no stated why can
             only say yes. */}
@@ -313,7 +313,7 @@ export function Composer({
 
   return (
     <form
-      className="border-line relative flex items-end gap-2.5 border-t px-4.5 py-3"
+      className="border-line relative flex items-end gap-3 border-t px-4 py-3"
       onSubmit={(e) => {
         e.preventDefault();
         submit();
@@ -326,9 +326,9 @@ export function Composer({
           onClose={() => setPicking(false)}
         />
       )}
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
         {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {attachments.map((a, i) => (
               <AttachmentChip
                 key={a.block.sha256 + String(i)}

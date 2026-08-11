@@ -52,7 +52,7 @@ export function RuntimeSelect({
           position="popper"
           sideOffset={4}
           data-testid="runtime-list"
-          className="bg-panel border-line z-50 overflow-hidden rounded-md border shadow-lg"
+          className="bg-panel border-line z-50 overflow-hidden rounded-[2px] border shadow-lg"
         >
           <Select.Viewport className="p-1">
             {options.map((option) => (
@@ -61,7 +61,7 @@ export function RuntimeSelect({
                 value={option.value}
                 data-testid="runtime-option"
                 data-value={option.value}
-                className="text-ink data-highlighted:bg-raised cursor-pointer rounded px-2.5 py-1.5 text-sm outline-hidden select-none"
+                className="text-ink data-highlighted:bg-raised cursor-pointer rounded px-3 py-2 text-sm outline-hidden select-none"
               >
                 <Select.ItemText>{option.label}</Select.ItemText>
               </Select.Item>

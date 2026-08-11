@@ -111,7 +111,7 @@ export function StartGuide({ hasHosts, onAttachLocal, onAttachRemote }: StartGui
       <div className="grid gap-3">
         <span className={`${LABEL} text-muted`}>Which is why</span>
         {CONSEQUENCES.map((item) => (
-          <div key={item.title} className="grid gap-0.5">
+          <div key={item.title} className="grid gap-1">
             <span className="text-[13px]">{item.title}</span>
             <span className="text-muted text-xs leading-relaxed">{item.detail}</span>
           </div>

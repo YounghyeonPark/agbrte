@@ -127,7 +127,7 @@ function Hit({
       <button
         type="button"
         data-testid="search-hit"
-        className="border-line hover:border-accent w-full rounded border px-2 py-1.5 text-left"
+        className="border-line hover:border-accent w-full rounded border px-2 py-2 text-left"
         onClick={() => onOpen(hit.sessionId, hit.instanceId)}
       >
         <span className="flex items-baseline gap-2 text-[11px]">
@@ -137,7 +137,7 @@ function Hit({
           <span className="text-muted shrink-0">{hit.host}</span>
           <span className="text-muted shrink-0">{SAYS[hit.kind] ?? hit.kind}</span>
         </span>
-        <span className="text-muted truncate-line mt-0.5 block text-[11px]">{hit.snippet}</span>
+        <span className="text-muted truncate-line mt-1 block text-[11px]">{hit.snippet}</span>
       </button>
     </li>
   );

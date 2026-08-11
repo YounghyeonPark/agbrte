@@ -72,7 +72,7 @@ export function Inbox({
       >
         Inbox
         {unread > 0 && (
-          <span className="bg-accent rounded-full px-1.5 text-[11px] text-black" data-testid="inbox-badge">
+          <span className="bg-accent rounded-full px-2 text-[11px] text-black" data-testid="inbox-badge">
             {unread}
           </span>
         )}
@@ -100,7 +100,7 @@ export function Inbox({
                 >
                   <button
                     type="button"
-                    className="grid w-full gap-0.5 px-3 py-2 text-left hover:bg-white/5"
+                    className="grid w-full gap-1 px-3 py-2 text-left hover:bg-white/5"
                     onClick={() => onOpen?.(entry)}
                   >
                     <span className="flex items-baseline justify-between gap-2">

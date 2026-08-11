@@ -189,9 +189,9 @@ export function App(): JSX.Element {
             inside its own button — a control split mid-word reads as damage
             rather than as a tight fit. `flex-wrap` with `shrink-0` on the group
             moves a button down intact instead. */}
-        <header className="border-line flex flex-wrap items-center justify-between gap-y-2 border-b p-3.5">
+        <header className="border-line flex flex-wrap items-center justify-between gap-y-2 border-b p-4">
           <h1 className="text-base tracking-wide">Agbrte</h1>
-          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+          <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
             {/* §11: the durable record of what the notifier could not deliver —
                 while focused, in a browser, or with the app closed entirely. */}
             <Inbox
@@ -236,7 +236,7 @@ export function App(): JSX.Element {
         {/* Below the header rather than in it: a fleet-wide search is a thing you
             do occasionally and deliberately, and a box in the toolbar competes
             for attention with the sessions list every second it is not in use. */}
-        <div className="border-line border-b px-3.5 py-2.5">
+        <div className="border-line border-b px-4 py-3">
           <Search onOpen={(sessionId, instanceId) => void store.openSession(sessionId, instanceId)} />
         </div>
 
@@ -292,7 +292,7 @@ export function App(): JSX.Element {
           <div
             role="alert"
             data-testid="error"
-            className="border-state-fail mx-4.5 mt-3 flex items-center justify-between gap-3 rounded-md border bg-[#2a1a20] px-3 py-2.5"
+            className="border-state-fail mx-4 mt-3 flex items-center justify-between gap-3 rounded-[2px] border bg-panel px-3 py-3"
           >
             <span>{error}</span>
             <button className="btn" onClick={() => store.dismissError()}>
@@ -322,7 +322,7 @@ export function App(): JSX.Element {
              looks like a bug, so it says what happened. */
           <div
             data-testid="notice"
-            className="border-line mx-4.5 mt-3 flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-xs"
+            className="border-line mx-4 mt-3 flex items-center justify-between gap-3 rounded-[2px] border px-3 py-3 text-xs"
           >
             <span className="text-muted">{notice}</span>
             <button className="btn" onClick={() => store.dismissNotice()}>
@@ -480,8 +480,8 @@ function HostGroup({
 
   return (
     <section data-testid="host" data-instance={host.instanceId} data-label={host.label}>
-      <div className="mb-1 flex items-center justify-between gap-2 px-1.5">
-        <div className="flex min-w-0 items-baseline gap-1.5">
+      <div className="mb-1 flex items-center justify-between gap-2 px-2">
+        <div className="flex min-w-0 items-baseline gap-2">
           {/* The badge answers "where is this running" at a glance (§10). */}
           <span
             data-testid="host-badge"
@@ -498,7 +498,7 @@ function HostGroup({
         </div>
         <div className="flex shrink-0 gap-1">
           <button
-            className="btn px-1.5 py-0.5 text-xs"
+            className="btn px-2 py-1 text-xs"
             data-testid="new-session"
             title="New session on this host"
             onClick={() => setAdding((v) => !v)}
@@ -506,7 +506,7 @@ function HostGroup({
             +
           </button>
           <button
-            className="btn px-1.5 py-0.5 text-xs"
+            className="btn px-2 py-1 text-xs"
             data-testid="stop-host"
             title="Stop this host — refuses while work is running"
             onClick={() => void store.shutdownHost(host.instanceId)}
@@ -514,7 +514,7 @@ function HostGroup({
             ■
           </button>
           <button
-            className="btn px-1.5 py-0.5 text-xs"
+            className="btn px-2 py-1 text-xs"
             data-testid="remove-host"
             title="Detach this host — the run keeps going"
             onClick={() => void store.removeHost(host.instanceId)}
@@ -525,7 +525,7 @@ function HostGroup({
       </div>
 
       {host.link === 'reconnecting' && (
-        <p data-testid="host-reconnecting" className="text-state-paused mx-1.5 mb-1 text-[11px]">
+        <p data-testid="host-reconnecting" className="text-state-paused mx-2 mb-1 text-[11px]">
           {/* Deliberately not phrased as a failure. The sessions are still on the
               other side and probably still running; what broke is our link to
               them, and telling the user the host is gone would be wrong at the
@@ -541,7 +541,7 @@ function HostGroup({
            with no visible cause is the thing worth avoiding. */
         <p
           data-testid="host-moved"
-          className="text-muted mx-1.5 mb-1 text-[11px]"
+          className="text-muted mx-2 mb-1 text-[11px]"
           title={`was ${host.movedFrom}`}
         >
           moved here — agents resume from the log rather than a vendor's token
@@ -551,7 +551,7 @@ function HostGroup({
       {host.unavailableReason !== undefined && (
         <p
           data-testid="host-unavailable"
-          className="text-state-paused mx-1.5 mb-1 text-[11px]"
+          className="text-state-paused mx-2 mb-1 text-[11px]"
           title={host.unavailableReason}
         >
           host unavailable — transcripts readable, nothing can run
@@ -560,7 +560,7 @@ function HostGroup({
 
       {adding && (
         <form
-          className="mb-1 grid gap-1.5 px-1.5"
+          className="mb-1 grid gap-2 px-2"
           onSubmit={(e) => {
             e.preventDefault();
             submit();
@@ -621,7 +621,7 @@ function HostGroup({
             key={s.sessionId}
             data-testid="session"
             data-title={s.title}
-            className={`grid gap-0.5 rounded-md border px-2.5 py-1.5 text-left ${
+            className={`grid gap-1 rounded-[2px] border px-3 py-2 text-left ${
               s.sessionId === activeId ? 'bg-raised border-line' : 'hover:border-line border-transparent'
             }`}
             onClick={() => void store.openSession(s.sessionId, host.instanceId)}
@@ -638,7 +638,7 @@ function HostGroup({
             key={d.sessionId}
             data-testid="session"
             data-title={d.title}
-            className="hover:border-line grid gap-0.5 rounded-md border border-transparent px-2.5 py-1.5 text-left"
+            className="hover:border-line grid gap-1 rounded-[2px] border border-transparent px-3 py-2 text-left"
             onClick={() => void store.openSession(d.sessionId, host.instanceId)}
           >
             <span className="truncate-line">{d.title}</span>
@@ -664,12 +664,12 @@ function SessionHeader({
   onBack: () => void;
 }): JSX.Element {
   return (
-    <div className="border-line safe-top flex items-start justify-between gap-4 border-b px-4.5 py-3.5">
+    <div className="border-line safe-top flex items-start justify-between gap-4 border-b px-4 py-4">
       <div className="flex min-w-0 items-start gap-2">
         {/* Hidden from `md` up, where the list is already on screen and a back
             arrow would point at nothing. */}
         <button
-          className="btn shrink-0 px-2 py-0.5 md:hidden"
+          className="btn shrink-0 px-2 py-1 md:hidden"
           data-testid="back-to-list"
           aria-label="Back to sessions"
           onClick={onBack}
@@ -678,7 +678,7 @@ function SessionHeader({
         </button>
       <div className="min-w-0">
         <h2 className="truncate-line text-[15px]">{session.title}</h2>
-        <p className="text-muted truncate-line mt-0.5 text-xs">
+        <p className="text-muted truncate-line mt-1 text-xs">
           {/* Which host, in the header too: with several attached, the sidebar
               grouping alone is easy to lose track of once you have scrolled. */}
           {host !== null && <span data-testid="active-host">{host.label} · </span>}
@@ -686,7 +686,7 @@ function SessionHeader({
         </p>
       </div>
       </div>
-      <div className="flex shrink-0 items-center gap-2.5">
+      <div className="flex shrink-0 items-center gap-3">
         <span data-testid="session-state" className={`${LABEL} ${stateTone(session.state)}`}>
           {session.state.replace(/_/g, ' ')}
         </span>

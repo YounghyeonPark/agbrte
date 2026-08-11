@@ -61,7 +61,7 @@ export function Roster({
   return (
     <div
       data-testid="roster"
-      className="border-line flex flex-wrap items-center gap-1.5 border-b px-4.5 py-2"
+      className="border-line flex flex-wrap items-center gap-2 border-b px-4 py-2"
     >
       <button
         type="button"
@@ -84,14 +84,14 @@ export function Roster({
             data-agent={agent.agentId}
             data-role={agent.role}
             aria-pressed={isOpen}
-            className={`btn grid gap-0.5 text-left text-[11px] ${isOpen ? 'border-accent' : ''}`}
+            className={`btn grid gap-1 text-left text-[11px] ${isOpen ? 'border-accent' : ''}`}
             onClick={() => onSelect(isOpen ? null : agent.agentId)}
           >
-            <span className="flex items-baseline gap-1.5">
+            <span className="flex items-baseline gap-2">
               <span>{agent.role}</span>
               <span className="text-muted">{agent.spec.model?.modelId ?? agent.spec.runtimeId}</span>
             </span>
-            <span className={`${LABEL} flex gap-1.5`}>
+            <span className={`${LABEL} flex gap-2`}>
               <span className="text-muted">{AUTH[agent.spec.auth.kind] ?? agent.spec.auth.kind}</span>
               {/* §13: never imply two agents enforce the same policy. */}
               <span className={gate.tone} data-testid="roster-fidelity">

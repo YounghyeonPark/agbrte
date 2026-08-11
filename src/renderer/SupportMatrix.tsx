@@ -70,7 +70,7 @@ export function SupportMatrix({
               className="flex items-start justify-between gap-3 px-3 py-2"
               data-testid={`scenario-${scenario.id}`}
             >
-              <span className="grid gap-0.5">
+              <span className="grid gap-1">
                 <span className="text-xs">{scenario.title}</span>
                 <small className="text-muted text-[11px]">
                   {cell.detail ??
@@ -80,7 +80,7 @@ export function SupportMatrix({
                 </small>
               </span>
               <span
-                className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] ${look.className}`}
+                className={`shrink-0 rounded px-2 py-1 text-[11px] ${look.className}`}
                 data-status={cell.status}
               >
                 {look.label}

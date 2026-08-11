@@ -102,7 +102,7 @@ export function Dashboard({ sessions, hosts, onOpen, now }: DashboardProps): JSX
   const rest = ranked.filter((s) => s.needsAttention === null);
 
   return (
-    <div className="min-h-0 grid content-start gap-6 overflow-y-auto p-4.5" data-testid="dashboard">
+    <div className="min-h-0 grid content-start gap-6 overflow-y-auto p-4" data-testid="dashboard">
 
       {needing.length > 0 && (
         <section className="grid gap-2" data-testid="needs-you">
@@ -190,7 +190,7 @@ function Card({
        * reader is already looking, still distinguishing an amber pause from a
        * red failure as §4.1 requires.
        */
-      className="bg-panel border-line hover:border-accent grid gap-1.5 rounded-[2px] border p-3 text-left"
+      className="bg-panel border-line hover:border-accent grid gap-2 rounded-[2px] border p-3 text-left"
       onClick={() => onOpen(session.sessionId, session.instanceId)}
     >
       {/* `min-w-0` on the row, not on the title.
@@ -211,7 +211,7 @@ function Card({
         <span className={`${LABEL} shrink-0 text-muted`}>{ago(session.updatedAt, at)}</span>
       </div>
 
-      <div className="flex min-w-0 items-baseline gap-1.5">
+      <div className="flex min-w-0 items-baseline gap-2">
         {/* Which machine, on every card. With several hosts attached, "where is
             this running" has to be answerable without opening it (§10). */}
         {host !== null && (
