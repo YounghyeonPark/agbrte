@@ -301,12 +301,38 @@ if (invokedDirectly) {
 
   const lingerEnv = Number(process.env['AGBRTE_HOST_LINGER_MS']);
 
+  /**
+   * How this host is reached, set by whatever started it (§6.2).
+   *
+   * Not a user-facing switch: choosing loopback where a socket works trades an
+   * OS-enforced permission for a bearer token, which is strictly worse. It is
+   * set by a transport that has no choice — a WSL distribution, a container, a
+   * pod, or a **Windows machine**, where the alternative is a named pipe and
+   * `ssh -L` cannot forward one.
+   *
+   * **This line is why the loopback channel existed and could not be used.** It
+   * was written when that channel was built and never reached the file — a
+   * find-and-replace that matched nothing and said nothing about it — so
+   * `control` kept its default, and the only way to get a loopback host was to
+   * call `startSessionHost` in process, which is exactly what its tests do. The
+   * channel had thirteen tests and the binary that ships had no way to turn it
+   * on. Found by trying to use it for real from the Windows bootstrap, which is
+   * the only thing that would have found it.
+   */
+  const control = process.env['AGBRTE_HOST_CONTROL'] === 'loopback' ? 'loopback' : 'socket';
+
   startSessionHost({
     workspaceRoot,
+    control,
     ...(Number.isFinite(lingerEnv) ? { lingerMs: lingerEnv } : {}),
   })
     .then((host) => {
-      process.stderr.write(`agbrte-host listening on ${host.socket}\n`);
+      // The port, never the token: this line goes to a log file on the remote.
+      process.stderr.write(
+        `agbrte-host listening on ${
+          host.port === undefined ? host.socket : `127.0.0.1:${host.port}`
+        }\n`,
+      );
       const shutdown = (): void => {
         void host.stop().then(() => process.exit(0));
       };
