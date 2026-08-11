@@ -43,6 +43,7 @@ import {
 } from '@main/host/windowsBootstrap.js';
 import { connectLoopback } from '@shared/host/loopback.js';
 import { HostConnection } from '@main/host/hostConnection.js';
+import { connectRemoteHost } from '@main/host/connectRemote.js';
 import { freeLoopbackPort, systemSshRunner, type SshRunner } from '@main/host/sshTransport.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { AgentId, SessionId } from '@shared/types/index.js';
@@ -293,7 +294,9 @@ describe('over real ssh, to this machine', () => {
     const workspace = await mkdtemp(join(tmpdir(), 'agbrte-winssh-'));
     roots.push(workspace);
 
-    // 2. Bundles cross as a byte stream on stdin, over ssh this time.
+    // 2. Bundles cross by scp, staged and moved into place. This step is the
+    //    reason this whole block exists: as a byte stream on stdin it passed
+    //    every local test and hung here forever.
     await uploadWindowsBundles(
       runner,
       ALIAS,
@@ -344,5 +347,93 @@ describe('over real ssh, to this machine', () => {
     expect(JSON.stringify(events)).toContain('a turn on a Windows host over ssh');
 
     await connection.requestShutdown().catch(() => undefined);
+  }, 300_000);
+
+  /**
+   * The same machine, reached the way the *app* reaches one.
+   *
+   * The test above proves every Windows piece works and proves nothing about
+   * whether anything calls them — which is the failure this project keeps
+   * producing: correct code behind a seam nobody crosses. When it first passed,
+   * `connectRemoteHost` still ran the POSIX bootstrap against every remote and
+   * the only reference to `windowsBootstrap.ts` outside itself was a comment
+   * claiming Windows worked. Every capability table can say `observed` while the
+   * product cannot attach a single Windows machine.
+   *
+   * So: no runner is injected. `connectRemoteHost` picks its own, which means
+   * the POSIX probe genuinely runs first, genuinely fails against `cmd.exe`, and
+   * the Windows fallback is genuinely what recovers — the branch under test is
+   * the one production takes, not one this test arranged.
+   */
+  it('is what connectRemoteHost reaches, with nothing injected', async (ctx) => {
+    if (!(await sshdReachable())) {
+      ctx.skip();
+      return;
+    }
+
+    const workspace = await mkdtemp(join(tmpdir(), 'agbrte-winconn-'));
+    roots.push(workspace);
+
+    const steps: string[] = [];
+    const version = `winconn-${Date.now()}`;
+    const remote = await connectRemoteHost({
+      alias: ALIAS,
+      workspaceRoot: workspace,
+      bundles: {
+        host: await readFile('dist/main/agbrteHost.js', 'utf8'),
+        agent: await readFile('dist/main/agentHost.js', 'utf8'),
+      },
+      bundleVersion: version,
+      lingerMs: 120_000,
+      onProgress: (s) => steps.push(s),
+    });
+    closers.push(() => remote.close());
+
+    const identity = await remote.connection.ready;
+    expect(identity.workspaceRoot).toBe(workspace);
+
+    const session = await remote.connection.createSession({ title: 'via connect', goal: 'g' });
+    const agent = await remote.connection.addAgent(session.sessionId, {
+      role: 'worker',
+      runtimeId: 'echo',
+    });
+    await remote.connection.send(
+      session.sessionId as SessionId,
+      agent.agentId as AgentId,
+      'reached through connectRemoteHost',
+    );
+
+    const events = await remote.connection.events(session.sessionId as SessionId);
+    expect(events.map((e) => e.type)).toContain('agent.stopped');
+    expect(JSON.stringify(events)).toContain('reached through connectRemoteHost');
+
+    // It started one, because the workspace is new.
+    expect(steps).toContain('starting the host');
+
+    /**
+     * And a second attach reuses it rather than starting a rival.
+     *
+     * §6.4's promise, and the reason `readWindowsHostRecord` had to exist:
+     * without it this call launches a *second* host against the same workspace
+     * and two processes append to one event log. That is silent, survives a
+     * casual look, and corrupts the one thing the store exists to protect.
+     */
+    const again = await connectRemoteHost({
+      alias: ALIAS,
+      workspaceRoot: workspace,
+      // The version just deployed, so the deploy step is skipped — which is half
+      // of what "reattaching is cheap" means, and is asserted below. Passing a
+      // fresh version with empty bundles here would have re-uploaded an empty
+      // file over the working host and made the reuse assertion meaningless.
+      bundles: { host: '', agent: '' },
+      bundleVersion: version,
+      onProgress: (s) => steps.push(s),
+    });
+    closers.push(() => again.close());
+    const second = await again.connection.ready;
+    expect(second.instanceId, 'a second host was started').toBe(identity.instanceId);
+    expect(steps.filter((s) => s === 'starting the host')).toHaveLength(1);
+
+    await remote.connection.requestShutdown().catch(() => undefined);
   }, 300_000);
 });

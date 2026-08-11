@@ -54,10 +54,25 @@
  * on the day they were written.
  *
  * **These declarations are researched, not measured.** The two implemented rows
- * are observed — the ssh row is what a real host does. The six unimplemented
- * rows are what the mechanism is documented to allow, and each will need
- * confirming against a real one when it is built. Saying which is which is the
- * point; a table that mixes them is a table nobody can trust a row of.
+ * are observed — the ssh row is what a real host does, now on a POSIX remote and
+ * a Windows one. The six unimplemented rows are what the mechanism is documented
+ * to allow, and each will need confirming against a real one when it is built.
+ * Saying which is which is the point; a table that mixes them is a table nobody
+ * can trust a row of.
+ *
+ * ## A row is a claim about a kind, and one kind outgrew a boolean
+ *
+ * `ssh` reaches two families of remote that answer `unixSockets` differently, so
+ * that flag is now the *floor* — what holds whoever answers — rather than a
+ * description of any particular connection. The alternative was to keep saying
+ * `true` because the POSIX remote can, which would have promised a control
+ * channel half the reachable machines cannot open.
+ *
+ * Worth stating plainly because it is a limit of the shape rather than of the
+ * data: capabilities are declared per kind, and locality is only one of the
+ * things they actually depend on. The next transport that spans two remote
+ * operating systems will hit this again, and the fix at that point is a
+ * capability set the probe narrows, not a longer comment.
  */
 
 import type {
@@ -107,22 +122,32 @@ export const TRANSPORTS: Record<TargetKind, TransportDescriptor> = {
 
   ssh: {
     kind: 'ssh',
-    // Named with its condition, because "over SSH" is a claim about how you
-    // reach a machine and this transport also has a requirement about *what*
-    // machine. §6.3 puts the loop on the remote, so the bootstrap is a POSIX
-    // shell script — a Windows server answers ssh perfectly well and cannot be
-    // attached at all. The table said "a machine over SSH", which is broader
-    // than the truth.
-    label: 'a Linux or macOS machine over SSH',
+    // This label was `a Linux or macOS machine over SSH`, and that condition was
+    // real: §6.3 puts the loop on the remote, so the bootstrap was a POSIX shell
+    // script and a Windows server answered ssh perfectly well while being
+    // impossible to attach. Windows is now bootstrapped by a PowerShell path of
+    // its own (`windowsBootstrap.ts`) and observed end to end — probe, upload,
+    // detached launch, `-L`, control channel, a session that ran a turn.
+    label: 'a Linux, macOS, or Windows machine over SSH',
     evidence: 'observed',
     capabilities: {
-      // All observed against a real host: the process outlives the session that
-      // started it, `-L` forwards to a remote unix socket, and one connection
+      // Observed against a real host on both: the process outlives the session
+      // that started it, `-L` reaches the control channel, and one connection
       // carries many channels.
       persistentProcesses: true,
       portForwardIn: true,
       portForwardOut: true,
-      unixSockets: true,
+      // False, and it is the one row where that word means "floor" rather than
+      // "no". A POSIX remote does listen on a unix socket; a Windows one cannot,
+      // so it listens on loopback with a bearer token — which is precisely the
+      // fallback §6.2 attaches to this flag ("else loopback TCP + bearer token").
+      //
+      // One boolean on the *kind* can no longer answer this, because the kind now
+      // spans two remote operating systems that answer it differently. The honest
+      // value is what holds no matter who answers the connection, and the probe
+      // picks the better channel when the remote turns out to support it. Left
+      // `true` this would have promised a channel half the remotes cannot open.
+      unixSockets: false,
       fileTransfer: true,
       multiplexed: true,
       latencyClass: 'wan',

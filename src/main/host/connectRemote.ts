@@ -23,9 +23,20 @@ import {
   startRemoteHost,
   systemSshRunner,
   uploadHostBundle,
+  type RemoteProbe,
   type SshRunner,
 } from './sshTransport.js';
+import {
+  installWindowsNode,
+  probeWindows,
+  readWindowsHostRecord,
+  startWindowsHost,
+  uploadWindowsBundles,
+  windowsNodeExe,
+  windowsSshRunner,
+} from './windowsBootstrap.js';
 import { connect } from '@shared/host/socketChannel.js';
+import { connectLoopback } from '@shared/host/loopback.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import { HostConnection } from './hostConnection.js';
 
@@ -65,12 +76,50 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
 
   report('checking the remote');
   const probe = await probeRemote(runner, opts.alias);
-  if (!probe.reachable) {
-    // Classified rather than passed through raw. "Host key verification failed"
-    // and "Permission denied (publickey)" are the same sentence to someone who
-    // has not met them before, and both read as "this app is broken" — while
-    // needing completely different actions.
-    throw new RemoteBootstrapFailed(describeSshFailure(opts.alias, probe.detail));
+
+  /**
+   * A POSIX probe that "succeeded" is not evidence of a POSIX machine.
+   *
+   * `probeRemote` sends `echo "platform=$(uname -s)"; …` and a Windows remote
+   * answers ssh perfectly well, hands it to `cmd.exe`, prints the line back
+   * *literally*, and **exits 0**. So the probe reported `reachable: true` with
+   * every field empty, and this function went on to install a POSIX Node on a
+   * machine that had never run a shell — surfacing as "could not install Node on
+   * the remote", which names the wrong problem on the wrong operating system.
+   *
+   * The condition is `platform`, not `reachable`, because `uname -s` prints
+   * something on every POSIX system there is. A probe that cannot say what it is
+   * running on did not run as a shell script, whatever the exit code claimed.
+   * Checking `reachable` alone was the first version of this and it never fired.
+   *
+   * The second probe costs a round trip only on a path that was already going to
+   * fail; a POSIX remote answers `Linux` or `Darwin` and never reaches it.
+   */
+  if (!probe.reachable || probe.platform === '') {
+    const windows = await probeWindows(windowsSshRunner(), opts.alias);
+    if (windows.reachable) {
+      return connectWindowsHost(opts, windows, report);
+    }
+
+    if (!probe.reachable) {
+      // This really is ssh. The *POSIX* detail is reported, not the Windows one:
+      // the second probe is a guess this function made, and its error message
+      // would describe the guess rather than the user's problem.
+      //
+      // Classified rather than passed through raw. "Host key verification
+      // failed" and "Permission denied (publickey)" are the same sentence to
+      // someone who has not met them before, and both read as "this app is
+      // broken" — while needing completely different actions.
+      throw new RemoteBootstrapFailed(describeSshFailure(opts.alias, probe.detail));
+    }
+
+    // Authentication worked and neither shell did, so an ssh diagnostic would
+    // send the user to their keys for a problem that is not there.
+    throw new RemoteBootstrapFailed(
+      `${opts.alias} answered ssh, but its shell is neither a POSIX one nor Windows PowerShell, ` +
+        `so there is no way to install a host on it`,
+      windows.detail,
+    );
   }
 
   let nodePath = probe.nodePath;
@@ -133,6 +182,83 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
     // From here down it is the local path exactly: a stream channel carrying the
     // session protocol. Nothing above this line appears in `HostConnection`.
     const channel = await connect<SessionCommand, SessionMessage>({ port }, 10_000);
+    const connection = new HostConnection({
+      channel,
+      client: opts.client ?? `agbrte-app@${opts.alias}`,
+      onClose: () => forward.close(),
+    });
+    return { connection, close: () => forward.close() };
+  } catch (err) {
+    forward.close();
+    throw err;
+  }
+}
+
+/**
+ * The same sequence against a Windows remote (DESIGN.md §6.2, §6.3).
+ *
+ * Deliberately step-for-step with the POSIX path above — probe, install Node if
+ * absent, deploy if the version differs, reuse a running host or start one,
+ * forward, connect — because the ordering *is* the §6.4 promise that reattaching
+ * costs one probe and a forward. Written as its own function rather than as
+ * branches inside that one: nearly every call differs (PowerShell instead of
+ * `sh`, scp instead of a stream, a loopback port instead of a unix socket), so
+ * interleaving them would put an `if` on all six steps and make neither
+ * readable.
+ *
+ * What is genuinely different, and the reason a shared implementation would have
+ * been wrong: the control channel. A Windows host cannot listen on a unix
+ * socket, so it listens on loopback and proves who it is with a bearer token —
+ * §6.1's stated fallback. That token comes back from the host's own record, so
+ * it is never stored by this process and never crosses ssh in a command line.
+ */
+async function connectWindowsHost(
+  opts: RemoteConnectOptions,
+  probe: RemoteProbe,
+  report: (step: string) => void,
+): Promise<RemoteConnection> {
+  // Not `opts.runner`: a caller who injected one injected a POSIX one, and the
+  // whole reason we are here is that the remote is not POSIX. A test that wants
+  // to drive this supplies a Windows runner through the same option, which is
+  // why the fallback rather than an unconditional override.
+  const runner = opts.runner ?? windowsSshRunner();
+
+  let nodePath = probe.nodePath;
+  if (nodePath === null) {
+    report('installing a private Node runtime (nothing system-wide)');
+    await installWindowsNode(runner, opts.alias, probe);
+    nodePath = windowsNodeExe(probe.home);
+  }
+
+  if (probe.bundleVersion !== opts.bundleVersion) {
+    report('deploying the host');
+    await uploadWindowsBundles(
+      runner,
+      opts.alias,
+      probe.home,
+      { host: Buffer.from(opts.bundles.host), agent: Buffer.from(opts.bundles.agent) },
+      opts.bundleVersion,
+    );
+  }
+
+  let record = await readWindowsHostRecord(runner, opts.alias, opts.workspaceRoot);
+  if (record === null) {
+    report('starting the host');
+    record = await startWindowsHost(runner, opts.alias, probe.home, nodePath, opts.workspaceRoot, {
+      ...(opts.lingerMs !== undefined ? { lingerMs: opts.lingerMs } : {}),
+    });
+  }
+
+  report('opening the tunnel');
+  const port = await freeLoopbackPort();
+  const forward = await runner.forward(opts.alias, port, `127.0.0.1:${record.port}`);
+
+  try {
+    const channel = await connectLoopback<SessionCommand, SessionMessage>(
+      port,
+      record.token,
+      10_000,
+    );
     const connection = new HostConnection({
       channel,
       client: opts.client ?? `agbrte-app@${opts.alias}`,

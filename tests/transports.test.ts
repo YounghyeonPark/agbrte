@@ -116,10 +116,23 @@ describe('the table covers every locality', () => {
     for (const kind of ['wsl', 'container', 'k8s', 'devcontainer'] as const) {
       expect(TRANSPORTS[kind].capabilities.unixSockets, kind).toBe(false);
     }
-    // Both working transports have one, which is why nothing has needed the
-    // fallback and why it was never noticed missing.
+    // `local` is the last row that can promise one outright.
     expect(TRANSPORTS.local.capabilities.unixSockets).toBe(true);
-    expect(TRANSPORTS.ssh.capabilities.unixSockets).toBe(true);
+
+    /**
+     * `ssh` said `true` here, on the strength of a POSIX remote, and the comment
+     * next to it read "both working transports have one, which is why nothing
+     * has needed the fallback and why it was never noticed missing".
+     *
+     * That is no longer the reason and no longer the fact. A Windows remote is
+     * reached over the same kind and cannot listen on a unix socket, so it uses
+     * the loopback-plus-token channel §6.2 attaches to exactly this flag. The
+     * row is the floor now — what holds whoever answers — because a single
+     * boolean on the kind cannot describe two families of remote, and the
+     * optimistic value would promise a channel half of them cannot open.
+     */
+    expect(TRANSPORTS.ssh.capabilities.unixSockets).toBe(false);
+    expect(TRANSPORTS.ssh.label).toContain('Windows');
   });
 });
 

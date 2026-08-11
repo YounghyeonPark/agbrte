@@ -341,6 +341,48 @@ export async function uploadWindowsBundles(
  * cannot forward one. §6.2 anticipated exactly this and the channel already
  * exists — this is its first real user.
  */
+export interface WindowsHostRecord {
+  pid: number;
+  port: number;
+  token: string;
+  protocol: number;
+  instanceId: string;
+}
+
+/**
+ * Read the host's own record of where it is listening, if one is already there.
+ *
+ * The POSIX counterpart of this is what makes reattaching cheap — §6.4's normal
+ * case, once you have used a machine once, is one probe, one record read and a
+ * forward, with nothing installed or started. Without it every attach to a
+ * Windows machine would launch a *second* host against the same workspace, two
+ * processes appending to one event log.
+ *
+ * `-Raw` because the default `Get-Content` splits into lines and `JSON.parse`
+ * would receive an array's worth of them joined by nothing.
+ */
+export async function readWindowsHostRecord(
+  runner: SshRunner,
+  alias: string,
+  workspaceRoot: string,
+): Promise<WindowsHostRecord | null> {
+  const result = await runner.exec(
+    alias,
+    psCommand(`
+$p = Join-Path "${workspaceRoot}" ".devagents\\host.json"
+if (Test-Path $p) { try { Get-Content $p -Raw -ErrorAction Stop } catch { } }
+`.trim()),
+  );
+  if (result.code !== 0 || result.stdout.trim() === '') return null;
+  try {
+    return JSON.parse(result.stdout) as WindowsHostRecord;
+  } catch {
+    // Same reasoning as the POSIX path: a half-written record is
+    // indistinguishable from none, and treating it as none is right.
+    return null;
+  }
+}
+
 export async function startWindowsHost(
   runner: SshRunner,
   alias: string,
