@@ -205,7 +205,7 @@ export function Annotator({
         </span>
       </div>
 
-      {error !== null && <p className="text-state-failed mb-2 text-xs">{error}</p>}
+      {error !== null && <p className="text-state-fail mb-2 text-xs">{error}</p>}
 
       <div
         ref={surface}

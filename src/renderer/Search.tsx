@@ -84,7 +84,7 @@ export function Search({
         </button>
       </form>
 
-      {error !== null && <p className="text-state-failed text-xs">{error}</p>}
+      {error !== null && <p className="text-state-fail text-xs">{error}</p>}
 
       {results !== null && (
         <>

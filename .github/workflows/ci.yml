@@ -59,6 +59,14 @@ jobs:
       - name: Build
         run: npm run build
 
+      # After the build, because a class is real exactly when it survives into
+      # the stylesheet — which is also what the browser sees. `btn-quiet` was on
+      # ten buttons and defined nowhere: valid markup, green build, green tests,
+      # and the only place it showed was the screen. Three more turned up the
+      # first time this ran, all of them colours on error messages.
+      - name: No inert class names
+        run: node scripts/inert-classes.mjs --strict
+
       - name: Unit tests
         run: npm test
 

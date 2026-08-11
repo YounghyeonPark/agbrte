@@ -157,7 +157,7 @@ export function Preview({
           </a>
           {f.reachable ? null : (
             <button
-              className="text-muted hover:text-fg"
+              className="text-muted hover:text-ink"
               title="Nothing answered there yet — a dev server that is still starting looks the same. Look again."
               onClick={() => {
                 void window.agbrte.preview
@@ -170,7 +170,7 @@ export function Preview({
             </button>
           )}
           <button
-            className="text-muted hover:text-fg"
+            className="text-muted hover:text-ink"
             aria-label={`Close the preview of port ${f.remotePort}`}
             onClick={() => {
               void window.agbrte.preview
@@ -184,7 +184,7 @@ export function Preview({
         </span>
       ))}
 
-      {error === null ? null : <span className="text-warn">{error}</span>}
+      {error === null ? null : <span className="text-state-fail">{error}</span>}
 
       {/* §3.12: an agent's background processes are reaped shortly after its run
           returns, so a dev server it starts vanishes under you. This one belongs
@@ -215,11 +215,11 @@ export function Preview({
         {servers.map((s) => (
           <span key={s.id} className="border-line flex items-center gap-1 rounded border px-2 py-1">
             <code className="text-muted">{s.command}</code>
-            <span className={s.exit === null ? 'text-ok' : 'text-warn'}>
+            <span className={s.exit === null ? 'text-ink' : 'text-state-paused'}>
               {s.exit === null ? 'running' : `exited ${s.exit.code ?? s.exit.signal ?? '?'}`}
             </span>
             <button
-              className="text-muted hover:text-fg"
+              className="text-muted hover:text-ink"
               title="What it printed — where a server that never started says why"
               onClick={() => {
                 void window.agbrte.preview
@@ -231,7 +231,7 @@ export function Preview({
             </button>
             {s.exit === null && (
               <button
-                className="text-muted hover:text-fg"
+                className="text-muted hover:text-ink"
                 aria-label={`Stop ${s.command}`}
                 onClick={() => {
                   void window.agbrte.preview

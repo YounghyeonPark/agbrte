@@ -179,14 +179,14 @@ export function Dictate({
   return (
     <span className="flex shrink-0 items-center gap-2 self-center">
       {error !== null && (
-        <span className="text-state-failed max-w-60 truncate text-xs" title={error}>
+        <span className="text-state-fail max-w-60 truncate text-xs" title={error}>
           {error}
         </span>
       )}
       <button
         type="button"
         data-testid="dictate"
-        className={`btn-quiet text-xs ${state === 'recording' ? 'text-state-failed' : ''}`}
+        className={`btn-quiet text-xs ${state === 'recording' ? 'text-state-fail' : ''}`}
         title="Hold to dictate. The recording stays on this machine."
         disabled={state === 'transcribing'}
         // Pointer events rather than mouse: a press that ends outside the button,
