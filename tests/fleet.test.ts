@@ -646,3 +646,45 @@ describe('a template carries the machine it was taken from', () => {
     expect(started.agents).toHaveLength(1);
   }, 30_000);
 });
+
+/**
+ * The refusal above must fail *closed*.
+ *
+ * Its first version read the template through `Fleet.templates()`, which
+ * answers "what can I show in a list" and so returns `[]` when the host is too
+ * old or the call fails. That made the guard fail open: any error listing
+ * produced `undefined`, `find` matched nothing, the check was skipped, and the
+ * template ran on the machine it was not meant for — the exact bug the guard
+ * exists to prevent, reintroduced by the guard.
+ *
+ * It would have been invisible in every ordinary test, because the success path
+ * is identical whether the check ran or was skipped. So the listing is broken on
+ * purpose here, which is the only way to tell the two apart.
+ */
+describe('a guard that cannot see refuses', () => {
+  it('will not apply a template when the host cannot be asked about it', async () => {
+    const fleet = makeFleet();
+    const host = await fleet.attach(local(await makeRoot()));
+
+    const session = await fleet.createSession(host.instanceId, { title: 't', goal: 'g' });
+    await fleet.addAgent(session.sessionId as SessionId, { role: 'worker', runtimeId: 'echo' });
+    await fleet.saveTemplate(host.instanceId, session.sessionId as SessionId, 'Nightly');
+
+    // Applying works while the host can be asked.
+    expect((await fleet.applyTemplate(host.instanceId, 'nightly')).title).toBe('Nightly');
+
+    // Now it cannot be. `templates()` swallowing this is what made the guard
+    // blind; `applyTemplate` must not inherit that.
+    const connection = (fleet as unknown as { entries: Map<string, { connection: { templates: () => Promise<unknown> } }> })
+      .entries.get(host.instanceId)!.connection;
+    connection.templates = () => Promise.reject(new Error('link dropped mid-call'));
+
+    // The swallowing list still degrades quietly, which is right for a sidebar.
+    expect(await fleet.templates(host.instanceId)).toEqual([]);
+
+    // The refusal does not.
+    await expect(fleet.applyTemplate(host.instanceId, 'nightly')).rejects.toThrow(
+      /link dropped mid-call/,
+    );
+  }, 30_000);
+});

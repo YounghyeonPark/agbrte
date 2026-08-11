@@ -633,7 +633,29 @@ export class Fleet extends EventEmitter {
    */
   async applyTemplate(instanceId: InstanceId, templateId: string, title?: string): Promise<Session> {
     const entry = this.host(instanceId);
-    const template = (await this.templates(instanceId)).find((t) => t.id === templateId);
+
+    /**
+     * Asked through the connection, deliberately, and not through `templates()`
+     * one method up.
+     *
+     * That one answers "what can I show in a list", so it returns `[]` when the
+     * host is too old or the call fails — right for a sidebar, and catastrophic
+     * here. The first version of this guard used it, which made the refusal
+     * **fail open**: any error listing templates produced `undefined`, `find`
+     * matched nothing, the check was skipped, and the template ran on the wrong
+     * machine. That is the bug this guard exists to prevent, reintroduced by the
+     * guard itself, and it would have been invisible — the success path is
+     * identical.
+     *
+     * A check that cannot see is a check that must refuse.
+     */
+    if (!entry.connection.supports('template.list')) {
+      throw new AttachRefused(
+        `this host cannot list templates, so there is no way to tell whether ` +
+          `"${templateId}" is meant for another machine. Upgrade the host to apply it.`,
+      );
+    }
+    const template = (await entry.connection.templates()).find((t) => t.id === templateId);
 
     if (template?.target !== undefined && !sameTarget(template.target, entry.target)) {
       throw new AttachRefused(
