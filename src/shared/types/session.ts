@@ -58,12 +58,24 @@ export type AttentionReason =
   | 'failed'
   | 'stalled';
 
+/**
+ * `delegatedTo?: SessionId` used to be here, "set when a child session owns this
+ * item (§4.3)", and appeared exactly once in the repository — on its own
+ * declaration. Nothing wrote it, nothing read it, no test mentioned it, and no
+ * section of the design asked for it.
+ *
+ * Removed rather than implemented, on the rule this file's neighbour already
+ * states for templates: a field is either projected on purpose or absent on
+ * purpose, and never silently half-supported. Nothing can delegate an item today
+ * — `spawnChild` takes a scope, not a checklist id — so keeping it would promise
+ * a link a reader could not build and would always read as "nothing delegated".
+ *
+ * If item-level delegation is wanted, it arrives with the thing that sets it.
+ */
 export interface ChecklistItem {
   id: string;
   text: string;
   state: 'todo' | 'doing' | 'done' | 'blocked';
-  /** Set when a child session owns this item (§4.3). */
-  delegatedTo?: SessionId;
 }
 
 export interface ArtifactRef {

@@ -85,12 +85,33 @@ export interface PermissionAsk {
   toolUseId?: string;
 }
 
-/** An ask plus the identity only the host can stamp. */
+/**
+ * An ask plus the identity only the host can stamp.
+ *
+ * ## There was a third field here, and nothing ever set it
+ *
+ * `originSessionId?: SessionId`, documented as "set when the request came from a
+ * descendant session (§4.3)", appeared exactly once in the repository: on this
+ * line. Nothing wrote it, nothing read it, no test mentioned it — while §7's
+ * table stated as fact that "the host stamps `requestId`, `sessionId`, and
+ * `originSessionId`". It stamps two.
+ *
+ * It described a routing that does not happen. `pendingPermissions()` is
+ * per-session and a child's prompt never enters its parent's list, so there is
+ * no request for which this could have been true. A client reading it would have
+ * got `undefined` every time and concluded that no prompt ever came from below —
+ * a wrong belief, stated confidently by a type.
+ *
+ * The thing it was reaching for exists and works: a blockage anywhere beneath a
+ * session bubbles to it as `needsAttention.from`, carrying the origin's id,
+ * title and the path to reach it, and keeping the *original* origin when it is
+ * relayed through an intermediate parent. That is §4.3's breadcrumb, it is
+ * tested, and a second never-populated route to the same fact is how two
+ * mechanisms drift until one of them is quietly wrong.
+ */
 export interface PermissionRequest extends PermissionAsk {
   requestId: string;
   sessionId: SessionId;
-  /** Set when the request came from a descendant session (§4.3). */
-  originSessionId?: SessionId;
 }
 
 /**
