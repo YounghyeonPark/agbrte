@@ -181,12 +181,25 @@ function Card({
       }`}
       onClick={() => onOpen(session.sessionId, session.instanceId)}
     >
-      <div className="flex items-baseline justify-between gap-2">
+      {/* `min-w-0` on the row, not on the title.
+
+          The title already truncates, and it still tore the card open: a long
+          one ran past the border, off the viewport on a phone, and pushed the
+          timestamp out of existence entirely. The clipping was never reached
+          because this row is a **grid item**, and a grid item's `min-width:
+          auto` resolves to its content's minimum — which, for an unbreakable
+          `whitespace-nowrap` title, is the whole title. So the row grew wider
+          than the card and carried the truncating span out with it.
+
+          Worth stating plainly because the instinct is to add `truncate` to the
+          span that is already truncating. The overflow is one level up from the
+          element that looks responsible for it. */}
+      <div className="flex min-w-0 items-baseline justify-between gap-2">
         <span className="truncate-line text-[13px]">{session.title}</span>
         <span className={`${LABEL} shrink-0 text-muted`}>{ago(session.updatedAt, at)}</span>
       </div>
 
-      <div className="flex items-baseline gap-1.5">
+      <div className="flex min-w-0 items-baseline gap-1.5">
         {/* Which machine, on every card. With several hosts attached, "where is
             this running" has to be answerable without opening it (§10). */}
         {host !== null && (

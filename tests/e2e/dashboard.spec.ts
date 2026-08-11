@@ -53,3 +53,55 @@ test('shows every session, with what needs a human first', async ({ page }) => {
     await web.stop();
   }
 });
+
+/**
+ * A long title must not tear the card open.
+ *
+ * Found by screenshotting the real thing rather than by reading the markup, and
+ * it was not subtle: the title ran past the card's border, off the right edge of
+ * a phone viewport, and pushed the timestamp out of existence — while every
+ * shorter title on the same screen truncated correctly.
+ *
+ * The cause was one level up from the element that looked responsible. The title
+ * already had `overflow: hidden` and an ellipsis; the *row* holding it is a grid
+ * item, and a grid item's `min-width: auto` resolves to its content's minimum
+ * size, which for an unbreakable `whitespace-nowrap` title is the entire title.
+ * The row grew wider than the card and carried the truncating span out with it,
+ * so the clipping was never reached.
+ *
+ * Asserted by measuring overflow rather than by matching class names, because
+ * the same bug can arrive through any markup and a class-name assertion would
+ * only recognise the shape it was written against.
+ */
+test('a long title truncates instead of overflowing its card', async ({ page }) => {
+  const web = await serveWebFixture();
+  const long =
+    'a title that is quite a lot longer than the others, to see what the card does with it';
+
+  try {
+    execFileSync(
+      process.execPath,
+      [resolve('dist/cli/agbrte.js'), 'run', web.repo, '--runtime', 'echo', '--title', long, 'go'],
+      { stdio: 'ignore' },
+    );
+
+    // The narrow viewport is where it showed worst, and is a shape §12's CSS
+    // already takes seriously.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(web.url);
+    const card = page.locator('[data-testid=session-card]').first();
+    await expect(card).toBeVisible({ timeout: 25_000 });
+
+    // The card does not scroll sideways: nothing inside it is wider than it is.
+    const overflow = await card.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow, 'the card overflows its own box').toBeLessThanOrEqual(0);
+
+    // And the timestamp survives, which is what the overflow destroyed. It was
+    // not merely clipped — it was pushed out and rendered at zero width.
+    const stamp = card.locator('span', { hasText: /just now|ago|^\d/i }).last();
+    await expect(stamp).toBeVisible();
+    expect(await stamp.evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(0);
+  } finally {
+    await web.stop();
+  }
+});

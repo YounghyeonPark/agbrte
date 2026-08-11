@@ -30,3 +30,6 @@ tmp-*/
 # electron-builder output. Installers are ~130-190 MB each and are produced by
 # `npm run dist`; a release is an artifact, never a commit.
 release/
+
+# Screenshots written by tests/e2e/shots.spec.ts, for looking at the UI.
+.shots/
