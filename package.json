@@ -1,6 +1,6 @@
 {
   "name": "agbrte",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Agent Bridge Terminal \u2014 durable, bridge-owned agent sessions you attach to from any terminal.",
   "license": "Apache-2.0",
   "author": "Younghyeon Park <ypark.dev@gmail.com>",
