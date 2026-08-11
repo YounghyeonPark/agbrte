@@ -229,9 +229,63 @@ if ($listening.Count -gt 0) {
   Write-Host "listening      : nothing on port 22. Check $config" -ForegroundColor Red
 }
 
+Write-Host "6. authorising your key in the file sshd will actually read..." -ForegroundColor Cyan
+#
+# Which file that is depends on whether you are an administrator, and the obvious
+# way to ask is wrong.
+#
+# The default config ends with
+#
+#     Match Group administrators
+#            AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys
+#
+# so for an administrator sshd ignores ~/.ssh/authorized_keys entirely. Checking
+# membership with WindowsPrincipal.IsInRole from a NON-elevated shell reports
+# False even for an administrator, because UAC hands that process a token in
+# which the Administrators group is marked deny-only. I trusted that answer,
+# concluded this account was an ordinary user, put the key in ~/.ssh, and got
+# "Permission denied (publickey)" with everything else correct.
+#
+# Get-LocalGroupMember asks the account database instead of the current token,
+# which is the question that was actually meant.
+$me = "$env:USERDOMAIN\$env:USERNAME"
+$admins = @(Get-LocalGroupMember -Group Administrators | ForEach-Object { $_.Name })
+$isAdmin = $admins -contains $me
+
+if ($isAdmin) {
+  $target = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
+  Write-Host "   $me is an administrator, so sshd reads $target"
+} else {
+  $target = Join-Path $env:USERPROFILE '.ssh\authorized_keys'
+  Write-Host "   $me is an ordinary user, so sshd reads $target"
+}
+
+$pub = Join-Path $env:USERPROFILE '.ssh\id_rsa.pub'
+if (-not (Test-Path $pub)) { throw "no public key at $pub -- run ssh-keygen first" }
+$key = (Get-Content $pub -Raw).Trim()
+
+$existing = if (Test-Path $target) { Get-Content $target -Raw } else { "" }
+if ($existing -match [regex]::Escape($key)) {
+  Write-Host "   key already present."
+} else {
+  Add-Content -Path $target -Value $key -Encoding ASCII
+  Write-Host "   key added."
+}
+
+if ($isAdmin) {
+  # sshd refuses this file if anyone besides Administrators and SYSTEM can write
+  # it, and reports that as an authentication failure rather than as a permission
+  # problem -- so it is set here rather than left to inheritance.
+  icacls $target /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F" | Out-Null
+  Write-Host "   permissions restricted to Administrators and SYSTEM."
+}
+
+Restart-Service sshd
+Write-Host "   sshd restarted."
+
 Write-Host ""
-Write-Host "Next, in your NORMAL (non-elevated) window, authorise your own key:" -ForegroundColor Cyan
-Write-Host '  Get-Content "$env:USERPROFILE\.ssh\id_rsa.pub" | Add-Content "$env:USERPROFILE\.ssh\authorized_keys"'
+Write-Host "Now test it from your normal window:" -ForegroundColor Cyan
 Write-Host '  ssh -o BatchMode=yes localhost "echo it works"'
+
 Write-Host ""
 Write-Host "To undo: Stop-Service sshd; Remove-WindowsCapability -Online -Name $($cap.Name)"

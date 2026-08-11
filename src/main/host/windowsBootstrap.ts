@@ -33,8 +33,17 @@
  * it. Silenced at the top of every script.
  */
 
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { RemoteProbe, SshRunner } from './sshTransport.js';
-import { RemoteBootstrapFailed, REMOTE_NODE_VERSION } from './sshTransport.js';
+import {
+  RemoteBootstrapFailed,
+  REMOTE_NODE_VERSION,
+  systemSshRunner,
+} from './sshTransport.js';
 
 /** Where Agbrte lives in a Windows profile. Mirrors `~/.agbrte` on POSIX. */
 export function windowsRoot(home: string): string {
@@ -95,8 +104,18 @@ if (Test-Path "$root\\node\\node.exe") { Write-Output "node=$root\\node\\node.ex
 elseif (Get-Command node -ErrorAction SilentlyContinue) { Write-Output "node=$((Get-Command node).Source)" }
 else { Write-Output "node=" }
 if (Test-Path "$root\\agbrteHost.js") {
-  $first = Get-Content "$root\\agbrteHost.js" -First 1
-  if ($first -match '^// agbrte-bundle: (.*)$') { Write-Output "bundle=$($Matches[1])" } else { Write-Output "bundle=" }
+  # Wrapped because the *only* correct answer to an unreadable bundle is "I do
+  # not know which version is there", and \`$ErrorActionPreference='Stop'\` turned
+  # it into a failed probe reported to the user as an unreachable machine.
+  #
+  # Not defensive programming for its own sake: a bundle mid-upload is locked on
+  # Windows for as long as the transfer takes, so the window where this throws is
+  # one this program opens itself, every time it upgrades a remote. An empty
+  # version is also the safe answer — it re-uploads, where a guess would skip.
+  try {
+    $first = Get-Content "$root\\agbrteHost.js" -First 1 -ErrorAction Stop
+    if ($first -match '^// agbrte-bundle: (.*)$') { Write-Output "bundle=$($Matches[1])" } else { Write-Output "bundle=" }
+  } catch { Write-Output "bundle=" }
 } else { Write-Output "bundle=" }
 `.trim();
 
@@ -189,20 +208,104 @@ Remove-Item -Recurse -Force $stage
 }
 
 /**
- * Copy a bundle by streaming it into the command's stdin.
+ * Where a staged upload lands before it is moved into place.
  *
- * The POSIX path uses `cat > path`. There is no `cat`, and `more >` mangles
- * binary — so PowerShell opens the raw standard input stream and copies it. The
- * .NET stream is used rather than `$input` because `$input` is a line-oriented
- * pipeline and would corrupt anything that is not text.
+ * Separate from the destination so a transfer that dies halfway cannot leave a
+ * truncated file where a working one used to be — which is not hypothetical:
+ * the first version of this left a 32768-byte `agbrteHost.js` (exactly one
+ * buffer) that every later run then failed to parse.
  */
-export function windowsWriteFileCommand(remotePath: string): string {
+export function stagingPathFor(remotePath: string): string {
+  return `${remotePath}.part`;
+}
+
+/** Move a staged upload onto the destination, replacing whatever is there. */
+export function windowsCommitUploadCommand(remotePath: string): string {
   return psCommand(`
-$out = [IO.File]::Open("${remotePath}", [IO.FileMode]::Create, [IO.FileAccess]::Write)
-$in = [Console]::OpenStandardInput()
-$in.CopyTo($out)
-$out.Close()
+Move-Item -LiteralPath "${stagingPathFor(remotePath)}" -Destination "${remotePath}" -Force
 `.trim());
+}
+
+/**
+ * The user's own `ssh`, with the one method that cannot be shared.
+ *
+ * `systemSshRunner` sends a file with `cat > path`, which is exactly right for a
+ * POSIX remote and reaches a Windows one as "'cat' is not recognized". `exec`
+ * and `forward` are pure ssh and need no variant; only `upload` names a program
+ * on the far side, so only `upload` is replaced.
+ *
+ * That asymmetry is worth noticing rather than papering over: it is the only
+ * place in the transport where the far machine's operating system leaks into
+ * something that looks like plumbing.
+ *
+ * ## Why `scp` and not stdin
+ *
+ * The obvious Windows analogue of `cat > path` is to have PowerShell open the
+ * destination and copy the raw standard input stream into it. That is what this
+ * function did, it passed every test that ran the command locally, and **over
+ * real ssh it hung forever** — the remote wrote exactly one 32 KB buffer and
+ * then blocked, holding an exclusive handle on a half-written bundle. Local
+ * `stdin.end(contents)` was already correct; Win32-OpenSSH simply does not
+ * deliver stdin EOF to a non-tty child the way sshd on POSIX does.
+ *
+ * The failure is worse than a hang, because the lock outlives it: the stalled
+ * shell could not be killed without elevation, and until it died *every*
+ * subsequent run failed with `EBUSY` on a file nothing appeared to be using.
+ *
+ * `scp` is the mechanism built for this. It ships with the same OpenSSH that
+ * provides `ssh` — so it costs no new dependency — speaks its own framed
+ * protocol rather than relying on a shell's stdin semantics, and reports
+ * failure as a non-zero exit instead of a stall. Measured against this machine:
+ * 200 KB, byte-identical, exit 0.
+ */
+export function windowsSshRunner(sshPath = 'ssh'): SshRunner {
+  const base = systemSshRunner(sshPath);
+  const scpPath = sshPath.endsWith('ssh') ? `${sshPath.slice(0, -3)}scp` : 'scp';
+  return {
+    exec: base.exec,
+    forward: base.forward,
+    upload: async (alias, remotePath, contents) => {
+      // scp sends a file, not a stream, so the payload has to exist on disk.
+      const local = join(tmpdir(), `agbrte-upload-${randomUUID()}`);
+      await writeFile(local, contents);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn(
+            scpPath,
+            [
+              '-o',
+              'BatchMode=yes',
+              '-o',
+              'ConnectTimeout=20',
+              local,
+              // Forward slashes: the alias is split from the path at the first
+              // colon, and `C:\…` would otherwise lose its drive.
+              `${alias}:${stagingPathFor(remotePath).replaceAll('\\', '/')}`,
+            ],
+            { stdio: ['ignore', 'ignore', 'pipe'] },
+          );
+          let stderr = '';
+          child.stderr.on('data', (d) => (stderr += d));
+          child.on('error', reject);
+          child.on('close', (code) =>
+            code === 0
+              ? resolve()
+              : reject(new RemoteBootstrapFailed(`upload to ${remotePath} failed`, stderr.trim())),
+          );
+        });
+      } finally {
+        await rm(local, { force: true });
+      }
+
+      const commit = await base.exec(alias, windowsCommitUploadCommand(remotePath));
+      if (commit.code !== 0) {
+        throw new RemoteBootstrapFailed(
+          `upload to ${remotePath} could not be moved into place`,
+          commit.stderr.trim(),
+        );
+      }
+    },
+  };
 }
 
 export async function uploadWindowsBundles(

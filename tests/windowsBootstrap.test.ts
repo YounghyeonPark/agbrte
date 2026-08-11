@@ -10,20 +10,23 @@
  * The runner executes through `cmd.exe` **on this machine** rather than over
  * ssh, which is exactly what Windows `sshd` does with a command by default. So
  * every quoting layer but one is genuine, and everything the bootstrap actually
- * does — the probe, downloading and unpacking a private Node, streaming a
- * bundle in over stdin, a detached launch, the loopback control channel — runs
- * for real against a real filesystem and real processes.
+ * does — the probe, downloading and unpacking a private Node, a detached
+ * launch, the loopback control channel — runs for real against a real
+ * filesystem and real processes.
  *
- * The untested layer is `ssh` itself, which needs `sshd` on this machine and
- * therefore an elevated install. It is also the layer least likely to be wrong:
- * every command crosses it as base64 and nothing in it can be mangled.
+ * `ssh` itself was once the untested layer, on the reasoning that it was the
+ * one least likely to be wrong: every command crosses it as base64 and nothing
+ * in it can be mangled. That reasoning was sound about *commands* and the hole
+ * was underneath it — uploads do not cross as base64, and the upload hung
+ * forever the first time a real `sshd` carried it. Hence `over real ssh` below,
+ * which is the only test here that can speak about the transport.
  *
  * These skip off Windows, where `powershell.exe` and `cmd.exe` do not exist.
  */
 
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
@@ -36,11 +39,11 @@ import {
   uploadWindowsBundles,
   windowsNodeExe,
   windowsNodeUrl,
-  windowsWriteFileCommand,
+  windowsSshRunner,
 } from '@main/host/windowsBootstrap.js';
 import { connectLoopback } from '@shared/host/loopback.js';
 import { HostConnection } from '@main/host/hostConnection.js';
-import type { SshRunner } from '@main/host/sshTransport.js';
+import { freeLoopbackPort, systemSshRunner, type SshRunner } from '@main/host/sshTransport.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { AgentId, SessionId } from '@shared/types/index.js';
 
@@ -72,10 +75,13 @@ function localWindowsRunner(): SshRunner {
 
   return {
     exec: (_alias, command) => run(command),
-    upload: async (_alias, remotePath, contents) => {
-      const r = await run(windowsWriteFileCommand(remotePath), contents);
-      if (r.code !== 0) throw new Error(`upload failed: ${r.stderr}`);
-    },
+    // Just writes the bytes, deliberately. This used to run the same command the
+    // real runner sent, which reads as the more faithful double and was in fact
+    // the reason a hang shipped: `cmd.exe` on a real pipe delivers stdin EOF, so
+    // streaming-into-stdin passed here and blocked forever over ssh. A double
+    // that reproduces a transport it is not using proves nothing about it; the
+    // only test that can is `over real ssh` below.
+    upload: (_alias, remotePath, contents) => writeFile(remotePath, contents),
     forward: () => Promise.reject(new Error('the local runner has nothing to tunnel')),
   };
 }
@@ -142,35 +148,13 @@ describe('the node build it would fetch', () => {
 onWindows('against this machine, for real', () => {
   it('probes it', async () => {
     const probe = await probeWindows(localWindowsRunner(), 'self');
-    expect(probe.reachable).toBe(true);
+    // `detail` is the only thing that says *why* an unreachable probe failed,
+    // and a bare `expected false to be true` sent me looking at the machine
+    // rather than at the message the code had already written down.
+    expect(probe.reachable, `probe failed: ${probe.detail}`).toBe(true);
     expect(probe.platform).toBe('Windows_NT');
     expect(['x64', 'arm64']).toContain(probe.arch);
     expect(probe.home).toBe(homedir());
-  }, 60_000);
-
-  it('streams a bundle in over stdin, byte for byte', async () => {
-    /**
-     * The POSIX path uses `cat > path`. There is no `cat`, and `more >` mangles
-     * binary — so PowerShell opens the raw standard input stream. `$input` would
-     * have been the obvious choice and is line-oriented, which corrupts anything
-     * that is not text.
-     *
-     * Asserted with bytes chosen to break a text path: a NUL, a CR without an
-     * LF, and every high byte.
-     */
-    const root = await mkdtemp(join(tmpdir(), 'agbrte-winup-'));
-    roots.push(root);
-    const target = join(root, 'payload.bin');
-    const bytes = Buffer.from([
-      0x00, 0x0d, 0x0a, 0x0d, 0x1a, 0xff, 0xfe, 0x00,
-      ...Array.from({ length: 256 }, (_unused, i) => i),
-    ]);
-
-    await localWindowsRunner().upload('self', target, bytes);
-
-    const back = await readFile(target);
-    expect(back.length, 'the stream changed length').toBe(bytes.length);
-    expect(back.equals(bytes), 'the bytes were mangled in transit').toBe(true);
   }, 60_000);
 
   it('installs a private Node, and touches nothing else', async () => {
@@ -263,6 +247,101 @@ onWindows('against this machine, for real', () => {
       'utf8',
     );
     expect(log).not.toContain(started.token);
+
+    await connection.requestShutdown().catch(() => undefined);
+  }, 300_000);
+});
+
+/**
+ * The layer the local runner cannot reach: `ssh` itself.
+ *
+ * Everything above goes through `cmd.exe` on this machine, which is what Windows
+ * `sshd` does with a command — but it skips the transport. This block runs the
+ * same bootstrap through the real `ssh` client against `localhost`, including
+ * the `ssh -L` tunnel, so nothing about the path is simulated.
+ *
+ * It needs an sshd on this machine reachable by key, which is an elevated
+ * install, so it skips when there is none rather than failing. `scripts/enable-sshd.ps1`
+ * sets one up bound to loopback only.
+ */
+describe('over real ssh, to this machine', () => {
+  const ALIAS = 'localhost';
+
+  /** Is there an sshd here that key auth can reach without a prompt? */
+  async function sshdReachable(): Promise<boolean> {
+    if (process.platform !== 'win32') return false;
+    const r = await systemSshRunner().exec(ALIAS, 'echo ok');
+    return r.code === 0 && r.stdout.includes('ok');
+  }
+
+  it('bootstraps and serves a session through the tunnel', async (ctx) => {
+    if (!(await sshdReachable())) {
+      ctx.skip();
+      return;
+    }
+
+    // The user's own ssh, with the one method a Windows remote cannot share.
+    const runner = windowsSshRunner();
+
+    // 1. The probe has to survive ssh, cmd.exe and PowerShell in one go.
+    const probe = await probeWindows(runner, ALIAS);
+    expect(probe.reachable).toBe(true);
+    expect(probe.platform).toBe('Windows_NT');
+    expect(probe.home).toBe(homedir());
+
+    const node = probe.nodePath ?? windowsNodeExe(probe.home);
+    const workspace = await mkdtemp(join(tmpdir(), 'agbrte-winssh-'));
+    roots.push(workspace);
+
+    // 2. Bundles cross as a byte stream on stdin, over ssh this time.
+    await uploadWindowsBundles(
+      runner,
+      ALIAS,
+      probe.home,
+      {
+        host: await readFile('dist/main/agbrteHost.js'),
+        agent: await readFile('dist/main/agentHost.js'),
+      },
+      `winssh-${Date.now()}`,
+    );
+
+    // 3. Detached, through WMI, listening on a loopback port with a token.
+    const started = await startWindowsHost(runner, ALIAS, probe.home, node, workspace, {
+      lingerMs: 120_000,
+    });
+    expect(started.port).toBeGreaterThan(0);
+
+    // 4. The tunnel. A Windows host cannot use a named pipe — `ssh -L` will not
+    //    forward one — so this is why §6.2's loopback channel had to exist.
+    const localPort = await freeLoopbackPort();
+    const forward = await runner.forward(ALIAS, localPort, `127.0.0.1:${started.port}`);
+    closers.push(() => forward.close());
+
+    // 5. And it is an ordinary session from here down.
+    const channel = await connectLoopback<SessionCommand, SessionMessage>(
+      localPort,
+      started.token,
+    );
+    const connection = new HostConnection({ channel, client: 'agbrte-test@win-over-ssh' });
+    closers.push(() => connection.disconnect());
+
+    const identity = await connection.ready;
+    expect(identity.workspaceRoot).toBe(workspace);
+
+    const session = await connection.createSession({ title: 'over ssh', goal: 'g' });
+    const agent = await connection.addAgent(session.sessionId, {
+      role: 'worker',
+      runtimeId: 'echo',
+    });
+    await connection.send(
+      session.sessionId as SessionId,
+      agent.agentId as AgentId,
+      'a turn on a Windows host over ssh',
+    );
+
+    const events = await connection.events(session.sessionId as SessionId);
+    expect(events.map((e) => e.type)).toContain('agent.stopped');
+    expect(JSON.stringify(events)).toContain('a turn on a Windows host over ssh');
 
     await connection.requestShutdown().catch(() => undefined);
   }, 300_000);
