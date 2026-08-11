@@ -44,12 +44,16 @@ import type { MatrixCell, Session, SessionState } from '../shared/types/index.js
 /** Session-state colour, by what the state *means* (§4.1). */
 export function stateTone(state: SessionState): string {
   switch (state) {
+    // Neither of these is a request, so neither gets a hue. `working` was the
+    // accent and `done` was green, which meant a screen of healthy sessions was
+    // as colourful as a screen of stuck ones — and the accent is the only mark
+    // the eye has for "this one needs you".
     case 'working':
-      return 'text-accent';
+      return 'text-ink';
+    case 'done':
+      return 'text-muted';
     case 'failed':
       return 'text-state-fail';
-    case 'done':
-      return 'text-state-done';
     case 'awaiting_input':
     case 'awaiting_permission':
     case 'awaiting_credentials':
@@ -61,6 +65,29 @@ export function stateTone(state: SessionState): string {
     default:
       return 'text-muted';
   }
+}
+
+/**
+ * The same state, where something else on screen already says it.
+ *
+ * Removing the amber card borders was not the reduction it looked like: the
+ * dashboard went from four glowing outlines to nine amber labels — one heading,
+ * four card lines, four sidebar lines — all saying the thing every session had
+ * in common. The signal had been moved, not reduced, and a signal that marks
+ * everything marks nothing.
+ *
+ * So the rule is about context rather than about state: **red always, amber only
+ * where it is the only thing saying so.** A session's own header keeps the amber,
+ * because there it is the sole indicator. A dashboard card sits under a heading
+ * that reads "Needs you", and a sidebar row is navigation next to a screen that
+ * has already said it — both use this.
+ *
+ * `failed` is the exception on purpose, and the reason greyscale could not take
+ * over completely: §4.1 requires that a pause never read as a breakage, so the
+ * one state that *is* a breakage keeps its colour wherever it appears.
+ */
+export function quietTone(state: SessionState): string {
+  return state === 'failed' ? 'text-state-fail' : 'text-muted';
 }
 
 export const LABEL = 'text-[10px] uppercase tracking-wider';
@@ -568,7 +595,9 @@ function HostGroup({
             onClick={() => void store.openSession(s.sessionId, host.instanceId)}
           >
             <span className="truncate-line">{s.title}</span>
-            <span className={`${LABEL} ${stateTone(s.state)}`}>{s.state.replace(/_/g, ' ')}</span>
+            {/* Quiet: the sidebar is navigation, and the pane beside it has
+                already said this. See `quietTone`. */}
+            <span className={`${LABEL} ${quietTone(s.state)}`}>{s.state.replace(/_/g, ' ')}</span>
           </button>
         ))}
 

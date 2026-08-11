@@ -13,22 +13,72 @@
 
 @import 'tailwindcss';
 
+/*
+ * ## The palette is functional, and that is the whole change
+ *
+ * It used to be Tokyo Night: a blue accent, plus amber, red and green, four
+ * hues carrying state. That is a *theme* — colour applied to a surface — and it
+ * had a cost this app could measure. Four sessions all waiting on a person drew
+ * four orange-outlined cards under a heading that already said "Needs you", so
+ * the loudest thing on the screen was the thing every card had in common. This
+ * repo says it better elsewhere, about the same problem in the notifier: "a rail
+ * that is always lit is a rail nobody reads".
+ *
+ * So: greyscale surfaces, and **one** functional accent, used where a person has
+ * to act. Neutral is the resting state of the whole interface, which is what
+ * makes a single mark of colour mean anything.
+ *
+ * Two hues survive, because §4.1 requires a pause and a failure never to blur
+ * and greyscale cannot hold that distinction: amber asks, red warns. `working`
+ * and `done` lost their colours outright — normal operation and finished work
+ * are not requests, and giving them a hue spends the one signal the eye has on
+ * the two states that need nothing.
+ *
+ * The greys are warm-neutral rather than the old blue-black. A blue-tinted
+ * ground makes an amber signal read as a colour clash; on a neutral ground it
+ * reads as a lamp coming on.
+ *
+ * ## Measured against the ground, not judged
+ *
+ * Every colour that carries text, against `--color-bg`:
+ *
+ *     ink    15.26:1    muted  5.39:1
+ *     accent  6.41:1    fail   5.30:1
+ *
+ * Worth keeping, because the first `fail` red chosen here measured 4.30:1 — it
+ * looked correct and was under AA, on the one state a person most needs to read.
+ * Contrast is the property of a palette that confident visual judgement is worst
+ * at, and a restrained palette is the kind most likely to drift under it.
+ */
 @theme {
-  --color-bg: #16161a;
-  --color-panel: #1d1d22;
-  --color-sunken: #14141a;
-  --color-raised: #26262e;
-  --color-line: #2c2c34;
-  --color-ink: #e6e6ea;
-  --color-muted: #8b8b96;
+  --color-bg: #121211;
+  --color-panel: #1a1a18;
+  --color-sunken: #0e0e0d;
+  --color-raised: #232320;
+  --color-line: #2b2b28;
+  --color-ink: #e8e8e4;
+  --color-muted: #8a8a83;
 
-  --color-accent: #7aa2f7;
-  --color-state-paused: #e0af68;
-  --color-state-fail: #f7768e;
-  --color-state-done: #9ece6a;
+  /* Braun's orange, slightly dulled for a dark ground. The interface's only
+     accent: focus, the active control, and a session that needs a person. */
+  --color-accent: #d9822b;
+  --color-state-paused: #d9822b;
+  /*
+   * A warning, and the one thing allowed to disagree with the accent.
+   *
+   * Lightened from `#c4574c`, which looked right and measured 4.30:1 against the
+   * ground — under AA, on the one state a person most needs to be able to read.
+   * Restraint is a legitimate aim and legibility is not the place to spend it.
+   * Measured, not eyeballed: contrast is the property of a palette that
+   * confident visual judgement is worst at.
+   */
+  --color-state-fail: #d4685c;
+  /* Finished is not an event. It reads as ordinary text and is `muted` in use;
+     kept as a token so the state map stays total rather than falling through. */
+  --color-state-done: #8a8a83;
 
-  --color-user-bubble: #23304a;
-  --color-user-edge: #2f4068;
+  --color-user-bubble: #232320;
+  --color-user-edge: #34342f;
 }
 
 @layer base {
@@ -40,7 +90,11 @@
 
   body {
     @apply bg-bg text-ink overflow-hidden antialiased;
-    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    /* Helvetica first, then the platform's nearest grotesque. Braun's own
+       typography was Akzidenz-Grotesk and Helvetica, and the reason it suits
+       this app is not homage: a neutral grotesque leaves hierarchy to size,
+       weight and spacing, which is the only place this design puts it. */
+    font-family: 'Helvetica Neue', Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
     font-size: 14px;
     line-height: 1.5;
     color-scheme: dark;
@@ -55,11 +109,11 @@
 }
 
 @utility field {
-  @apply bg-sunken border-line text-ink w-full rounded-md border px-2.5 py-2;
+  @apply bg-sunken border-line text-ink w-full rounded-[2px] border px-2.5 py-2;
 }
 
 @utility btn {
-  @apply bg-raised border-line text-ink cursor-pointer rounded-md border px-2.5 py-1.5;
+  @apply bg-raised border-line text-ink cursor-pointer rounded-[2px] border px-2.5 py-1.5;
   @apply hover:border-accent disabled:cursor-default disabled:opacity-45 disabled:hover:border-line;
 }
 

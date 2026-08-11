@@ -35,7 +35,7 @@ import type { HostInfo } from '../shared/ipc/contract.js';
 import { byAttentionThenRecency } from '../shared/types/index.js';
 import { formatCost, sumCost } from '../shared/cost.js';
 import type { AttentionReason, Session } from '../shared/types/index.js';
-import { LABEL, stateTone } from './App.js';
+import { LABEL, quietTone } from './App.js';
 
 /** What each `awaiting_*` reason is actually asking of the person reading it. */
 const ASKS: Record<AttentionReason, string> = {
@@ -176,9 +176,21 @@ function Card({
       data-testid="session-card"
       data-title={session.title}
       data-state={session.state}
-      className={`bg-panel grid gap-1.5 rounded-md border p-3 text-left ${
-        attention !== null ? 'border-state-paused' : 'border-line hover:border-accent'
-      }`}
+      /*
+       * One border, the same on every card.
+       *
+       * It was amber whenever the session needed a person — under a heading that
+       * already says "Needs you", above a line that already says "waiting for
+       * you", on a card sitting in the section built to hold exactly these. Four
+       * such sessions drew four glowing outlines, so the most emphatic thing on
+       * the screen was the property they all shared, and nothing was left to
+       * pick out the one that mattered.
+       *
+       * The state word keeps the colour: one statement of the fact, where the
+       * reader is already looking, still distinguishing an amber pause from a
+       * red failure as §4.1 requires.
+       */
+      className="bg-panel border-line hover:border-accent grid gap-1.5 rounded-[2px] border p-3 text-left"
       onClick={() => onOpen(session.sessionId, session.instanceId)}
     >
       {/* `min-w-0` on the row, not on the title.
@@ -212,7 +224,9 @@ function Card({
             {host.label}
           </span>
         )}
-        <span className={`${LABEL} truncate-line ${stateTone(session.state)}`}>
+        {/* Quiet: this card is inside the section whose heading is the amber
+            one. `failed` still shows red — see `quietTone`. */}
+        <span className={`${LABEL} truncate-line ${quietTone(session.state)}`}>
           {attention !== null ? ASKS[attention.reason] : session.state.replace(/_/g, ' ')}
         </span>
       </div>
