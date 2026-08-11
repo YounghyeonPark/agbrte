@@ -54,6 +54,8 @@ import {
   type AgentId,
   type SessionId,
   type Actor,
+  describeTarget,
+  sameTarget,
 } from '@shared/types/index.js';
 import { SessionStore, type SessionMeta } from './store/sessionStore.js';
 import { workspaceLayout } from './store/layout.js';
@@ -2413,28 +2415,6 @@ function attentionFor(state: SessionState, since: string): Session['needsAttenti
   // Sanity: every attention state must be a pause or a terminal failure.
   if (!isPaused(state) && state !== 'failed') return null;
   return { reason, since };
-}
-
-/**
- * Whether two targets name the same place.
- *
- * Compared by the fields that decide *which machine*, not by deep equality: two
- * `ssh` targets differing only in a port they both default are the same box, and
- * refusing that would make an honest caller look like a liar.
- */
-function sameTarget(a: ExecutionTarget, b: ExecutionTarget): boolean {
-  if (a.kind !== b.kind) return false;
-  const where = (t: ExecutionTarget): string => {
-    const x = t as { alias?: string; host?: string; distro?: string; container?: string };
-    return x.alias ?? x.host ?? x.distro ?? x.container ?? '';
-  };
-  return where(a) === where(b);
-}
-
-/** A target as a person would name it. */
-function describeTarget(target: ExecutionTarget): string {
-  const x = target as { alias?: string; host?: string; distro?: string };
-  return x.alias ?? x.host ?? x.distro ?? target.kind;
 }
 
 function mergeUsage(a: AgentRecord['usage'], b: AgentRecord['usage']): AgentRecord['usage'] {

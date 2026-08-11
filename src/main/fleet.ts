@@ -27,7 +27,7 @@
 import { EventEmitter } from 'node:events';
 import { basename } from 'node:path';
 
-import { byAttentionThenRecency } from '@shared/types/index.js';
+import { byAttentionThenRecency, describeTarget, sameTarget } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
 import { requireTransport } from './host/transports.js';
 import type { SearchHit } from './store/searchSessions.js';
@@ -593,16 +593,57 @@ export class Fleet extends EventEmitter {
     }
   }
 
+  /**
+   * Save a template, stamped with where this host is.
+   *
+   * The target is added here because this is the only layer that has one. A host
+   * knows a workspace; `ssh build-01` is *this app's* name for the route to it,
+   * and it lives in the entry. The host used to derive it from `session.target`,
+   * which is `{kind:'local'}` on every session that has ever existed — so no
+   * template could carry a target and the refusal below could never fire.
+   */
   async saveTemplate(
     instanceId: InstanceId,
     sessionId: SessionId,
     name: string,
   ): Promise<SessionTemplate> {
-    return this.host(instanceId).connection.saveTemplate(sessionId, name);
+    const entry = this.host(instanceId);
+    return entry.connection.saveTemplate(sessionId, name, entry.target);
   }
 
+  /**
+   * Apply a template, refusing to quietly run it on the wrong machine.
+   *
+   * `SessionTemplate.target` documented this from the day it was written — "a
+   * user who does not have that alias gets a refusal naming it, which is more
+   * useful than silently running somewhere else — the failure §16 already
+   * records for execution targets" — and the code did the thing that sentence
+   * forbids. `template.apply` rebuilt the roster, the goal and the checklist and
+   * never read `target` at all.
+   *
+   * Nothing looked broken, because the field was also impossible to populate. So
+   * the promise sat in a doc comment being believed, which is §16's shape
+   * exactly: recorded, not enforced. It costs one comparison now that anything
+   * can set it.
+   *
+   * Refusing rather than attaching the right machine on the user's behalf: "we
+   * run this on the build box" is a claim about *their* setup, and the alias may
+   * not exist here, may point somewhere else, or may be a machine they did not
+   * mean to start work on. Naming it is the useful act; choosing for them is not.
+   */
   async applyTemplate(instanceId: InstanceId, templateId: string, title?: string): Promise<Session> {
-    return this.host(instanceId).connection.applyTemplate(templateId, title);
+    const entry = this.host(instanceId);
+    const template = (await this.templates(instanceId)).find((t) => t.id === templateId);
+
+    if (template?.target !== undefined && !sameTarget(template.target, entry.target)) {
+      throw new AttachRefused(
+        `the template "${template.name}" runs on ${describeTarget(template.target)}, and ` +
+          `this host is ${describeTarget(entry.target)}. Attach that machine and apply the ` +
+          `template there, or save a copy of the template for this one.`,
+      );
+    }
+
+    return entry.connection.applyTemplate(templateId, title);
   }
 
   async deleteTemplate(instanceId: InstanceId, templateId: string): Promise<boolean> {

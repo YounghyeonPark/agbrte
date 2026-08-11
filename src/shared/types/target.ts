@@ -81,3 +81,30 @@ export function targetLabel(t: ExecutionTarget): string {
       return t.transportId;
   }
 }
+
+/**
+ * Whether two targets name the same place.
+ *
+ * Compared by the fields that decide *which machine*, not by deep equality: two
+ * `ssh` targets differing only in a port they both default are the same box, and
+ * refusing that would make an honest caller look like a liar.
+ *
+ * Lives here rather than in `sessionManager` because two layers now need the
+ * same answer and they run in different processes — the session host refusing a
+ * mislabelled child, and the fleet refusing a template aimed at another machine.
+ * A second copy of a rule this quiet is how the two drift apart.
+ */
+export function sameTarget(a: ExecutionTarget, b: ExecutionTarget): boolean {
+  if (a.kind !== b.kind) return false;
+  const where = (t: ExecutionTarget): string => {
+    const x = t as { alias?: string; host?: string; distro?: string; container?: string };
+    return x.alias ?? x.host ?? x.distro ?? x.container ?? '';
+  };
+  return where(a) === where(b);
+}
+
+/** A target as a person would name it. */
+export function describeTarget(target: ExecutionTarget): string {
+  const x = target as { alias?: string; host?: string; distro?: string };
+  return x.alias ?? x.host ?? x.distro ?? target.kind;
+}

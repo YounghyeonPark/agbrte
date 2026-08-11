@@ -303,7 +303,14 @@ export class SessionHostServer {
           const session = await manager.get(command.sessionId as SessionId);
           return saveTemplate(
             this.opts.identity.workspaceRoot,
-            fromSession(session, command.name),
+            // The target comes from the client, which is the only side that
+            // knows it — see `TemplateOrigin`. A v5 client sends none and the
+            // template records none, exactly as before.
+            fromSession(
+              session,
+              command.name,
+              ...(command.target !== undefined ? [{ target: command.target }] : []),
+            ),
           );
         }
 

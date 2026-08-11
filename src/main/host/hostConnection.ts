@@ -40,6 +40,7 @@ import type {
   SessionId,
   SessionProjection,
   Sha256,
+  ExecutionTarget,
 } from '@shared/types/index.js';
 import { sha256Of } from '@main/store/blobs.js';
 import { CHUNK_BYTES } from '@main/store/blobTransfer.js';
@@ -353,9 +354,18 @@ export class HostConnection extends EventEmitter {
     return this.call<SessionTemplate[]>({ t: 'template.list' });
   }
 
-  async saveTemplate(sessionId: SessionId, name: string): Promise<SessionTemplate> {
+  async saveTemplate(
+    sessionId: SessionId,
+    name: string,
+    target?: ExecutionTarget,
+  ): Promise<SessionTemplate> {
     this.require('template.save');
-    return this.call<SessionTemplate>({ t: 'template.save', sessionId, name });
+    return this.call<SessionTemplate>({
+      t: 'template.save',
+      sessionId,
+      name,
+      ...(target !== undefined ? { target } : {}),
+    });
   }
 
   async applyTemplate(templateId: string, title?: string): Promise<Session> {

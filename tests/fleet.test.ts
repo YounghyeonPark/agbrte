@@ -12,7 +12,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { until } from './support/until.js';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AttachRefused, Fleet, type FleetRuntime } from '@main/fleet.js';
@@ -22,6 +22,7 @@ import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
+import { templatesDir } from '@main/store/templates.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { InstanceId, SessionId } from '@shared/types/index.js';
@@ -561,4 +562,87 @@ describe('searching every machine at once (§15 Phase 8)', () => {
     // machine to go and wake.
     expect(found.unreachable).toHaveLength(1);
   });
+});
+
+/**
+ * A template names a machine, and applying it elsewhere is refused (§16).
+ *
+ * `SessionTemplate.target` documented this behaviour in the comment that
+ * introduced it — "a user who does not have that alias gets a refusal naming
+ * it, which is more useful than silently running somewhere else" — and nothing
+ * implemented it. `template.apply` rebuilt the roster, the goal and the
+ * checklist and never read `target`.
+ *
+ * It went unnoticed because the field was also impossible to populate: the
+ * projection took it from `session.target`, which is `{kind:'local'}` on every
+ * session that has ever existed. So a promise sat in a doc comment being
+ * believed, with no reachable code either to keep it or to break it.
+ *
+ * Both ends are exercised here through a real fleet, real host servers and real
+ * files on disk — the save that stamps the machine, and the apply that refuses.
+ */
+describe('a template carries the machine it was taken from', () => {
+  /** Attach a host under an ssh alias. The connector dials by workspace only. */
+  const onBox = (workspaceRoot: string, alias: string) => ({
+    target: { kind: 'ssh', alias, host: alias } as const,
+    workspaceRoot,
+  });
+
+  async function seeded(fleet: Fleet, host: { instanceId: InstanceId }): Promise<SessionId> {
+    const session = await fleet.createSession(host.instanceId, { title: 'nightly', goal: 'g' });
+    await fleet.addAgent(session.sessionId as SessionId, { role: 'worker', runtimeId: 'echo' });
+    return session.sessionId as SessionId;
+  }
+
+  it('stamps the host it was saved from, which the host itself cannot know', async () => {
+    const fleet = makeFleet();
+    const box = await fleet.attach(onBox(await makeRoot(), 'build-01'));
+    const template = await fleet.saveTemplate(box.instanceId, await seeded(fleet, box), 'Nightly');
+
+    // The value cannot come from the session — every session is `local`, on
+    // every host, including this one. It comes from the fleet's own entry.
+    expect(template.target).toEqual({ kind: 'ssh', alias: 'build-01', host: 'build-01' });
+  }, 30_000);
+
+  it('says nothing about a local host, so an ordinary template stays portable', async () => {
+    const fleet = makeFleet();
+    const here = await fleet.attach(local(await makeRoot()));
+    const template = await fleet.saveTemplate(here.instanceId, await seeded(fleet, here), 'Nightly');
+    expect(template.target).toBeUndefined();
+  }, 30_000);
+
+  it('refuses to apply it on a different machine, and names the one it wants', async () => {
+    const fleet = makeFleet();
+    const boxRoot = await makeRoot();
+    const box = await fleet.attach(onBox(boxRoot, 'build-01'));
+    await fleet.saveTemplate(box.instanceId, await seeded(fleet, box), 'Nightly');
+
+    // The same template file, in a second workspace on a plain local host —
+    // which is exactly what happens when a colleague pulls the repo.
+    const hereRoot = await makeRoot();
+    const here = await fleet.attach(local(hereRoot));
+    await mkdir(templatesDir(hereRoot), { recursive: true });
+    await copyFile(
+      join(templatesDir(boxRoot), 'nightly.json'),
+      join(templatesDir(hereRoot), 'nightly.json'),
+    );
+
+    await expect(fleet.applyTemplate(here.instanceId, 'nightly')).rejects.toThrow(AttachRefused);
+    // Naming the machine is the whole point: "refused" without it leaves the
+    // user with nothing to act on.
+    await expect(fleet.applyTemplate(here.instanceId, 'nightly')).rejects.toThrow(/build-01/);
+
+    // And nothing was created on the way to refusing.
+    expect(await fleet.list()).toHaveLength(1);
+  }, 30_000);
+
+  it('applies it on the machine it names', async () => {
+    const fleet = makeFleet();
+    const box = await fleet.attach(onBox(await makeRoot(), 'build-01'));
+    await fleet.saveTemplate(box.instanceId, await seeded(fleet, box), 'Nightly');
+
+    const started = await fleet.applyTemplate(box.instanceId, 'nightly', 'Tuesday');
+    expect(started.title).toBe('Tuesday');
+    expect(started.agents).toHaveLength(1);
+  }, 30_000);
 });

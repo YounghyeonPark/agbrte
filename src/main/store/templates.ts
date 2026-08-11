@@ -131,7 +131,33 @@ export function templateId(name: string): string {
  * step with `Session`, which means a field added there is either projected here
  * on purpose or absent on purpose — and never silently half-supported.
  */
-export function fromSession(session: Session, name: string, now = new Date()): SessionTemplate {
+/**
+ * Where the host being templated actually is, as the *client* names it.
+ *
+ * Passed in rather than read off the session, and that is the whole correction.
+ * `session.target` was the obvious source and is always `{kind:'local'}` —
+ * `session.create` carries only a title and a goal, and `spawnChild` refuses a
+ * target that differs from its parent's, so every session on every host records
+ * `local` and always will. `fromSession` skipped `local` as "the default
+ * everywhere", so the field was unreachable: no template could ever carry a
+ * target, and the refusal its documentation promised could never fire.
+ *
+ * The deeper reason it could not come from the session is that a target is not a
+ * property of the host at all. A host on the build box does not know it is "the
+ * build box"; it knows a workspace. `ssh build-01` is the *client's* name for the
+ * route to it, held by `Fleet`, and it is the useful half of "we run this on the
+ * build box". So it arrives from the side that knows it.
+ */
+export interface TemplateOrigin {
+  target: ExecutionTarget;
+}
+
+export function fromSession(
+  session: Session,
+  name: string,
+  origin?: TemplateOrigin,
+  now = new Date(),
+): SessionTemplate {
   const roles: TemplateRole[] = session.agents.map((agent) => ({
     role: agent.role,
     runtimeId: agent.spec.runtimeId,
@@ -153,8 +179,10 @@ export function fromSession(session: Session, name: string, now = new Date()): S
     name: name.trim(),
     ...(session.goal.trim() === '' ? {} : { goal: session.goal }),
     // A local target is the default everywhere and says nothing; recording it
-    // would make every template claim a locality it does not care about.
-    ...(session.target.kind === 'local' ? {} : { target: session.target }),
+    // would make every template claim a locality it does not care about. The
+    // test is on the *origin* now, for the reason given on `TemplateOrigin`:
+    // reading `session.target` here meant the condition was never once false.
+    ...(origin === undefined || origin.target.kind === 'local' ? {} : { target: origin.target }),
     roles,
     checklist: session.checklist.map((item) => item.text),
     createdAt: now.toISOString(),

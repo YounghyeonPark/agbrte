@@ -32,6 +32,7 @@ import type {
   AccessRole,
   AgentRecord,
   ContentBlock,
+  ExecutionTarget,
   InstanceId,
   LineageId,
   AgbrteEvent,
@@ -127,8 +128,23 @@ export interface HostIdentity {
  * ignores the extra `hello` field and reports `protocol: 1` exactly as it always
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
+ *
+ * ## v6 adds a *field*, which the table below cannot express
+ *
+ * `template.save` gained an optional `target`. `COMMAND_SINCE` answers per
+ * command, so a v6 client asking a v5 host still gets `true` for
+ * `template.save`, sends the field, and the host ignores it — the template is
+ * written without a target and applies anywhere, which is precisely what it did
+ * before v6. The degradation is to the old behaviour rather than to a broken
+ * one, and nothing strands.
+ *
+ * Written down rather than smoothed over, because it is a real blind spot and
+ * the reason this instance is safe is a property of *this* field rather than of
+ * the mechanism. A field whose absence changed a result — rather than dropping a
+ * restriction that did not exist before — would need `MIN_CLIENT_PROTOCOL`,
+ * which is the lever that does exist for shape changes.
  */
-export const SESSION_PROTOCOL_VERSION = 5;
+export const SESSION_PROTOCOL_VERSION = 6;
 
 /**
  * The oldest client a host will serve.
@@ -193,7 +209,20 @@ export type SessionCommand =
    * assembling it from a template it fetched would be a client that can
    * quietly assemble a different one.
    */
-  | { t: 'template.save'; id: RequestId; sessionId: string; name: string }
+  | {
+      t: 'template.save';
+      id: RequestId;
+      sessionId: string;
+      name: string;
+      /**
+       * How the client reaches this host, when that is worth recording.
+       *
+       * Sent by the client because the host cannot know it: a host on the
+       * build box knows a workspace, not that it is "the build box".
+       * Omitted for a local host, and ignored by a host older than v6.
+       */
+      target?: ExecutionTarget;
+    }
   | { t: 'template.list'; id: RequestId }
   | { t: 'template.apply'; id: RequestId; templateId: string; title?: string }
   | { t: 'template.delete'; id: RequestId; templateId: string }

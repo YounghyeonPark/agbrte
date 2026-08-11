@@ -133,18 +133,44 @@ describe('a template is a projection of a session', () => {
     expect(() => fromSession(await0(empty), 'Empty')).toThrow(TemplateRefused);
   }, 30_000);
 
-  it('records a remote target and stays quiet about a local one', async () => {
+  /**
+   * This test used to hand `fromSession` a session with `target: {kind:'ssh'}`
+   * and check it came back out. It passed for as long as it existed, while the
+   * feature did not work at all.
+   *
+   * No session can be in that state. `session.create` carries a title and a goal
+   * and nothing else, and `spawnChild` refuses a target differing from its
+   * parent's, so every session on every host records `{kind:'local'}` and always
+   * has. The projection read `session.target` and skipped `local`, so the branch
+   * under test was unreachable in production and no template could ever carry a
+   * target — while the field's own documentation promised a refusal on apply
+   * that therefore could never fire. The spread in the old test is what supplied
+   * the state reality does not.
+   *
+   * The lesson is narrow and worth keeping: **a fixture that constructs an
+   * impossible input tests the function, not the feature.** Rewritten around
+   * where the value actually comes from — the client, the only side that knows
+   * how it reaches a host.
+   */
+  it('records the target it was told, and stays quiet about a local one', async () => {
     const { manager, sessionId } = await realSession();
     const session = await manager.get(sessionId);
+
+    // No origin at all: a v5 client, or a caller with nothing to say.
+    expect(fromSession(session, 'No origin').target).toBeUndefined();
+
     // Local is the default everywhere and says nothing; recording it would make
     // every template claim a locality it does not care about.
-    expect(fromSession(session, 'Local').target).toBeUndefined();
+    expect(fromSession(session, 'Local', { target: { kind: 'local' } }).target).toBeUndefined();
 
-    const remote = fromSession(
-      { ...session, target: { kind: 'ssh', alias: 'build-01', host: 'build-01' } },
-      'On the box',
-    );
+    const remote = fromSession(session, 'On the box', {
+      target: { kind: 'ssh', alias: 'build-01', host: 'build-01' },
+    });
     expect(remote.target).toEqual({ kind: 'ssh', alias: 'build-01', host: 'build-01' });
+
+    // And the session's own target is not consulted, which is the fix itself:
+    // reading it made the condition one that could never be false.
+    expect(session.target).toEqual({ kind: 'local' });
   }, 30_000);
 });
 
