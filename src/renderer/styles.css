@@ -117,6 +117,33 @@
   @apply hover:border-accent disabled:cursor-default disabled:opacity-45 disabled:hover:border-line;
 }
 
+/*
+ * The tertiary control: a real button that does not ask for the eye.
+ *
+ * **This did not exist.** `btn-quiet` was on ten buttons across six files and
+ * was defined nowhere, so the class was inert and every one of them rendered as
+ * bare text — `Read aloud`, `Screen`, `Export` sat in the composer row looking
+ * like a sentence. An undefined CSS class is not an error in any tool the
+ * project runs: the markup is valid, the build succeeds, the test suite passes,
+ * and the only place it shows is the screen.
+ *
+ * Which makes it the same shape as the dead fields swept out of the shared types
+ * this week — a name stating an intent with no implementation behind it — and
+ * the reason it survived is that nobody had looked at the app.
+ *
+ * Three levels, and no more: `btn` is filled, this is outlined, plain text is
+ * not a control. Rams' honesty applies to affordance before it applies to
+ * decoration — a thing that can be pressed has to look like it, and a thing that
+ * cannot must not. The hairline is present at rest rather than appearing on
+ * hover, because an affordance that requires discovering it is not one; the
+ * restraint is in the weight of the mark, not in hiding it.
+ */
+@utility btn-quiet {
+  @apply border-line text-muted cursor-pointer rounded-[2px] border bg-transparent px-2 py-1;
+  @apply hover:text-ink hover:border-accent;
+  @apply disabled:cursor-default disabled:opacity-45 disabled:hover:border-line disabled:hover:text-muted;
+}
+
 /* One line, ellipsised. Used for paths and titles in the fixed-width sidebar,
    where a long value must not be allowed to widen the column. */
 @utility truncate-line {

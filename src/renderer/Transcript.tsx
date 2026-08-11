@@ -34,7 +34,23 @@ export function Transcript({
   return (
     <div
       data-testid="transcript"
-      className="grid min-h-0 flex-1 content-start gap-2.5 overflow-y-auto p-4.5"
+      /*
+       * A measure, not the window.
+       *
+       * The transcript is prose — the agent's replies, the user's turns — and it
+       * was set across the whole pane, which on a 1440px window runs well past
+       * 150 characters a line. Beyond roughly 75 the eye loses the start of the
+       * next line on the return sweep, which is why every tradition that has had
+       * to be read for hours settles near 65.
+       *
+       * On the container rather than on each row: the rows differ — a user turn
+       * aligns right, a state line centres — and constraining them individually
+       * would make every new row re-decide the measure. It stays left rather
+       * than centring so the transcript and the composer below it share an edge;
+       * a column that floats in the middle of its pane is a second alignment for
+       * no reason.
+       */
+      className="grid min-h-0 w-full max-w-[72ch] flex-1 content-start gap-2.5 overflow-y-auto p-4.5"
       onScroll={(e) => {
         const el = e.currentTarget;
         atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
