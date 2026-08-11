@@ -268,16 +268,43 @@ onWindows('against this machine, for real', () => {
 describe('over real ssh, to this machine', () => {
   const ALIAS = 'localhost';
 
-  /** Is there an sshd here that key auth can reach without a prompt? */
-  async function sshdReachable(): Promise<boolean> {
-    if (process.platform !== 'win32') return false;
+  /**
+   * Is there an sshd here that key auth can reach without a prompt?
+   *
+   * **Says so out loud when there is not**, because these two are the only
+   * tests that exercise the Windows transport at all and a silent skip is
+   * indistinguishable from a pass in every place anybody looks. When the sshd
+   * service stopped between two runs, the totals went from `1180 passed | 13
+   * skipped` to `1178 passed | 15 skipped` and the summary line still read
+   * `Test Files 76 passed` — the transport stopped being verified and nothing
+   * said so.
+   *
+   * The skip is still the right behaviour: most machines running this suite
+   * have no sshd, and failing there would train people to ignore a red suite.
+   * What was wrong was doing it quietly.
+   */
+  /** Why ssh could not be used, or `null` when it can. */
+  async function sshdUnreachable(): Promise<string | null> {
+    if (process.platform !== 'win32') return 'not running on Windows';
     const r = await systemSshRunner().exec(ALIAS, 'echo ok');
-    return r.code === 0 && r.stdout.includes('ok');
+    if (r.code === 0 && r.stdout.includes('ok')) return null;
+
+    const last = (r.stderr.trim() || `ssh exited ${r.code}`).split('\n').slice(-1)[0]!.trim();
+    // Written to the stream directly rather than through `console.warn`: Vitest
+    // attaches intercepted console output to the task, and a task that then
+    // skips renders none of it — so the warning disappeared exactly in the case
+    // it exists for.
+    process.stderr.write(
+      `\n  ⚠ The Windows-over-ssh tests are being SKIPPED — the transport is NOT verified by this run.\n` +
+        `    \`ssh ${ALIAS}\` did not answer: ${last}\n\n`,
+    );
+    return last;
   }
 
   it('bootstraps and serves a session through the tunnel', async (ctx) => {
-    if (!(await sshdReachable())) {
-      ctx.skip();
+    const why = await sshdUnreachable();
+    if (why !== null) {
+      ctx.skip(`ssh ${ALIAS} unavailable: ${why}`);
       return;
     }
 
@@ -366,8 +393,9 @@ describe('over real ssh, to this machine', () => {
    * the one production takes, not one this test arranged.
    */
   it('is what connectRemoteHost reaches, with nothing injected', async (ctx) => {
-    if (!(await sshdReachable())) {
-      ctx.skip();
+    const why = await sshdUnreachable();
+    if (why !== null) {
+      ctx.skip(`ssh ${ALIAS} unavailable: ${why}`);
       return;
     }
 

@@ -315,8 +315,8 @@ describe('diagnosing a failed connection', () => {
 describe('a Windows server is a different problem from a missing ssh client', () => {
   /**
    * §6.3 puts the loop on the remote — the host is installed on the machine it
-   * controls — so the bootstrap is a POSIX shell script and a Windows target
-   * cannot be attached. That is a real limit and it was being reported as
+   * controls — so the bootstrap was a POSIX shell script and a Windows target
+   * could not be attached. That was a real limit and it was being reported as
    * something else entirely.
    *
    * `diagnoseSshFailure` matched `not recognized` and `command not found` under
@@ -324,6 +324,13 @@ describe('a Windows server is a different problem from a missing ssh client', ()
    * server answers the probe's `uname` with exactly that, so the user was told
    * "No ssh client was found on this machine" and sent to install OpenSSH
    * locally — a confident sentence about the wrong computer.
+   *
+   * Windows is a supported target now, which changes what reaching this branch
+   * *means* rather than retiring it: `connectRemoteHost` asks the Windows probe
+   * before it classifies anything, so a Windows remote attaches and never
+   * arrives here. What arrives is a remote offering neither shell — a restricted
+   * `git-shell` or `rbash`, an appliance CLI, a forced command in
+   * `authorized_keys`.
    */
   const CMD = "'uname' is not recognized as an internal or external command,\r\noperable program or batch file.";
   const POWERSHELL =
@@ -338,6 +345,26 @@ describe('a Windows server is a different problem from a missing ssh client', ()
       // The connection and the credentials are fine, and the message has to say
       // so — otherwise the next hour goes on keys and known_hosts.
       expect(`${d.summary} ${d.fix}`).toMatch(/nothing is wrong with the connection/i);
+
+      /**
+       * And it must not still be claiming Windows is unsupported.
+       *
+       * It did, for exactly as long as it took someone to read it: the sentence
+       * "Linux and macOS targets work and a Windows one is not supported yet"
+       * survived the commit that made Windows work, in a branch a Windows remote
+       * can no longer reach. Every assertion above passed the whole time — kind,
+       * alias, no self-blame — because none of them read what the message
+       * actually claimed.
+       *
+       * A wrong message costs more than a missing one. It is confident and
+       * specific, so it is believed, and it sends the reader somewhere the
+       * answer is not.
+       */
+      const message = `${d.summary} ${d.fix}`;
+      expect(message, 'the fix still says Windows is unsupported').not.toMatch(
+        /windows[^.]*not supported|not supported[^.]*windows/i,
+      );
+      expect(message).toMatch(/powershell/i);
     }
   });
 

@@ -181,13 +181,30 @@ export function diagnoseSshFailure(alias: string, detail: string): SshDiagnosis 
   }
 
   /**
-   * The connection worked and the shell on the other side is not a POSIX one.
+   * The connection worked and the shell on the other side ran nothing we sent.
    *
    * `cmd.exe` says "is not recognized as an internal or external command";
    * PowerShell says "is not recognized as the name of a cmdlet". Either way ssh
    * authenticated fine and the machine simply cannot run what was sent, which is
    * a different problem from everything else in this list and deserves its own
    * sentence rather than the nearest one.
+   *
+   * ## What this used to say, and why it had to change
+   *
+   * It said "Agbrte bootstraps a remote host through a POSIX shell, so Linux and
+   * macOS targets work and a Windows one is not supported yet", which was true
+   * when written and is now the opposite of true. Worse, it is unreachable for
+   * the case it names: `connectRemoteHost` asks the Windows probe *before* it
+   * classifies anything, so a Windows remote attaches and never arrives here.
+   *
+   * Reaching this branch now means **both** bootstraps were refused — so the
+   * remote is neither a POSIX shell nor PowerShell. A restricted shell
+   * (`git-shell`, `rbash`), a network appliance's CLI, or a forced command in
+   * `authorized_keys` all land here, and all of them are configuration on the
+   * remote rather than anything about ssh or this app.
+   *
+   * A stale message of this kind is more expensive than no message: it is
+   * confident, specific, and sends the reader somewhere the answer is not.
    */
   if (
     text.includes('not recognized') ||
@@ -196,14 +213,15 @@ export function diagnoseSshFailure(alias: string, detail: string): SshDiagnosis 
   ) {
     return {
       kind: 'non-posix-remote',
-      summary: `${alias} answered, but it is not a POSIX machine.`,
+      summary: `${alias} answered, but its shell could not run what was sent.`,
       // Deliberately not phrased as a fault. The connection is fine and the
-      // credentials are fine; what is missing is a bootstrap for that operating
-      // system, and the user should not go looking at their keys for it.
+      // credentials are fine; what is missing is a shell that can install
+      // anything, and the user should not go looking at their keys for it.
       fix:
-        'Agbrte bootstraps a remote host through a POSIX shell, so Linux and macOS ' +
-        'targets work and a Windows one is not supported yet. Nothing is wrong with ' +
-        'the connection or your credentials.',
+        'Agbrte installs a host through a POSIX shell or PowerShell, and this remote ' +
+        'offered neither — a restricted shell such as git-shell or rbash, an appliance ' +
+        'CLI, or a forced command in authorized_keys will all do this. Nothing is wrong ' +
+        'with the connection or your credentials.',
     };
   }
 
