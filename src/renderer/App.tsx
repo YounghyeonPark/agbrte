@@ -182,9 +182,16 @@ export function App(): JSX.Element {
           pane === 'hosts' && active === null ? 'flex' : 'hidden'
         }`}
       >
-        <header className="border-line flex items-center justify-between border-b p-3.5">
+        {/* Wraps as whole controls, never inside one.
+
+            Relabelling `?` to `Guide` cost more width than a 300px column had,
+            and the row answered by breaking `Attach host…` across two lines
+            inside its own button — a control split mid-word reads as damage
+            rather than as a tight fit. `flex-wrap` with `shrink-0` on the group
+            moves a button down intact instead. */}
+        <header className="border-line flex flex-wrap items-center justify-between gap-y-2 border-b p-3.5">
           <h1 className="text-base tracking-wide">Agbrte</h1>
-          <div className="flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5 whitespace-nowrap">
             {/* §11: the durable record of what the notifier could not deliver —
                 while focused, in a browser, or with the app closed entirely. */}
             <Inbox
@@ -200,14 +207,21 @@ export function App(): JSX.Element {
             >
               ‹
             </button>
+            {/* "Guide", not "?".
+
+                Its neighbours are `Inbox` and `Attach host…`; a bare glyph
+                between two words is the one control on the bar that cannot be
+                read, and its meaning lived only in a `title` — which a touch
+                screen never shows and a keyboard user reaches after pressing it.
+                A label costs eight pixels of a bar that has room. */}
             <button
-              className="btn px-2"
+              className="btn"
               data-testid="show-guide"
               title="How Agbrte is used"
               aria-pressed={guide}
               onClick={() => setGuide((open) => !open)}
             >
-              ?
+              Guide
             </button>
             <button
               className="btn"
@@ -249,6 +263,21 @@ export function App(): JSX.Element {
                   !sessions.some((s) => s.sessionId === d.sessionId),
               )}
               activeId={active?.sessionId ?? null}
+              /*
+               * On the dashboard these rows are the dashboard, printed again in
+               * a 300px column: the same four titles, the same four states, in a
+               * different order. Rams' "as little design as possible" is not
+               * about sparseness — it is about not saying a thing twice.
+               *
+               * They come back the moment a session is open, because then this
+               * is the only way to reach another one and nothing else on screen
+               * is saying it.
+               *
+               * Only the *loaded* ones. `unloaded` sessions live on disk and are
+               * absent from the dashboard entirely, so hiding those would not
+               * remove a duplicate — it would remove the only route to them.
+               */
+              showLoaded={active !== null}
             />
           ))}
         </nav>
@@ -420,11 +449,14 @@ function HostGroup({
   sessions,
   unloaded,
   activeId,
+  showLoaded,
 }: {
   host: HostInfo;
   sessions: Session[];
   unloaded: Array<{ sessionId: string; title: string }>;
   activeId: string | null;
+  /** False while the dashboard is showing them. See the call site. */
+  showLoaded: boolean;
 }): JSX.Element {
   const store = useAgbrte();
   const [adding, setAdding] = useState(false);
@@ -584,7 +616,7 @@ function HostGroup({
       )}
 
       <div className="grid gap-1">
-        {sessions.map((s) => (
+        {(showLoaded ? sessions : []).map((s) => (
           <button
             key={s.sessionId}
             data-testid="session"

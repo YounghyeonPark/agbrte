@@ -105,3 +105,53 @@ test('a long title truncates instead of overflowing its card', async ({ page }) 
     await web.stop();
   }
 });
+
+/**
+ * The same list is not printed twice.
+ *
+ * The sidebar listed every loaded session beside a dashboard listing every
+ * loaded session — the same titles, the same states, in a different order, on
+ * one screen. So the sidebar's rows are hidden while the dashboard is what the
+ * main pane is showing, and come back the moment a session is open, because
+ * then they are the only way to reach another one.
+ *
+ * Both halves are asserted because only the pair is the rule. Hiding them
+ * unconditionally would remove the session switcher; showing them
+ * unconditionally is what this replaced.
+ */
+test('the sidebar does not repeat the dashboard, and returns when a session is open', async ({
+  page,
+}) => {
+  const web = await serveWebFixture();
+  const titles = ['fix the parser', 'update the README'];
+
+  try {
+    for (const title of titles) {
+      execFileSync(
+        process.execPath,
+        [resolve('dist/cli/agbrte.js'), 'run', web.repo, '--runtime', 'echo', '--title', title, 'go'],
+        { stdio: 'ignore' },
+      );
+    }
+
+    await page.goto(web.url);
+    await expect(page.locator('[data-testid=dashboard]')).toBeVisible({ timeout: 25_000 });
+
+    // The dashboard is the list. The sidebar is hosts and controls.
+    await expect(page.locator('[data-testid=session-card]')).toHaveCount(titles.length);
+    await expect(page.locator('[data-testid=session]')).toHaveCount(0);
+    // The host itself stays: attaching and starting a session live there, and
+    // nothing else on screen offers them.
+    await expect(page.locator('[data-testid=host]')).toHaveCount(1);
+
+    // Open one, and the switcher is back with every session in it.
+    await page.locator('[data-testid=session-card][data-title="fix the parser"]').click();
+    await expect(page.locator('[data-testid=composer-input]')).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('[data-testid=session]')).toHaveCount(titles.length);
+    for (const title of titles) {
+      await expect(page.locator(`[data-testid=session][data-title="${title}"]`)).toBeVisible();
+    }
+  } finally {
+    await web.stop();
+  }
+});
