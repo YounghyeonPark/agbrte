@@ -56,6 +56,13 @@ jobs:
       # exec without this. Running tests first reported `dist/main/agbrteHost.js
       # is missing` on every runner, which is a true sentence about the wrong
       # thing.
+      # Before the build, because it reads source rather than output. Validated
+      # against the real case it exists for: with `windowsBootstrap` unwired the
+      # way it actually shipped, it reports "reached ONLY by tests — built,
+      # covered, and wired to nothing" and exits 1.
+      - name: No unreached modules
+        run: node scripts/unreached.mjs --strict
+
       - name: Build
         run: npm run build
 
