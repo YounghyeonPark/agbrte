@@ -208,6 +208,97 @@
   </section>
 
   <section>
+    <span class="eyebrow">Where to run it</span>
+    <h2>Local works. A machine that stays awake works better.</h2>
+    <p class="lead">Nothing here requires a server. Attach a folder on the laptop you are typing on and everything above is true of it: the host is still a separate process, the log is still durable, closing the window is still a non-event.</p>
+
+    <p>What a laptop cannot give you is the half of the promise that depends on <em>time</em>. A detached host survives the app closing; it does not survive the lid closing. Sleep, a reboot, a battery — each of those ends the process, and a run that was going to take four hours is over at the first of them. The design's durability is bounded by the machine's uptime, and on a laptop that bound is short and arrives without warning.</p>
+
+    <p>So the shape this is built for is <strong>a computer that stays on</strong> — a spare desktop, a home server, a cheap VPS, an old laptop with the lid open and sleep disabled. Sessions live there and keep working; your laptop and your phone are windows onto them, and closing either costs nothing. That is also when the rest of it starts paying: a run continues while you are asleep, and the machine you pick it up on the next morning need not be the one you started it from.</p>
+
+    <h3>Reaching it without a fixed address</h3>
+    <p class="lead">Most home and office connections have no static IP, and often no way to open an inbound port at all. Three shapes work, and they differ in one thing: which side dials.</p>
+
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 1000 300" role="img" aria-label="Three ways to reach an always-on agent computer without a fixed IP: a mesh VPN where both ends hold a stable private address, a jump host that both sides reach, and a reverse tunnel that the agent computer dials out to.">
+          <defs>
+            <marker id="d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+            <marker id="d2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#d9822b" />
+            </marker>
+          </defs>
+          <g fill="none" stroke="currentColor" stroke-width="1">
+            <rect x="160" y="40" width="170" height="44" rx="2" />
+            <rect x="160" y="128" width="170" height="44" rx="2" />
+            <rect x="160" y="216" width="170" height="44" rx="2" />
+
+            <rect x="790" y="40" width="200" height="44" rx="2" />
+            <rect x="790" y="128" width="200" height="44" rx="2" />
+            <rect x="790" y="216" width="200" height="44" rx="2" />
+
+            <rect x="470" y="128" width="170" height="44" rx="2" stroke-opacity=".55" />
+            <rect x="470" y="216" width="170" height="44" rx="2" stroke-opacity=".55" />
+
+            <line x1="334" y1="62" x2="786" y2="62" marker-end="url(#d)" />
+            <line x1="334" y1="150" x2="466" y2="150" marker-end="url(#d)" />
+            <line x1="644" y1="150" x2="786" y2="150" marker-end="url(#d)" />
+            <line x1="334" y1="238" x2="466" y2="238" marker-end="url(#d)" />
+          </g>
+          <line x1="786" y1="238" x2="648" y2="238" stroke="#d9822b" stroke-width="1" marker-end="url(#d2)" />
+
+          <g fill="currentColor" font-family="Helvetica, Arial, sans-serif" font-size="12.5">
+            <text x="245" y="67" text-anchor="middle">your laptop, phone</text>
+            <text x="245" y="155" text-anchor="middle">your laptop, phone</text>
+            <text x="245" y="243" text-anchor="middle">your laptop, phone</text>
+            <text x="890" y="67" text-anchor="middle">the agent computer</text>
+            <text x="890" y="155" text-anchor="middle">the agent computer</text>
+            <text x="890" y="243" text-anchor="middle">the agent computer</text>
+            <text x="555" y="155" text-anchor="middle">jump host</text>
+            <text x="555" y="243" text-anchor="middle">rendezvous</text>
+          </g>
+          <g fill="currentColor" fill-opacity=".62" font-family="Helvetica, Arial, sans-serif" font-size="11.5">
+            <text x="560" y="52" text-anchor="middle">one private network · both ends keep a stable address</text>
+            <text x="400" y="140" text-anchor="middle">you dial</text>
+            <text x="715" y="140" text-anchor="middle">it dials on</text>
+            <text x="400" y="228" text-anchor="middle">you dial</text>
+          </g>
+          <g fill="currentColor" font-family="Helvetica, Arial, sans-serif" font-size="11.5" font-weight="500">
+            <text x="8" y="67">mesh VPN</text>
+            <text x="8" y="155">jump host</text>
+            <text x="8" y="243">reverse tunnel</text>
+          </g>
+          <text x="717" y="228" text-anchor="middle" fill="#d9822b" font-family="Helvetica, Arial, sans-serif" font-size="11.5">it dialled out first</text>
+        </svg>
+      </div>
+      <figcaption>Only the third changes who initiates, and that is what makes it work where nothing inbound is possible at all: the agent computer opens the connection outward and keeps it, so the network it sits behind never has to accept anything.</figcaption>
+    </figure>
+
+    <div class="grid2" style="margin-top:1.75rem">
+      <div class="card">
+        <h3>A mesh VPN — the intended answer</h3>
+        <p>Tailscale, WireGuard or similar gives every machine a private address that follows it between networks. Both ends keep that address on café wifi and at home, so <span class="mono">ssh</span> works unchanged and the browser client can bind to it directly.</p>
+      </div>
+      <div class="card">
+        <h3>A jump host — free if you already have one</h3>
+        <p>The ssh alias is handed to your own <span class="mono">ssh</span> untouched, so whatever <span class="mono">~/.ssh/config</span> already says — <span class="mono">ProxyJump</span>, a proxy command, a key, a port — is what happens. If you reach the machine today, this reaches it too, with nothing new configured.</p>
+      </div>
+      <div class="card">
+        <h3>A reverse tunnel — when nothing inbound is possible</h3>
+        <p>The agent computer runs <span class="mono">ssh -R</span> out to any host with a stable address and holds it open. You attach to that host's forwarded port. Nothing listens on the agent computer's side of the NAT, and nothing has to.</p>
+      </div>
+      <div class="card">
+        <h3>Dynamic DNS — the weakest of the four</h3>
+        <p>A name that follows a changing IP still needs an inbound port, still needs the router to cooperate, and still exposes that port to the internet. It solves the address and none of the rest.</p>
+      </div>
+    </div>
+
+    <p class="claim" style="margin-top:2rem">Do not put the browser client behind a public tunnel. <strong>There is no login</strong> — the address is the entire boundary, which is why it binds to loopback unless told otherwise. A private network has already established who is connecting; a public URL has established nothing.</p>
+  </section>
+
+  <section>
     <span class="eyebrow">Many sessions</span>
     <h2>A tree that cannot outspend its root</h2>
     <p class="lead">Work decomposes. The risk in letting an agent decompose it is a tree nobody can see the bottom of, spending money nobody agreed to. Both are handled by structure rather than by watching.</p>
