@@ -428,6 +428,16 @@ export interface ModelEndpoint {
 
 Without `target-local`, an agent on your GPU workstation using Ollama on that same workstation would tunnel every token through your laptop and back — doubling latency for nothing and making the run depend on your laptop staying awake. Local servers usually need no auth, so there's also nothing to protect. This is precisely the case people buy a GPU box for, so it gets a first-class path.
 
+**Which models an endpoint has, asked rather than typed.** The model was a free-text field: you typed a name and found out whether it existed when the turn failed. `ModelProvider.listModels` had been declared, implemented against `/v1/models`, and called by nothing — the shape §16 records, with the unused piece being exactly what the missing feature needed.
+
+`models.list` (v8) asks each endpoint what it serves *now*. A command rather than a field on the handshake, because the answer changes while the host runs: pulling a model is something a person does mid-session and expects to see. Endpoints are configuration; their contents are not. Each is asked independently and a failure comes back as a value — a machine with a local Ollama and a hosted API is ordinary, and the local one is unreachable whenever the laptop is elsewhere.
+
+**Installing is not one operation, and three of four runners cannot do it.** Ollama fetches into a local store while running (`POST /api/pull`); vLLM and llama.cpp take their model at launch; NIM is a container per model. A menu offering *Install* against all four works against one and fails against three with a 404 — an error about the wrong subject. So the runner is detected by a positive test (`/api/version`, which only Ollama answers) and the others are told so by name, with what to do instead. Anything that does not answer is assumed usable-but-not-installable: the cost of that error is a sentence, and the cost of the opposite is a dead button.
+
+**The catalogue is verified, not recalled.** A suggested-model list is only useful if its tags exist, and a tag is exactly what one is confidently wrong about — writing it by hand produced `kimi-k2:1t`, which the registry answered 404, as it did for every other Kimi tag: it is not in Ollama's library at all. One invented entry in eight, caught by asking. `scripts/model-catalogue.mjs` now checks every tag against the registry and takes each size from the manifest, CI runs `--check`, and the file records the date the claim was true. It is a starting point, not an allow-list: the field still accepts any tag, and the dropdown's last option reveals it, because `/v1/models` is optional and a closed list would strand any server that does not implement it.
+
+**Progress sums the layers**, which only running it proved necessary. Ollama reports `completed`/`total` for whichever blob is in flight, so assigning them through makes the numbers restart at every layer boundary: a real pull raced to 88%, jumped to a nonsense percentage when a 561-byte config layer arrived, and *finished* at `561/561` — a 271 MB download reporting itself as half a kilobyte.
+
 ### 3.9 Normalized failures, including quota
 
 Providers signal trouble incompatibly, and the supervisor can't act without a common taxonomy:
@@ -1328,6 +1338,22 @@ Then the deploy showed what that actually means. `agbrte stop` on the upgraded s
 
 **Since fixed** (§17.16): compatibility is a range rather than an equality, so a v2 client connects to a v1 host, loses `blob.has`/`blob.put` and nothing else, and can still ask it to shut down. Verified against a host built from the commit before §6.7 existed, which is the only way to know that the old side needed no change.
 
+**The versions since, and the one thing the mechanism does not cover.** The table is `COMMAND_SINCE`, and it answers *per command*: v3 added `preview.ports`, v4 the four preview-server commands, v5 templates, v8 `models.list`, v9 `models.install` and `models.progress`. Every one of those degrades exactly as designed — an older host says which single feature it lacks and serves everything else.
+
+**v6 and v7 added *fields*, which that table cannot express.** `template.save` gained a `target` and `welcome` gained `bundleVersion`. `supports('template.save')` is still `true` against a v5 host, so the client sends a field the host ignores; `bundleVersion` is simply absent from an older handshake. Both are safe, and both are safe for a reason that is a property of *those fields* rather than of the mechanism: the missing one drops a restriction that never existed, or produces "cannot tell" rather than a wrong value. A field whose absence changed a *result* would need `MIN_CLIENT_PROTOCOL`, which is the lever that exists for shape changes and has still never been raised. Worth writing down because a blind spot nobody has named is one somebody walks into.
+
+### 6.3a A host keeps running the code it started with
+
+Deploying a newer bundle changes nothing until the host restarts, and until v7 no client could tell whether that had happened. `attach` compares the *file* on the far side and re-uploads when it differs — which says what is on disk, not what is executing.
+
+So the host reports `bundleVersion`, read from its own first line at startup. The build stamps `// agbrte-bundle: <version>` onto `agbrteHost.js`; upload had always stamped a deployed copy so a remote probe could read it, and a local host — spawned straight from the file — could not answer about itself. "Which of my hosts is running old code" is one question wherever the host is.
+
+Read from `process.argv[1]` rather than baked in as a constant. A constant is the version of the source that was *built*, which is the same number right up until the case that matters: a bundle deployed by one client and inspected by another.
+
+**Three-valued, and the third value is the point.** `undefined` means *cannot be determined* — a pre-v7 host, or one run unstamped from source — and nothing rounds that to "out of date", because the remedy offered is restarting the host and that costs whoever is mid-turn on it. The button is absent rather than optimistic.
+
+Restarting is `hosts.update` in the app and `agbrte update [path]` at a terminal. Both stop the host and let the next attach deploy; sessions are durable in the log (§5.4) and resume from it, so the cost is the turn in flight rather than the work. Interrupting a running host is deliberately **not** something `attach` does on its own: on a remote machine that may be somebody's overnight run, and the decision belongs to a person.
+
 ### 6.8 Preview forwarding
 
 `forwardOut(3000)` yields a local port; the session view offers **Open preview** and **Capture preview** (§12.1). Ports are listed per session and torn down with it. The host detects newly listening ports and offers to forward them.
@@ -2051,6 +2077,14 @@ Policy is enforced in the tool implementation, before execution — not by promp
 - **Secrets never live in the workspace store.** Keys and tokens go to the OS keychain via `safeStorage`; the store holds references only. A `.devagents/` accidentally committed, or sitting on a shared server, must not be a credential leak.
 - **`vendor-cli-session` means credentials live wherever the loop runs** — on the remote, for a remote session. Surfaced explicitly, never inferred.
 
+**A file mode is not a permission on Windows, and the host record is a credential.** `writeHostRecord` writes `mode: 0o600`, under a comment that ended "ignored on Windows, where the pipe path it carries is not secret". True of the host it described. It stopped being true the week Windows became a supported target: a Windows host cannot listen on a unix socket, so it listens on loopback and that file carries **the bearer token that is the entire authentication** for the channel. A premise falsified by a change three files away, with nothing to recheck it.
+
+`mode` is close to a no-op there — the file inherits its parent directory's ACL. Measured rather than argued, on a real machine: a record written by Node with `mode: 0o600` under a directory granting `Users:(OI)(CI)R` comes out `BUILTIN\Users:(I)(R)`, and `C:\dev` grants exactly that to `Users` plus `Modify` to `Authenticated Users`. A checkout in an entirely ordinary place therefore left the token readable by every local account, which could then attach with a read-write ceiling. **Whether the code protected anything depended on where the user happened to keep their repository.**
+
+Fixed with `icacls` — inheritance removed, one grant issued — because Node has no API for a DACL and `chmod` cannot express one. It throws rather than continuing, and only when a token is present: a record without one is not a credential, and a volume with no ACLs must not stop a host over a file that is public anyway.
+
+The first test for it **passed with the fix disabled**, which is worse than no test: a security check that reassures and verifies nothing. Two causes, both process rather than code — a verification step whose `git checkout` had already reverted the fix it was meant to be testing, and assertions that were almost all negative, so observing nothing satisfied them. It now opens the directory up first so inheritance *would* hand the record a permissive ACL if the code did nothing, asserts that setup actually happened, and is confirmed to fail without the fix.
+
 ### Where your code goes
 
 Each endpoint records provider, region, and retention posture (`dataHandling`, §3.8), and the session view shows which endpoints and runtimes an agent used. **Adding a provider must never be a quiet change in where source code is transmitted.** Per-workspace endpoint allowlists let a client project be pinned to approved providers by policy rather than by discipline, and `target-local` / `none` endpoints transmit nothing off the machine — the honest answer for sensitive repositories, and a strong reason to keep the local-model path first-class.
@@ -2089,12 +2123,24 @@ Each endpoint records provider, region, and retention posture (`dataHandling`, �
 | Diffs / worktrees | target-side native `git` + isomorphic-git for reads | worktrees need the real binary |
 | Secrets | Electron `safeStorage` (OS keychain) | never in the workspace store |
 | STT / TTS | whisper.cpp bundled / OS native | local by default; audio never leaves the machine |
-| Packaging | electron-builder | signed installers, auto-update |
+| Packaging | electron-builder | installers per OS and architecture, and self-update (unsigned today — see below for what that costs on macOS) |
 | Tests | Vitest + Playwright (`_electron`) + Docker sshd fixture + **adapter conformance suite** | remote, CLI, and provider paths must run against real endpoints, not mocks |
 
 **Three test layers, and what each is for.** `npm test` is Vitest over the headless core — no Electron, no window, so it runs in a second and is the one that gets run constantly. `npm run smoke` boots a real Electron window, a real preload, and a real agent host process to assert the wiring exists at all; it catches the class of failure where the app opens and every button silently does nothing. `npm run e2e` is Playwright driving the built app as a user, and is the only layer that can verify §15's acceptance criteria. The Docker sshd fixture arrives with Phase 5.
 
 Live-model tests **skip loudly** when no local server is present rather than passing. A criterion whose test was skipped is not a criterion that holds, and a green run that proved nothing is worse than a red one.
+
+**Updating the app, and the failure that reported success.** The table row said "signed installers, auto-update" long before either existed. Both do now, and neither the way the row implies.
+
+The download is automatic and the install is not. §6.4 puts sessions in detached hosts that outlive the app, so restarting the shell interrupts a *view* rather than a run — which is what makes background downloading reasonable, and is not what would make closing somebody's window for them reasonable. `autoInstallOnAppQuit` applies it at a quit they chose; **Restart to update** appears only once there is something to press.
+
+Three cases refuse, and the middle one is a limit rather than a bug: a checkout has nothing to replace; **unsigned macOS cannot update at all**, because Squirrel.Mac requires the incoming bundle's signature to match the running one, so an update would download and fail at the last step; and Linux outside an AppImage is updated the way it was installed. These builds are unsigned, so the macOS answer is given *before* the download rather than after. An unsupported build is inert rather than merely quiet — no listeners, no timer, no request every six hours to be told what startup already knew.
+
+**`oneClick: false` accepts the silent flag, exits 0, and installs nothing.** That was measured, not read: pressing the button quit the app, the installer ran, returned success, and nothing anywhere had changed. A failure that reports success is the worst shape available, and it is the shape an assisted installer hands an updater. Hence `oneClick: true` — a directory choice at first install traded for updates working at all, which is the same trade VS Code and every Squirrel-based app makes. Verified end to end afterwards with two real builds and a local server standing in for the release: 0.0.3 running, button pressed, 0.0.4 installed silently, app relaunched.
+
+Integrity is real and authenticity is not. `latest.yml` is fetched over HTTPS and the artifact's SHA512 verified before installing, so a corrupted download is refused; nothing proves the release came from this project rather than whoever could serve that URL. `verifyUpdateCodeSignature` stays off rather than switched on to fail — a signature check that cannot pass is not security, it is an error message.
+
+Setting `publish` did **not** make anything publish. It names where a built app *looks*; uploading needs `--publish always`, and both the workflow and `npm run dist` pass `--publish never`. But it is also the source of `app-update.yml`, without which the updater fails on a missing file for a feature that was never configured. Which exposed the seam: the release workflow uploaded six artifact patterns and no `*.yml`, so every shipped app would have checked forever and found nothing — indistinguishable from "there is no update". Caught by asking what the updater fetches and then looking for it.
 
 ---
 
