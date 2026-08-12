@@ -14,6 +14,10 @@ import { defineConfig } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests/e2e',
+  // These launch `dist/`, so a stale build is a silent wrong answer rather than
+  // a failure. The check costs a directory walk; see the file for what it cost
+  // not to have it.
+  globalSetup: './tests/e2e/globalSetup.ts',
   // A live test waits on a 7B model generating a tool call.
   timeout: 180_000,
   expect: { timeout: 15_000 },
