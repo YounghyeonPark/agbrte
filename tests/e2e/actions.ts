@@ -41,8 +41,33 @@ export async function addAgent(page: Page, runtimeId: string, model?: string): P
   await page.click(`[data-testid=runtime-option][data-value="${runtimeId}"]`);
 
   if (model !== undefined) {
-    await expect(page.locator('[data-testid=model-id]')).toBeVisible();
-    await page.fill('[data-testid=model-id]', model);
+    /*
+     * The model control is a dropdown when the host could list what it serves
+     * and a plain field when it could not — `/v1/models` is optional, so both
+     * shapes are real. This takes whichever route a person would.
+     *
+     * It was `fill` alone, which broke the moment the control became a `select`.
+     * Worth handling properly rather than forcing the input back: the branch
+     * where a wanted model is *not* offered is exactly the escape hatch that
+     * makes a closed dropdown honest, and this is the only thing exercising it.
+     */
+    const control = page.locator('[data-testid=model-id]');
+    await expect(control).toBeVisible();
+
+    if ((await control.evaluate((el) => el.tagName)) === 'SELECT') {
+      const offered = await control
+        .locator('option')
+        .evaluateAll((els) => els.map((el) => (el as HTMLOptionElement).value));
+      if (offered.includes(model)) {
+        await control.selectOption(model);
+      } else {
+        // "Type a model id…", which swaps the select for a field.
+        await control.selectOption('__type__');
+        await page.fill('[data-testid=model-id]', model);
+      }
+    } else {
+      await page.fill('[data-testid=model-id]', model);
+    }
   }
 
   await page.click('[data-testid=add-agent]');

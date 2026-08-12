@@ -845,6 +845,8 @@ function AgentPicker({
   /** Which endpoints can take an install, from the same answer as the list. */
   const [installable, setInstallable] = useState<EndpointModelsDto[]>([]);
   const [browsing, setBrowsing] = useState(false);
+  /** Set when somebody chose "Type a model id…", or nothing could be listed. */
+  const [manualModel, setManualModel] = useState(false);
   const [installs, setInstalls] = useState<ModelInstallDto[]>([]);
 
   /**
@@ -857,6 +859,7 @@ function AgentPicker({
    */
   /** The one endpoint that can take an install, if exactly one can. */
   const installTarget = installable.find((e) => e.canInstall === true);
+
 
   /*
    * Poll only while the menu is open.
@@ -909,6 +912,29 @@ function AgentPicker({
   const endpoint = endpoints.find((e) => e.id === endpointId) ?? endpoints[0];
   const selected = useMemo(() => runtimes.find((r) => r.id === runtimeId), [runtimes, runtimeId]);
 
+  /*
+   * Load the list once, when a model is first actually needed.
+   *
+   * Not on mount, and not on a click. On mount would ask every endpoint the host
+   * has — a hosted API over a slow link included — for somebody who opened the
+   * roster to read it. On a click means a dropdown that is empty until you find
+   * the button that fills it, which is the failure that made a `datalist` the
+   * wrong answer here in the first place.
+   *
+   * Choosing a runtime that takes a model is the moment the question becomes
+   * real, so that is when it is asked. `needsModel` rather than the runtime id:
+   * switching between two model-driven runtimes does not change the answer.
+   */
+  const needsModel = selected !== undefined && selected.model !== 'none';
+  useEffect(() => {
+    if (!needsModel) return;
+    if (knownModels.length > 0 || modelsBusy || modelsNote !== null) return;
+    void refreshModels();
+    // `refreshModels` is redefined every render and listing it here would ask on
+    // every one of them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsModel]);
+
   // Runtimes arrive asynchronously per host, so the initial list is often empty.
   // Without this the picker stays unselected and "Add agent" is permanently
   // disabled — and the list differs per host, so it can change under us.
@@ -949,41 +975,63 @@ function AgentPicker({
             <label className="text-muted grid gap-1 text-xs">
               Model
               {/*
-                A list *and* a field, not a dropdown.
+                A dropdown of what the host actually serves, with a way out.
 
-                The list is what the host answers when asked — the models its
-                endpoints actually serve right now, which is the only authority
-                on the question. But `/v1/models` is optional in the
-                OpenAI-compatible shape and some servers do not implement it, so
-                a closed dropdown would make those endpoints unusable through a
-                UI that had simply failed to ask. A `datalist` offers the real
-                answer without taking away the ability to type one it did not
-                give.
+                The list is the only authority on the question — it is the models
+                that endpoint has *right now*. But `/v1/models` is optional in
+                the OpenAI-compatible shape, so a closed dropdown would make a
+                server that does not implement it unusable through a UI that had
+                merely failed to ask. Hence the last option: choosing it reveals
+                the text field, so an unlisted model stays reachable without
+                making everybody type.
               */}
               <div className="flex gap-2">
-                <input
-                  className="field"
-                  data-testid="model-id"
-                  list="known-models"
-                  value={modelId}
-                  onChange={(e) => setModelId(e.target.value)}
-                />
+                {manualModel || knownModels.length === 0 ? (
+                  <input
+                    className="field"
+                    data-testid="model-id"
+                    placeholder="e.g. qwen2.5-coder:7b"
+                    value={modelId}
+                    onChange={(e) => setModelId(e.target.value)}
+                  />
+                ) : (
+                  <select
+                    className="field"
+                    data-testid="model-id"
+                    value={knownModels.includes(modelId) ? modelId : ''}
+                    onChange={(e) => {
+                      if (e.target.value === '__type__') {
+                        setManualModel(true);
+                        return;
+                      }
+                      setModelId(e.target.value);
+                    }}
+                  >
+                    {/* Only when the current value is not in the list — an empty
+                        option that lingers is a way to choose nothing. */}
+                    {!knownModels.includes(modelId) && <option value="">Choose a model…</option>}
+                    {knownModels.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                    <option value="__type__">Type a model id…</option>
+                  </select>
+                )}
                 <button
                   type="button"
                   className="btn-quiet shrink-0 text-xs"
                   data-testid="refresh-models"
                   title="Ask this host what its endpoints serve now"
                   disabled={modelsBusy}
-                  onClick={() => void refreshModels()}
+                  onClick={() => {
+                    setManualModel(false);
+                    void refreshModels();
+                  }}
                 >
                   {modelsBusy ? '…' : 'Refresh'}
                 </button>
               </div>
-              <datalist id="known-models">
-                {knownModels.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
               <small className="text-muted text-[11px]">
                 {modelsNote ??
                   'An Ollama or other OpenAI-compatible model reachable from that host.'}
