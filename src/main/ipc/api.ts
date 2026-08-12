@@ -38,6 +38,7 @@ import {
   type SendRequest,
   type SessionSnapshot,
   type SshHostInfo,
+  type UpdateState,
 } from '@shared/ipc/contract.js';
 import type { PreviewForwards } from '../preview/forwards.js';
 import type {
@@ -97,6 +98,18 @@ export interface IpcDeps {
    * that explains why it cannot.
    */
   pickFolder?: () => Promise<string | null>;
+  /**
+   * The app's own updater, when there is one.
+   *
+   * A getter rather than the handle, because the updater is built after the
+   * first window exists — an update check must never be the reason a workbench
+   * takes longer to appear — and this API is registered before that. Passing the
+   * value would capture `undefined` forever.
+   *
+   * Absent in the web bridge, whose client is a browser tab with no standing to
+   * replace the program it is looking at.
+   */
+  updates?: () => { state(): UpdateState; installNow(): void } | undefined;
   /**
    * The screen, when this client has one (§12.1).
    *
@@ -268,6 +281,22 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   handle(CH.hostsRemove, (instanceId: string) => fleet.detach(instanceId as InstanceId));
 
   handle(CH.hostsShutdown, (instanceId: string) => fleet.shutdownHost(instanceId as InstanceId));
+  handle(CH.hostsUpdate, (instanceId: string) => fleet.updateHost(instanceId as InstanceId));
+
+  handle(CH.updateState, () =>
+    Promise.resolve(
+      deps.updates?.()?.state() ?? {
+        phase: 'unsupported' as const,
+        reason: 'this client cannot update the application',
+      },
+    ),
+  );
+  handle(CH.updateInstall, () => {
+    // Nothing else in this file closes the window, and this is the one call
+    // that does. It is behind a person pressing a control that says so.
+    deps.updates?.()?.installNow();
+    return Promise.resolve();
+  });
 
   handle(CH.hostsSsh, async (): Promise<SshHostInfo[]> =>
     (await readSshHosts()).map((h) => ({

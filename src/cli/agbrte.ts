@@ -53,6 +53,7 @@ const USAGE = `agbrte — an agent workbench, at a terminal
   agbrte web [path]             serve the app in a browser — a phone, over your VPN
   agbrte interrupt [path]       stop whatever is running here
   agbrte stop [path]            ask the host to exit; refuses while work is running
+  agbrte update [path]          restart the host onto this build's bundle
   agbrte --version
 
 Path defaults to the current directory. A host is started if none is running,
@@ -325,6 +326,37 @@ async function main(): Promise<number> {
         // not get one.
         process.stderr.write(`host still running: ${result.reason ?? 'work in flight'}\n`);
         return 1;
+      }
+
+      /*
+       * Restart the host so a newer bundle takes effect (§6.3).
+       *
+       * A running host keeps executing the bundle it started with. Attaching
+       * already deploys a newer one when the version differs — what it will not
+       * do is interrupt a host to make the new code run, because that decision
+       * belongs to a person, and on a remote machine it may be somebody's
+       * overnight work.
+       *
+       * So this is `stop` with the intent named. The next attach — this command's
+       * own, or the app's, or the next `agbrte run` — starts a host from the
+       * deployed bundle. Sessions are durable in the event log (§5.4) and resume
+       * from it, so what this costs is the turn in flight, not the work.
+       *
+       * Deliberately not "download an update": the bundle a host runs comes from
+       * whichever client attached to it, not from a release server. Updating the
+       * *app* is `Restart to update` in its window; this updates the far side.
+       */
+      case 'update': {
+        const result = await connection.requestShutdown();
+        if (!result.stopped) {
+          process.stderr.write(
+            `host still running: ${result.reason ?? 'work in flight'}\n` +
+              'Nothing was changed. Stop the work, or wait, and try again.\n',
+          );
+          return 1;
+        }
+        process.stdout.write('host stopped; the next attach deploys this build and starts it\n');
+        return 0;
       }
 
       case 'run': {

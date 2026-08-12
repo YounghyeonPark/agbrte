@@ -464,6 +464,39 @@ export class Fleet extends EventEmitter {
     return result;
   }
 
+  /**
+   * Restart a host onto the bundle this app ships (§6.3).
+   *
+   * A host keeps executing the bundle it started with, so deploying a newer one
+   * changes nothing until it restarts. `attach` already re-uploads when the
+   * version differs — what it will not do is interrupt a running host to make
+   * the new code take effect, and it should not: that decision belongs to a
+   * person, on a machine that may be running somebody's overnight work.
+   *
+   * Stop, then attach the same location again. The upload is `attach`'s job and
+   * stays there rather than being repeated here; this method is the *when*.
+   *
+   * Sessions survive it. They are durable in the event log (§5.4) and resume
+   * from it, which is the same guarantee that lets a host outlive the app — so
+   * this costs the running turn, not the work.
+   *
+   * The location is captured before stopping, because `shutdownHost` forgets the
+   * entry and with it the only record of where the host was.
+   */
+  async updateHost(instanceId: InstanceId): Promise<AttachedHost> {
+    const { location } = this.require(instanceId);
+
+    const result = await this.shutdownHost(instanceId);
+    if (!result.stopped) {
+      throw new AttachRefused(
+        `the host would not stop${result.reason === undefined ? '' : `: ${result.reason}`}. ` +
+          `It keeps running the version it started with until it does.`,
+      );
+    }
+
+    return this.attach(location);
+  }
+
   async detachAll(): Promise<void> {
     for (const instanceId of [...this.entries.keys()]) await this.detach(instanceId);
   }

@@ -19,6 +19,7 @@ import { app, BrowserWindow, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { delimiter, dirname, join } from 'node:path';
 import { registerIpc } from './ipc/register.js';
+import { PUSH } from '@shared/ipc/contract.js';
 import { Notifier } from './notify.js';
 import { Fleet, type FleetRuntime } from './fleet.js';
 import { connectOrSpawnHost } from './host/connectOrSpawn.js';
@@ -231,6 +232,9 @@ app.whenReady().then(async () => {
     previews,
     // Beside the app, so a build ships the report that describes that build.
     loadConformance: () => loadReport(join(app.getAppPath(), 'conformance')),
+    // Read at call time: the updater is built after the first window appears,
+    // which is later than this. See `IpcDeps.updates`.
+    updates: () => updates,
   });
 
   for (const root of roots) {
@@ -264,9 +268,7 @@ app.whenReady().then(async () => {
     build: facts,
     updater: autoUpdater as unknown as Parameters<typeof startUpdates>[0]['updater'],
     onState: (state) => {
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send('update:state', state);
-      }
+      for (const win of BrowserWindow.getAllWindows()) win.webContents.send(PUSH.update, state);
     },
   });
 

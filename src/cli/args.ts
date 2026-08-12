@@ -18,6 +18,30 @@ interface Parsed {
   value(name: string): string | undefined;
 }
 
+/**
+ * Every verb the CLI answers to.
+ *
+ * Exported, and that is the point. It used to be a `new Set([...])` inside
+ * `parse`, and adding `update` meant writing a `case 'update'` in the entry
+ * point that could never be reached: an unlisted first argument is treated as a
+ * **path**, so `agbrte update .` attached to a directory called `update` and
+ * reported success. Nothing failed — the switch arm was simply unreachable,
+ * which is this project's most reliable bug in miniature.
+ *
+ * A test now reads the entry point's `case` labels and requires them to be in
+ * here, so the two vocabularies cannot drift again.
+ */
+export const KNOWN_COMMANDS = new Set([
+  'attach',
+  'run',
+  'ls',
+  'serve',
+  'stop',
+  'update',
+  'web',
+  'interrupt',
+]);
+
 /** Flags that consume the next argument; everything else is a boolean. */
 const VALUE_FLAGS = new Set(['--runtime', '--model', '--session', '--title', '--port', '--bind', '--endpoint']);
 
@@ -41,7 +65,7 @@ export function parse(argv: string[]): Parsed {
     }
   }
 
-  const KNOWN = new Set(['attach', 'run', 'ls', 'serve', 'stop', 'web', 'interrupt']);
+  const KNOWN = KNOWN_COMMANDS;
   // `agbrte /srv/api` and `agbrte attach /srv/api` both work: a first argument that
   // is not a command is a path. Requiring the verb would make the common case
   // the long one.

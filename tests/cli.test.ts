@@ -16,12 +16,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionHostServer } from '../src/host/sessionServer.js';
 import { exitCodeFor, once } from '../src/cli/once.js';
-import { parse } from '../src/cli/args.js';
+import { KNOWN_COMMANDS, parse } from '../src/cli/args.js';
 import { preview } from '../src/cli/format.js';
 import { HostConnection } from '@main/host/hostConnection.js';
 import { SessionManager } from '@main/sessionManager.js';
@@ -305,5 +305,38 @@ describe('asking what is here must not make something be here', () => {
 
     expect(code).toBe(0);
     expect(out).not.toMatch(/no agbrte workspace/i);
+  });
+});
+
+/**
+ * Every command the entry point implements is one the parser knows.
+ *
+ * `case 'update':` was written in `agbrte.ts` while `update` was missing from
+ * the parser's vocabulary, and nothing failed. An unrecognised first argument is
+ * treated as a *path*, so `agbrte update .` attached to a directory named
+ * `update`, printed a host pid and exited 0 — a switch arm that could never be
+ * reached, wearing the appearance of a working feature.
+ *
+ * The cases are read out of the source rather than listed here, because a
+ * hand-kept list would be a third vocabulary that can drift too. What this
+ * asserts is that two lists which already exist agree with each other.
+ */
+describe('the parser and the entry point agree on what a command is', () => {
+  it('knows every case the CLI implements', async () => {
+    const source = await readFile(new URL('../src/cli/agbrte.ts', import.meta.url), 'utf8');
+    const cases = [...source.matchAll(/^\s+case '([a-z-]+)':/gm)].map((m) => m[1]!);
+
+    // A guard on the guard: if the entry point's shape changes so that no cases
+    // are found, this must fail rather than pass having checked nothing.
+    expect(cases.length, 'found no command cases to check').toBeGreaterThan(4);
+
+    for (const command of cases) {
+      expect(
+        KNOWN_COMMANDS.has(command),
+        `\`${command}\` is implemented but the parser reads it as a path`,
+      ).toBe(true);
+      // And it parses as itself rather than falling back to `attach`.
+      expect(parse([command, '.']).command).toBe(command);
+    }
   });
 });

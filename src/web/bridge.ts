@@ -116,6 +116,28 @@ const api: AgbrteApi = {
     shutdown: call(CH.hostsShutdown),
     runtimes: call(CH.hostsRuntimes),
     conformance: call(CH.hostsConformance),
+    update: call(CH.hostsUpdate),
+  },
+
+  /*
+   * A browser cannot update the application it is looking at.
+   *
+   * `agbrte web` serves this page from a machine somewhere; the thing that would
+   * need replacing is the program on *that* machine, and a tab has no standing
+   * to close it. Reported as unsupported with the reason rather than left
+   * missing, so the renderer shows one sentence instead of a control that fails.
+   *
+   * Host updates are a different question and do work from here — those restart
+   * a session host, which is exactly the kind of thing a remote client is for.
+   */
+  update: {
+    state: () =>
+      Promise.resolve({
+        phase: 'unsupported' as const,
+        reason:
+          'this is the web client; the desktop application updates itself on the machine it runs on',
+      }),
+    installNow: () => Promise.resolve(),
   },
   inbox: {
     list: call(CH.inboxList),
@@ -198,6 +220,10 @@ const api: AgbrteApi = {
     permission: (cb) => link.on(PUSH.permission, cb as (p: unknown) => void),
     permissionResolved: (cb) => link.on(PUSH.permissionResolved, cb as (p: unknown) => void),
     hosts: (cb) => link.on(PUSH.hosts, cb as (p: unknown) => void),
+    // Never pushed to a browser: there is no updater on this side. A no-op
+    // unsubscribe rather than an absent method, so the renderer's cleanup is
+    // the same shape everywhere.
+    update: () => () => undefined,
   },
 };
 

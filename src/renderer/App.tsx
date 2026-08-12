@@ -40,6 +40,7 @@ import { Preview } from './Preview.js';
 import type { SessionTemplateDto } from '@shared/ipc/contract.js';
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
 import type { MatrixCell, Session, SessionState } from '../shared/types/index.js';
+import type { UpdateState } from '../shared/ipc/contract.js';
 
 /** Session-state colour, by what the state *means* (§4.1). */
 export function stateTone(state: SessionState): string {
@@ -109,6 +110,14 @@ export function App(): JSX.Element {
    * something worth seeing.
    */
   const [pane, setPane] = useState<'main' | 'hosts'>('main');
+  /*
+   * The app's own update, held here rather than in the store.
+   *
+   * It is not session state and nothing else reads it — the store is what two
+   * clients share a view of, and this is a fact about *this* installation. A
+   * browser tab watching the same host has its own answer, and it is "no".
+   */
+  const [update, setUpdate] = useState<UpdateState>({ phase: 'idle' });
   /**
    * Which agent's pane is open, or `null` for the unified timeline (§4.2).
    *
@@ -146,6 +155,10 @@ export function App(): JSX.Element {
       useAgbrte.getState().applyPermissionResolved(r),
     );
     const offHosts = window.agbrte.on.hosts((h) => useAgbrte.getState().applyHosts(h));
+    const offUpdate = window.agbrte.on.update(setUpdate);
+    // Asked once as well as subscribed: a window opened after the download
+    // finished would otherwise wait for a push that already happened.
+    void window.agbrte.update.state().then(setUpdate, () => undefined);
 
     // Without these the listeners accumulate on every remount and events render
     // twice — a duplication bug, not a crash, which is why it is easy to miss.
@@ -155,6 +168,7 @@ export function App(): JSX.Element {
       offPermission();
       offResolved();
       offHosts();
+      offUpdate();
     };
   }, []);
 
@@ -314,6 +328,39 @@ export function App(): JSX.Element {
         >
           ☰
         </button>
+
+        {update.phase === 'ready' && (
+          /*
+           * Shown only when there is something to press.
+           *
+           * Not while checking or downloading: those are the app's business and
+           * a person can do nothing with either, so reporting them would be
+           * three states of noise to reach one that matters. Not on failure
+           * either — being offline is normal here, and a workbench that
+           * complains about its own update while the work is fine has its
+           * priorities backwards. `update.state()` still carries both for
+           * anywhere that wants to ask.
+           *
+           * The accent is on the verb, because §6.4 makes this cheap and the
+           * sentence should say so: hosts are detached, so restarting closes a
+           * window and interrupts nothing that is running.
+           */
+          <div
+            data-testid="update-ready"
+            className="border-line mx-4 mt-3 flex items-center justify-between gap-3 rounded-[2px] border px-3 py-3 text-xs"
+          >
+            <span className="text-muted">
+              Version {update.version} is downloaded. Sessions keep running while the app restarts.
+            </span>
+            <button
+              className="btn text-accent"
+              data-testid="update-install"
+              onClick={() => void window.agbrte.update.installNow()}
+            >
+              Restart to update
+            </button>
+          </div>
+        )}
 
         {notice !== null && (
           /* Not an error: nothing went wrong. Someone on another device

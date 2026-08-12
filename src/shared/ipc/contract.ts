@@ -281,6 +281,22 @@ export interface SessionSnapshot {
 
 // ----------------------------------------------------------------- the surface
 
+/**
+ * What the app knows about its own next version.
+ *
+ * Mirrored from `main/update.ts` rather than imported, because this file is the
+ * renderer's contract and the renderer must not reach into main. The shapes are
+ * pinned together by a test — two copies of a type that drift are worse than
+ * one copy in the wrong place.
+ */
+export type UpdateState =
+  | { phase: 'unsupported'; reason: string }
+  | { phase: 'idle' }
+  | { phase: 'checking' }
+  | { phase: 'downloading'; percent: number }
+  | { phase: 'ready'; version: string }
+  | { phase: 'failed'; reason: string };
+
 export interface AgbrteApi {
   hosts: {
     /** Every attached host. Several may be attached at once (§8). */
@@ -299,6 +315,15 @@ export interface AgbrteApi {
     addRemote(alias: string, workspaceRoot: string): Promise<HostInfo>;
     /** Stop watching a host. The workspace on disk is untouched. */
     remove(instanceId: string): Promise<void>;
+    /**
+     * Restart a host onto the bundle this app ships (§6.3).
+     *
+     * A running host keeps executing the bundle it started with, so deploying a
+     * newer one changes nothing until it is restarted — which is why this is a
+     * separate act rather than something `attach` quietly does. Sessions survive
+     * it: they are durable in the event log (§5.4) and resume from there.
+     */
+    update(instanceId: string): Promise<HostInfo>;
     /**
      * Ask a host to exit. It is allowed to refuse.
      *
@@ -534,6 +559,19 @@ export interface AgbrteApi {
       decision: PermissionDecision,
     ): Promise<'answered' | 'already-answered' | 'unknown'>;
   };
+  /**
+   * Updating this app (§13).
+   *
+   * The download is automatic and the install is not. `installNow` is the only
+   * thing that closes the window, and only a person presses it — see
+   * `main/update.ts` for why that asymmetry is the whole design.
+   */
+  update: {
+    /** The current state, for a window that opened after the last push. */
+    state(): Promise<UpdateState>;
+    /** Quit and apply a downloaded update. Does nothing unless one is ready. */
+    installNow(): Promise<void>;
+  };
   /** Push channels. Each returns an unsubscribe function. */
   on: {
     events(cb: (b: EventBatch) => void): () => void;
@@ -550,6 +588,7 @@ export interface AgbrteApi {
     permissionResolved(cb: (r: PermissionResolved) => void): () => void;
     /** A host was attached, detached, or changed availability. */
     hosts(cb: (hosts: HostInfo[]) => void): () => void;
+    update(cb: (state: UpdateState) => void): () => void;
   };
   /** Ack the highest `seq` rendered, so main can resume a paused forwarder. */
   ack(sessionId: string, seq: number): void;
@@ -609,6 +648,9 @@ export const CH = {
   hostsAdd: 'agbrte:hosts.add',
   hostsRemove: 'agbrte:hosts.remove',
   hostsShutdown: 'agbrte:hosts.shutdown',
+  hostsUpdate: 'agbrte:hosts.update',
+  updateState: 'agbrte:update.state',
+  updateInstall: 'agbrte:update.install',
   hostsRuntimes: 'agbrte:hosts.runtimes',
   hostsConformance: 'agbrte:hosts.conformance',
   inboxList: 'agbrte:inbox.list',
@@ -664,6 +706,7 @@ export const PUSH = {
   permission: 'agbrte:push.permission',
   permissionResolved: 'agbrte:push.permissionResolved',
   hosts: 'agbrte:push.hosts',
+  update: 'agbrte:push.update',
 } as const;
 
 /** §7's batch limits, shared so main and any test agree on one number. */

@@ -30,6 +30,7 @@ import {
   type HostInfo,
   type AgbrteApi,
   type SendRequest,
+  type UpdateState,
 } from '../shared/ipc/contract.js';
 import type {
   PermissionDecision,
@@ -58,6 +59,11 @@ const api: AgbrteApi = {
     sshHosts: () => ipcRenderer.invoke(CH.hostsSsh),
     addRemote: (alias: string, workspaceRoot: string) =>
       ipcRenderer.invoke(CH.hostsAddRemote, alias, workspaceRoot),
+    update: (instanceId: string) => ipcRenderer.invoke(CH.hostsUpdate, instanceId),
+  },
+  update: {
+    state: () => ipcRenderer.invoke(CH.updateState),
+    installNow: () => ipcRenderer.invoke(CH.updateInstall),
   },
   inbox: {
     list: (limit?: number) => ipcRenderer.invoke(CH.inboxList, limit),
@@ -141,6 +147,7 @@ const api: AgbrteApi = {
     permissionResolved: (cb: (r: PermissionResolved) => void) =>
       subscribe(PUSH.permissionResolved, cb),
     hosts: (cb: (h: HostInfo[]) => void) => subscribe(PUSH.hosts, cb),
+    update: (cb: (s: UpdateState) => void) => subscribe(PUSH.update, cb),
   },
   ack: (sessionId: string, seq: number) => ipcRenderer.send(CH.ack, sessionId, seq),
 };
