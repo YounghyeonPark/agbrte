@@ -142,7 +142,12 @@ jobs:
             # a Windows update download only the changed blocks; missing, the
             # updater falls back to the whole installer, which works and is
             # ~100 MB a time.
-            release/*.yml
+            # `latest*.yml` specifically, not `*.yml`. The directory also holds
+            # `builder-debug.yml`, electron-builder's resolved-configuration
+            # dump, which carries absolute paths from the build machine and is
+            # of no use to an updater or a person. A wildcard attached it to
+            # every public release.
+            release/latest*.yml
             release/*.blockmap
           if-no-files-found: error
           retention-days: 14
