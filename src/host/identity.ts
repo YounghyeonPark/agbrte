@@ -20,6 +20,16 @@
  * identity model — it *is* the identity model, and every claim below is worth
  * exactly what that file mode is worth.
  *
+ * On Windows the equivalent is a named pipe's DACL, which grants the creating
+ * user *and administrators*. An administrator connecting is indistinguishable
+ * from the owner. That was once a `isPeerCredentialTrustworthy()` returning
+ * `platform !== 'win32'`, which nothing called — and nothing could usefully have
+ * done with it, because no role check fixes an administrator, and the common
+ * case on Windows is that the owner of the machine *is* one. Refusing them
+ * would break the ordinary use and stop nobody. So it is written down here,
+ * where the identity model is stated, rather than left as a predicate that
+ * reads like a guard and guards nothing.
+ *
  * ## What this cannot yet distinguish
  *
  * One workspace owner, so today every client resolves to the same actor. That is
@@ -51,14 +61,31 @@ export interface ResolvedIdentity {
  *
  * `id` is the uid rather than the login name because names are reassigned and
  * uids are not, and a log outlives the account that wrote it.
+ *
+ * Except where there is no uid. Windows has none — `userInfo()` reports `-1` —
+ * so that reasoning does not apply and this used to mint `uid:-1` for every
+ * person on every Windows machine: one actor for everyone, and a number that
+ * identifies nobody. Windows over ssh is a supported target and this value is
+ * written into the log as §13 attribution, so "who answered this prompt" had a
+ * single wrong answer.
+ *
+ * There it falls back to `user:<name>@<host>`. A name is the weaker identifier
+ * the note above is about, and the host is included because `Administrator` and
+ * `ubuntu` are the same name on a great many machines. Weaker and true beats
+ * stronger-looking and false — and it is labelled `user:` rather than `uid:` so
+ * nothing downstream mistakes one for the other.
+ *
+ * The parameters exist so both branches can be tested from either platform.
  */
-export function localIdentity(): ResolvedIdentity {
-  const info = userInfo();
+export function localIdentity(
+  info: { uid: number; username: string } = userInfo(),
+  host: string = hostname(),
+): ResolvedIdentity {
   return {
     actor: {
-      id: `uid:${info.uid}`,
+      id: info.uid >= 0 ? `uid:${info.uid}` : `user:${info.username}@${host}`,
       via: 'peer-credential',
-      label: `${info.username}@${hostname()}`,
+      label: `${info.username}@${host}`,
     },
     ceiling: 'read-write',
   };
@@ -79,11 +106,3 @@ export function assertedIdentity(label: string): ResolvedIdentity {
   };
 }
 
-/** Windows has no uid; the pipe's DACL is the equivalent guarantee. */
-export function isPeerCredentialTrustworthy(): boolean {
-  // Named pipes are created with a DACL granting the creating user and
-  // administrators. An administrator connecting would be indistinguishable from
-  // the owner — true on Windows generally, and not something a role check can
-  // fix, so it is recorded rather than pretended away.
-  return process.platform !== 'win32';
-}

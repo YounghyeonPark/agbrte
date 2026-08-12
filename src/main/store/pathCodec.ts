@@ -14,7 +14,7 @@
  */
 
 import { isAbsolute, relative, resolve, sep } from 'node:path';
-import type { EncodedPath, ExternalPath, WorkspacePath } from '@shared/types/index.js';
+import { isExternalPath, type EncodedPath, type ExternalPath, type WorkspacePath } from '@shared/types/index.js';
 
 export const toPosix = (p: string): string => (sep === '/' ? p : p.split(sep).join('/'));
 export const fromPosix = (p: string): string => (sep === '/' ? p : p.split('/').join(sep));
@@ -43,7 +43,7 @@ export class PathCodec {
 
   /** Durable form → absolute path against the currently resolved root. */
   decode(p: EncodedPath): string {
-    if ('external' in p) return p.abs;
+    if (isExternalPath(p)) return p.abs;
     return resolve(this.root, fromPosix(p.$ws));
   }
 
@@ -52,7 +52,7 @@ export class PathCodec {
    * cannot — rehydration surfaces them as warnings (§5.4b).
    */
   isPortable(p: EncodedPath): boolean {
-    return !('external' in p);
+    return !isExternalPath(p);
   }
 
   /** A new codec for the same logical workspace at a different location. */

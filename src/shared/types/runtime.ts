@@ -161,7 +161,14 @@ export type StopReason =
   | { kind: 'unavailable' }
   | { kind: 'transport' };
 
-/** Whether the supervisor should retry, pause, or fail on a given stop. */
+/**
+ * What a stop means for whoever is driving the turn.
+ *
+ * Read by the CLI, which turns it into an exit code. Not read by the supervisor,
+ * despite what this said for a long time: `'retry'` is a classification, and no
+ * code re-issues the turn on it. `stateForStop` says what that absence means for
+ * the session (§4.1).
+ */
 export function stopDisposition(
   stop: StopReason,
 ): 'done' | 'continue' | 'retry' | 'pause' | 'fail' {

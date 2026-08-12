@@ -65,12 +65,31 @@ export function stateForStop(stop: StopReason): SessionState {
       // Not `awaiting_quota`: no window will reset. The user must decide whether
       // to raise the ceiling or accept the work as it stands.
       return 'awaiting_input';
+    /*
+     * Transient, and nothing recovers from them yet.
+     *
+     * These were `working`, on the strength of "the supervisor retries". It does
+     * not. `stopDisposition` returns `'retry'` for all five, and its only reader
+     * turns anything that is not `'fail'` into `idle`; no provider, runtime,
+     * supervisor or manager code re-issues the turn. So the pump returned, no
+     * agent was running, and the session sat displayed as busy — raising no
+     * `needsAttention`, because `working` is not in the attention family (§10).
+     *
+     * A stall that reports progress is the worst shape available on a workbench
+     * built for unattended runs: nobody is told, and the dashboard says the one
+     * session that needs a person is the one that is fine. `awaiting_input` is
+     * honest — somebody has to decide whether to send the turn again — and not
+     * `failed`, because §4.1 reserves failure for faults that will not come back.
+     *
+     * When a retry exists (backoff, a cap, and compaction for the overflow case)
+     * these move back to `working`, and this comment goes with them.
+     */
     case 'rate_limited':
     case 'unavailable':
     case 'transport':
     case 'context_overflow':
     case 'invalid_tool_args':
-      return 'working'; // the supervisor retries; the session stays live
+      return 'awaiting_input';
     case 'max_output_tokens':
     case 'refused':
     case 'content_filtered':

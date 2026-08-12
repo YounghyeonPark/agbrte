@@ -76,10 +76,10 @@ describe('stateForStop', () => {
     [{ kind: 'tool_calls' }, 'working'],
     [{ kind: 'quota_exhausted', scope: 'weekly' }, 'awaiting_quota'],
     [{ kind: 'auth' }, 'awaiting_credentials'],
-    [{ kind: 'rate_limited' }, 'working'],
-    [{ kind: 'unavailable' }, 'working'],
-    [{ kind: 'transport' }, 'working'],
-    [{ kind: 'context_overflow' }, 'working'],
+    [{ kind: 'rate_limited' }, 'awaiting_input'],
+    [{ kind: 'unavailable' }, 'awaiting_input'],
+    [{ kind: 'transport' }, 'awaiting_input'],
+    [{ kind: 'context_overflow' }, 'awaiting_input'],
     [{ kind: 'limit_reached', limit: 'turns' }, 'awaiting_input'],
     [{ kind: 'refused' }, 'failed'],
     [{ kind: 'content_filtered', stage: 'output' }, 'failed'],
@@ -92,6 +92,45 @@ describe('stateForStop', () => {
       expect(stateForStop(stop)).toBe(expected);
     });
   }
+
+  /**
+   * `working` means an agent is working. By the time this is asked, `pumpAgent`
+   * has returned and none is.
+   *
+   * Five kinds were mapped to `working` on the strength of a comment saying "the
+   * supervisor retries". Nothing retries — not the provider, not the runtime,
+   * not the supervisor, not the session manager. `stopDisposition` returns
+   * `'retry'` and its only reader turns it into `idle`. So a rate limit, a
+   * dropped connection or a full context ended the turn, left the session
+   * displayed as busy, raised no `needsAttention` because `working` is not in
+   * the attention family, and waited for a retry that no code performs.
+   *
+   * On a workbench whose premise is unattended runs, that is the worst available
+   * shape: a stall that reports progress. Until something does retry, these say
+   * a person is needed.
+   */
+  it('never leaves a finished turn looking like a running one', () => {
+    const ended: StopReason[] = [
+      { kind: 'rate_limited' },
+      { kind: 'unavailable' },
+      { kind: 'transport' },
+      { kind: 'context_overflow' },
+      { kind: 'invalid_tool_args', detail: 'bad json' },
+    ];
+    for (const stop of ended) {
+      expect(stateForStop(stop), `${stop.kind} leaves the session displayed as working`).not.toBe(
+        'working',
+      );
+    }
+  });
+
+  it('asks for a person on anything that stopped and will not resume itself', () => {
+    // Not `failed`: none of these is a permanent fault, and §4.1 reserves
+    // failure for things that will not come back.
+    for (const stop of [{ kind: 'rate_limited' }, { kind: 'transport' }] as StopReason[]) {
+      expect(stateForStop(stop)).toBe('awaiting_input');
+    }
+  });
 
   it('never maps a pause condition to failed', () => {
     // The highest-cost bug in the orchestrator (§4.1).
@@ -192,8 +231,11 @@ describe('pumpAgent', () => {
     const outcome = await runScript([{ kind: 'text', text: 'partial…' }, { kind: 'die' }]);
 
     expect(outcome.stop).toEqual({ kind: 'transport' });
+    // Still classified retryable — that part was always true.
     expect(outcome.disposition).toBe('retry');
-    expect(outcome.nextState).toBe('working');
+    // But nothing performs the retry, so the session must not sit there looking
+    // like it is still going. `working` said the truncated turn was in progress.
+    expect(outcome.nextState).toBe('awaiting_input');
   });
 
   it('marks a refusal as a genuine failure', async () => {

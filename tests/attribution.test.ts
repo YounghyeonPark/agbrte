@@ -207,8 +207,15 @@ describe('what a connection is worth', () => {
     // `peer-credential` is the honest label: nothing was asked, because a 0600
     // socket already refused everyone else.
     expect(local.actor.via).toBe('peer-credential');
-    expect(local.actor.id).toMatch(/^uid:/);
     expect(local.ceiling).toBe('read-write');
+    /*
+     * The id has to identify somebody, which `/^uid:/` did not check.
+     * On Windows `userInfo()` reports `uid: -1`, so this assertion was green
+     * while every user on every machine resolved to the literal `uid:-1` — a
+     * pattern match satisfied by a value that names nobody.
+     */
+    expect(local.actor.id).toMatch(/^(uid:\d+|user:.+@.+)$/);
+    expect(local.actor.id).not.toBe('uid:-1');
   });
 
   it('caps an unverified claim at read-only', () => {

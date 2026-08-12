@@ -10,6 +10,7 @@
 import { addCost } from '@shared/cost.js';
 import {
   emptyProjection,
+  isWorkspacePath,
   type AttentionReason,
   type ChecklistItem,
   type AgbrteEvent,
@@ -163,7 +164,7 @@ export function reduceEvents(
         p.artifacts.push({
           artifactId: ev.artifactId,
           kind: ev.kind,
-          ...(ev.path !== undefined && '$ws' in ev.path ? { path: ev.path } : {}),
+          ...(ev.path !== undefined && isWorkspacePath(ev.path) ? { path: ev.path } : {}),
           createdAt: ev.at,
         });
         break;
