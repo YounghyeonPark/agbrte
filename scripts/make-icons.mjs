@@ -52,9 +52,9 @@ const out = join(root, 'build');
 const work = join(tmpdir(), `agbrte-icons-${process.pid}`);
 
 /** Agbrte's own accent (§10's palette), and the plate the app's window uses. */
-const ACCENT = '#7aa2f7';
-const PLATE_TOP = '#23233a';
-const PLATE_BOTTOM = '#16161a';
+const ACCENT = '#d9822b';
+const PLATE_TOP = '#232320';
+const PLATE_BOTTOM = '#121211';
 
 /**
  * The mark, in a 64-unit box.
@@ -266,7 +266,27 @@ try {
     ]),
   );
 
-  console.log('\nwrote build/icon.png, build/icon.ico, build/icon.icns');
+  /*
+   * The renderer needs its own copy, because it is served to a browser.
+   *
+   * `build/` is electron-builder's resource directory and never reaches the
+   * page; Vite copies `src/renderer/public/` verbatim into `dist/renderer/`,
+   * which is also what the web client is served from. Without this the desktop
+   * app was iconned and every browser tab showed the default globe — the icon
+   * existed and half the clients could not see it.
+   *
+   * Written from here rather than checked in twice, so a regenerated icon cannot
+   * leave a stale one behind in the other place. `.ico` rather than the 1024px
+   * png: it already carries 16/32/48 and is 18 KB instead of 138.
+   */
+  const publicDir = join(root, 'src/renderer/public');
+  mkdirSync(publicDir, { recursive: true });
+  writeFileSync(
+    join(publicDir, 'icon.ico'),
+    ico([16, 24, 32, 48, 64].map((size) => ({ size, data: square.get(size) }))),
+  );
+
+  console.log('\nwrote build/icon.{png,ico,icns} and src/renderer/public/icon.ico');
 } finally {
   rmSync(work, { recursive: true, force: true });
 }

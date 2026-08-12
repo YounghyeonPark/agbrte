@@ -18,6 +18,16 @@
     />
     <title>Agbrte</title>
     <!--
+      The web client is a supported client (§14) and was showing a browser
+      default: the icon existed and half the clients could not see it. `./`
+      rather than `/icon.ico` for the same reason `base` is relative — the built
+      page also loads from `file://`, where an absolute path resolves to the
+      filesystem root and silently finds nothing. Generated into `public/` by
+      `scripts/make-icons.mjs` rather than checked in a second time, so a
+      regenerated icon cannot leave a stale copy behind.
+    -->
+    <link rel="icon" href="./icon.ico" sizes="any" />
+    <!--
       The renderer displays model output, which is untrusted content. A CSP that
       forbids inline script and any remote origin means a prompt-injected string
       that reaches the DOM cannot become a network call or an executed script.

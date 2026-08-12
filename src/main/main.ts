@@ -117,7 +117,23 @@ async function createWindow(): Promise<void> {
     minWidth: 720,
     minHeight: 480,
     show: false,
-    backgroundColor: '#16161a',
+    /*
+     * The ground the window paints before the renderer has loaded.
+     *
+     * It was `#16161a`, the old blue-black, and the restyle walked straight past
+     * it: a literal outside the stylesheet is invisible to a change made in
+     * `@theme`, which is exactly how four hardcoded panel colours survived in the
+     * TSX. Here it shows as a cold flash at every launch, a moment before the
+     * warm neutral arrives. Kept in step with `--color-bg` by hand, because
+     * Electron needs this before any CSS exists to read.
+     */
+    backgroundColor: '#121211',
+    /*
+     * Packaged builds take their icon from the executable, which electron-builder
+     * embeds from `build/`. Unpackaged ones — `npm start`, the e2e suite, anyone
+     * running from a checkout — had none, and showed Electron's own.
+     */
+    icon: join(HERE, '../../build/icon.png'),
     title: 'Agbrte',
     webPreferences: {
       // §7. All three, and none of them are negotiable: the renderer displays

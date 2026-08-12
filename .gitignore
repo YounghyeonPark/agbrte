@@ -33,3 +33,6 @@ release/
 
 # Screenshots written by tests/e2e/shots.spec.ts, for looking at the UI.
 .shots/
+
+# electron-builder output.
+release/
