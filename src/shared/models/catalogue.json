@@ -1,0 +1,78 @@
+{
+  "verifiedAt": "2026-08-12",
+  "registry": "registry.ollama.ai",
+  "models": [
+    {
+      "tag": "llama3.2:3b",
+      "label": "Llama 3.2 3B",
+      "note": "Small and general. Runs on a laptop without a discrete GPU.",
+      "bytes": 2019392628
+    },
+    {
+      "tag": "llama3.1:8b",
+      "label": "Llama 3.1 8B",
+      "note": "The usual default when there is a GPU to spare.",
+      "bytes": 4920752841
+    },
+    {
+      "tag": "qwen2.5:7b",
+      "label": "Qwen 2.5 7B",
+      "note": "Strong general model; reliable at tool calling.",
+      "bytes": 4683086845
+    },
+    {
+      "tag": "qwen2.5-coder:7b",
+      "label": "Qwen 2.5 Coder 7B",
+      "note": "Tuned for code. A good default for this program.",
+      "bytes": 4683087074
+    },
+    {
+      "tag": "qwen3:8b",
+      "label": "Qwen 3 8B",
+      "note": "Newer Qwen generation.",
+      "bytes": 5225387677
+    },
+    {
+      "tag": "gemma3:4b",
+      "label": "Gemma 3 4B",
+      "note": "Google's small open model.",
+      "bytes": 3338801315
+    },
+    {
+      "tag": "gemma3:12b",
+      "label": "Gemma 3 12B",
+      "note": "Larger Gemma; wants a GPU.",
+      "bytes": 8149189763
+    },
+    {
+      "tag": "gpt-oss:20b",
+      "label": "GPT-OSS 20B",
+      "note": "OpenAI's open-weight release. Large; check disk first.",
+      "bytes": 13793440755
+    },
+    {
+      "tag": "deepseek-r1:7b",
+      "label": "DeepSeek-R1 7B",
+      "note": "Reasoning-tuned.",
+      "bytes": 4683074953
+    },
+    {
+      "tag": "phi4:14b",
+      "label": "Phi-4 14B",
+      "note": "Microsoft; strong for its size.",
+      "bytes": 9053115905
+    },
+    {
+      "tag": "mistral:7b",
+      "label": "Mistral 7B",
+      "note": "Long-standing, well understood.",
+      "bytes": 4372823897
+    },
+    {
+      "tag": "smollm2:135m",
+      "label": "SmolLM2 135M",
+      "note": "Tiny. For checking the plumbing, not for work.",
+      "bytes": 270898111
+    }
+  ]
+}

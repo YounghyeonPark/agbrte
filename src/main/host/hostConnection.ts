@@ -26,7 +26,7 @@ import {
   type SessionMessage,
 } from '@shared/host/sessionProtocol.js';
 
-import type { EndpointModels } from '@shared/host/protocol.js';
+import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import type {
   AccessRole,
   AgentId,
@@ -366,6 +366,17 @@ export class HostConnection extends EventEmitter {
   async models(): Promise<EndpointModels[]> {
     this.require('models.list');
     return this.call<EndpointModels[]>({ t: 'models.list' });
+  }
+
+  /** Start a pull. Returns once it has begun, not once it has finished. */
+  async installModel(endpointId: string, tag: string): Promise<void> {
+    this.require('models.install');
+    await this.call<null>({ t: 'models.install', endpointId, tag });
+  }
+
+  async installProgress(): Promise<ModelInstallProgress[]> {
+    this.require('models.progress');
+    return this.call<ModelInstallProgress[]>({ t: 'models.progress' });
   }
 
   async saveTemplate(

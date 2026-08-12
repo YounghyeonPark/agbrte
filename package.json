@@ -34,6 +34,7 @@
     "lint:classes": "npm run build && node scripts/inert-classes.mjs --strict",
     "lint:reach": "node scripts/unreached.mjs --strict",
     "citation": "node scripts/citation.mjs",
+    "models": "node scripts/model-catalogue.mjs",
     "build": "node scripts/build.mjs && vite build",
     "smoke": "node scripts/build.mjs --smoke && vite build && node scripts/smoke.mjs",
     "dev": "node scripts/dev.mjs",

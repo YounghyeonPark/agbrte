@@ -157,6 +157,14 @@ export interface HostIdentity {
  * restriction that did not exist before — would need `MIN_CLIENT_PROTOCOL`,
  * which is the lever that does exist for shape changes.
  *
+ * ## v9 adds installing, and one field to an existing reply
+ *
+ * `models.install` and `models.progress` are commands, so `COMMAND_SINCE`
+ * covers them and an older host reports that it cannot rather than failing
+ * oddly. `models.list` also gained `runner` / `canInstall` / `installHint`,
+ * which a v8 host omits — read as *cannot tell*, which is why the client shows
+ * no install control there rather than one that would fail.
+ *
  * ## v8 adds a command, which is the case this table was built for
  *
  * `models.list` asks a host what its endpoints currently serve. A host older
@@ -173,7 +181,7 @@ export interface HostIdentity {
  * remedy offered on a mismatch is "restart this host", so a confident guess
  * here would cost somebody their running turn, and silence is the safe value.
  */
-export const SESSION_PROTOCOL_VERSION = 8;
+export const SESSION_PROTOCOL_VERSION = 9;
 
 /**
  * The oldest client a host will serve.
@@ -205,6 +213,8 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'template.apply': 5,
   'template.delete': 5,
   'models.list': 8,
+  'models.install': 9,
+  'models.progress': 9,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -268,6 +278,16 @@ export type SessionCommand =
    * fact.
    */
   | { t: 'models.list'; id: RequestId }
+  /**
+   * Start pulling a model into an endpoint that can accept one (§3.8).
+   *
+   * Returns as soon as the pull is *started*, not when it finishes: a model is
+   * gigabytes, and a request that waits for a 14 GB download is a request that
+   * times out somewhere in the four layers between the button and the runner.
+   * Progress is asked for separately.
+   */
+  | { t: 'models.install'; id: RequestId; endpointId: string; tag: string }
+  | { t: 'models.progress'; id: RequestId }
   | { t: 'template.delete'; id: RequestId; templateId: string }
   | { t: 'preview.ports'; id: RequestId }
   /**

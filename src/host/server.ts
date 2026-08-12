@@ -21,6 +21,7 @@ import type {
 } from '@shared/types/index.js';
 import type {
   EndpointModels,
+  ModelInstallProgress,
   HandleId,
   HostCommand,
   HostSideChannel,
@@ -59,6 +60,11 @@ export class AgentHostServer {
      * gains the ability to read a key.
      */
     private readonly listModels?: () => Promise<EndpointModels[]>,
+    /** Starts a pull, and reports on every one started. Absent means no runner here can. */
+    private readonly installer?: {
+      install: (endpointId: string, tag: string) => Promise<void>;
+      progress: () => ModelInstallProgress[];
+    },
   ) {
     channel.onMessage((command) => void this.dispatch(command));
     channel.onClose(() => this.shutdown());
@@ -79,6 +85,20 @@ export class AgentHostServer {
 
       case 'models':
         await this.reply(command.id, async () => (await this.listModels?.()) ?? []);
+        return;
+
+      case 'model.install':
+        await this.reply(command.id, async () => {
+          if (this.installer === undefined) {
+            throw new Error('no runner here can install models');
+          }
+          await this.installer.install(command.endpointId, command.tag);
+          return null;
+        });
+        return;
+
+      case 'model.progress':
+        await this.reply(command.id, () => Promise.resolve(this.installer?.progress() ?? []));
         return;
 
       case 'start':

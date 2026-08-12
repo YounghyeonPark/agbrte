@@ -313,6 +313,26 @@ export interface EndpointModelsDto {
   models: string[];
   /** Set when that endpoint could not be reached. The others still answered. */
   error?: string;
+  /**
+   * What serves this endpoint and whether it can take an install.
+   *
+   * `undefined` from a host too old to say, which reads as *cannot tell* — so
+   * no install control is offered rather than one that would fail.
+   */
+  runner?: 'ollama' | 'openai-compatible';
+  canInstall?: boolean;
+  installHint?: string;
+}
+
+/** How far one install has got, as the renderer polls it. */
+export interface ModelInstallDto {
+  endpointId: string;
+  tag: string;
+  status: string;
+  completed: number;
+  total: number;
+  done: boolean;
+  error?: string;
 }
 
 export interface AgbrteApi {
@@ -351,6 +371,14 @@ export interface AgbrteApi {
      * since an empty list is indistinguishable from "no models here".
      */
     models(instanceId: string): Promise<EndpointModelsDto[]>;
+    /**
+     * Begin installing a model on that host (§3.8).
+     *
+     * Resolves when the pull has *started*. A model is gigabytes; watching it is
+     * `installProgress`, polled while somebody is looking at it.
+     */
+    installModel(instanceId: string, endpointId: string, tag: string): Promise<void>;
+    installProgress(instanceId: string): Promise<ModelInstallDto[]>;
     /**
      * Ask a host to exit. It is allowed to refuse.
      *
@@ -677,6 +705,8 @@ export const CH = {
   hostsShutdown: 'agbrte:hosts.shutdown',
   hostsUpdate: 'agbrte:hosts.update',
   hostsModels: 'agbrte:hosts.models',
+  hostsInstallModel: 'agbrte:hosts.installModel',
+  hostsInstallProgress: 'agbrte:hosts.installProgress',
   updateState: 'agbrte:update.state',
   updateInstall: 'agbrte:update.install',
   hostsRuntimes: 'agbrte:hosts.runtimes',

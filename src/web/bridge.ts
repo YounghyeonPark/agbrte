@@ -118,6 +118,8 @@ const api: AgbrteApi = {
     conformance: call(CH.hostsConformance),
     update: call(CH.hostsUpdate),
     models: call(CH.hostsModels),
+    installModel: call(CH.hostsInstallModel),
+    installProgress: call(CH.hostsInstallProgress),
   },
 
   /*

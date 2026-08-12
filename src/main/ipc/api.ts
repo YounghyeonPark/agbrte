@@ -312,6 +312,12 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   handle(CH.hostsShutdown, (instanceId: string) => fleet.shutdownHost(instanceId as InstanceId));
   handle(CH.hostsUpdate, (instanceId: string) => fleet.updateHost(instanceId as InstanceId));
   handle(CH.hostsModels, (instanceId: string) => fleet.models(instanceId as InstanceId));
+  handle(CH.hostsInstallModel, (instanceId: string, endpointId: string, tag: string) =>
+    fleet.installModel(instanceId as InstanceId, endpointId, tag),
+  );
+  handle(CH.hostsInstallProgress, (instanceId: string) =>
+    fleet.installProgress(instanceId as InstanceId),
+  );
 
   handle(CH.updateState, () =>
     Promise.resolve(

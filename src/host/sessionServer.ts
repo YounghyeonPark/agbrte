@@ -26,7 +26,7 @@
  */
 
 import { listListeningPorts, type ListeningPort } from '@main/preview/ports.js';
-import type { EndpointModels } from '@shared/host/protocol.js';
+import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import type { PreviewServers } from '@main/preview/servers.js';
 import {
   deleteTemplate,
@@ -86,6 +86,9 @@ export interface SessionHostOptions {
    * which a client would show as "this machine has no models".
    */
   models?: () => Promise<EndpointModels[]>;
+  /** Starts a pull and reports on every one started. Absent where nothing can. */
+  installModel?: (endpointId: string, tag: string) => Promise<void>;
+  installProgress?: () => Promise<ModelInstallProgress[]>;
   /**
    * Called whenever this server stops serving, for any reason.
    *
@@ -440,6 +443,19 @@ export class SessionHostServer {
 
         case 'runtime.capabilities':
           return probeCapabilities(manager, this.opts.identity, command.runtimeId);
+
+        case 'models.install': {
+          // A write in the sense that matters: it puts gigabytes on somebody's
+          // disk, on a machine that may not be theirs.
+          this.requireWrite(client, 'install a model');
+          const install = this.opts.installModel;
+          if (install === undefined) throw new Error('this host cannot install models');
+          await install(command.endpointId, command.tag);
+          return null;
+        }
+
+        case 'models.progress':
+          return (await this.opts.installProgress?.()) ?? [];
 
         case 'models.list': {
           // A read: asking a server what it has changes nothing about the work.

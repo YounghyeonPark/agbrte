@@ -29,7 +29,7 @@ import { basename } from 'node:path';
 
 import { byAttentionThenRecency, describeTarget, sameTarget } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
-import type { EndpointModels } from '@shared/host/protocol.js';
+import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import { requireTransport } from './host/transports.js';
 import type { SearchHit } from './store/searchSessions.js';
 import type { ListeningPort } from './preview/ports.js';
@@ -639,6 +639,14 @@ export class Fleet extends EventEmitter {
    */
   async models(instanceId: InstanceId): Promise<EndpointModels[]> {
     return this.host(instanceId).connection.models();
+  }
+
+  async installModel(instanceId: InstanceId, endpointId: string, tag: string): Promise<void> {
+    await this.host(instanceId).connection.installModel(endpointId, tag);
+  }
+
+  async installProgress(instanceId: InstanceId): Promise<ModelInstallProgress[]> {
+    return this.host(instanceId).connection.installProgress();
   }
 
   async templates(instanceId: InstanceId): Promise<SessionTemplate[]> {

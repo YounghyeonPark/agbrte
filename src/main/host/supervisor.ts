@@ -27,7 +27,7 @@ import type {
 import type { MainSideChannel } from '@shared/host/protocol.js';
 import type { ModelNeed } from '../runtime/registry.js';
 import type { HostAdvertisement } from './hostRuntime.js';
-import type { EndpointModels } from '@shared/host/protocol.js';
+import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import { HostBackedRuntime, HostClient } from './hostRuntime.js';
 
 export interface HostSupervisorOptions {
@@ -87,6 +87,21 @@ export class HostSupervisor {
   /** Models the running host can reach, credentials already stripped. */
   async endpoints(): Promise<HostAdvertisement['endpoints']> {
     return (await this.current().ready).endpoints;
+  }
+
+  /** Begin pulling a model into an endpoint that can take one. */
+  async installModel(endpointId: string, tag: string): Promise<void> {
+    const client = this.current();
+    await client.ready;
+    await client.request({ t: 'model.install', id: client.mintId(), endpointId, tag });
+  }
+
+  /** How far every install on this host has got. */
+  async installProgress(): Promise<ModelInstallProgress[]> {
+    const client = this.current();
+    await client.ready;
+    return ((await client.request({ t: 'model.progress', id: client.mintId() })) ??
+      []) as ModelInstallProgress[];
   }
 
   /**

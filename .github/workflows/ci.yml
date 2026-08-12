@@ -69,6 +69,12 @@ jobs:
       - name: Citation metadata is current
         run: node scripts/citation.mjs --check
 
+      # Every suggested model is checked against the registry rather than
+      # recalled. Writing the list by hand produced one tag that does not exist;
+      # this is what caught it, and what keeps catching it.
+      - name: Suggested models still exist
+        run: node scripts/model-catalogue.mjs --check
+
       - name: Build
         run: npm run build
 

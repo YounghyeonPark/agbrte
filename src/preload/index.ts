@@ -61,6 +61,9 @@ const api: AgbrteApi = {
       ipcRenderer.invoke(CH.hostsAddRemote, alias, workspaceRoot),
     update: (instanceId: string) => ipcRenderer.invoke(CH.hostsUpdate, instanceId),
     models: (instanceId: string) => ipcRenderer.invoke(CH.hostsModels, instanceId),
+    installModel: (instanceId: string, endpointId: string, tag: string) =>
+      ipcRenderer.invoke(CH.hostsInstallModel, instanceId, endpointId, tag),
+    installProgress: (instanceId: string) => ipcRenderer.invoke(CH.hostsInstallProgress, instanceId),
   },
   update: {
     state: () => ipcRenderer.invoke(CH.updateState),

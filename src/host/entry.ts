@@ -22,6 +22,7 @@ import type { HostMessage, HostCommand, HostSideChannel } from '@shared/host/pro
 import { AgentHostServer } from './server.js';
 import { loadEndpoints, type EndpointRegistry } from './endpoints.js';
 import type { EndpointModels } from '@shared/host/protocol.js';
+import { detectRunner, ModelInstaller } from './modelInstall.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import {
   AgbrteHarnessRuntime,
@@ -226,19 +227,53 @@ const endpoints = await loadEndpoints();
 const modelLister = async (): Promise<EndpointModels[]> => {
   const provider = new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) });
   return Promise.all(
-    endpoints.list().map(async ({ id }): Promise<EndpointModels> => {
+    endpoints.list().map(async ({ id, baseUrl }): Promise<EndpointModels> => {
+      // Asked together because a client needs both to draw one control: the
+      // list to choose from, and whether "install" is even a thing here.
+      const runner = await detectRunner(id, baseUrl);
+      const capability = {
+        runner: runner.kind,
+        canInstall: runner.canInstall,
+        ...(runner.reason !== undefined ? { installHint: runner.reason } : {}),
+      };
       try {
         const found = await provider.listModels(endpoints.resolve(id));
-        return { endpointId: id, models: found.map((m) => m.modelId) };
+        return { endpointId: id, models: found.map((m) => m.modelId), ...capability };
       } catch (err) {
         return {
           endpointId: id,
           models: [],
           error: err instanceof Error ? err.message : String(err),
+          ...capability,
         };
       }
     }),
   );
 };
 
-new AgentHostServer(channel, await buildHostRegistry(endpoints), endpoints.list(), modelLister);
+/*
+ * One installer for the host's lifetime, so progress survives the request that
+ * started it. A pull is minutes long and the call that begins it returns in
+ * milliseconds — the state has to outlive the caller or there is nothing to ask.
+ */
+const installer = new ModelInstaller();
+const modelInstaller = {
+  install: async (endpointId: string, tag: string): Promise<void> => {
+    const endpoint = endpoints.list().find((e) => e.id === endpointId);
+    if (endpoint === undefined) throw new Error(`no endpoint "${endpointId}" on this host`);
+    const runner = await detectRunner(endpointId, endpoint.baseUrl);
+    // Refused here rather than attempted and failed at a 404: the reason is
+    // about the runner, and only this side knows which one it is.
+    if (!runner.canInstall) throw new Error(runner.reason ?? 'this endpoint cannot install models');
+    installer.start(endpointId, endpoint.baseUrl, tag);
+  },
+  progress: () => installer.progress(),
+};
+
+new AgentHostServer(
+  channel,
+  await buildHostRegistry(endpoints),
+  endpoints.list(),
+  modelLister,
+  modelInstaller,
+);

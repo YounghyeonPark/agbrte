@@ -37,7 +37,8 @@ import { RuntimeSelect } from './RuntimeSelect.js';
 import { useAgbrte } from './store.js';
 import { Composer, EventRow, PermissionPrompt, SplitPrompt, Transcript, summarize } from './Transcript.js';
 import { Preview } from './Preview.js';
-import type { EndpointModelsDto, SessionTemplateDto } from '@shared/ipc/contract.js';
+import type { EndpointModelsDto, ModelInstallDto, SessionTemplateDto } from '@shared/ipc/contract.js';
+import CATALOGUE from '../shared/models/catalogue.json' with { type: 'json' };
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
 import type { MatrixCell, Session, SessionState } from '../shared/types/index.js';
 import type { UpdateState } from '../shared/ipc/contract.js';
@@ -430,6 +431,10 @@ export function App(): JSX.Element {
                 // about a machine, and the picker does not know which one it is
                 // looking at.
                 listModels={() => window.agbrte.hosts.models(active.instanceId)}
+                installModel={(endpointId, tag) =>
+                  window.agbrte.hosts.installModel(active.instanceId, endpointId, tag)
+                }
+                installProgress={() => window.agbrte.hosts.installProgress(active.instanceId)}
                 onAdd={store.addAgent}
                 busy={busy}
               />
@@ -807,6 +812,8 @@ function AgentPicker({
   conformance,
   endpoints,
   listModels,
+  installModel,
+  installProgress,
   onAdd,
   busy,
 }: {
@@ -816,6 +823,8 @@ function AgentPicker({
   endpoints: HostInfo['endpoints'];
   /** Asks the host this picker belongs to what its endpoints serve now (§3.8). */
   listModels: () => Promise<EndpointModelsDto[]>;
+  installModel: (endpointId: string, tag: string) => Promise<void>;
+  installProgress: () => Promise<ModelInstallDto[]>;
   onAdd: (runtimeId: string, modelId: string | null, endpointId?: string) => Promise<void>;
   busy: boolean;
 }): JSX.Element {
@@ -833,6 +842,10 @@ function AgentPicker({
   const [knownModels, setKnownModels] = useState<string[]>([]);
   const [modelsNote, setModelsNote] = useState<string | null>(null);
   const [modelsBusy, setModelsBusy] = useState(false);
+  /** Which endpoints can take an install, from the same answer as the list. */
+  const [installable, setInstallable] = useState<EndpointModelsDto[]>([]);
+  const [browsing, setBrowsing] = useState(false);
+  const [installs, setInstalls] = useState<ModelInstallDto[]>([]);
 
   /**
    * Failures are reported in place rather than raised.
@@ -842,12 +855,43 @@ function AgentPicker({
    * still usable by typing. A host too old to answer is a *different* sentence
    * from "no models", and has to read as one.
    */
+  /** The one endpoint that can take an install, if exactly one can. */
+  const installTarget = installable.find((e) => e.canInstall === true);
+
+  /*
+   * Poll only while the menu is open.
+   *
+   * A pull is minutes long and nobody is watching a closed panel; polling
+   * regardless would be a request every two seconds for the lifetime of the app,
+   * to learn something nothing is displaying.
+   */
+  useEffect(() => {
+    if (!browsing) return;
+    let live = true;
+    const tick = async (): Promise<void> => {
+      try {
+        const p = await installProgress();
+        if (live) setInstalls(p);
+      } catch {
+        // The host may be older than v9, or gone. Neither is worth a banner
+        // while somebody is reading a list of models.
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 2000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [browsing, installProgress]);
+
   const refreshModels = async (): Promise<void> => {
     setModelsBusy(true);
     try {
       const answers = await listModels();
       const found = [...new Set(answers.flatMap((a) => a.models))].sort();
       setKnownModels(found);
+      setInstallable(answers);
       const failed = answers.filter((a) => a.error !== undefined);
       setModelsNote(
         failed.length > 0
@@ -944,6 +988,110 @@ function AgentPicker({
                 {modelsNote ??
                   'An Ollama or other OpenAI-compatible model reachable from that host.'}
               </small>
+
+              <button
+                type="button"
+                className="btn-quiet justify-self-start text-xs"
+                data-testid="browse-models"
+                onClick={() => {
+                  setBrowsing((open) => !open);
+                  if (knownModels.length === 0) void refreshModels();
+                }}
+              >
+                {browsing ? 'Hide models' : 'Browse models…'}
+              </button>
+
+              {browsing && (
+                <div className="border-line bg-panel grid gap-2 rounded-[2px] border p-3">
+                  {/*
+                    The list is a starting point, not a boundary.
+
+                    Every tag here was checked against the registry when the
+                    catalogue was generated — one invented entry was caught that
+                    way — but the field above still takes anything, because the
+                    catalogue is there to save somebody knowing that "a good
+                    small coding model" is spelled `qwen2.5-coder:7b`.
+                  */}
+                  <span className={`${LABEL} text-muted`}>
+                    Suggested models · verified {CATALOGUE.verifiedAt}
+                  </span>
+
+                  {installTarget === undefined ? (
+                    /*
+                      Said rather than shown as a dead button.
+
+                      vLLM, llama.cpp and NIM all take their model at launch, so
+                      "install" against them is not a slow operation — it is not
+                      an operation. The reason comes from the host, which is the
+                      only side that knows which runner it is talking to.
+                    */
+                    <p className="text-muted m-0 text-[11px]">
+                      {installable.find((e) => e.installHint !== undefined)?.installHint ??
+                        'Refresh to find out whether this host can install models.'}
+                    </p>
+                  ) : null}
+
+                  <div className="grid gap-1">
+                    {CATALOGUE.models.map((m) => {
+                      const here = knownModels.includes(m.tag);
+                      const run = installs.find((i) => i.tag === m.tag);
+                      const pct =
+                        run !== undefined && run.total > 0
+                          ? Math.round((run.completed / run.total) * 100)
+                          : null;
+                      return (
+                        <div
+                          key={m.tag}
+                          data-testid="catalogue-row"
+                          data-tag={m.tag}
+                          className="flex items-baseline justify-between gap-3"
+                        >
+                          <span className="min-w-0">
+                            <span className="truncate-line">{m.label}</span>
+                            <span className="text-muted text-[11px]"> · {m.note}</span>
+                          </span>
+                          <span className="text-muted flex shrink-0 items-baseline gap-2 text-[11px]">
+                            <span className="tabular-nums">
+                              {(m.bytes / 1e9).toFixed(1)} GB
+                            </span>
+                            {here ? (
+                              <button
+                                type="button"
+                                className="btn-quiet text-[11px]"
+                                onClick={() => setModelId(m.tag)}
+                              >
+                                Use
+                              </button>
+                            ) : run !== undefined && !run.done ? (
+                              <span className="text-accent tabular-nums">
+                                {pct === null ? run.status : `${pct}%`}
+                              </span>
+                            ) : run?.error !== undefined ? (
+                              <span className="text-state-fail">failed</span>
+                            ) : installTarget !== undefined ? (
+                              <button
+                                type="button"
+                                className="btn-quiet text-accent text-[11px]"
+                                data-testid="install-model"
+                                onClick={() => {
+                                  void installModel(installTarget.endpointId, m.tag).catch(
+                                    (err: unknown) =>
+                                      setModelsNote(
+                                        err instanceof Error ? err.message : String(err),
+                                      ),
+                                  );
+                                }}
+                              >
+                                Install
+                              </button>
+                            ) : null}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {endpoints.length > 1 && (
                 <label className="text-muted mt-1 grid gap-1 text-xs">
                   Sent to

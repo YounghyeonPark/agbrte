@@ -51,6 +51,30 @@ export interface EndpointModels {
   endpointId: string;
   models: string[];
   error?: string;
+  /**
+   * What is serving this endpoint, and whether a model can be installed into it.
+   *
+   * Carried with the list rather than asked separately because a client needs
+   * both to render one control: a menu offering "install" against a runner that
+   * takes its model at launch is a button that cannot work. Absent from a host
+   * older than this field, which reads as *cannot tell* — the same three-valued
+   * shape `outdated` uses, for the same reason.
+   */
+  runner?: 'ollama' | 'openai-compatible';
+  canInstall?: boolean;
+  /** When it cannot: what to do instead, in the user's terms. */
+  installHint?: string;
+}
+
+/** How far one model install has got. Reported per attempt, never deleted. */
+export interface ModelInstallProgress {
+  endpointId: string;
+  tag: string;
+  status: string;
+  completed: number;
+  total: number;
+  done: boolean;
+  error?: string;
 }
 /** Identifies one live agent handle inside the host. */
 export type HandleId = string;
@@ -77,6 +101,10 @@ export type HostCommand =
    * the wrong shape for a list that changes by design.
    */
   | { t: 'models'; id: RequestId }
+  /** Begin pulling a model into an endpoint that can accept one. */
+  | { t: 'model.install'; id: RequestId; endpointId: string; tag: string }
+  /** How far every install started on this host has got. */
+  | { t: 'model.progress'; id: RequestId }
   | { t: 'start'; id: RequestId; handleId: HandleId; spec: AgentSpec; ctx: HostContext }
   /**
    * `token` may be null and that is **not** the same as `start`: an adapter is
