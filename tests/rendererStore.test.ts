@@ -93,3 +93,157 @@ describe('a prompt settled elsewhere', () => {
     expect(useAgbrte.getState().notice).toBeNull();
   });
 });
+
+/**
+ * Events arriving while a gap refetch is in flight (§8 backpressure).
+ *
+ * Found from the other end: a live e2e run wrote `hello.txt`, the log held
+ * `permission.decided … allow via policy`, and the row for it never appeared on
+ * screen. §13 requires every decision be recorded *and* shown — a transcript
+ * that quietly omits an allow reads as though the gate was never consulted.
+ *
+ * The hole is a stale closure. When main pauses the stream, `applyBatch` starts
+ * an async refetch and, on resolution, writes `[...events, ...missed, ...batch]`
+ * using the `events` captured *before* the await. Batches that arrive in the
+ * meantime take the non-refetching path, land in the store correctly, and are
+ * then overwritten by that stale write. Whatever they carried is gone — with no
+ * error, no gap in `seq` that anything checks, and nothing on screen.
+ */
+describe('a batch that lands while a refetch is in flight', () => {
+  const ev = (seq: number, type = 'agent.text'): never =>
+    ({ id: `id${seq}`, seq, type, text: `e${seq}` }) as never;
+
+  it('survives the refetch instead of being overwritten by it', async () => {
+    let releaseSince: (events: never[]) => void = () => {};
+    const since = new Promise<never[]>((resolve) => {
+      releaseSince = resolve;
+    });
+
+    // The store reaches for `window.agbrte`; this suite runs in node, so the
+    // bridge is stood up on globalThis rather than pulling in a DOM.
+    const acked: number[] = [];
+    (globalThis as unknown as { window: unknown }).window = {
+      agbrte: {
+        sessions: { since: () => since },
+        ack: (_id: string, seq: number) => acked.push(seq),
+      },
+    };
+
+    useAgbrte.setState({ activeId: 's1', events: [ev(1)], refetching: false });
+    const store = useAgbrte.getState();
+
+    // Main says it withheld events, which starts the refetch.
+    store.applyBatch({ sessionId: 's1', paused: true, events: [ev(4)], lastSeq: 4 } as never);
+    expect(useAgbrte.getState().refetching).toBe(true);
+
+    // A live batch lands before the refetch resolves. This is the decision row.
+    store.applyBatch({ sessionId: 's1', paused: false, events: [ev(5)], lastSeq: 5 } as never);
+    expect(useAgbrte.getState().events.map((e) => e.seq)).toContain(5);
+
+    releaseSince([ev(2), ev(3)] as never[]);
+    await since;
+    await Promise.resolve();
+
+    expect(
+      useAgbrte.getState().events.map((e) => e.seq),
+      'the batch that arrived mid-refetch was dropped',
+    ).toEqual([1, 2, 3, 4, 5]);
+
+    // The ack is what lets main resume forwarding. The paused branch returned
+    // without one, so a client that hit a gap could be left holding a stream
+    // nobody was going to send anything else down.
+    expect(acked, 'main was never told the gap had closed').toContain(4);
+  });
+});
+
+/**
+ * A snapshot landing on top of a turn that is already producing events.
+ *
+ * `send()` fetches a fresh snapshot in its `finally` and `applySnapshot`
+ * *replaces* the event list with it. The turn is still running at that point —
+ * the IPC resolves when the turn is accepted, not when it finishes — so any
+ * event that arrived between the snapshot being taken on the main side and it
+ * being applied here is overwritten by a view of the session from before it
+ * existed. Everything after it appends normally.
+ *
+ * The result is one row missing from the middle of a transcript that otherwise
+ * looks complete, which is why this went unnoticed: it does not look like data
+ * loss, it looks like the thing never happened. In a live run the row that
+ * vanished was `permission.decided … allow via policy`, and §13's audit trail
+ * missing an allow is indistinguishable from a gate that never ran.
+ */
+describe('a snapshot arriving mid-turn', () => {
+  const ev = (seq: number): never => ({ id: `id${seq}`, seq, type: 'agent.text', text: `e${seq}` }) as never;
+
+  it('does not erase events that arrived while it was in flight', async () => {
+    const session = { sessionId: 's1', agents: [{ agentId: 'a1' }] };
+
+    (globalThis as unknown as { window: unknown }).window = {
+      agbrte: {
+        ack: () => {},
+        sessions: {
+          // The event the gate recorded, arriving while the send is in flight.
+          send: async () => {
+            useAgbrte.getState().applyBatch({
+              sessionId: 's1',
+              paused: false,
+              events: [ev(3)],
+              lastSeq: 3,
+            } as never);
+          },
+          // Taken before that event existed, which is the whole race.
+          snapshot: async () => ({ session, recent: [ev(1), ev(2)], queued: 0 }),
+          list: async () => [],
+        },
+      },
+    };
+
+    useAgbrte.setState({
+      activeId: 's1',
+      active: session as never,
+      events: [ev(1), ev(2)],
+      refetching: false,
+    });
+
+    await useAgbrte.getState().send('hello');
+
+    expect(
+      useAgbrte.getState().events.map((e) => e.seq),
+      'the snapshot replaced the transcript instead of catching up to it',
+    ).toEqual([1, 2, 3]);
+  });
+});
+
+/**
+ * Two distinct events that share a seq.
+ *
+ * Should never happen — `EventLog` allocates seq synchronously now — but this
+ * store used to key its dedupe on position rather than identity, so when the
+ * writer did race, the *renderer* is what threw the second event away. A row
+ * that was written, allowed, and logged simply never appeared. Keying on `id`
+ * means a writer bug stays a writer bug instead of becoming silent data loss
+ * three processes downstream.
+ */
+describe('two different events carrying the same seq', () => {
+  it('renders both rather than treating one as a repeat', () => {
+    (globalThis as unknown as { window: unknown }).window = {
+      agbrte: { ack: () => {}, sessions: {} },
+    };
+    useAgbrte.setState({ activeId: 's1', events: [], refetching: false });
+
+    useAgbrte.getState().applyBatch({
+      sessionId: 's1',
+      paused: false,
+      lastSeq: 6,
+      events: [
+        { id: 'a', seq: 6, type: 'usage' },
+        { id: 'b', seq: 6, type: 'permission.decided', tool: 'write' },
+      ],
+    } as never);
+
+    expect(
+      useAgbrte.getState().events.map((e) => e.id),
+      'the decision was discarded as a duplicate of the usage row',
+    ).toEqual(['a', 'b']);
+  });
+});

@@ -177,3 +177,67 @@ describe('EventLog', () => {
     expect(events).toEqual([]);
   });
 });
+
+/**
+ * Concurrent appends (DESIGN.md §5.1: `seq` orders events, not timestamps).
+ *
+ * Found from a long way downstream. A live run wrote `hello.txt`, the gate
+ * allowed it by policy, and the row saying so never appeared on screen. The log
+ * held the answer:
+ *
+ *     … 5:session.state  6:usage  6:permission.decided  7:agent.tool_use  9:agent.tool_result
+ *
+ * Two events with `seq` 6, and 8 issued to nobody. `append` read `this.seq`,
+ * awaited the write, and incremented afterwards — so anything appending during
+ * that await got the same number. The renderer dedupes by `seq`, quite
+ * reasonably, and threw the second one away as a repeat of the first.
+ *
+ * A duplicate `seq` is not a cosmetic flaw. It is the ordering the log exists to
+ * provide, and everything downstream — dedupe, `since(seq)` tails, mirror
+ * resume — is entitled to assume it.
+ */
+describe('appends that overlap', () => {
+  const body = (text: string) => ({ type: 'agent.text', text }) as never;
+
+  it('gives each one its own seq, with none issued twice or skipped', async () => {
+    const { log } = await EventLog.open(logPath);
+
+    // Started together, which is what a runtime emitting usage while the gate
+    // records a decision actually looks like.
+    const events = await Promise.all([
+      log.append(body('a')),
+      log.append(body('b')),
+      log.append(body('c')),
+      log.append(body('d')),
+    ]);
+
+    const seqs = events.map((e) => e.seq).sort((x, y) => x - y);
+    expect(new Set(seqs).size, 'a seq was issued twice').toBe(seqs.length);
+    expect(seqs, 'a seq was burned').toEqual([seqs[0], seqs[0]! + 1, seqs[0]! + 2, seqs[0]! + 3]);
+  });
+
+  it('writes every one of them, in seq order', async () => {
+    const { log } = await EventLog.open(logPath);
+    await Promise.all([log.append(body('a')), log.append(body('b')), log.append(body('c'))]);
+
+    const reopened = await EventLog.open(logPath);
+    const { events, skipped } = await reopened.log.readAll();
+    expect(skipped).toBe(0);
+    expect(events).toHaveLength(3);
+    // Strictly increasing, not merely "sorted". With every record carrying the
+    // same seq — precisely what the bug produced — sortedness is true of any
+    // order whatsoever, and the assertion would have watched it happen.
+    const seqs = events.map((e) => e.seq);
+    expect(
+      seqs.every((s, i) => i === 0 || s > seqs[i - 1]!),
+      `byte order disagrees with seq order: ${seqs.join(',')}`,
+    ).toBe(true);
+  });
+
+  /** `byteLength` is what a mirror resumes from, so it must match the file. */
+  it('keeps byteLength equal to what is on disk', async () => {
+    const { log } = await EventLog.open(logPath);
+    await Promise.all([log.append(body('a')), log.append(body('b')), log.append(body('c'))]);
+    expect(log.byteLength).toBe((await stat(logPath)).size);
+  });
+});

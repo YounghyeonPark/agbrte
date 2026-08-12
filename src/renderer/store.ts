@@ -116,11 +116,35 @@ async function guard<T>(set: SetState, fn: () => Promise<T>): Promise<T | undefi
 
 type SetState = (partial: Partial<AgbrteState>) => void;
 
-function applySnapshot(set: SetState, snapshot: SessionSnapshot): void {
+/**
+ * Adopt a snapshot without throwing away anything newer than it.
+ *
+ * A snapshot is authoritative about *a moment*, not about now. `send()` takes
+ * one in its `finally`, and the turn is still running then — the IPC resolves
+ * when the turn is accepted, not when it ends — so events keep arriving while
+ * the request is in flight. Replacing the list wholesale erases exactly those,
+ * leaving one row missing from the middle of a transcript that otherwise looks
+ * complete. That does not read as data loss; it reads as the thing never having
+ * happened, which is why it survived this long.
+ *
+ * The row it ate in a live run was `permission.decided … allow via policy`. §13
+ * requires every decision be recorded and shown, and an audit trail missing an
+ * allow is indistinguishable from a gate that was never consulted.
+ *
+ * Switching *to a different session* still replaces, because then the previous
+ * events belong to something else entirely.
+ */
+function applySnapshot(set: SetState, get: () => AgbrteState, snapshot: SessionSnapshot): void {
+  const sameSession = get().activeId === snapshot.session.sessionId;
+  // `dedupe` sorts by seq, so a late snapshot slots in rather than appending.
+  const events = sameSession
+    ? dedupe([...get().events, ...snapshot.recent]).slice(-WINDOW)
+    : snapshot.recent.slice(-WINDOW);
+
   set({
     active: snapshot.session,
     activeId: snapshot.session.sessionId,
-    events: snapshot.recent.slice(-WINDOW),
+    events,
     queued: snapshot.queued,
     refetching: false,
   });
@@ -251,7 +275,7 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
         if (owner === undefined) throw new Error('no host is known to own that session');
         await agbrte().sessions.resume(owner, sessionId);
       }
-      applySnapshot(set, await agbrte().sessions.snapshot(sessionId));
+      applySnapshot(set, get, await agbrte().sessions.snapshot(sessionId));
       set({ sessions: await agbrte().sessions.list() });
     });
   },
@@ -282,7 +306,7 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
             }
           : {}),
       });
-      applySnapshot(set, await agbrte().sessions.snapshot(sessionId));
+      applySnapshot(set, get, await agbrte().sessions.snapshot(sessionId));
     });
   },
 
@@ -312,7 +336,7 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     } catch (err) {
       set({ error: err instanceof Error ? err.message : String(err) });
     } finally {
-      applySnapshot(set, await agbrte().sessions.snapshot(activeId));
+      applySnapshot(set, get, await agbrte().sessions.snapshot(activeId));
       set({ sessions: await agbrte().sessions.list() });
     }
   },
@@ -363,10 +387,30 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
       void agbrte()
         .sessions.since(batch.sessionId, from)
         .then((missed) => {
-          const merged = [...events, ...missed, ...batch.events];
+          /*
+           * `get().events`, not the `events` read before the await.
+           *
+           * Batches keep arriving while this request is in flight, and they take
+           * the branch below — correctly — because `refetching` is set. Merging
+           * onto the captured array instead of the current one overwrites every
+           * one of them, silently: no error, no gap anything checks, just an
+           * event that was on disk and never on screen.
+           *
+           * That is not theoretical. It swallowed a `permission.decided … allow
+           * via policy` row in a live run, and §13's audit trail missing an
+           * allow reads exactly like a gate that was never consulted.
+           */
+          const merged = [...get().events, ...missed, ...batch.events];
           set({ events: dedupe(merged).slice(-WINDOW), refetching: false });
+          // The gap is closed, so tell main it can resume. Returning early
+          // without this leaves the stream paused with nobody waiting on it.
+          if (batch.lastSeq >= 0) agbrte().ack(batch.sessionId, batch.lastSeq);
         })
-        .catch(() => set({ refetching: false }));
+        .catch(() => {
+          // Said out loud. The hole is real and permanent for this client, and
+          // a transcript quietly missing a turn is worse than a visible error.
+          set({ refetching: false, error: 'Some events could not be reloaded — reopen the session.' });
+        });
       return;
     }
 
@@ -448,18 +492,26 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
 }));
 
 /**
- * Drop duplicate seqs, keeping order.
+ * Drop events we already hold, keeping seq order.
  *
  * A refetch deliberately overlaps what we already hold — asking for events
  * *after* our last seq risks missing one if the window boundary moved — so
  * overlap is expected and must not render twice.
+ *
+ * Keyed on `id`, not `seq`. The same event fetched twice carries the same id,
+ * which is what "already holding it" actually means; `seq` is where an event
+ * sits, and two events sharing a position is a bug in the writer rather than a
+ * repeat. Keying on position made this function the thing that *executed* that
+ * bug: an `EventLog` race handed `usage` and `permission.decided` the same seq,
+ * and this quietly discarded the decision as a duplicate. The writer is fixed,
+ * and this no longer has the power to hide it if it regresses.
  */
 function dedupe(events: AgbrteEvent[]): AgbrteEvent[] {
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   const out: AgbrteEvent[] = [];
   for (const event of events) {
-    if (seen.has(event.seq)) continue;
-    seen.add(event.seq);
+    if (seen.has(event.id)) continue;
+    seen.add(event.id);
     out.push(event);
   }
   return out.sort((a, b) => a.seq - b.seq);

@@ -166,7 +166,7 @@ export interface AgentSpec {
   model?: ModelRef;                         // required iff harness is AgbrteHarness
   auth: AuthMode;                           // §3.11
   reasoning?: ReasoningRequest;             // normalized, §3.4
-  systemPrompt?: string;
+  systemPrompt?: string;                    // absent ⇒ none is sent; see §3.7
   toolPolicy: ToolPolicy;
   limits: { maxTurns?: number; maxToolCalls?: number; tokenCeiling?: number; wallClockMs?: number };
   /** Resolved at start by whoever is adjacent to the filesystem.
@@ -402,6 +402,7 @@ For every `ModelProvider`, `AgbrteHarness` supplies what a harness would have:
 - **Permission gate** — every call passes `ctx.requestPermission` *before* execution. `permissionFidelity: 'callback'`, the strongest tier (§3.10).
 - **Context management** — no server-side compaction to lean on, so it compacts at a high-water mark by calling the **same `rehydrate()`** used for moved workspaces (§5.4). The function that reconstructs context after a move is the function that compacts a running session — one code path, exercised constantly, so the durable path can't rot.
 - **Prompt assembly** — always stable-prefix-first (frozen system prompt, deterministic tool order, volatile content last). Correct for explicit-breakpoint caching, free wins for automatic prefix caching, harmless otherwise — so it's unconditional.
+- **No default system prompt** — a seat that sets none sends none. This was tested the other way and the measurement went against it. Given only a tool list, a small local model concludes about one turn in ten that it has no filesystem, says so, and stops; adding a short factual system prompt saying otherwise raised the broken-run rate from ~3/20 to 9/20 on `qwen2.5:7b` and changed the failure kind — the model left function calling and began typing tool calls as prose, opening shell fences, and emitting gibberish. Prose in the system slot pulls a small model toward answering in prose. The field stays plumbed and empty; a future default needs its own twenty-run measurement, not an argument.
 - **Loop control** — turn and tool-call caps, no-progress detection (identical call with identical args N times → intervene), and a wall-clock budget.
 
 Reports `nativeResume: false`, which is fine: the durable resume path was never allowed to depend on it.
@@ -1121,6 +1122,12 @@ A `PathCodec` collapses on write, expands on read. Genuinely external paths are 
 **(c) Attachments must not be path-linked.** Content-addressed, referenced by hash. Moving the folder moves the blobs; dedup and remote transfer (§6.7) follow free.
 
 **(d) Timestamps across machines aren't comparable.** `seq` is authoritative; timestamps advisory. Each event carries the writing host's clock plus measured skew, so a transcript spanning machines 40 seconds apart still reads in order.
+
+**(e) `seq` is claimed synchronously, and writes are serialized.** Because `seq` is authoritative, allocating it across an `await` is not a small bug. `append` used to read `this.seq`, await the file write, and increment afterwards — so every append starting during that await was issued the same number. A live session produced `6:usage 6:permission.decided 7:agent.tool_use 9:agent.tool_result`: one number issued twice, one issued to nobody.
+
+Nothing complained. The renderer dedupes by `seq` — which this section entitles it to do — so it discarded the decision as a repeat of the usage row, and a `write` that the gate had allowed and recorded left no trace on screen. §13's audit trail was missing an allow, which reads exactly like a gate that was never consulted. The write path is also chained now: byte order and `seq` order must agree, because a mirror resumes from a byte offset (§6.6) and reads the file rather than the numbers.
+
+Downstream, the renderer keys its dedupe on event `id` rather than `seq`. Two fetches of one event share an id; two events sharing a position is a writer bug. Keying on position made the reader *execute* that bug instead of surviving it.
 
 ### 5.5 Memory tiers
 

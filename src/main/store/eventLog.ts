@@ -123,6 +123,16 @@ export interface OpenResult {
 }
 
 export class EventLog {
+  /**
+   * The tail of the write chain, so records land in the order they were issued.
+   *
+   * Allocating `seq` synchronously is necessary but not sufficient: two
+   * unserialized `appendFile` calls can still land out of order, which would
+   * leave the file's byte order disagreeing with its `seq` order — and a mirror
+   * resuming from a byte offset reads the file, not the numbers.
+   */
+  private writing: Promise<void> = Promise.resolve();
+
   private constructor(
     readonly path: string,
     private seq: number,
@@ -195,9 +205,24 @@ export class EventLog {
    */
   async append(body: EventBody, meta: AppendMeta = {}): Promise<AgbrteEvent> {
     const now = meta.now ?? (() => new Date());
+
+    /*
+     * Claimed before anything can yield.
+     *
+     * This used to read `this.seq` here and increment after `await appendFile`,
+     * so every append that started during that await was handed the same
+     * number. A live session produced `6:usage 6:permission.decided
+     * 7:agent.tool_use 9:agent.tool_result` — one seq issued twice, one issued
+     * to nobody — and the renderer, which dedupes by seq exactly as §5.1 lets
+     * it, discarded the decision as a repeat. The gate had run and recorded an
+     * allow, and the transcript showed no sign of it.
+     */
+    const seq = this.seq;
+    this.seq += 1;
+
     const event = {
       id: newEventId(),
-      seq: this.seq,
+      seq,
       at: now().toISOString(),
       ...(meta.clockSkewMs !== undefined ? { clockSkewMs: meta.clockSkewMs } : {}),
       ...(meta.agentId !== undefined ? { agentId: meta.agentId } : {}),
@@ -207,10 +232,16 @@ export class EventLog {
     } as AgbrteEvent;
 
     const line = `${JSON.stringify(event)}\n`;
-    await appendFile(this.path, line, 'utf8');
+    const write = this.writing.then(async () => {
+      await appendFile(this.path, line, 'utf8');
+      this.bytes += Buffer.byteLength(line, 'utf8');
+    });
+    // The chain must survive a failed write, or one ENOSPC would wedge every
+    // later append behind a rejection nobody is waiting on. The caller still
+    // sees this write's own failure, because that is what is awaited.
+    this.writing = write.catch(() => {});
+    await write;
 
-    this.seq += 1;
-    this.bytes += Buffer.byteLength(line, 'utf8');
     return event;
   }
 
