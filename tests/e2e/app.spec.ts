@@ -11,7 +11,7 @@
  * skipped is worse than no test.
  */
 
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { readFile, rm, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { launch, makeRepo, modelAvailable, warmModel } from './harness.js';
@@ -36,6 +36,119 @@ const MODEL = 'qwen2.5:7b';
  * timeout only made every coin-flip loss two and a half minutes long.
  */
 const LIVE_TIMEOUT = 60_000;
+
+/**
+ * Split across two turns rather than spent waiting on one.
+ *
+ * A successful call arrives in about four seconds, and the failure mode is a
+ * refusal that ends the turn — so the back half of a single long wait was time
+ * spent watching a model that had already finished. Both attempts together stay
+ * inside the old single-attempt budget.
+ */
+const FIRST_ATTEMPT = 25_000;
+const SECOND_ATTEMPT = 30_000;
+
+/**
+ * What the agent actually did, for a failure that would otherwise say nothing.
+ *
+ * Read from the log on disk rather than the window: the point of asking is that
+ * something went wrong, and the UI is the layer most likely to be wrong with it.
+ * Tool calls and stop reasons only — a full transcript buries the answer in the
+ * model's prose.
+ */
+/**
+ * Every transcript row currently in the DOM, with its testid.
+ *
+ * The log says what happened; this says what a person would have seen. Asserting
+ * on one missing row cannot tell "the decision row alone is absent" from "the
+ * transcript is empty and the assertion happened to name that row first", and
+ * those are different bugs in different processes.
+ */
+async function whatIsOnScreen(page: Page): Promise<string> {
+  try {
+    const rows = await page.locator('[data-testid^=row-]').evaluateAll((nodes) =>
+      nodes.map((n) => `${n.getAttribute('data-testid')}: ${(n.textContent ?? '').slice(0, 80)}`),
+    );
+    return rows.length === 0
+      ? 'On screen: no transcript rows at all.'
+      : ['On screen:', ...rows.map((r) => `  ${r}`)].join('\n');
+  } catch (err) {
+    return `(could not read the screen: ${err instanceof Error ? err.message : String(err)})`;
+  }
+}
+
+async function whatTheAgentDid(repo: string): Promise<string> {
+  try {
+    const dir = join(repo, '.devagents', 'sessions');
+    const ids = await readdir(dir);
+    const log = await readFile(join(dir, ids[0]!, 'events.jsonl'), 'utf8');
+    const interesting = log
+      .split(/\r?\n/)
+      .filter((l) => l.trim() !== '')
+      .map(
+        (l) =>
+          JSON.parse(l) as {
+            type?: string;
+            tool?: string;
+            text?: string;
+            args?: unknown;
+            via?: string;
+            decision?: { result?: string };
+            stop?: { kind?: string };
+          },
+      )
+      .filter((e) =>
+        [
+          'agent.tool_use',
+          'agent.stopped',
+          'agent.text',
+          // The claim under test is that §13 lets this through without asking.
+          // A prompt sitting unanswered looks exactly like a slow model from
+          // outside, and is the single most likely way this times out.
+          'permission.requested',
+          // And the decision itself, verbatim. "The row is missing" and "the
+          // row says something other than allow-via-policy" look identical
+          // through a `toContainText`, and only one of them is a gate bug.
+          'permission.decided',
+        ].includes(e.type ?? ''),
+      )
+      .map((e) =>
+        e.type === 'agent.tool_use'
+          ? `  called ${e.tool} ${JSON.stringify(e.args).slice(0, 100)}`
+          : e.type === 'agent.stopped'
+            ? `  stopped: ${e.stop?.kind}`
+            : e.type === 'agent.text'
+              ? `  said: ${(e.text ?? '').slice(0, 120)}`
+              : e.type === 'permission.decided'
+                ? `  decided ${e.tool}: ${e.decision?.result} via ${e.via}`
+                : `  ASKED FOR PERMISSION for ${e.tool} (§13 says it should not have)`,
+      );
+    /*
+     * The whole seq/type spine, not just the interesting rows.
+     *
+     * Main forwards events with `seq` greater than what it has already sent, so
+     * an event written to the log out of order is dropped from the live stream
+     * for good while remaining perfectly present on disk. That is
+     * indistinguishable from "the renderer lost it" unless the numbers are
+     * visible, and the two live in different processes.
+     */
+    const spine = log
+      .split(/\r?\n/)
+      .filter((l) => l.trim() !== '')
+      .map((l) => JSON.parse(l) as { seq?: number; type?: string })
+      .map((e) => `${e.seq}:${e.type}`)
+      .join(' ');
+
+    return [
+      interesting.length === 0
+        ? 'The agent produced no tool calls or text at all.'
+        : ['What the agent did:', ...interesting].join('\n'),
+      `Log spine: ${spine}`,
+    ].join('\n');
+  } catch (err) {
+    return `(could not read the log: ${err instanceof Error ? err.message : String(err)})`;
+  }
+}
 
 test.describe('the shell', () => {
   test('opens on the chosen workspace with runtimes available', async () => {
@@ -269,18 +382,55 @@ test.describe('a real model against a real repo', () => {
     try {
       await createSession(agbrte.window, 'Real edit');
       await addAgent(agbrte.window, 'agbrte-harness', MODEL);
-      await send(
-        agbrte.window,
+      const instruction =
         'Use the write tool to create a file named hello.txt containing exactly: hello from agbrte. ' +
-          'Do it now with a single write call, then stop.',
-      );
+        'Do it now with a single write call, then stop.';
+      await send(agbrte.window, instruction);
 
-      // §15's Phase 1 criterion: a real repo edited by a real model, through the
-      // agent host process.
-      await expect(async () => {
-        const contents = await readFile(join(repo, 'hello.txt'), 'utf8');
-        expect(contents.toLowerCase()).toContain('hello');
-      }).toPass({ timeout: LIVE_TIMEOUT });
+      /** Whether hello.txt turns up within `ms`. */
+      const written = async (ms: number): Promise<boolean> => {
+        try {
+          await expect(async () => {
+            const contents = await readFile(join(repo, 'hello.txt'), 'utf8');
+            expect(contents.toLowerCase()).toContain('hello');
+          }).toPass({ timeout: ms });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      /*
+       * §15's Phase 1 criterion: a real repo edited by a real model, through the
+       * agent host process. Two turns, not one — and that is a real measurement
+       * rather than a shrug.
+       *
+       * About one turn in ten, `qwen2.5:7b` answers this with *"as an AI, I
+       * don't have direct access to local file systems"* and stops. It is a
+       * refusal, not a delay: the stop reason is `end_turn`, so waiting longer
+       * cannot help, and a longer timeout only made each loss slower. The
+       * obvious fix — telling the model in a system prompt that its tools are
+       * real — was implemented and measured, and made it three times worse (see
+       * `agbrteHarness.ts`). What a person does instead is say it again, so that
+       * is what this does.
+       *
+       * The retry sends the **same words**, not a firmer version of them. New
+       * phrasing would make the second attempt a different test from the first,
+       * and this is a coin the model flips, not an instruction it misread.
+       *
+       * A failure carries the transcript, because otherwise this reports
+       * `Timeout exceeded` and nothing else — and "slow", "called `bash`
+       * instead", and "refused outright" are three different problems that were
+       * indistinguishable from the outside.
+       */
+      if (!(await written(FIRST_ATTEMPT))) {
+        await send(agbrte.window, instruction);
+        if (!(await written(SECOND_ATTEMPT))) {
+          throw new Error(
+            `hello.txt was never written, across two turns.\n\n${await whatTheAgentDid(repo)}`,
+          );
+        }
+      }
 
       // A write inside the workspace is `allow` under §13's defaults, so the
       // gate must have run, recorded, and asked nobody.
@@ -294,12 +444,26 @@ test.describe('a real model against a real repo', () => {
       //
       // `via: 'policy'` is also the *stronger* claim — it proves no human was
       // consulted for this call, which a prompt count can only imply.
+      //
+      // Carries the transcript for the same reason the file check does. This
+      // assertion still couples to *which* tool the model reached for, and when
+      // it failed it said only `toContainText failed` — which is consistent
+      // with a broken gate and with the model having created the file some
+      // other way, and those need opposite fixes.
       const decision = agbrte.window
         .locator('[data-testid=row-decision]')
         .filter({ hasText: 'write' })
         .first();
-      await expect(decision).toContainText('allow');
-      await expect(decision).toContainText('policy');
+      try {
+        await expect(decision).toContainText('allow');
+        await expect(decision).toContainText('policy');
+      } catch (err) {
+        throw new Error(
+          `hello.txt exists, but no allowed-by-policy decision row for \`write\`.\n` +
+            `${(err as Error).message}\n\n${await whatTheAgentDid(repo)}\n\n` +
+            `${await whatIsOnScreen(agbrte.window)}`,
+        );
+      }
     } finally {
       await agbrte.close();
       await rm(repo, { recursive: true, force: true });
