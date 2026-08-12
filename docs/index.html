@@ -388,6 +388,56 @@
   </section>
 
   <section>
+    <span class="eyebrow">Staying current</span>
+    <h2>Two things go stale: the app, and what it is running</h2>
+    <p class="lead">A workbench you leave running for weeks drifts in two directions at once. The application ages, and so does the machine on the far end — which is a separate copy of the same software, on a computer you may not be sitting at. Neither updates behind your back.</p>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>The app, when you say so</h3>
+        <p>A new release is announced, not applied. The banner appears, the download happens in the background, and the restart waits for the button. Nothing interrupts a turn that is running.</p>
+      </div>
+      <div class="card">
+        <h3>The far end, from either end</h3>
+        <p>The remote host is a second copy of the software, and an old one speaks an older protocol. Each attached machine gets its own <span class="mono">Update</span> control, and the same thing is available from a terminal on either side as <span class="mono">agbrte update /srv/api</span>.</p>
+      </div>
+      <div class="card">
+        <h3>Versions negotiate rather than assume</h3>
+        <p>Host and client agree on a range — currently up to v9 — so a newer client drives an older host instead of stranding it. That is what makes updating the two ends independently a safe thing to offer.</p>
+      </div>
+      <div class="card">
+        <h3>Refused by name, again</h3>
+        <p>Three builds cannot update themselves: a checkout with nothing to replace, an unsigned macOS bundle, and a Linux build that is not an AppImage. Each says which, before the download rather than after it.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Models</span>
+    <h2>Choosing a model should not require knowing its exact tag</h2>
+    <p class="lead">Local models are the reason to own the machine in the first place, and installing one meant knowing that the thing you wanted was spelled <span class="mono">qwen2.5-coder:14b</span> and not <span class="mono">qwen2.5:14b-coder</span>. The list is a dropdown now, and the entries are checked rather than remembered.</p>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>A catalogue that was verified, not typed</h3>
+        <p>Twelve models — Llama, Qwen, Gemma, DeepSeek, gpt-oss and others — with sizes read from their published manifests. A build step re-checks every tag against the registry, so an entry that stops existing fails the build instead of failing a user.</p>
+      </div>
+      <div class="card">
+        <h3>Installed where the model will run</h3>
+        <p>The pull happens on the machine that serves the model, which for a remote host is that machine's disk and bandwidth, not yours. Progress is summed across layers, because a model is several and the last one is often the smallest.</p>
+      </div>
+      <div class="card">
+        <h3>Only where installing is a real operation</h3>
+        <p>Ollama can fetch a model while running. vLLM, llama.cpp and NIM take theirs at launch, so there the button is absent and a sentence explains it — an install that 404s teaches you to look for the bug in the wrong place.</p>
+      </div>
+      <div class="card">
+        <h3>Still nothing bundled</h3>
+        <p>No runtime ships inside the app. It detects what is already serving models and offers to use it, which is the same rule as the browser, the CLIs and the icons.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
     <span class="eyebrow">In use</span>
     <h2>What it looks like</h2>
     <p class="lead">One accent colour on a neutral ground, spent only where a person has to act. On the dashboard that mark appears exactly once — on the heading of the group that needs them.</p>
@@ -456,7 +506,7 @@
   </section>
 
   <footer>
-    <p>Screenshots are captured from the running application by its own end-to-end suite, at the viewports shown. Every number in this page is read from the source rather than recalled: tree limits from <span class="mono">TREE_LIMITS</span>, the transport rows from <span class="mono">transports.ts</span>, the protocol version from <span class="mono">sessionProtocol.ts</span> (currently v7, negotiated as a range so a newer client can drive an older host rather than stranding it).</p>
+    <p>Screenshots are captured from the running application by its own end-to-end suite, at the viewports shown. Every number in this page is read from the source rather than recalled: tree limits from <span class="mono">TREE_LIMITS</span>, the transport rows from <span class="mono">transports.ts</span>, the protocol version from <span class="mono">sessionProtocol.ts</span> (currently v9, negotiated as a range so a newer client can drive an older host rather than stranding it), the model list from a catalogue whose every tag was verified against the registry.</p>
     <p><a href="https://github.com/YounghyeonPark/agbrte">github.com/YounghyeonPark/agbrte</a> — Apache-2.0</p>
   </footer>
 
