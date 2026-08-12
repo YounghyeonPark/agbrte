@@ -72,6 +72,7 @@ function fakeUpdater(): UpdaterLike & {
   fire: (event: string, payload?: unknown) => void;
   checks: number;
   installs: number;
+  installArgs: unknown[];
 } {
   const listeners = new Map<string, (payload?: unknown) => void>();
   return {
@@ -83,8 +84,10 @@ function fakeUpdater(): UpdaterLike & {
       this.checks += 1;
       return Promise.resolve(null);
     },
-    quitAndInstall(this: { installs: number }) {
+    installArgs: [] as unknown[],
+    quitAndInstall(this: { installs: number; installArgs: unknown[] }, ...args: unknown[]) {
       this.installs += 1;
+      this.installArgs = args;
     },
     on(event: string, listener: (...args: never[]) => void) {
       listeners.set(event, listener as (payload?: unknown) => void);
@@ -123,6 +126,37 @@ describe('what the app does about an update', () => {
     // Rounded, because a card showing `41.60000000000001%` is a bug report.
     expect(seen[2]).toEqual({ phase: 'downloading', percent: 42 });
     expect(seen[3]).toEqual({ phase: 'ready', version: '0.0.4' });
+  });
+
+  /**
+   * Pressing the button updates; it does not open a form.
+   *
+   * `isSilent` was `false`, and with an assisted installer
+   * (`nsis.oneClick: false`) that meant "Restart to update" launched a setup
+   * wizard asking where to install an application that is already installed.
+   * The control promised a restart and produced a questionnaire — the kind of
+   * thing that only shows up when someone runs the built app rather than
+   * reading the call.
+   *
+   * Asserted on the arguments because there is nothing else to assert on: the
+   * behaviour lives entirely in what is passed to electron-updater, and no test
+   * that stays offline can watch an installer run.
+   */
+  it('installs silently and comes back, rather than opening an installer', () => {
+    const updater = fakeUpdater();
+    const handle = startUpdates({
+      build,
+      updater,
+      onState: () => undefined,
+      setInterval: vi.fn() as never,
+    });
+
+    handle.installNow();
+
+    expect(updater.installs).toBe(1);
+    const [isSilent, isForceRunAfter] = updater.installArgs;
+    expect(isSilent, 'a silent install is the difference between a restart and a wizard').toBe(true);
+    expect(isForceRunAfter, 'the app must come back by itself').toBe(true);
   });
 
   it('survives an error instead of raising one', () => {

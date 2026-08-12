@@ -58,9 +58,24 @@ win:
       arch: [x64, arm64]
 
 nsis:
-  oneClick: false
+  # One-click, because the alternative cannot update.
+  #
+  # This was `oneClick: false` with `allowToChangeInstallationDirectory: true`,
+  # which is the friendlier first install: a wizard, and a choice of directory.
+  # It also makes automatic updating impossible, and not by being awkward —
+  # **an assisted installer accepts `/S`, exits 0, and installs nothing.** That
+  # was measured rather than read: pressing "Restart to update" quit the app,
+  # the installer ran silently, returned success, and nothing anywhere had
+  # changed. A failure that reports success is the worst shape available, and it
+  # is the shape `oneClick: false` gives an updater.
+  #
+  # So the trade is a directory choice at first install against updates that
+  # work at all, which is not a close call — and it is the same call VS Code and
+  # every Squirrel-based app make. `perMachine: false` keeps the install under
+  # the user's own profile, so neither the first install nor any update needs
+  # elevation.
+  oneClick: true
   perMachine: false
-  allowToChangeInstallationDirectory: true
   # Sessions live in the workspace (§5), not in the install, so removing the app
   # removes the app. Deleting transcripts on uninstall would be the one
   # irreversible thing this program does.

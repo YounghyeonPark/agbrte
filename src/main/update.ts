@@ -202,7 +202,25 @@ export function startUpdates(opts: UpdateOptions): {
   return {
     state: () => state,
     check,
-    installNow: () => updater.quitAndInstall(false, true),
+    /*
+     * Silent, and relaunch afterwards.
+     *
+     * The first argument is `isSilent`, and it was `false` — which for this
+     * project's assisted installer (`nsis.oneClick: false`) meant pressing
+     * "Restart to update" opened a setup wizard asking where to install an
+     * application that is already installed. The label promised a restart and
+     * delivered a form.
+     *
+     * `true` runs the same installer with `/S`. No UAC prompt goes with it
+     * because `nsis.perMachine: false` puts the install under the user's own
+     * profile, so nothing here needs a privilege the app does not have.
+     *
+     * The assisted installer is kept for the *first* install, where choosing a
+     * directory is a reasonable thing to be asked once. An update is not that
+     * moment: the answer was given already, and asking again is a form standing
+     * between a person and the thing they pressed a button for.
+     */
+    installNow: () => updater.quitAndInstall(true, true),
     stop: () => clearInterval(timer as ReturnType<typeof setInterval>),
   };
 }
