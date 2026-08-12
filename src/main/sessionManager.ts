@@ -34,6 +34,7 @@ import {
   type AgentSpec,
   type AttentionReason,
   type ChildRef,
+  type CompactedHistory,
   type Annotation,
   type ImageBlock,
   type EventOrigin,
@@ -61,7 +62,7 @@ import { SessionStore, type SessionMeta } from './store/sessionStore.js';
 import { workspaceLayout } from './store/layout.js';
 import { addCost } from '@shared/cost.js';
 import { ensureBlob } from './store/blobTransfer.js';
-import { rehydrate } from './store/rehydrate.js';
+import { compactionSizes, rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
 import { TurnSlots } from './concurrency.js';
@@ -1109,7 +1110,42 @@ export class SessionManager extends EventEmitter {
       peers: live.session.agents.map((a) => a.agentId),
       capture: (o) => this.captureUrl(live, o),
       proposeSplit: (proposal) => void this.proposeSplit(live.session.sessionId, proposal, spec.agentId),
+      compact: (budgetTokens) => this.compact(live, spec, budgetTokens),
     };
+  }
+
+  /**
+   * Compact one agent's history, on that agent's own initiative (§3.7).
+   *
+   * The **same `rehydrate()`** the resume path uses, which was the point of the
+   * design: the function that reconstructs context after a workspace moves is
+   * the function that compacts a running session, so the durable path is
+   * exercised every day rather than only in a rare recovery.
+   *
+   * `null` for an empty result rather than an empty history. A session whose log
+   * holds nothing worth carrying is ordinary, and handing back zero turns would
+   * erase a conversation to save a window that was not full.
+   *
+   * The event is written here, not by the caller, for the reason every other
+   * event is: the store is the owner's. A transcript that shows a context
+   * shrinking with no line saying so reads as a model that forgot things.
+   */
+  private async compact(
+    live: LiveSession,
+    spec: AgentSpec,
+    budgetTokens: number,
+  ): Promise<CompactedHistory | null> {
+    const result = await rehydrate(live.store, { budgetTokens });
+    if (result.isEmpty) return null;
+
+    const { beforeTokens, afterTokens } = await compactionSizes(live.store, result);
+    await live.store.append(
+      { type: 'agent.compacted', beforeTokens, afterTokens },
+      { agentId: spec.agentId, origin: this.originFor(spec) },
+    );
+    live.lastEventAt = this.now().getTime();
+
+    return { turns: result.seed, beforeTokens, afterTokens };
   }
 
   /**

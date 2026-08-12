@@ -32,7 +32,17 @@ export type EchoStep =
   | { kind: 'usage'; inputTokens: number; outputTokens: number; cost?: number | undefined }
   | { kind: 'stop'; stop: StopReason }
   /** Ends the stream with no `stopped` event, as a dropped subprocess would. */
-  | { kind: 'die' };
+  | { kind: 'die' }
+  /**
+   * Asks the owner to compact, as a real runtime does when its window fills.
+   *
+   * Here so the *owner's* half of §3.7 is drivable without a model: the
+   * `AgbrteHarness` decides when to compact from a token count no scripted test
+   * can produce cheaply, and that decision is tested there. What is tested
+   * through this is what the owner does when asked — rehydrate, record, hand
+   * back — which is the half that touches the log.
+   */
+  | { kind: 'compact'; budgetTokens?: number };
 
 export interface EchoConfig {
   id?: string;
@@ -140,6 +150,11 @@ class EchoHandle implements AgentHandle {
       switch (step.kind) {
         case 'text':
           this.emit({ type: 'text', text: step.text });
+          break;
+
+        case 'compact':
+          // Absent on an owner that cannot compact, which must not be a crash.
+          await this.ctx.compact?.(step.budgetTokens ?? 1_000);
           break;
 
         case 'tool': {

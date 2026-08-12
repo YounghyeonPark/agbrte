@@ -237,6 +237,15 @@ export interface ProgressSignal {
   at: string;
 }
 
+/** What an owner hands back when it compacts a history (§3.7). */
+export interface CompactedHistory {
+  /** The replacement conversation, in the same shape as `seedHistory`. */
+  turns: NormalizedTurn[];
+  /** Estimated size of what was replaced, for the record. */
+  beforeTokens: number;
+  afterTokens: number;
+}
+
 export interface RuntimeContext {
   /** Rehydrated conversation when native resume is unavailable or rejected (§5.4). */
   seedHistory?: NormalizedTurn[];
@@ -257,6 +266,25 @@ export interface RuntimeContext {
    * waiting on each other is a deadlock with a token bill.
    */
   sendMessage?(message: OutboundMessage): void;
+  /**
+   * Ask the owner to compact this agent's history (§3.7, §17.18).
+   *
+   * The division is the one §17.1 arrived at the hard way: **the harness may
+   * decide, and may not own.** Only the runtime knows how full the window is —
+   * it holds the message array and the context window — and only the owner can
+   * read the log, which is what `rehydrate()` compacts from. So the runtime says
+   * when and with what budget, and the owner does it and records it.
+   *
+   * `budgetTokens` is the ceiling for the replacement, passed rather than
+   * re-derived so there is one opinion about it.
+   *
+   * Optional for the same reason `sendMessage` is: an adapter running its own
+   * loop — an installed CLI, a vendor SDK — manages its own context and has no
+   * message array to replace. Returns `null` when there was nothing to compact,
+   * which is not a failure: a session whose log is shorter than its window is
+   * the ordinary case, and the caller keeps what it has.
+   */
+  compact?(budgetTokens: number): Promise<CompactedHistory | null>;
   /**
    * Ask to split this session's scope into a child (§4.3).
    *

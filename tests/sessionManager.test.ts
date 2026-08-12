@@ -441,3 +441,43 @@ describe('SessionManager — durability', () => {
     expect(tail[0]?.seq).toBe(all.length - 1);
   });
 });
+
+/**
+ * The owner's half of compaction (DESIGN.md §3.7, §17.18).
+ *
+ * `AgbrteHarness` decides *when* — it holds the message array and the window —
+ * and that decision is tested where it lives. What is tested here is what
+ * happens when it asks: the owner rehydrates from the log it alone can read,
+ * writes the event, and hands the replacement back.
+ */
+describe('SessionManager — compaction', () => {
+  it('rehydrates from the log and records that it did', async () => {
+    const sm = manager([{ kind: 'compact' }, { kind: 'stop', stop: { kind: 'end_turn' } }]);
+    const session = await sm.createSession({ title: 's', goal: 'g' });
+    const agent = await sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    // A turn first, so the log holds something worth carrying.
+    await sm.send(session.sessionId, agent.agentId, TEXT('the first thing'));
+    await sm.send(session.sessionId, agent.agentId, TEXT('the second thing'));
+
+    const projection = await sm.projection(session.sessionId);
+    // The statistic the reducer has folded since the beginning and nothing ever
+    // produced — the event type existed, `compactionSizes()` computed its
+    // payload, and no code path wrote one.
+    expect(projection.stats.compactions, 'nothing wrote agent.compacted').toBeGreaterThan(0);
+  });
+
+  it('says nothing rather than erasing a conversation it could not summarize', async () => {
+    const sm = manager([{ kind: 'compact' }, { kind: 'stop', stop: { kind: 'end_turn' } }]);
+    const session = await sm.createSession({ title: 's', goal: 'g' });
+    const agent = await sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    // Asked on the very first turn, with a budget too small to carry anything.
+    // `null` is the honest answer; handing back zero turns would empty a history
+    // to save a window that was not full.
+    await sm.send(session.sessionId, agent.agentId, TEXT('hello'));
+
+    const projection = await sm.projection(session.sessionId);
+    expect(projection.state).toBe('awaiting_input');
+  });
+});

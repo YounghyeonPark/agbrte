@@ -28,6 +28,7 @@ import {
   type ModelEndpoint,
   type ModelProvider,
   type NormalizedToolCall,
+  type NormalizedTurn,
   type ProviderMessage,
   type RuntimeCapabilities,
   type RuntimeContext,
@@ -39,6 +40,10 @@ import {
 import { DEFAULT_TOOLS, toolByName, type ToolDefinition } from '../../tools/index.js';
 import { WorkspaceLeases } from '../../tools/leases.js';
 import { fitContent } from '../../content/fit.js';
+// The **same** estimator the budget is denominated in. A second opinion about
+// what a token is would let the harness ask for a size the owner measures
+// differently, which is a disagreement nothing would report.
+import { estimateTokens } from '../../store/rehydrate.js';
 
 export const AGBRTE_HARNESS_RUNTIME_ID = 'agbrte-harness';
 
@@ -79,6 +84,15 @@ export interface AgbrteHarnessOptions {
 }
 
 const DEFAULT_MAX_ITERATIONS = 12;
+/**
+ * Fractions of the context window: compact once this full, down to this much.
+ *
+ * The gap between them is what stops a session compacting on every turn. A high
+ * water mark alone would sit just under the line and re-summarize continuously,
+ * paying for it each time and losing a little more detail each time.
+ */
+const COMPACT_AT = 0.75;
+const COMPACT_TO = 0.5;
 /** Identical call repeated this many times means the loop is stuck, not working. */
 const NO_PROGRESS_LIMIT = 3;
 
@@ -153,11 +167,63 @@ class AgbrteHarnessHandle implements AgentHandle {
     this.leases = opts.leases ?? new WorkspaceLeases();
     // A rehydrated seed is conversation, not tool mechanics — it replays as
     // ordinary turns (§5.4).
-    for (const turn of ctx.seedHistory ?? []) {
+    this.replaceHistory(ctx.seedHistory ?? []);
+  }
+
+  /** Turns in, provider messages out. Used by the seed and by compaction. */
+  private replaceHistory(turns: readonly NormalizedTurn[]): void {
+    this.messages.length = 0;
+    for (const turn of turns) {
       if (turn.role === 'user') this.messages.push({ role: 'user', content: turn.content });
-      else if (turn.role === 'assistant') this.messages.push({ role: 'assistant', text: textOf(turn.content) });
+      else if (turn.role === 'assistant')
+        this.messages.push({ role: 'assistant', text: textOf(turn.content) });
       else this.messages.push({ role: 'system', text: textOf(turn.content) });
     }
+  }
+
+  /** Rough size of the history as it stands, in the same units as the budget. */
+  private historyTokens(): number {
+    let total = 0;
+    for (const message of this.messages) {
+      if (message.role === 'user') total += estimateTokens(textOf(message.content));
+      else if (message.role === 'assistant') total += estimateTokens(message.text ?? '');
+      else if (message.role === 'system') total += estimateTokens(message.text);
+      else total += estimateTokens(message.result);
+    }
+    return total;
+  }
+
+  /**
+   * Compact before a turn, if the window is filling (§3.7).
+   *
+   * **Between turns and never inside one.** A turn in progress holds an
+   * assistant message with tool calls and the results answering them, and every
+   * provider requires those to stay paired. `rehydrate()` returns ordinary
+   * conversation, so compacting mid-loop would replace half of a pair with prose
+   * and the next request would be rejected — a break far from its cause. Context
+   * grows across turns anyway; growing past a window inside one is a turn that
+   * has already gone wrong.
+   *
+   * Declining is normal. `compact` is absent on adapters that run their own loop
+   * and returns `null` when the log holds nothing worth carrying, and in both
+   * cases the history stands. What is *not* silent is running out: the provider
+   * refuses, `classifyError` reports `context_overflow`, and §4.1 surfaces it as
+   * needing a person.
+   */
+  private async compactIfNeeded(): Promise<void> {
+    if (this.ctx.compact === undefined) return;
+
+    const window = this.caps.contextWindow;
+    // A provider that will not say how big its window is cannot be measured
+    // against one. Guessing a number here would compact sessions that had no
+    // need to, and the cost of that is a model that forgets for no reason.
+    if (window <= 0) return;
+    if (this.historyTokens() < window * COMPACT_AT) return;
+
+    const compacted = await this.ctx.compact(Math.floor(window * COMPACT_TO));
+    if (compacted === null) return;
+
+    this.replaceHistory(compacted.turns);
   }
 
   async send(turn: UserTurn): Promise<void> {
@@ -166,6 +232,7 @@ class AgbrteHarnessHandle implements AgentHandle {
     // (§12.2). Doing it here meant a resizer that could not reach the bytes.
     this.messages.push({ role: 'user', content: turn.content });
     try {
+      await this.compactIfNeeded();
       await this.loop();
     } catch (err) {
       this.emit({ type: 'stopped', stop: classifyError(err) });

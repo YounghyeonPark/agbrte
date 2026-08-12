@@ -567,3 +567,86 @@ describe('ceilings the user set are ceilings (§3.9, §16)', () => {
     expect(stopped.stop.limit).toBe('turns');
   });
 });
+
+/**
+ * Compaction, which the design described for a long time and nothing did
+ * (DESIGN.md §3.7, §17.18).
+ *
+ * The division under test is §17.1's rule: **the harness may decide, and may not
+ * own.** Only the runtime knows how full the window is; only the owner can read
+ * the log that `rehydrate()` compacts from. So the runtime says when, the owner
+ * does it, and neither can do the other's half.
+ */
+describe('compacting a history that is filling the window', () => {
+  /** A `compact` that records the ask and returns a two-turn replacement. */
+  const owner = () => {
+    const asks: number[] = [];
+    const compact = async (budgetTokens: number) => {
+      asks.push(budgetTokens);
+      return {
+        turns: [
+          { role: 'system' as const, content: [{ type: 'text' as const, text: 'summary so far' }] },
+          { role: 'user' as const, content: [{ type: 'text' as const, text: 'the last thing' }] },
+        ],
+        beforeTokens: 30_000,
+        afterTokens: 12,
+      };
+    };
+    return { asks, compact };
+  };
+
+  /** A seed big enough to cross 75% of the stub's 32,768-token window. */
+  const hugeSeed = () => [
+    { role: 'user' as const, content: [{ type: 'text' as const, text: 'x'.repeat(120_000) }] },
+  ];
+
+  it('asks the owner when the window is filling, and sends what came back', async () => {
+    const provider = new StubProvider([{}]);
+    const { asks, compact } = owner();
+    await run(provider, { ...context(), compact, seedHistory: hugeSeed() });
+
+    expect(asks, 'the owner was never asked to compact').toHaveLength(1);
+    // Below the mark that triggered it, so the next turn does not immediately
+    // compact again — re-summarizing every turn costs a request each time and
+    // loses a little more detail each time.
+    expect(asks[0]).toBeLessThan(32_768 * 0.75);
+
+    const sent = provider.requests[0]?.messages ?? [];
+    const text = JSON.stringify(sent);
+    expect(text, 'the replacement never reached the provider').toContain('summary so far');
+    expect(text, 'the old history was kept as well as the new one').not.toContain('xxxxx');
+  });
+
+  it('leaves a short history alone', async () => {
+    const provider = new StubProvider([{}]);
+    const { asks, compact } = owner();
+    await run(provider, { ...context(), compact, seedHistory: [
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+    ] as never });
+
+    expect(asks, 'a session well under its window was compacted anyway').toHaveLength(0);
+  });
+
+  it('keeps going when the owner declines', async () => {
+    // `null` is "nothing worth carrying", which is ordinary rather than a fault:
+    // handing back zero turns would erase a conversation to save a window that
+    // was not full.
+    const provider = new StubProvider([{}]);
+    const events = await run(provider, {
+      ...context(),
+      compact: async () => null,
+      seedHistory: hugeSeed(),
+    });
+
+    expect(JSON.stringify(provider.requests[0]?.messages)).toContain('xxxxx');
+    expect(events.some((e) => e.type === 'stopped')).toBe(true);
+  });
+
+  it('does not ask an owner that cannot compact', async () => {
+    // An adapter running its own loop has no message array to replace, so the
+    // hook is absent rather than a no-op — and a missing hook must not throw.
+    const provider = new StubProvider([{}]);
+    const events = await run(provider, { ...context(), seedHistory: hugeSeed() });
+    expect(events.some((e) => e.type === 'stopped')).toBe(true);
+  });
+});
