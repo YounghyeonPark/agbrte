@@ -9,6 +9,10 @@ authors:
   - family-names: Park
     given-names: Younghyeon
     email: ypark.dev@gmail.com
+    # The full URL form, which is what the CFF schema expects and what GitHub
+    # renders as a link. A bare `0000-0002-4733-5049` validates in some tools and
+    # not others, so the unambiguous form is the one to store.
+    orcid: "https://orcid.org/0000-0002-4733-5049"
 repository-code: "https://github.com/YounghyeonPark/agbrte"
 license: Apache-2.0
 abstract: >-
