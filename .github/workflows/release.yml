@@ -200,8 +200,17 @@ jobs:
       - name: Checksums
         working-directory: artifacts
         run: |
-          rm -f *.blockmap
-          sha256sum * > SHA256SUMS
+          # Blockmaps are skipped here and **kept on disk**. This was
+          # `rm -f *.blockmap`, which removed them from the directory the release
+          # is uploaded from — so the delta metadata was built, uploaded as a CI
+          # artifact, and then deleted one step before it would have shipped.
+          # Every Windows update therefore pulled the whole ~196 MB installer,
+          # while the comment beside the upload described that as the fallback.
+          : > SHA256SUMS
+          for f in *; do
+            case "$f" in *.blockmap|SHA256SUMS) continue;; esac
+            sha256sum "$f" >> SHA256SUMS
+          done
           cat SHA256SUMS
 
       # Written with `gh` rather than a marketplace action. Creating a release
@@ -253,7 +262,7 @@ jobs:
 
           | You are on | Download |
           |---|---|
-          | Windows, either architecture | `Agbrte Setup VERSION.exe` — one installer, both |
+          | Windows, either architecture | `Agbrte-Setup-VERSION.exe` — one installer, both |
           | Windows, no installer allowed | `Agbrte-VERSION-win.zip`, or `-arm64-win.zip` |
           | macOS, Apple silicon | `Agbrte-VERSION-arm64.dmg` |
           | macOS, Intel | `Agbrte-VERSION.dmg` |

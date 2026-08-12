@@ -58,6 +58,22 @@ win:
       arch: [x64, arm64]
 
 nsis:
+  # No spaces in the filename, because `gh` uploads these rather than
+  # electron-builder.
+  #
+  # The NSIS default is `${productName} Setup ${version}.${ext}` — with spaces.
+  # electron-builder writes `latest.yml` before any upload and puts the *dashed*
+  # form in it, on the assumption that it will do the publishing and rename as it
+  # goes. This workflow publishes with `gh release create`, and GitHub replaces
+  # spaces in an asset name with **dots**. So `latest.yml` said
+  # `Agbrte-Setup-0.0.4.exe` and the release held `Agbrte.Setup.0.0.4.exe`: an
+  # installed app finds the update, announces it, and 404s fetching it. Detected
+  # and then broken is worse than never found.
+  #
+  # Naming it without spaces makes the two identical by construction rather than
+  # by both sides guessing the same transformation.
+  artifactName: ${productName}-Setup-${version}.${ext}
+
   # One-click, because the alternative cannot update.
   #
   # This was `oneClick: false` with `allowToChangeInstallationDirectory: true`,
