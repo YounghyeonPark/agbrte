@@ -38,6 +38,20 @@ import type {
 
 /** Correlates a request with its reply. Host-opaque; main mints them. */
 export type RequestId = string;
+
+/**
+ * What one endpoint answered when asked for its models.
+ *
+ * `error` rather than a rejected request, because one endpoint being
+ * unreachable is not a reason to have no answer about the others — a laptop
+ * with a local Ollama and a hosted API is the ordinary case, and the local one
+ * is down whenever the laptop is somewhere else.
+ */
+export interface EndpointModels {
+  endpointId: string;
+  models: string[];
+  error?: string;
+}
 /** Identifies one live agent handle inside the host. */
 export type HandleId = string;
 
@@ -53,6 +67,16 @@ export interface HostContext {
 
 export type HostCommand =
   | { t: 'capabilities'; id: RequestId; spec: AgentSpec }
+  /**
+   * Which models each endpoint can serve, asked now rather than at startup.
+   *
+   * The `ready` handshake advertises *endpoints*; this asks each of them what
+   * it currently has. A host learns its endpoints once and would otherwise
+   * report the same answer for as long as it runs — so a model pulled after the
+   * host started is invisible to every client until something restarts, which is
+   * the wrong shape for a list that changes by design.
+   */
+  | { t: 'models'; id: RequestId }
   | { t: 'start'; id: RequestId; handleId: HandleId; spec: AgentSpec; ctx: HostContext }
   /**
    * `token` may be null and that is **not** the same as `start`: an adapter is

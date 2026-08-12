@@ -157,6 +157,14 @@ export interface HostIdentity {
  * restriction that did not exist before — would need `MIN_CLIENT_PROTOCOL`,
  * which is the lever that does exist for shape changes.
  *
+ * ## v8 adds a command, which is the case this table was built for
+ *
+ * `models.list` asks a host what its endpoints currently serve. A host older
+ * than v8 does not have it, `supports()` says so, and the client shows the
+ * plain text field it always had rather than an empty list that looks like an
+ * answer. This is the shape the mechanism handles cleanly — unlike v6 and v7,
+ * which added *fields* and needed a paragraph each.
+ *
  * ## v7 adds a field to `welcome`, and the same reasoning holds
  *
  * `HostIdentity.bundleVersion` says which bundle a host is running. A host older
@@ -165,7 +173,7 @@ export interface HostIdentity {
  * remedy offered on a mismatch is "restart this host", so a confident guess
  * here would cost somebody their running turn, and silence is the safe value.
  */
-export const SESSION_PROTOCOL_VERSION = 7;
+export const SESSION_PROTOCOL_VERSION = 8;
 
 /**
  * The oldest client a host will serve.
@@ -196,6 +204,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'template.list': 5,
   'template.apply': 5,
   'template.delete': 5,
+  'models.list': 8,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -246,6 +255,19 @@ export type SessionCommand =
     }
   | { t: 'template.list'; id: RequestId }
   | { t: 'template.apply'; id: RequestId; templateId: string; title?: string }
+  /**
+   * What each endpoint on this host can serve, right now (§3.8).
+   *
+   * A command rather than a field on `welcome`, because the answer changes while
+   * the host runs — `ollama pull` is something a person does *during* a session
+   * and expects to see the result of. The handshake reports endpoints, which are
+   * configuration; this reports their contents, which are not.
+   *
+   * A real command, so `COMMAND_SINCE` covers it and an older host says "cannot
+   * do that" instead of the client inventing an empty list and showing it as
+   * fact.
+   */
+  | { t: 'models.list'; id: RequestId }
   | { t: 'template.delete'; id: RequestId; templateId: string }
   | { t: 'preview.ports'; id: RequestId }
   /**

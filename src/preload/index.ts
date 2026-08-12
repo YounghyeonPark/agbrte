@@ -60,6 +60,7 @@ const api: AgbrteApi = {
     addRemote: (alias: string, workspaceRoot: string) =>
       ipcRenderer.invoke(CH.hostsAddRemote, alias, workspaceRoot),
     update: (instanceId: string) => ipcRenderer.invoke(CH.hostsUpdate, instanceId),
+    models: (instanceId: string) => ipcRenderer.invoke(CH.hostsModels, instanceId),
   },
   update: {
     state: () => ipcRenderer.invoke(CH.updateState),

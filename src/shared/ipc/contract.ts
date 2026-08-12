@@ -307,6 +307,14 @@ export type UpdateState =
   | { phase: 'ready'; version: string }
   | { phase: 'failed'; reason: string };
 
+/** What one endpoint answered when asked for its models. */
+export interface EndpointModelsDto {
+  endpointId: string;
+  models: string[];
+  /** Set when that endpoint could not be reached. The others still answered. */
+  error?: string;
+}
+
 export interface AgbrteApi {
   hosts: {
     /** Every attached host. Several may be attached at once (§8). */
@@ -334,6 +342,15 @@ export interface AgbrteApi {
      * it: they are durable in the event log (§5.4) and resume from there.
      */
     update(instanceId: string): Promise<HostInfo>;
+    /**
+     * What each endpoint on this host can serve, asked now (§3.8).
+     *
+     * Refreshable rather than reported once, because the list changes while the
+     * host runs: pulling a model is something a person does mid-session and
+     * expects to see. Rejects on an older host rather than returning `[]`,
+     * since an empty list is indistinguishable from "no models here".
+     */
+    models(instanceId: string): Promise<EndpointModelsDto[]>;
     /**
      * Ask a host to exit. It is allowed to refuse.
      *
@@ -659,6 +676,7 @@ export const CH = {
   hostsRemove: 'agbrte:hosts.remove',
   hostsShutdown: 'agbrte:hosts.shutdown',
   hostsUpdate: 'agbrte:hosts.update',
+  hostsModels: 'agbrte:hosts.models',
   updateState: 'agbrte:update.state',
   updateInstall: 'agbrte:update.install',
   hostsRuntimes: 'agbrte:hosts.runtimes',

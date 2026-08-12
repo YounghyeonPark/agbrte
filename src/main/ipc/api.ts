@@ -311,6 +311,7 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
 
   handle(CH.hostsShutdown, (instanceId: string) => fleet.shutdownHost(instanceId as InstanceId));
   handle(CH.hostsUpdate, (instanceId: string) => fleet.updateHost(instanceId as InstanceId));
+  handle(CH.hostsModels, (instanceId: string) => fleet.models(instanceId as InstanceId));
 
   handle(CH.updateState, () =>
     Promise.resolve(

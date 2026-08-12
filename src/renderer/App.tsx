@@ -37,7 +37,7 @@ import { RuntimeSelect } from './RuntimeSelect.js';
 import { useAgbrte } from './store.js';
 import { Composer, EventRow, PermissionPrompt, SplitPrompt, Transcript, summarize } from './Transcript.js';
 import { Preview } from './Preview.js';
-import type { SessionTemplateDto } from '@shared/ipc/contract.js';
+import type { EndpointModelsDto, SessionTemplateDto } from '@shared/ipc/contract.js';
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
 import type { MatrixCell, Session, SessionState } from '../shared/types/index.js';
 import type { UpdateState } from '../shared/ipc/contract.js';
@@ -426,6 +426,10 @@ export function App(): JSX.Element {
                 runtimes={runtimesHere}
                 conformance={conformanceHere}
                 endpoints={hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []}
+                // Bound to the open session's host: "which models" is a question
+                // about a machine, and the picker does not know which one it is
+                // looking at.
+                listModels={() => window.agbrte.hosts.models(active.instanceId)}
                 onAdd={store.addAgent}
                 busy={busy}
               />
@@ -802,6 +806,7 @@ function AgentPicker({
   runtimes,
   conformance,
   endpoints,
+  listModels,
   onAdd,
   busy,
 }: {
@@ -809,12 +814,54 @@ function AgentPicker({
   /** The support matrix for this host, so the choice is informed (§3.13). */
   conformance: MatrixCell[];
   endpoints: HostInfo['endpoints'];
+  /** Asks the host this picker belongs to what its endpoints serve now (§3.8). */
+  listModels: () => Promise<EndpointModelsDto[]>;
   onAdd: (runtimeId: string, modelId: string | null, endpointId?: string) => Promise<void>;
   busy: boolean;
 }): JSX.Element {
   const [runtimeId, setRuntimeId] = useState('');
   const [modelId, setModelId] = useState('qwen2.5:7b');
   const [endpointId, setEndpointId] = useState('');
+  /*
+   * What the host says it can serve, asked rather than assumed.
+   *
+   * Empty until somebody presses refresh. Not fetched on mount: the question
+   * costs a round trip to every endpoint the host has — a hosted API over a slow
+   * link included — and opening the roster is not the same as being about to add
+   * an agent. It is a request, so it gets a button.
+   */
+  const [knownModels, setKnownModels] = useState<string[]>([]);
+  const [modelsNote, setModelsNote] = useState<string | null>(null);
+  const [modelsBusy, setModelsBusy] = useState(false);
+
+  /**
+   * Failures are reported in place rather than raised.
+   *
+   * An endpoint being unreachable is ordinary — a laptop away from the machine
+   * running its Ollama — the other endpoints still answered, and the field is
+   * still usable by typing. A host too old to answer is a *different* sentence
+   * from "no models", and has to read as one.
+   */
+  const refreshModels = async (): Promise<void> => {
+    setModelsBusy(true);
+    try {
+      const answers = await listModels();
+      const found = [...new Set(answers.flatMap((a) => a.models))].sort();
+      setKnownModels(found);
+      const failed = answers.filter((a) => a.error !== undefined);
+      setModelsNote(
+        failed.length > 0
+          ? `${found.length} found. ${failed.map((f) => `${f.endpointId}: ${f.error}`).join('; ')}`
+          : found.length > 0
+            ? `${found.length} reachable from that host.`
+            : 'That host reported no models. Type one if you know it is there.',
+      );
+    } catch (err) {
+      setModelsNote(err instanceof Error ? err.message : String(err));
+    } finally {
+      setModelsBusy(false);
+    }
+  };
   const endpoint = endpoints.find((e) => e.id === endpointId) ?? endpoints[0];
   const selected = useMemo(() => runtimes.find((r) => r.id === runtimeId), [runtimes, runtimeId]);
 
@@ -857,14 +904,45 @@ function AgentPicker({
           {selected !== undefined && selected.model !== 'none' && (
             <label className="text-muted grid gap-1 text-xs">
               Model
-              <input
-                className="field"
-                data-testid="model-id"
-                value={modelId}
-                onChange={(e) => setModelId(e.target.value)}
-              />
+              {/*
+                A list *and* a field, not a dropdown.
+
+                The list is what the host answers when asked — the models its
+                endpoints actually serve right now, which is the only authority
+                on the question. But `/v1/models` is optional in the
+                OpenAI-compatible shape and some servers do not implement it, so
+                a closed dropdown would make those endpoints unusable through a
+                UI that had simply failed to ask. A `datalist` offers the real
+                answer without taking away the ability to type one it did not
+                give.
+              */}
+              <div className="flex gap-2">
+                <input
+                  className="field"
+                  data-testid="model-id"
+                  list="known-models"
+                  value={modelId}
+                  onChange={(e) => setModelId(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn-quiet shrink-0 text-xs"
+                  data-testid="refresh-models"
+                  title="Ask this host what its endpoints serve now"
+                  disabled={modelsBusy}
+                  onClick={() => void refreshModels()}
+                >
+                  {modelsBusy ? '…' : 'Refresh'}
+                </button>
+              </div>
+              <datalist id="known-models">
+                {knownModels.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
               <small className="text-muted text-[11px]">
-                An Ollama or other OpenAI-compatible model reachable from that host.
+                {modelsNote ??
+                  'An Ollama or other OpenAI-compatible model reachable from that host.'}
               </small>
               {endpoints.length > 1 && (
                 <label className="text-muted mt-1 grid gap-1 text-xs">

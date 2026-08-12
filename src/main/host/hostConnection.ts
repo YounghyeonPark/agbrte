@@ -26,6 +26,7 @@ import {
   type SessionMessage,
 } from '@shared/host/sessionProtocol.js';
 
+import type { EndpointModels } from '@shared/host/protocol.js';
 import type {
   AccessRole,
   AgentId,
@@ -352,6 +353,19 @@ export class HostConnection extends EventEmitter {
   async templates(): Promise<SessionTemplate[]> {
     this.require('template.list');
     return this.call<SessionTemplate[]>({ t: 'template.list' });
+  }
+
+  /**
+   * What each endpoint on this host currently serves (§3.8).
+   *
+   * `require` rather than a silent empty list: a host too old to answer must
+   * read as *cannot tell you*, because an empty array shown in a picker is
+   * indistinguishable from "this machine has no models" and is a lie about a
+   * machine that may have several.
+   */
+  async models(): Promise<EndpointModels[]> {
+    this.require('models.list');
+    return this.call<EndpointModels[]>({ t: 'models.list' });
   }
 
   async saveTemplate(

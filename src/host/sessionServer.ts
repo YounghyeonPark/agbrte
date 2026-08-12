@@ -26,6 +26,7 @@
  */
 
 import { listListeningPorts, type ListeningPort } from '@main/preview/ports.js';
+import type { EndpointModels } from '@shared/host/protocol.js';
 import type { PreviewServers } from '@main/preview/servers.js';
 import {
   deleteTemplate,
@@ -75,6 +76,16 @@ export interface SessionHostOptions {
    * authorization on somewhere else.
    */
   grantRole?: (requested: AccessRole, client: string) => { role: AccessRole; actor: Actor };
+  /**
+   * What each endpoint currently serves, asked live (§3.8).
+   *
+   * A callback because the answer lives in the *agent* host, which this server
+   * reaches only through the supervisor that `hostMain` owns. Absent means the
+   * question cannot be answered here — `agbrte serve` with no agent host, for
+   * instance — and the command says so rather than returning an empty list,
+   * which a client would show as "this machine has no models".
+   */
+  models?: () => Promise<EndpointModels[]>;
   /**
    * Called whenever this server stops serving, for any reason.
    *
@@ -429,6 +440,17 @@ export class SessionHostServer {
 
         case 'runtime.capabilities':
           return probeCapabilities(manager, this.opts.identity, command.runtimeId);
+
+        case 'models.list': {
+          // A read: asking a server what it has changes nothing about the work.
+          const ask = this.opts.models;
+          if (ask === undefined) {
+            throw new Error(
+              'this host cannot list models — it is running without an agent host',
+            );
+          }
+          return ask();
+        }
 
         case 'inbox.list':
           return manager.inbox(command.limit);

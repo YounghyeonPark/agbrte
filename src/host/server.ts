@@ -20,6 +20,7 @@ import type {
   RuntimeContext,
 } from '@shared/types/index.js';
 import type {
+  EndpointModels,
   HandleId,
   HostCommand,
   HostSideChannel,
@@ -48,6 +49,16 @@ export class AgentHostServer {
     private readonly registry: RuntimeRegistry,
     /** Advertised so a client can offer them. Secrets are already stripped. */
     endpoints: PublicEndpoint[] = [],
+    /**
+     * Asks each endpoint what models it has, now.
+     *
+     * Injected because answering needs the *resolved* endpoint — the one
+     * carrying a credential — and this server is deliberately given only the
+     * public ones. The closure is built in `entry.ts`, which is the single place
+     * that holds both the provider and the endpoint registry, and nothing here
+     * gains the ability to read a key.
+     */
+    private readonly listModels?: () => Promise<EndpointModels[]>,
   ) {
     channel.onMessage((command) => void this.dispatch(command));
     channel.onClose(() => this.shutdown());
@@ -64,6 +75,10 @@ export class AgentHostServer {
         await this.reply(command.id, () =>
           this.registry.get(command.spec.runtimeId).capabilities(command.spec),
         );
+        return;
+
+      case 'models':
+        await this.reply(command.id, async () => (await this.listModels?.()) ?? []);
         return;
 
       case 'start':

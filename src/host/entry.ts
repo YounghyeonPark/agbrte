@@ -21,6 +21,7 @@
 import type { HostMessage, HostCommand, HostSideChannel } from '@shared/host/protocol.js';
 import { AgentHostServer } from './server.js';
 import { loadEndpoints, type EndpointRegistry } from './endpoints.js';
+import type { EndpointModels } from '@shared/host/protocol.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import {
   AgbrteHarnessRuntime,
@@ -208,4 +209,36 @@ process.on('unhandledRejection', (reason) => {
 // stop the host rather than surface as a turn that quietly went to the wrong
 // place. The failure reaches the app as `unavailableReason` on the handshake.
 const endpoints = await loadEndpoints();
-new AgentHostServer(channel, await buildHostRegistry(endpoints), endpoints.list());
+
+/*
+ * Ask every endpoint what models it has, on demand.
+ *
+ * Built here because this is the one scope holding both the provider and the
+ * *resolved* endpoints — the ones carrying credentials. The server is given
+ * this closure rather than either of those, so nothing downstream gains the
+ * ability to read a key while gaining the ability to ask the question.
+ *
+ * Each endpoint is asked independently and a failure is returned rather than
+ * thrown: a machine with a local Ollama and a hosted API is the ordinary case,
+ * and the local one is unreachable whenever the laptop is elsewhere. One
+ * endpoint being down is not a reason to have no answer about the others.
+ */
+const modelLister = async (): Promise<EndpointModels[]> => {
+  const provider = new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) });
+  return Promise.all(
+    endpoints.list().map(async ({ id }): Promise<EndpointModels> => {
+      try {
+        const found = await provider.listModels(endpoints.resolve(id));
+        return { endpointId: id, models: found.map((m) => m.modelId) };
+      } catch (err) {
+        return {
+          endpointId: id,
+          models: [],
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    }),
+  );
+};
+
+new AgentHostServer(channel, await buildHostRegistry(endpoints), endpoints.list(), modelLister);

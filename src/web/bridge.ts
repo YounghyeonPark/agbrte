@@ -117,6 +117,7 @@ const api: AgbrteApi = {
     runtimes: call(CH.hostsRuntimes),
     conformance: call(CH.hostsConformance),
     update: call(CH.hostsUpdate),
+    models: call(CH.hostsModels),
   },
 
   /*

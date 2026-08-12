@@ -227,6 +227,8 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       ...(unavailableReason !== undefined ? { unavailableReason } : {}),
       ...(bundleVersion === null ? {} : { bundleVersion }),
     },
+    // Live, not from the handshake: `ollama pull` happens while this runs.
+    models: () => supervisor.models(),
     grantRole: (requested, client) => ({
       role: decideRole(accessPolicy, requested, client, identityOf.ceiling),
       actor: identityOf.actor,

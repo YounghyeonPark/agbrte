@@ -27,6 +27,7 @@ import type {
 import type { MainSideChannel } from '@shared/host/protocol.js';
 import type { ModelNeed } from '../runtime/registry.js';
 import type { HostAdvertisement } from './hostRuntime.js';
+import type { EndpointModels } from '@shared/host/protocol.js';
 import { HostBackedRuntime, HostClient } from './hostRuntime.js';
 
 export interface HostSupervisorOptions {
@@ -86,6 +87,21 @@ export class HostSupervisor {
   /** Models the running host can reach, credentials already stripped. */
   async endpoints(): Promise<HostAdvertisement['endpoints']> {
     return (await this.current().ready).endpoints;
+  }
+
+  /**
+   * Which models each endpoint has, asked now.
+   *
+   * Deliberately not derived from the handshake the way `endpoints()` is. The
+   * set of endpoints is configuration and changes when a file changes; the set
+   * of *models* changes when somebody runs `ollama pull`, which is a thing they
+   * do while the host is running and expect to see the result of.
+   */
+  async models(): Promise<EndpointModels[]> {
+    const client = this.current();
+    await client.ready;
+    const value = await client.request({ t: 'models', id: client.mintId() });
+    return (value ?? []) as EndpointModels[];
   }
 
   get restartCount(): number {

@@ -29,6 +29,7 @@ import { basename } from 'node:path';
 
 import { byAttentionThenRecency, describeTarget, sameTarget } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
+import type { EndpointModels } from '@shared/host/protocol.js';
 import { requireTransport } from './host/transports.js';
 import type { SearchHit } from './store/searchSessions.js';
 import type { ListeningPort } from './preview/ports.js';
@@ -627,6 +628,19 @@ export class Fleet extends EventEmitter {
    * person did those on purpose, and swallowing their failure would leave them
    * looking at a list that never gains a row.
    */
+  /**
+   * Ask a host what models it can reach, now.
+   *
+   * Errors are not swallowed here, unlike `templates()`. That one answers "what
+   * can I show in a list" and an empty sidebar is a fine degradation; this one
+   * is asked because somebody pressed refresh, and telling them "no models"
+   * when the truth is "the endpoint refused" would send them to fix the wrong
+   * thing.
+   */
+  async models(instanceId: InstanceId): Promise<EndpointModels[]> {
+    return this.host(instanceId).connection.models();
+  }
+
   async templates(instanceId: InstanceId): Promise<SessionTemplate[]> {
     const entry = this.host(instanceId);
     if (!entry.connection.supports('template.list')) return [];
