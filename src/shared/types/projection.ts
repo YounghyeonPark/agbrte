@@ -72,6 +72,17 @@ export interface SessionProjection {
   agents: ProjectedAgent[];
   /** Highest seq folded in. The resume point for an incremental fold. */
   lastSeq: number;
+  /**
+   * Ids of the events folded *at* `lastSeq` — normally one.
+   *
+   * More than one means a log written while `EventLog` allocated `seq` across an
+   * await and handed the same number to two appends (§5.1e). Those logs exist,
+   * and they are replayed on every load, so the fold has to answer "have we
+   * folded this already?" by identity. Answering it by position dropped the
+   * second event every time, permanently — a log holding a permission decision
+   * the projection did not have is the exact failure §13 exists to prevent.
+   */
+  lastSeqIds: string[];
   lastActivityAt: string | null;
   checklist: ChecklistItem[];
   artifacts: ArtifactRef[];
@@ -108,6 +119,7 @@ export function emptyProjection(sessionId: SessionId): SessionProjection {
     state: 'draft',
     agents: [],
     lastSeq: 0,
+    lastSeqIds: [],
     lastActivityAt: null,
     checklist: [],
     artifacts: [],

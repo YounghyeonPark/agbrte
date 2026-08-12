@@ -28,7 +28,7 @@ import { BlobStore } from './blobs.js';
 import { PathCodec } from './pathCodec.js';
 import { PRIVATE_DIR_MODE, sessionLayout, type SessionLayout } from './layout.js';
 import { readLatestCheckpoint, writeCheckpoint } from './checkpoints.js';
-import { reduceEvents } from './reduce.js';
+import { isAlreadyFolded, reduceEvents } from './reduce.js';
 
 /** Small enough that a crash loses little replay work, large enough to be cheap. */
 export const DEFAULT_CHECKPOINT_INTERVAL = 200;
@@ -163,15 +163,23 @@ export class SessionStore {
     const base = checkpoint?.projection ?? emptyProjection(this.sessionId);
     const { events, skipped } = await this.log.readAll();
 
-    // Replay from the checkpoint's seq. `reduceEvents` also skips already-folded
-    // events by seq, so an off-by-one here cannot double-count.
-    const tail = events.filter((e) => e.seq > base.lastSeq);
+    // Replay from the checkpoint's seq. `reduceEvents` skips anything already
+    // folded — by id at the boundary, not by seq (§5.1e) — so an off-by-one here
+    // cannot double-count.
+    // `>=`, so events sharing the checkpoint's own seq still reach the fold —
+    // it now tells a repeat from a collision by id, which `>` could not (§5.1e).
+    const tail = events.filter((e) => e.seq >= base.lastSeq);
+    // What the fold will actually take, which is what `replayed` claims. The
+    // `>=` above deliberately hands it the checkpoint's own boundary events so
+    // it can tell a repeat from a collision; counting them as replayed would
+    // report work that did not happen.
+    const folded = tail.filter((e) => !isAlreadyFolded(base, e)).length;
     const projection = reduceEvents(this.sessionId, tail, base, { skippedLines: skipped });
 
     return {
       projection,
       fromCheckpointSeq: checkpoint?.seq ?? null,
-      replayed: tail.length,
+      replayed: folded,
     };
   }
 

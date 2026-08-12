@@ -37,6 +37,18 @@ export interface ReduceOptions {
   skippedLines?: number;
 }
 
+/**
+ * Whether `ev` is already folded into `p`.
+ *
+ * One definition, used by the fold and by the caller that reports how much it
+ * replayed. Keeping the rule in two places is how a loader ends up claiming it
+ * replayed an event it then skipped.
+ */
+export function isAlreadyFolded(p: SessionProjection, ev: AgbrteEvent): boolean {
+  if (ev.seq < p.lastSeq) return true;
+  return ev.seq === p.lastSeq && p.lastSeqIds.includes(ev.id);
+}
+
 export function reduceEvents(
   sessionId: SessionId,
   events: readonly AgbrteEvent[],
@@ -50,10 +62,25 @@ export function reduceEvents(
   if (opts.skippedLines !== undefined) p.skippedLines += opts.skippedLines;
 
   for (const ev of events) {
-    // Idempotent replay: an event already folded in is skipped, so overlapping
-    // a checkpoint with a tail read cannot double-count.
-    if (ev.seq <= p.lastSeq) continue;
-    p.lastSeq = ev.seq;
+    /*
+     * Idempotent replay: an event already folded in is skipped, so overlapping
+     * a checkpoint with a tail read cannot double-count.
+     *
+     * By identity at the boundary, not by position. This was `ev.seq <=
+     * p.lastSeq`, which is the same question asked the wrong way: two events
+     * sharing a seq — which logs written before §5.1e's fix really do contain —
+     * meant the second was skipped as "already folded" on every load, for good.
+     * `lastSeqIds` is the handful of ids actually folded at that seq, so a
+     * repeat is recognised as a repeat and a collision is not mistaken for one.
+     */
+    if (isAlreadyFolded(p, ev)) continue;
+
+    if (ev.seq > p.lastSeq) {
+      p.lastSeq = ev.seq;
+      p.lastSeqIds = [ev.id];
+    } else {
+      p.lastSeqIds = [...p.lastSeqIds, ev.id];
+    }
     p.lastActivityAt = ev.at;
 
     switch (ev.type) {
@@ -227,6 +254,9 @@ function upsertChild(p: SessionProjection, child: SessionProjection['children'][
 function cloneProjection(p: SessionProjection): SessionProjection {
   return {
     ...p,
+    // Copied rather than shared: nothing pushes into it today, and a future
+    // edit that does must not reach back into the checkpoint it came from.
+    lastSeqIds: [...p.lastSeqIds],
     checklist: p.checklist.map((i) => ({ ...i })),
     artifacts: p.artifacts.map((a) => ({ ...a })),
     children: p.children.map((c) => ({ ...c, lastKnown: { ...c.lastKnown } })),

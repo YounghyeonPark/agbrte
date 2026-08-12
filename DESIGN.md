@@ -1129,6 +1129,10 @@ Nothing complained. The renderer dedupes by `seq` — which this section entitle
 
 Downstream, the renderer keys its dedupe on event `id` rather than `seq`. Two fetches of one event share an id; two events sharing a position is a writer bug. Keying on position made the reader *execute* that bug instead of surviving it.
 
+The same correction applies to the fold. `reduceEvents` skipped anything at or below `lastSeq` — the guard that makes replaying a checkpoint's overlap idempotent — so in a log that already contains a collision, the second event at a shared `seq` was dropped from the projection on **every load, permanently**. Not a display problem: the log recorded a permission decision and the session state did not have it. The projection now carries `lastSeqIds`, the handful of ids folded at `lastSeq`, and "have we folded this?" is answered by identity there too. Checkpoints written before this cannot answer it, so `CHECKPOINT_VERSION` is bumped and they are ignored in favour of a full replay, which is always correct.
+
+Logs written before the fix keep their duplicate numbers — the log is the record of what happened and is not rewritten — but they now replay in full.
+
 ### 5.5 Memory tiers
 
 | Tier | Lives in | Keyed by | Lifetime | Contents |

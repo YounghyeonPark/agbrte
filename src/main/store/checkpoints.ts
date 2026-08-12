@@ -20,7 +20,10 @@ import type { SessionProjection } from '@shared/types/index.js';
 import { PRIVATE_DIR_MODE, checkpointName } from './layout.js';
 
 /** Bump when the projection shape changes. Old checkpoints then self-invalidate. */
-export const CHECKPOINT_VERSION = 1;
+// 2: the projection carries `lastSeqIds`. A v1 checkpoint has no record of
+// which events sat at its `lastSeq`, so it cannot be resumed from safely; it is
+// ignored and the log is replayed in full, which is always correct.
+export const CHECKPOINT_VERSION = 2;
 
 export interface Checkpoint {
   version: number;

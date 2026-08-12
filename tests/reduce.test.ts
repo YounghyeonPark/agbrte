@@ -292,3 +292,48 @@ describe('cache tokens accumulate separately (§3.6a, §10)', () => {
     expect(p.usage.cost).toBe(0.5);
   });
 });
+
+/**
+ * A log whose seq numbers collide (DESIGN.md §5.1e).
+ *
+ * `EventLog` used to allocate `seq` across an await, so overlapping appends were
+ * issued the same number. That is fixed, but the logs written before it are on
+ * disk and are replayed every time a session loads — and the fold skipped
+ * anything at or below `lastSeq`, so the second event at a shared seq was
+ * dropped from the projection on every single load. Not a display problem: the
+ * log recorded a permission decision and the session state did not have it.
+ *
+ * The guard is there so that overlapping a checkpoint with a tail read cannot
+ * double-count. That is a question about *identity* — the same event seen twice
+ * — and answering it with position was what turned a writer's bug into
+ * permanent loss. The renderer's dedupe was changed for the same reason; leaving
+ * the reducer keyed on seq would have left the two disagreeing about what "an
+ * event we already have" means.
+ */
+describe('two events sharing a seq', () => {
+  const collided = (): AgbrteEvent[] => {
+    const events = log(
+      { type: 'user.turn', content: [{ type: 'text', text: 'go' }] },
+      { type: 'usage', inputTokens: 1, outputTokens: 1 },
+      { type: 'agent.text', text: 'done' },
+    ) as AgbrteEvent[];
+    // What the race actually produced: the third event handed the second's seq.
+    (events[2] as { seq: number }).seq = events[1]!.seq;
+    return events;
+  };
+
+  it('folds both instead of discarding the later one', () => {
+    const p = reduceEvents(SID, collided());
+    // The text arrived after a usage row that had taken its number.
+    expect(p.lastActivityAt, 'the colliding event was skipped entirely').toBe(collided()[2]!.at);
+  });
+
+  it('still refuses to fold the same event twice', () => {
+    const events = collided();
+    const once = reduceEvents(SID, events);
+    // A checkpoint at that point, replayed over the same tail — the overlap the
+    // seq guard exists for.
+    const twice = reduceEvents(SID, events, once);
+    expect(twice.usage.inputTokens, 'the overlap was counted again').toBe(once.usage.inputTokens);
+  });
+});
