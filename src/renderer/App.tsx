@@ -560,6 +560,29 @@ function HostGroup({
           >
             ■
           </button>
+          {/*
+            Shown only when the host says it is running older code.
+
+            `outdated` is three-valued and the third value is why this is a
+            condition rather than an always-present button: `undefined` means
+            *cannot be determined* — a host older than protocol v7, or one run
+            unstamped from source — and offering a restart against a guess costs
+            whoever is mid-turn on that machine. Absent is the honest rendering
+            of "no claim".
+
+            The accent, because unlike everything else in this column it is the
+            one thing here asking for a decision.
+          */}
+          {host.outdated === true && (
+            <button
+              className="btn text-accent px-2 py-1 text-xs"
+              data-testid="update-host"
+              title="Restart this host onto this build — sessions resume from their log"
+              onClick={() => void store.updateHost(host.instanceId)}
+            >
+              Update
+            </button>
+          )}
           <button
             className="btn px-2 py-1 text-xs"
             data-testid="remove-host"

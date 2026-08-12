@@ -12,7 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, rename, access } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, rename, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { connectOrSpawnHost } from '@main/host/connectOrSpawn.js';
@@ -87,6 +87,25 @@ describe('a detached host', () => {
     expect(identity.pid).not.toBe(process.pid);
     expect(processAlive(identity.pid)).toBe(true);
     expect(identity.workspaceRoot).toBe(resolve(root));
+
+    /**
+     * And it says which bundle it is executing (§6.3).
+     *
+     * A host keeps running the code it started with, so deploying a newer bundle
+     * changes nothing until someone restarts it — and a client comparing files
+     * on disk cannot tell whether that has happened. Only the host knows.
+     *
+     * Compared against `package.json` rather than a literal, because the value
+     * is stamped onto the bundle at build time and what matters is that the two
+     * agree. A hardcoded string here would pass happily while the build stamped
+     * something else.
+     */
+    const shipped = JSON.parse(
+      await readFile(resolve(import.meta.dirname, '../package.json'), 'utf8'),
+    ) as { version: string };
+    expect(identity.bundleVersion, 'the host cannot say which bundle it runs').toBe(
+      shipped.version,
+    );
   }, 40_000);
 
   it('records where it is so another client can find it', async () => {

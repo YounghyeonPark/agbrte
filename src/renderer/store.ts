@@ -69,6 +69,8 @@ export interface AgbrteState {
   removeHost(instanceId: string): Promise<void>;
   /** Ask a host to exit. Returns false when it refused because work is running. */
   shutdownHost(instanceId: string): Promise<boolean>;
+  /** Restart a host onto the bundle this build ships (§6.3). */
+  updateHost(instanceId: string): Promise<void>;
   createSession(instanceId: string, title: string, goal: string): Promise<void>;
   openSession(sessionId: string, instanceId?: string): Promise<void>;
   /** Deselect, so a narrow screen can show the list again. */
@@ -193,6 +195,26 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
       set({ active: null, activeId: null, events: [] });
     });
     return stopped;
+  },
+
+  /**
+   * Restart a host so a newly deployed bundle takes effect.
+   *
+   * The open session is cleared the way `shutdownHost` clears it: the host
+   * genuinely stops, and holding a transcript from a process that no longer
+   * exists shows the user a live view of nothing. It comes back on the next
+   * attach, resumed from its log — which the returned host already reflects,
+   * because `hosts.update` waits for the new one.
+   *
+   * A refusal is an error banner rather than a silence, for the same reason as
+   * stopping: the person pressed a control and it did not do the thing, and
+   * "an agent is mid-turn" is the useful half of that sentence.
+   */
+  async updateHost(instanceId) {
+    await guard(set, async () => {
+      await agbrte().hosts.update(instanceId);
+      set({ active: null, activeId: null, events: [] });
+    });
   },
 
   async removeHost(instanceId) {

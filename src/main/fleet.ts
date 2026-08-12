@@ -99,6 +99,16 @@ export interface AttachedHost {
   lineageId: LineageId;
   workspaceRoot: string;
   target: ExecutionTarget;
+  /**
+   * The bundle this host is executing, when it says (§6.3).
+   *
+   * `undefined` from a host older than protocol v7 or running unstamped from
+   * source, and that is a third answer rather than a missing one: it means *this
+   * cannot be determined*, which a client must not round down to "out of date".
+   * The remedy on a mismatch is restarting the host, and offering it against a
+   * guess costs somebody their running turn.
+   */
+  bundleVersion?: string;
   /** Runtime ids this host actually offers. Empty when its agent host failed. */
   available: string[];
   /** Models it can reach, credentials already stripped. */
@@ -231,6 +241,7 @@ export class Fleet extends EventEmitter {
       instanceId: identity.instanceId,
       lineageId: identity.lineageId,
       workspaceRoot: identity.workspaceRoot,
+      ...(identity.bundleVersion === undefined ? {} : { bundleVersion: identity.bundleVersion }),
       target,
       available: this.deps.runtimes
         .filter((r) => identity.runtimes.includes(r.id))

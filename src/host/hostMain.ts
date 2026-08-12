@@ -17,6 +17,7 @@
  * the same one the app used to hold — only the parent changed.
  */
 
+import { closeSync, openSync, readSync } from 'node:fs';
 import { fork, type ChildProcess } from 'node:child_process';
 import type { ModelNeed } from '@main/runtime/registry.js';
 import { dirname, resolve } from 'node:path';
@@ -185,6 +186,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
   // Read before listening, so a malformed policy stops the host instead of
   // being discovered by the first client it silently over-grants.
   const accessPolicy = await loadAccessPolicy(workspaceRoot);
+  const bundleVersion = readOwnBundleVersion();
   const identityOf = localIdentity();
 
   // Declared here rather than beside the listener below: the server closes over
@@ -223,6 +225,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
         ? { movedFrom: identity.movedFrom }
         : {}),
       ...(unavailableReason !== undefined ? { unavailableReason } : {}),
+      ...(bundleVersion === null ? {} : { bundleVersion }),
     },
     grantRole: (requested, client) => ({
       role: decideRole(accessPolicy, requested, client, identityOf.ceiling),
@@ -348,4 +351,47 @@ if (invokedDirectly) {
   process.on('unhandledRejection', (reason) => {
     process.stderr.write(`agbrte-host unhandled rejection: ${String(reason)}\n`);
   });
+}
+
+/**
+ * Which bundle this host is executing, from its own first line.
+ *
+ * The build stamps `// agbrte-bundle: <version>` onto `agbrteHost.js`, and
+ * `uploadHostBundle` stamps a deployed copy the same way, so every host can
+ * answer the question the remote probe was already asking about files on disk:
+ * *is this the current code?* A running host keeps executing the bundle it
+ * started with, which is precisely why deploying a newer one changes nothing
+ * until someone restarts it — and why a client needs to be told.
+ *
+ * Read from `process.argv[1]` rather than baked in at compile time. A constant
+ * would be the version of the source that was *built*, which is the same number
+ * right up until the interesting case: a bundle deployed to a remote machine by
+ * one client and inspected by another. The file itself is the artefact both are
+ * talking about.
+ *
+ * `null` for anything unstamped — a `tsx src/host/hostMain.ts` during
+ * development, or a bundle from before this existed. Absent rather than
+ * guessed: a wrong version here would make a current host look stale, and the
+ * offered remedy is to restart it.
+ */
+function readOwnBundleVersion(): string | null {
+  const self = process.argv[1];
+  if (self === undefined) return null;
+  try {
+    // Only the first line is needed and the bundle is megabytes; reading all of
+    // it to look at 30 bytes is work every host would do at every start.
+    const handle = openSync(self, 'r');
+    try {
+      const head = Buffer.alloc(256);
+      const read = readSync(handle, head, 0, head.length, 0);
+      const first = head.subarray(0, read).toString('utf8').split('\n', 1)[0] ?? '';
+      const match = /^\/\/ agbrte-bundle: (.+)$/.exec(first.trim());
+      return match?.[1]?.trim() ?? null;
+    } finally {
+      closeSync(handle);
+    }
+  } catch {
+    // Unreadable is the same answer as unstamped: nothing can be claimed.
+    return null;
+  }
 }

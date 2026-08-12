@@ -111,6 +111,15 @@ export interface IpcDeps {
    */
   updates?: () => { state(): UpdateState; installNow(): void } | undefined;
   /**
+   * The bundle version this client would deploy, for comparing hosts against.
+   *
+   * Injected because this module also backs the web bridge, where there is no
+   * Electron to ask. Absent means no comparison is made and every host reports
+   * `outdated: undefined` — which is the honest answer for a client that does
+   * not know what it ships.
+   */
+  shippingVersion?: string;
+  /**
    * The screen, when this client has one (§12.1).
    *
    * Absent in a browser, and the handlers below say so rather than throwing
@@ -199,8 +208,24 @@ function labelFor(host: AttachedHost): string {
   return target.alias ?? target.host ?? target.distro ?? basename(host.workspaceRoot);
 }
 
-function toInfo(host: AttachedHost): HostInfo {
+/**
+ * The version this client would deploy, so a host can be compared against it.
+ *
+ * Injected rather than read from `app.getVersion()` here, because this module is
+ * also what the web bridge serves and there is no Electron on that side. The two
+ * numbers being the same is the point: it is the same value `connectRemoteHost`
+ * stamps onto an uploaded bundle.
+ */
+function isOutdated(host: AttachedHost, shipping: string | undefined): boolean | undefined {
+  // Unknown at either end is unknown, not stale. See `HostInfo.outdated`.
+  if (host.bundleVersion === undefined || shipping === undefined) return undefined;
+  return host.bundleVersion !== shipping;
+}
+
+function toInfo(host: AttachedHost, shipping?: string): HostInfo {
+  const outdated = isOutdated(host, shipping);
   return {
+    ...(outdated === undefined ? {} : { outdated }),
     root: host.workspaceRoot,
     lineageId: host.lineageId,
     instanceId: host.instanceId,
@@ -235,7 +260,8 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     broadcast(PUSH.permission, request);
   const onResolved = (_instanceId: string, resolved: unknown): void =>
     broadcast(PUSH.permissionResolved, resolved);
-  const onHosts = (): void => broadcast(PUSH.hosts, fleet.hosts().map(toInfo));
+  const onHosts = (): void =>
+    broadcast(PUSH.hosts, fleet.hosts().map((h) => toInfo(h, deps.shippingVersion)));
 
   fleet.on('event', onEvent);
   fleet.on('session', onSession);
@@ -264,7 +290,7 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     });
   };
 
-  handle(CH.hostsList, () => fleet.hosts().map(toInfo));
+  handle(CH.hostsList, () => fleet.hosts().map((h) => toInfo(h, deps.shippingVersion)));
 
   handle(CH.hostsAdd, async () => {
     // A browser has no native folder picker, and inventing a path field would be
@@ -275,7 +301,10 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     }
     const chosen = await deps.pickFolder();
     if (chosen === null) return null;
-    return toInfo(await fleet.attach({ target: { kind: 'local' }, workspaceRoot: chosen }));
+    return toInfo(
+      await fleet.attach({ target: { kind: 'local' }, workspaceRoot: chosen }),
+      deps.shippingVersion,
+    );
   });
 
   handle(CH.hostsRemove, (instanceId: string) => fleet.detach(instanceId as InstanceId));
@@ -315,6 +344,7 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
         target: { kind: 'ssh', alias, host: alias, useSystemConfig: true },
         workspaceRoot,
       }),
+      deps.shippingVersion,
     ),
   );
 

@@ -105,7 +105,22 @@ builds.push({
   outfile: resolve(root, 'dist/main/agbrteHost.js'),
   format: 'esm',
   banner: {
-    js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",
+    /*
+     * The version stamp goes on here, not only on upload.
+     *
+     * `uploadHostBundle` has always prepended `// agbrte-bundle: <version>` so a
+     * remote probe could tell whether the deployed file is current. A local host
+     * is spawned straight from this file and was never stamped, so it could not
+     * answer the same question about itself — and "which of my hosts is running
+     * old code" is one question wherever the host happens to be.
+     *
+     * The first line, because that is where every existing reader looks: the
+     * POSIX probe's `sed … | head -1`, the PowerShell probe's `-First 1`, and
+     * now the host reading its own source at startup.
+     */
+    js:
+      `// agbrte-bundle: ${pkgVersion}\n` +
+      "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);",
   },
 });
 

@@ -235,6 +235,9 @@ app.whenReady().then(async () => {
     // Read at call time: the updater is built after the first window appears,
     // which is later than this. See `IpcDeps.updates`.
     updates: () => updates,
+    // The same number `connectRemoteHost` stamps onto a bundle it deploys, so
+    // a host reporting a different one is reporting older code.
+    shippingVersion: app.getVersion(),
   });
 
   for (const root of roots) {

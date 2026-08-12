@@ -80,6 +80,19 @@ export interface HostIdentity {
    * derived from a path — so if the host does not say so, nothing can.
    */
   movedFrom?: string;
+  /**
+   * The bundle this host is executing (§6.3).
+   *
+   * Absent when the file carries no stamp — a development run from source, or a
+   * host deployed before v7. Absent rather than guessed, because the remedy a
+   * client offers on a mismatch is *restart this host*, and offering that
+   * against a wrong number costs somebody their running turn.
+   *
+   * A host keeps executing the bundle it started with, so a client that has
+   * deployed a newer one cannot tell from the filesystem whether it took effect.
+   * Only the host knows, and now it says.
+   */
+  bundleVersion?: string;
   /** The host's own pid, so a client can report which process it is talking to. */
   pid: number;
   /** Protocol version, so a client knows which commands this host has. */
@@ -143,8 +156,16 @@ export interface HostIdentity {
  * the mechanism. A field whose absence changed a result — rather than dropping a
  * restriction that did not exist before — would need `MIN_CLIENT_PROTOCOL`,
  * which is the lever that does exist for shape changes.
+ *
+ * ## v7 adds a field to `welcome`, and the same reasoning holds
+ *
+ * `HostIdentity.bundleVersion` says which bundle a host is running. A host older
+ * than v7 sends none, and a client reading its absence learns exactly what is
+ * true — that it cannot tell — rather than being told a wrong number. The
+ * remedy offered on a mismatch is "restart this host", so a confident guess
+ * here would cost somebody their running turn, and silence is the safe value.
  */
-export const SESSION_PROTOCOL_VERSION = 6;
+export const SESSION_PROTOCOL_VERSION = 7;
 
 /**
  * The oldest client a host will serve.

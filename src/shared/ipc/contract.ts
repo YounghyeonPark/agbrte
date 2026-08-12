@@ -62,6 +62,16 @@ export interface HostInfo {
   /** Runtime ids this host actually offers. Empty when it could not start. */
   available: string[];
   /**
+   * Whether this host is running an older bundle than the app ships (§6.3).
+   *
+   * Three-valued on purpose, and the third value is the important one:
+   * `undefined` means *cannot be determined* — a host older than protocol v7, or
+   * one running unstamped from source. A client must not round that down to
+   * "out of date", because the offered remedy is restarting the host and that
+   * costs whoever is mid-turn on it.
+   */
+  outdated?: boolean;
+  /**
    * Models this host can reach.
    *
    * `provider` is here so the UI can say where a turn's code will go *before* it
