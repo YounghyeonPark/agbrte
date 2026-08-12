@@ -344,6 +344,36 @@ OneDrive). The log is append-only with byte-offset resume, and sync clients
 rewrite files and create conflict copies. Use a git remote for backup instead;
 the repository history is the durable copy.
 
+## Using it in research, or in a patent
+
+If this project — the code, or the design decisions written up in
+[DESIGN.md](DESIGN.md) — feeds into a paper, a thesis, a technical report or a
+patent application, a citation is appreciated. [CITATION.cff](CITATION.cff) has
+the metadata, and GitHub turns it into a **Cite this repository** button at the
+top of this page.
+
+**This is a request, not a licence term.** Apache-2.0 requires that you keep the
+copyright notice and [NOTICE](NOTICE) when you redistribute; it does not require
+that you cite anything, and nothing in this section adds a condition to the
+licence. You are free to use this without asking and without crediting a paper.
+The asking is separate from the permission, and deliberately so — a licence that
+quietly grew an academic obligation would be a worse licence.
+
+**Patents.** Two things are worth knowing rather than discovering later. This
+repository is public and its commits are dated, which makes it **prior art**:
+that is useful to you if you are establishing what was already known, and it
+limits what anyone — including me — can later claim as novel over it. And
+Apache-2.0 §3 already grants you a patent licence for what the contributors put
+into this work, with the usual retaliation clause: sue over the work infringing
+your patent and that grant ends. If you are filing something that builds on this,
+I would genuinely like to hear about it beforehand — not to object, but because
+the interesting conversation is usually upstream of the filing.
+
+**Collaboration.** If you are building on this seriously — a research group, a
+product, a thesis — an email is welcome: **ypark.dev@gmail.com**. Issues and pull
+requests are fine too. There is no obligation attached to any of this; the code
+works the same either way.
+
 ## Licence
 
 Apache License 2.0 — see [LICENSE](LICENSE). Chosen over MIT for two things it

@@ -1,0 +1,29 @@
+# Read by GitHub, which turns it into a "Cite this repository" button, and by
+# Zenodo, reference managers and citation tooling. A README section alone is a
+# sentence people have to notice; this is a file machines already look for.
+cff-version: 1.2.0
+title: "Agbrte — an agent workbench with durable, bridge-owned sessions"
+message: "If you use this software or its design in academic or patent work, please cite it."
+type: software
+authors:
+  - family-names: Park
+    given-names: Younghyeon
+    email: ypark.dev@gmail.com
+repository-code: "https://github.com/YounghyeonPark/agbrte"
+license: Apache-2.0
+abstract: >-
+  An agent workbench in which sessions belong to a per-workspace host process
+  rather than to the window watching them. The host owns the append-only event
+  log and the permission gate, so a run survives the app closing, is reachable
+  from a second machine, and can execute on a remote target over SSH while the
+  interface stays local. Includes a transport layer that refuses localities it
+  has not implemented rather than silently running work elsewhere, and a
+  capability model that distinguishes what an adapter declares from what has been
+  observed.
+keywords:
+  - agent
+  - llm
+  - durable-sessions
+  - event-sourcing
+  - remote-execution
+  - electron
