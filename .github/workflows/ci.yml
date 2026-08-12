@@ -63,6 +63,14 @@ jobs:
       - name: No unreached modules
         run: node scripts/unreached.mjs --strict
 
+      # State read before an `await` and written after it. `EventLog.append` did
+      # exactly that with `seq`, so overlapping appends were issued the same
+      # number, the renderer deduped one away, and a recorded permission decision
+      # never reached the screen. No test caught it, because nothing throws.
+      # Validated against that commit: it reports the line and exits 1.
+      - name: No state mutated across an await
+        run: node scripts/await-race.mjs --strict
+
       # CITATION.cff and .zenodo.json are generated from one source. Two
       # hand-edited copies of an author list is how a DOI ends up crediting a
       # slightly different person than the citation button.

@@ -33,6 +33,7 @@
     "check": "npm run typecheck && npm run test",
     "lint:classes": "npm run build && node scripts/inert-classes.mjs --strict",
     "lint:reach": "node scripts/unreached.mjs --strict",
+    "lint:race": "node scripts/await-race.mjs --strict",
     "citation": "node scripts/citation.mjs",
     "models": "node scripts/model-catalogue.mjs",
     "build": "node scripts/build.mjs && vite build",
