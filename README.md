@@ -1,8 +1,8 @@
 # Agbrte
 
-**Ag**ent **Br**idge **Te**rminal. Said *AG-bruh-teh* or *AG-burt* — 애그브르테 or
-애그버트. Both are correct: it is a contraction rather than a word, so there is
-nothing here to get wrong.
+**Ag**ent **Br**idge **Te**rminal. Said /ɛɡɯbɯɾɯtʰɯ/ *(AG-buh-ruh-teu)* or
+/ˈæɡbərt/ *(AG-burt)*. Both are correct: it is a contraction rather than a word,
+so there is nothing here to get wrong.
 
 An agent-based development workbench. Multiple sessions, multiple agents per
 session, any model behind a pluggable adapter, running on your machine or on a
