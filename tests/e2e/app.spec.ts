@@ -42,14 +42,6 @@ const FIRST_ATTEMPT = 25_000;
 const SECOND_ATTEMPT = 30_000;
 
 /**
- * What the agent actually did, for a failure that would otherwise say nothing.
- *
- * Read from the log on disk rather than the window: the point of asking is that
- * something went wrong, and the UI is the layer most likely to be wrong with it.
- * Tool calls and stop reasons only — a full transcript buries the answer in the
- * model's prose.
- */
-/**
  * Every transcript row currently in the DOM, with its testid.
  *
  * The log says what happened; this says what a person would have seen. Asserting
@@ -70,6 +62,14 @@ async function whatIsOnScreen(page: Page): Promise<string> {
   }
 }
 
+/**
+ * What the agent actually did, for a failure that would otherwise say nothing.
+ *
+ * Read from the log on disk rather than the window: the point of asking is that
+ * something went wrong, and the UI is the layer most likely to be wrong with it.
+ * Tool calls, decisions and stop reasons only — a full transcript buries the
+ * answer in the model's prose.
+ */
 async function whatTheAgentDid(repo: string): Promise<string> {
   try {
     const dir = join(repo, '.devagents', 'sessions');
