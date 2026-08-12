@@ -16,6 +16,7 @@
 
 import type {
   AgentHandle,
+  CompactedHistory,
   AgentRuntime,
   AgentSpec,
   RuntimeCapabilities,
@@ -274,6 +275,32 @@ export class HostClient {
               },
             }),
           );
+        return;
+      }
+
+      case 'compactAsk': {
+        const ctx = this.contexts.get(message.handleId);
+        /*
+         * An answer always goes back, including `null`.
+         *
+         * A turn is blocked on this promise in the other process. Permission can
+         * afford to drop an ask for a dead handle because the tool call it
+         * belonged to is gone too; here, staying silent would hang the turn
+         * rather than degrade it. `null` means "keep the history you have",
+         * which is the right outcome for a missing context, a runtime whose
+         * owner cannot compact, and a compaction that threw.
+         */
+        const reply = (history: CompactedHistory | null): void =>
+          this.opts.channel.post({ t: 'compacted', askId: message.askId, history });
+
+        if (!ctx?.compact) {
+          reply(null);
+          return;
+        }
+        void ctx
+          .compact(message.budgetTokens)
+          .then(reply)
+          .catch(() => reply(null));
         return;
       }
     }

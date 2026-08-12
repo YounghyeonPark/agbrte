@@ -24,6 +24,7 @@
  */
 
 import type {
+  CompactedHistory,
   AgentSpec,
   NormalizedTurn,
   PermissionAsk,
@@ -126,6 +127,11 @@ export type HostCommand =
   | { t: 'abort'; handleId: HandleId }
   /** The answer to a `permission-ask`. */
   | { t: 'permission'; askId: RequestId; decision: PermissionDecision }
+  /**
+   * The answer to `compactAsk` (§3.7). `history: null` means the owner had
+   * nothing worth carrying, which the runtime treats as "keep what you have".
+   */
+  | { t: 'compacted'; askId: RequestId; history: CompactedHistory | null }
   | { t: 'shutdown' };
 
 // -------------------------------------------------------------- host → main
@@ -147,6 +153,16 @@ export type HostMessage =
   /** The handle's event stream ended. Exactly one per handle. */
   | { t: 'closed'; handleId: HandleId }
   | { t: 'ask'; askId: RequestId; handleId: HandleId; ask: PermissionAsk }
+  /**
+   * The runtime asking its owner to compact (§3.7, §17.18).
+   *
+   * A request rather than a notification, and it has to cross this channel for
+   * the same reason a permission ask does: the runtime runs in the host process
+   * and the log is written in the owner's. Without it the hook is simply absent
+   * on every real session — which is what happened, and what a live test caught
+   * after the unit tests had passed by handing the runtime a context directly.
+   */
+  | { t: 'compactAsk'; askId: RequestId; handleId: HandleId; budgetTokens: number }
   | { t: 'progress'; handleId: HandleId; progress: ProgressSignal }
   /**
    * An agent addressing another (§4.2).

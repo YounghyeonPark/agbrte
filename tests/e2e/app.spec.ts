@@ -363,6 +363,91 @@ test.describe('a real model against a real repo', () => {
     if (await modelAvailable(MODEL)) await warmModel(MODEL);
   });
 
+  /**
+   * Compaction against a real provider (§3.7).
+   *
+   * The mechanism is unit-tested against a stub that accepts anything, which
+   * proves the two halves talk to each other and nothing about whether a real
+   * server accepts what comes out. `rehydrate()` emits `system` turns into the
+   * middle of a history, and "an OpenAI-compatible server tolerates that" was an
+   * assumption until something asked one.
+   *
+   * Cheap to observe, because compaction runs **before** the provider call: one
+   * turn large enough to cross the high-water mark triggers it on the way in, so
+   * this costs a single request rather than the dozens it would take to fill a
+   * window honestly.
+   *
+   * The assertion is on the log rather than on the reply. Whether a 7B model
+   * says anything sensible about a wall of text is its business; what is under
+   * test is that the history was replaced, the replacement was accepted, and the
+   * turn completed instead of being refused for a malformed history.
+   */
+  test('compacts a history that will not fit, and the model still answers', async () => {
+    test.skip(
+      !(await modelAvailable(MODEL)),
+      `needs a local Ollama server with ${MODEL} — run \`ollama pull ${MODEL}\``,
+    );
+
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      await createSession(agbrte.window, 'Compaction');
+      await addAgent(agbrte.window, 'agbrte-harness', MODEL);
+
+      /*
+       * Just past 0.75 of the window, and no further.
+       *
+       * The first version used half again as much, which triggered compaction
+       * and then spent a hundred seconds making a 7B model prefill the result —
+       * close enough to the 180s ceiling to cross it about one run in five. What
+       * is under test is that compaction happens and the server accepts what
+       * comes out, and neither gets truer with a bigger wall.
+       *
+       * 32,768-token window, `estimateTokens` at three characters each, so the
+       * mark is around 73,700 characters. Ordinary prose rather than one
+       * repeated character, so the summariser has something to summarise.
+       */
+      const wall = 'The quick brown fox jumps over the lazy dog. '.repeat(1_750);
+      await send(agbrte.window, `${wall}
+
+In one short sentence: what animal was mentioned?`);
+
+      /*
+       * Compacted, and then accepted — `usage` is the moment the provider
+       * answered, so a history it refused could not produce one.
+       *
+       * This waited for the turn to *finish*, which was the wrong end of the
+       * proof and cost about a hundred seconds a run. Worse, it hung outright
+       * roughly one run in five: handed a summary and asked a question, the
+       * model sometimes reaches for a tool, `bash` falls through to §13's
+       * `ask`, and a test that answers no prompt waits forever. The gate was
+       * doing its job; the test was asking for something it did not need.
+       */
+      await expect(async () => {
+        const log = await whatTheAgentDid(repo);
+        expect(log, 'the history was never compacted').toContain('agent.compacted');
+        expect(log, 'the provider never answered the compacted history').toContain('usage');
+      }).toPass({ timeout: SECOND_ATTEMPT });
+
+      /*
+       * Settle the turn before tearing down.
+       *
+       * Handed a summary and asked a question, this model sometimes reaches for
+       * a tool; `bash` falls through to §13's `ask` and the gate stops for a
+       * person who, in a test, never comes. The assertion above had already
+       * passed, so the failure showed up as teardown taking two minutes and
+       * occasionally timing out — the gate doing its job, and the test leaving
+       * a turn hanging on the way out.
+       */
+      const prompt = agbrte.window.locator('[data-testid=prompt]');
+      if (await prompt.isVisible()) await agbrte.window.click('[data-testid=prompt-deny]');
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   test('writes a file, with no prompt because §13 allows it', async () => {
     test.skip(
       !(await modelAvailable(MODEL)),

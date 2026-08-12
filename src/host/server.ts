@@ -16,6 +16,7 @@
 import type {
   AgentHandle,
   AgentSpec,
+  CompactedHistory,
   PermissionDecision,
   RuntimeContext,
 } from '@shared/types/index.js';
@@ -41,6 +42,7 @@ export class AgentHostServer {
   private readonly handles = new Map<HandleId, LiveHandle>();
   /** Permission asks awaiting an answer from the other side. */
   private readonly asks = new Map<RequestId, (d: PermissionDecision) => void>();
+  private readonly compactions = new Map<RequestId, (h: CompactedHistory | null) => void>();
   /** Handles aborted before their `start` arrived. */
   private readonly preAborted = new Set<HandleId>();
   private nextAskId = 0;
@@ -180,6 +182,17 @@ export class AgentHostServer {
         return;
       }
 
+      case 'compacted': {
+        const resolve = this.compactions.get(command.askId);
+        this.compactions.delete(command.askId);
+        // Same reasoning as above, with one difference: a turn is waiting on
+        // this promise, so an answer for a live handle must always arrive. The
+        // owner replies `null` rather than staying silent when it cannot
+        // compact — silence here would hang the turn, not degrade it.
+        resolve?.(command.history);
+        return;
+      }
+
       case 'shutdown':
         this.shutdown();
         return;
@@ -229,6 +242,21 @@ export class AgentHostServer {
           const askId = `${handleId}:${(this.nextAskId += 1)}`;
           this.asks.set(askId, resolve);
           this.channel.post({ t: 'ask', askId, handleId, ask: { ...ask, agentId: spec.agentId } });
+        }),
+      /*
+       * Compaction crosses the channel for the same reason permission does: the
+       * runtime is here and the log is written over there (§3.7).
+       *
+       * This was missing, and missing invisibly. The context the runtime is
+       * handed is assembled *here*, so a hook added only to the owner's own
+       * factory left `ctx.compact` undefined on every real session while the
+       * unit tests — which construct a context directly — went on passing.
+       */
+      compact: (budgetTokens) =>
+        new Promise<CompactedHistory | null>((resolve) => {
+          const askId = `${handleId}:${(this.nextAskId += 1)}`;
+          this.compactions.set(askId, resolve);
+          this.channel.post({ t: 'compactAsk', askId, handleId, budgetTokens });
         }),
     };
   }
