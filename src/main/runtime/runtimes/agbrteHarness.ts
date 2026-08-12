@@ -82,6 +82,29 @@ const DEFAULT_MAX_ITERATIONS = 12;
 /** Identical call repeated this many times means the loop is stuck, not working. */
 const NO_PROGRESS_LIMIT = 3;
 
+/*
+ * No default system prompt — deliberately, and against instinct.
+ *
+ * `systemPrompt` is threaded through the seat, the projection, the event and the
+ * spec, and nothing ever sets it, so an agent added through the UI runs with a
+ * tool list and no statement of where it is. That looks like an oversight, and
+ * it explains a real defect: roughly one live turn in ten, a 7B model answered
+ * "create hello.txt" with *"as an AI, I don't have direct access to local file
+ * systems"* and stopped.
+ *
+ * A default was written and measured over twenty live runs against
+ * `qwen2.5:7b`. It made things **much** worse — nine runs broken instead of
+ * two or three, and the failures changed kind: instead of declining politely,
+ * the model left its function-calling path altogether and typed calls as prose
+ * (`)(((write {"file_path":"hello.txt"…})))`), opened ```sh fences, and emitted
+ * plain gibberish. Prose in the system slot pulls a small model toward
+ * answering in prose.
+ *
+ * So the field stays empty by default. Whoever tries this next: measure over at
+ * least twenty runs before believing it, because the version that felt most
+ * obviously correct is the one that broke it.
+ */
+
 export class AgbrteHarnessRuntime implements AgentRuntime {
   readonly id = AGBRTE_HARNESS_RUNTIME_ID;
   readonly version = '0.0.1';

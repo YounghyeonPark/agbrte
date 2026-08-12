@@ -358,6 +358,22 @@ describe('AgbrteHarness — context assembly', () => {
     expect(provider.requests[0]?.system).toBe('Be terse.');
   });
 
+  /**
+   * Pins a measured result, not a preference.
+   *
+   * Supplying a default system prompt here is the obvious-looking fix for a live
+   * flake where the model declines to touch the filesystem. It was tried and
+   * measured: it tripled the failure rate on `qwen2.5:7b` and pushed the model
+   * off function calling into typing tool calls as prose. The runtime comment
+   * has the numbers. This test exists so the next attempt is a deliberate one
+   * with fresh measurements behind it, rather than a quiet re-introduction.
+   */
+  it('sends no system prompt at all when the seat sets none', async () => {
+    const provider = new StubProvider([{}]);
+    await run(provider, context(), {});
+    expect(provider.requests[0]?.system).toBeUndefined();
+  });
+
   it('declares the tool suite to the provider', async () => {
     const provider = new StubProvider([{}]);
     await run(provider);
