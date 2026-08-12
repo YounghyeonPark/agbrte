@@ -28,22 +28,15 @@ import {
 const MODEL = 'qwen2.5:7b';
 
 /**
- * How long to wait for the model to produce its tool call.
+ * How long to wait for the model to produce its tool call, split across two
+ * turns rather than spent waiting on one.
  *
- * The model is already resident by the time these run, and a successful call
- * arrives in about four seconds. Sixty is generous rather than tight — and
- * keeping it short matters because the failure mode is a retry, so a 150s
- * timeout only made every coin-flip loss two and a half minutes long.
- */
-const LIVE_TIMEOUT = 60_000;
-
-/**
- * Split across two turns rather than spent waiting on one.
- *
- * A successful call arrives in about four seconds, and the failure mode is a
- * refusal that ends the turn — so the back half of a single long wait was time
- * spent watching a model that had already finished. Both attempts together stay
- * inside the old single-attempt budget.
+ * The model is already resident by the time these run and a successful call
+ * arrives in about four seconds, so this was a single sixty-second wait. The back
+ * half of it was time spent watching a model that had already finished: the
+ * failure mode is a refusal that ends the turn, not slowness. Asking again is the
+ * only thing that can help, and both attempts together stay inside the old
+ * single-attempt budget.
  */
 const FIRST_ATTEMPT = 25_000;
 const SECOND_ATTEMPT = 30_000;
@@ -418,6 +411,15 @@ test.describe('a real model against a real repo', () => {
        * phrasing would make the second attempt a different test from the first,
        * and this is a coin the model flips, not an instruction it misread.
        *
+       * Two attempts, and not three, because the coin is weighted by what came
+       * before it. Independent refusals at the measured ~12% would put two in a
+       * row at 1.4%, or one failure in seventy runs; the observed rate after this
+       * change is one in twenty here and one in twelve for the denial test. Once
+       * the model has answered in prose, that turn is in the transcript and reads
+       * as precedent for the next one. A third identical ask buys much less than
+       * the arithmetic suggests, so the residual is left visible rather than
+       * papered over with more turns.
+       *
        * A failure carries the transcript, because otherwise this reports
        * `Timeout exceeded` and nothing else — and "slow", "called `bash`
        * instead", and "refused outright" are three different problems that were
@@ -486,13 +488,43 @@ test.describe('a real model against a real repo', () => {
       // `bash` has no allow rule, so it falls through to `defaultAction: 'ask'` —
       // the one tool here that reaches a human. The instruction is blunt because
       // softer phrasing made this model answer in prose instead of calling it.
-      await send(
-        agbrte.window,
-        "List the files in the current directory. You must use the bash tool with command 'ls -la'.",
-      );
+      const instruction =
+        "List the files in the current directory. You must use the bash tool with command 'ls -la'.";
+      await send(agbrte.window, instruction);
 
       const prompt = agbrte.window.locator('[data-testid=prompt]');
-      await expect(prompt).toBeVisible({ timeout: LIVE_TIMEOUT });
+      const asked = async (ms: number): Promise<boolean> => {
+        try {
+          await expect(prompt).toBeVisible({ timeout: ms });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      /*
+       * Two turns, and a failure that carries the transcript — the same treatment
+       * as the write test, for the same reason.
+       *
+       * Blunt phrasing reduced this model's refusal rate without removing it: it
+       * still sometimes explains that it cannot run commands and ends the turn.
+       * That is a refusal, so waiting longer cannot produce a prompt, and the
+       * report said only `element(s) not found` — which is equally consistent
+       * with a gate that failed to ask, and those need opposite fixes.
+       */
+      if (!(await asked(FIRST_ATTEMPT))) {
+        await send(agbrte.window, instruction);
+        if (!(await asked(SECOND_ATTEMPT))) {
+          throw new Error(
+            `no permission prompt appeared, across two turns.
+
+` +
+              `${await whatTheAgentDid(repo)}
+
+${await whatIsOnScreen(agbrte.window)}`,
+          );
+        }
+      }
       await expect(agbrte.window.locator('[data-testid=prompt-tool]')).toContainText('bash');
 
       // Denying rather than allowing: it has no side effects, and refusal is the
@@ -500,7 +532,12 @@ test.describe('a real model against a real repo', () => {
       // not a gate.
       await agbrte.window.click('[data-testid=prompt-deny]');
 
-      await expect(agbrte.window.locator('[data-testid=row-decision]').first()).toContainText('deny');
+      // Addressed by tool, not by position: a retried turn can put another
+      // policy-settled decision above this one, and `.first()` would then assert
+      // on a row that has nothing to do with the denial.
+      await expect(
+        agbrte.window.locator('[data-testid=row-decision]').filter({ hasText: 'bash' }).first(),
+      ).toContainText('deny');
       // The denial reaches the model as a failed tool result rather than killing
       // the turn, so the agent can respond to it (§13's deny-ask-resume flow).
       await expect(agbrte.window.locator('[data-testid=row-result-failed]').first()).toBeVisible({
