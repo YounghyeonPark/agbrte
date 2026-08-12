@@ -46,6 +46,12 @@ has only been run with a stub agent at the far end.
 [DESIGN.md §15](DESIGN.md) says what each phase covers and what is deliberately
 unfinished; where something is only partly true, it says which part.
 
+> **[The idea, and the shape it forces](https://younghyeonpark.github.io/agbrte/)** — the
+> design concept as a page: the process model, how a remote host is bootstrapped
+> and what does *not* cross the link, how a session tree reserves budget and
+> bubbles blockage, and what is deliberately not built. Source in
+> [docs/](docs/).
+
 ## The one idea
 
 **A session runs on the bridge, not inside the terminal.** The bridge is a
