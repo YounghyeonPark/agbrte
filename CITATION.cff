@@ -14,6 +14,13 @@ authors:
     # renders as a link. Zenodo wants the bare identifier; see .zenodo.json.
     orcid: "https://orcid.org/0000-0002-4733-5049"
 repository-code: "https://github.com/YounghyeonPark/agbrte"
+# The concept DOI. It resolves to the newest archived version rather than to a
+# fixed one, so a citation made today keeps pointing at the current work.
+doi: "10.5281/zenodo.21906998"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.21906998"
+    description: The concept DOI, resolving to the latest version.
 license: Apache-2.0
 abstract: >-
   An agent workbench in which sessions belong to a per-workspace host process

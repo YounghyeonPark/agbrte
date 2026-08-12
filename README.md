@@ -358,6 +358,12 @@ patent application, a citation is appreciated. [CITATION.cff](CITATION.cff) has
 the metadata, and GitHub turns it into a **Cite this repository** button at the
 top of this page.
 
+Archived releases carry a DOI: [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21906998.svg)](https://doi.org/10.5281/zenodo.21906998)
+
+That is the **concept** DOI, which resolves to the newest archived version. Cite
+it unless you specifically need to pin a reader to the exact release you used,
+in which case take the version DOI from the Zenodo page it sends you to.
+
 **This is a request, not a licence term.** Apache-2.0 requires that you keep the
 copyright notice and [NOTICE](NOTICE) when you redistribute; it does not require
 that you cite anything, and nothing in this section adds a condition to the

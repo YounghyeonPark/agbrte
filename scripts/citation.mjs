@@ -34,6 +34,17 @@ const WORK = {
   message: 'If you use this software or its design in academic or patent work, please cite it.',
   repository: 'https://github.com/YounghyeonPark/agbrte',
   license: 'Apache-2.0',
+  /**
+   * The **concept** DOI, not a version one.
+   *
+   * Zenodo mints two per archived release: one for that version, and one that
+   * always resolves to the newest. Citing the version DOI pins a reader to
+   * whatever existed the day the paper was written; citing the concept DOI sends
+   * them to the current work, which is what a software citation is usually for.
+   * Verified by resolving it: 10.5281/zenodo.21906998 redirects to the record of
+   * the newest version rather than to a fixed one.
+   */
+  conceptDoi: '10.5281/zenodo.21906998',
   author: {
     family: 'Park',
     given: 'Younghyeon',
@@ -95,6 +106,13 @@ authors:
     # renders as a link. Zenodo wants the bare identifier; see .zenodo.json.
     orcid: "https://orcid.org/${a.orcid}"
 repository-code: ${JSON.stringify(WORK.repository)}
+# The concept DOI. It resolves to the newest archived version rather than to a
+# fixed one, so a citation made today keeps pointing at the current work.
+doi: ${JSON.stringify(WORK.conceptDoi)}
+identifiers:
+  - type: doi
+    value: ${JSON.stringify(WORK.conceptDoi)}
+    description: The concept DOI, resolving to the latest version.
 license: ${WORK.license}
 abstract: >-
 ${WORK.abstract.map((line) => `  ${line}`).join('\n')}
