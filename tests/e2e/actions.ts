@@ -57,7 +57,10 @@ export async function addAgent(page: Page, runtimeId: string, model?: string): P
     if ((await control.evaluate((el) => el.tagName)) === 'SELECT') {
       const offered = await control
         .locator('option')
-        .evaluateAll((els) => els.map((el) => (el as HTMLOptionElement).value));
+        // Structural, not `HTMLOptionElement`: this config compiles with
+        // `lib: ["ES2022"]` and no DOM, so naming a DOM interface here type
+        // checks in an editor and fails the build.
+        .evaluateAll((els) => els.map((el) => (el as unknown as { value: string }).value));
       if (offered.includes(model)) {
         await control.selectOption(model);
       } else {
