@@ -63,6 +63,12 @@ jobs:
       - name: No unreached modules
         run: node scripts/unreached.mjs --strict
 
+      # CITATION.cff and .zenodo.json are generated from one source. Two
+      # hand-edited copies of an author list is how a DOI ends up crediting a
+      # slightly different person than the citation button.
+      - name: Citation metadata is current
+        run: node scripts/citation.mjs --check
+
       - name: Build
         run: npm run build
 

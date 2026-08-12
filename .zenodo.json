@@ -1,0 +1,27 @@
+{
+  "upload_type": "software",
+  "title": "Agbrte — an agent workbench with durable, bridge-owned sessions",
+  "description": "An agent workbench in which sessions belong to a per-workspace host process rather than to the window watching them. The host owns the append-only event log and the permission gate, so a run survives the app closing, is reachable from a second machine, and can execute on a remote target over SSH while the interface stays local. Includes a transport layer that refuses localities it has not implemented rather than silently running work elsewhere, and a capability model that distinguishes what an adapter declares from what has been observed.",
+  "creators": [
+    {
+      "name": "Park, Younghyeon",
+      "orcid": "0000-0002-4733-5049"
+    }
+  ],
+  "license": "Apache-2.0",
+  "keywords": [
+    "agent",
+    "llm",
+    "durable-sessions",
+    "event-sourcing",
+    "remote-execution",
+    "electron"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/YounghyeonPark/agbrte",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}
