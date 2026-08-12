@@ -244,10 +244,46 @@ app.whenReady().then(async () => {
 
   await createWindow();
 
+  /*
+   * Look for a new version, download it, and apply it when the person quits.
+   *
+   * After the window rather than before: an update check is never the reason a
+   * workbench takes longer to appear, and being offline — a normal state for a
+   * laptop, and a fine one for this program, whose hosts may be elsewhere — must
+   * not delay startup by a timeout.
+   *
+   * Nothing here quits the app. §6.4's detached hosts mean a restart interrupts
+   * a *view* rather than a run, which is what makes downloading in the
+   * background reasonable; it is not what would make closing someone's window
+   * for them reasonable. See `update.ts`.
+   */
+  const { buildFacts, startUpdates } = await import('./update.js');
+  const { autoUpdater } = await import('electron-updater');
+  const facts = await buildFacts();
+  updates = startUpdates({
+    build: facts,
+    updater: autoUpdater as unknown as Parameters<typeof startUpdates>[0]['updater'],
+    onState: (state) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('update:state', state);
+      }
+    },
+  });
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
 });
+
+/**
+ * The updater handle, so a quit can stop its timer.
+ *
+ * Module-level because `whenReady` is where it can first be built and `will-quit`
+ * is where it must be torn down, and those are two different callbacks.
+ */
+let updates: ReturnType<typeof import('./update.js').startUpdates> | undefined;
+
+app.on('will-quit', () => updates?.stop());
 
 // Closing the window ends the app on Windows and Linux. This is temporary and
 // wrong for Agbrte's purpose: §8's parking model exists so long runs continue

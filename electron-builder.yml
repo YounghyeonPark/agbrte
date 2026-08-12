@@ -107,5 +107,25 @@ linux:
     - target: tar.gz
       arch: [x64, arm64]
 
-# Nothing here publishes on its own. A release is a person deciding to make one.
-publish: null
+# Where a built app looks for its next version — **not** where this uploads.
+#
+# Two different things, and the field name hides it. `publish` names a provider;
+# uploading happens only when electron-builder is invoked with `--publish always`,
+# and both the release workflow and `npm run dist` pass `--publish never`. So a
+# release is still a person deciding to make one, which is what the previous
+# `publish: null` was protecting.
+#
+# It had to stop being `null` because it is also the source of `app-update.yml`,
+# the file baked into the package that `electron-updater` reads at runtime to
+# know what to check. With no provider there is no such file, and the updater
+# fails with `ENOENT app-update.yml` — a message about a missing file, for a
+# feature that was never configured.
+#
+# `releaseType: release` so drafts and pre-releases stay invisible to installed
+# apps. The drafts already sitting in this repository are exactly the case where
+# "published" and "ready for everyone" are not the same decision.
+publish:
+  provider: github
+  owner: YounghyeonPark
+  repo: agbrte
+  releaseType: release

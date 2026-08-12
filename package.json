@@ -1,7 +1,7 @@
 {
   "name": "agbrte",
   "version": "0.0.3",
-  "description": "Agent Bridge Terminal \u2014 durable, bridge-owned agent sessions you attach to from any terminal.",
+  "description": "Agent Bridge Terminal — durable, bridge-owned agent sessions you attach to from any terminal.",
   "license": "Apache-2.0",
   "author": "Younghyeon Park <ypark.dev@gmail.com>",
   "repository": {
@@ -47,6 +47,7 @@
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.3.7",
+    "electron-updater": "^6.8.9",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "zustand": "^5.0.14"

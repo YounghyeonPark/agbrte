@@ -134,6 +134,16 @@ jobs:
             release/*.AppImage
             release/*.deb
             release/*.tar.gz
+            # The update metadata, and the whole of it — an installed app fetches
+            # `latest*.yml` to learn what exists and to check the download's
+            # SHA512 against it. Without these files here every shipped app
+            # checks for updates forever and finds nothing, which looks exactly
+            # like "there is no update" and is not. The `.blockmap` is what lets
+            # a Windows update download only the changed blocks; missing, the
+            # updater falls back to the whole installer, which works and is
+            # ~100 MB a time.
+            release/*.yml
+            release/*.blockmap
           if-no-files-found: error
           retention-days: 14
 
@@ -312,6 +322,15 @@ jobs:
           # a second decision, taken after looking at what came out. Eleven files
           # across six platform-architectures is exactly where a bad build should
           # still be catchable.
+          #
+          # This is also the switch for the auto-updater, which is worth knowing
+          # before pressing it. `electron-builder.yml` sets
+          # `publish.releaseType: release`, so installed apps ignore drafts and
+          # pre-releases entirely: nothing is offered to anybody until a person
+          # publishes this draft, and at that moment every installed copy will
+          # find it within six hours. The upload above therefore includes
+          # `*.yml` — without that metadata the published release is invisible to
+          # every updater, which looks precisely like "no update available".
           gh release create "$VERSION"             --draft             --title "Agbrte $v"             --notes-file notes.md             $(if [[ "$VERSION" == *-* ]]; then echo --prerelease; fi)             artifacts/*
 
           echo "drafted: $(gh release view "$VERSION" --json url --jq .url)"
