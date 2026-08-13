@@ -933,6 +933,10 @@ export class Fleet extends EventEmitter {
     return this.ownerOf(sessionId).connection.setReasoning(sessionId, agentId, reasoning);
   }
 
+  async blob(sessionId: SessionId, sha256: Sha256, mime?: string): Promise<Buffer | null> {
+    return this.ownerOf(sessionId).connection.getBlob(sessionId, sha256, mime);
+  }
+
   async events(sessionId: SessionId, fromSeq = 0): Promise<AgbrteEvent[]> {
     return this.ownerOf(sessionId).connection.events(sessionId, fromSeq);
   }

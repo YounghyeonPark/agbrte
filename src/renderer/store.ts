@@ -89,6 +89,8 @@ export interface AgbrteState {
   interrupt(): Promise<void>;
   /** Move a seat's reasoning effort (§3.4). Rejects loudly rather than silently. */
   setReasoning(agentId: string, mode: ReasoningMode): Promise<void>;
+  /** Stored bytes as a `data:` URL, or null when they are gone (§12). */
+  loadBlob(sha256: string, mime?: string): Promise<string | null>;
   respond(requestId: string, allow: boolean): Promise<void>;
   /** Answer a split an agent proposed on the open session (§4.3). */
   respondSplit(proposalId: string, approved: boolean): Promise<void>;
@@ -341,6 +343,18 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     } finally {
       applySnapshot(set, get, await agbrte().sessions.snapshot(activeId));
       set({ sessions: await agbrte().sessions.list() });
+    }
+  },
+
+  async loadBlob(sha256, mime) {
+    const { activeId } = get();
+    if (activeId === null) return null;
+    // Not through `guard`: a picture that will not load is not an error banner
+    // across the app, and the row that asked says so itself.
+    try {
+      return await agbrte().sessions.blob(activeId, sha256, mime);
+    } catch {
+      return null;
     }
   },
 

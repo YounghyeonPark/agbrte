@@ -30,6 +30,7 @@ import { Dashboard } from './Dashboard.js';
 import { SupportMatrix } from './SupportMatrix.js';
 import { Inbox } from './Inbox.js';
 import { Search } from './Search.js';
+import { Artifacts } from './Artifacts.js';
 import { Roster } from './Roster.js';
 import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
@@ -442,6 +443,10 @@ export function App(): JSX.Element {
               <>
                 {/* §13: a heterogeneous roster is gated heterogeneously, and the
                     UI must never imply otherwise. */}
+                <Artifacts
+                  events={events}
+                  load={(sha256, mime) => store.loadBlob(sha256, mime)}
+                />
                 <Roster
                   agents={active.agents}
                   selected={focusedAgent}

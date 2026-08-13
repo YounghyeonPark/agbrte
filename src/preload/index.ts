@@ -136,6 +136,8 @@ const api: AgbrteApi = {
       ipcRenderer.invoke(CH.sessionsInterrupt, sessionId, agentId),
     setReasoning: (sessionId: string, agentId: string, mode: ReasoningMode) =>
       ipcRenderer.invoke(CH.sessionsSetReasoning, sessionId, agentId, mode),
+    blob: (sessionId: string, sha256: string, mime?: string) =>
+      ipcRenderer.invoke(CH.sessionsBlob, sessionId, sha256, mime),
     exportMarkdown: (sessionId: string, opts?: { toolArgs?: 'full' | 'summary' }) =>
       ipcRenderer.invoke(CH.sessionsExport, sessionId, opts),
     search: (query: string, limit?: number) => ipcRenderer.invoke(CH.sessionsSearch, query, limit),

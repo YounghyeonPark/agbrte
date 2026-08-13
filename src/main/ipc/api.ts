@@ -242,6 +242,34 @@ function toInfo(host: AttachedHost, shipping?: string): HostInfo {
   };
 }
 
+/**
+ * What these bytes are, from the bytes.
+ *
+ * `agent.tool_result` records a hash and no type, so for anything a tool
+ * produced the mime is genuinely unknown here. Sniffing the magic number is
+ * more honest than defaulting to `image/png` — a `data:` URL carrying the wrong
+ * type renders as a broken image, which reads as "the file is corrupt" rather
+ * than "we guessed".
+ *
+ * Anything unrecognised is `application/octet-stream`, which a browser declines
+ * to render. Correct: we do not know that it is a picture.
+ */
+function sniffMime(bytes: Buffer): string {
+  if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return 'image/png';
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.subarray(0, 4).toString('latin1') === 'GIF8') return 'image/gif';
+  if (
+    bytes.subarray(0, 4).toString('latin1') === 'RIFF' &&
+    bytes.subarray(8, 12).toString('latin1') === 'WEBP'
+  ) {
+    return 'image/webp';
+  }
+  if (bytes.subarray(0, 5).toString('latin1') === '%PDF-') return 'application/pdf';
+  return 'application/octet-stream';
+}
+
 export function createApi(deps: IpcDeps): AgbrteApiHost {
   const { fleet } = deps;
 
@@ -796,6 +824,20 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   handle(CH.sessionsSetReasoning, (sessionId: string, agentId: string, mode: ReasoningRequest['mode']) =>
     fleet.setReasoning(sessionId as SessionId, agentId as AgentId, { mode }),
   );
+
+  /*
+   * Turned into a `data:` URL here rather than in the renderer.
+   *
+   * The bytes cross one boundary either way; doing it here means the renderer
+   * never holds an ArrayBuffer it has to remember to release, and a `data:` URL
+   * needs no revoking the way `createObjectURL` does — a leak that only shows up
+   * after a long session, which is exactly the kind this app must not have.
+   */
+  handle(CH.sessionsBlob, async (sessionId: string, sha256: string, mime?: string) => {
+    const bytes = await fleet.blob(sessionId as SessionId, sha256 as Sha256, mime);
+    if (bytes === null) return null;
+    return `data:${mime ?? sniffMime(bytes)};base64,${bytes.toString('base64')}`;
+  });
 
   handle(CH.sessionsSince, (sessionId: string, fromSeq: number) =>
     fleet.events(sessionId as SessionId, fromSeq),

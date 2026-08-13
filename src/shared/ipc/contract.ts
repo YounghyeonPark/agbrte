@@ -589,6 +589,14 @@ export interface AgbrteApi {
      * would break every later turn far from the control that caused it.
      */
     setReasoning(sessionId: string, agentId: string, mode: ReasoningMode): Promise<void>;
+    /**
+     * Stored bytes as a `data:` URL, or `null` when they are not here (§12).
+     *
+     * A URL rather than raw bytes because every consumer is an `<img>`, and
+     * fetched per artifact rather than with the snapshot because a session's
+     * blobs are unbounded — the list is cheap and the pixels are not.
+     */
+    blob(sessionId: string, sha256: string, mime?: string): Promise<string | null>;
     /** Events since `fromSeq`, for filling a gap the renderer detected. */
     since(sessionId: string, fromSeq: number): Promise<AgbrteEvent[]>;
     /**
@@ -761,6 +769,7 @@ export const CH = {
   previewRecheck: 'agbrte:preview.recheck',
   sessionsInterrupt: 'agbrte:sessions.interrupt',
   sessionsSetReasoning: 'agbrte:sessions.setReasoning',
+  sessionsBlob: 'agbrte:sessions.blob',
   sessionsSince: 'agbrte:sessions.since',
   sessionsExport: 'agbrte:sessions.export',
   sessionsSearch: 'agbrte:sessions.search',
