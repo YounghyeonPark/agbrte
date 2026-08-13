@@ -1750,6 +1750,34 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Read stored bytes back (§12).
+   *
+   * The blob store has carried images since captures existed and nothing could
+   * ask for them back — `blob.has` and `blob.put` send bytes *to* a host, and
+   * there was no way home. So a screenshot a tool produced was visible to the
+   * model and to nobody else: stored, hashed, referenced in the log, and
+   * undrawable.
+   *
+   * `mime` is optional because the callers that need this often do not know it.
+   * `agent.tool_result` records a `resultSha256` and no type, so the store's own
+   * recovery scan — which finds `<sha>.*` — is what makes those reachable at
+   * all. Null rather than throwing for a blob that is simply not here: a log can
+   * outlive the bytes it references, and a missing picture is a thing to say
+   * rather than an error to raise.
+   */
+  async readBlob(sessionId: SessionId, sha256: Sha256, mime?: string): Promise<Buffer | null> {
+    const live = this.live(sessionId);
+    const blobs = live.store.blobs;
+    try {
+      if (mime !== undefined) return await blobs.get(sha256, mime);
+      const path = await blobs.locate(sha256);
+      return path === null ? null : await readFile(path);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Store verified bytes against a session (§6.7).
    *
    * `attach` rather than `put`, and the difference is the log: the bytes land in

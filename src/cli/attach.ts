@@ -28,6 +28,7 @@
 import { createInterface, type Interface } from 'node:readline';
 import type { HostConnection } from '@main/host/hostConnection.js';
 import type { AgentId, AgbrteEvent, PermissionRequest, Session, SessionId } from '@shared/types/index.js';
+import { detectGraphics, inlineImage } from './graphics.js';
 import { c, preview } from './format.js';
 
 export interface AttachOptions {
@@ -94,6 +95,9 @@ export async function attach(connection: HostConnection, opts: AttachOptions): P
     lastSeq = e.seq;
     const line = render(e);
     if (line !== null) say(line);
+    // Fetched rather than rendered from the event, because the event carries a
+    // hash and the bytes live on whichever machine owns the session.
+    void showPicture(connection, session.sessionId, e, say);
   };
   const onPermission = (request: unknown): void => {
     void answer(connection, request as PermissionRequest, rl, say, opts.autoApprove);
@@ -151,6 +155,53 @@ export async function attach(connection: HostConnection, opts: AttachOptions): P
   connection.off('permission', onPermission);
   say(c.dim('detached — the session keeps running'));
   return 0;
+}
+
+/**
+ * Draw an image the session just produced, where the terminal can take one.
+ *
+ * The blob store has held these since captures existed and nothing could ask for
+ * them back, so a screenshot was visible to the model and to nobody else. This
+ * asks, and asking is why it is `void`-ed rather than awaited: a picture is
+ * decoration on a transcript that must keep scrolling, and a slow or missing
+ * blob is not a reason to stall the line after it.
+ *
+ * On a terminal without graphics it says where the file is instead. That is the
+ * §3.3 shape — refuse by name — and it is also the more useful answer for
+ * anything that is not an image, since a path can be opened and a caption
+ * cannot.
+ */
+async function showPicture(
+  connection: HostConnection,
+  sessionId: SessionId,
+  event: AgbrteEvent,
+  say: (line: string) => void,
+): Promise<void> {
+  const found =
+    event.type === 'capture.attached'
+      ? { sha256: event.sha256, mime: event.mime }
+      : event.type === 'agent.tool_result' && event.resultSha256 !== undefined
+        ? { sha256: event.resultSha256, mime: undefined }
+        : null;
+  if (found === null) return;
+
+  // Asked before fetching: on a terminal that cannot draw, the bytes would be
+  // downloaded across an ssh link to be thrown away.
+  if (detectGraphics() === 'none') {
+    const where = event.type === 'capture.attached' ? `image ${found.sha256.slice(0, 12)}` : null;
+    if (where !== null) say(c.dim(`  ${where} — this terminal shows no inline images`));
+    return;
+  }
+
+  try {
+    const bytes = await connection.getBlob(sessionId, found.sha256, found.mime);
+    if (bytes === null) return;
+    const drawn = inlineImage(bytes, { name: found.sha256.slice(0, 12) });
+    if (drawn !== null) process.stdout.write(drawn);
+  } catch {
+    // A picture that will not load is not worth an error line in a transcript
+    // somebody is reading for the work.
+  }
 }
 
 /** One line of transcript, or null for events a person reading along does not need. */

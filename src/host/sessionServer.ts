@@ -435,6 +435,23 @@ export class SessionHostServer {
           });
           return undefined;
 
+        case 'blob.get': {
+          /*
+           * Ungated, like `session.events` and `session.snapshot` beside it.
+           *
+           * A read-only client can already read the transcript, and §7's
+           * read-only role is *watching* — which includes seeing the screenshot
+           * a turn was about. Gating this while leaving the summary readable
+           * would withhold the picture and keep the caption.
+           */
+          const bytes = await manager.readBlob(
+            command.sessionId as SessionId,
+            command.sha256 as Sha256,
+            command.mime,
+          );
+          return bytes === null ? null : bytes.toString('base64');
+        }
+
         case 'session.events':
           return manager.events(command.sessionId as SessionId, command.fromSeq);
 

@@ -182,7 +182,7 @@ export interface HostIdentity {
  * remedy offered on a mismatch is "restart this host", so a confident guess
  * here would cost somebody their running turn, and silence is the safe value.
  */
-export const SESSION_PROTOCOL_VERSION = 10;
+export const SESSION_PROTOCOL_VERSION = 11;
 
 /**
  * The oldest client a host will serve.
@@ -215,6 +215,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'template.delete': 5,
   'models.list': 8,
   'session.setReasoning': 10,
+  'blob.get': 11,
   'models.install': 9,
   'models.progress': 9,
 };
@@ -379,6 +380,15 @@ export type SessionCommand =
    * send a screenshot that machine already received once.
    */
   | { t: 'blob.has'; id: RequestId; sessionId: string; sha256: string; mime: string }
+  /**
+   * Read stored bytes back, base64'd (§12).
+   *
+   * `mime` is optional: `agent.tool_result` records a hash and no type, and the
+   * store can find `<sha>.*` on its own. The reply is `null` for a blob that is
+   * not here — a log outlives the bytes it references, and that is a sentence to
+   * show rather than an error to raise.
+   */
+  | { t: 'blob.get'; id: RequestId; sessionId: string; sha256: string; mime?: string }
   /**
    * One chunk of a blob, base64 in a JSON message.
    *

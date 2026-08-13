@@ -491,6 +491,20 @@ export class HostConnection extends EventEmitter {
     return this.call({ t: 'session.setReasoning', sessionId, agentId, mode: reasoning.mode });
   }
 
+  /** Stored bytes, or `null` when the blob is gone or the host is too old. */
+  async getBlob(sessionId: SessionId, sha256: Sha256, mime?: string): Promise<Buffer | null> {
+    // Not `require`: a host that cannot serve blobs should cost a picture, not
+    // the action the caller was in the middle of. The caller shows the path.
+    if (!this.supports('blob.get')) return null;
+    const b64 = await this.call<string | null>({
+      t: 'blob.get',
+      sessionId,
+      sha256,
+      ...(mime !== undefined ? { mime } : {}),
+    });
+    return b64 === null ? null : Buffer.from(b64, 'base64');
+  }
+
   search(query: string, limit?: number): Promise<SearchHit[]> {
     return this.call({
       t: 'session.search',

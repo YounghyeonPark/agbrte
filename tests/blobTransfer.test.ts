@@ -339,4 +339,47 @@ describe('over the protocol, end to end', () => {
 
     await expect(c.putBlob('nope' as SessionId, bytes(32), 'image/png')).rejects.toThrow(/nope/);
   });
+
+  /**
+   * Reading bytes back out (§12).
+   *
+   * `blob.has` and `blob.put` send bytes *to* a host and there was no way home,
+   * so a screenshot a tool produced was visible to the model and to nobody else —
+   * stored, hashed, referenced in the log, and undrawable. These are the tests for
+   * the return trip, which both the CLI's inline images and the app's artifacts
+   * panel are built on.
+   */
+  describe('reading a blob back', () => {
+    it('returns exactly what was stored', async () => {
+      const c = rig().connect();
+      const session = await c.createSession({ title: 's', goal: 'g' });
+      const data = Buffer.concat([bytes(CHUNK_BYTES, 7), bytes(1024, 9)]);
+      const sha = await c.putBlob(session.sessionId, data, 'image/png');
+
+      const back = await c.getBlob(session.sessionId, sha, 'image/png');
+      // Byte-for-byte: base64 across the wire is a place a picture can arrive
+      // corrupted and still look like a picture.
+      expect(back).not.toBeNull();
+      expect(sha256Of(back!)).toBe(sha);
+    });
+
+    it('finds it without being told the type', async () => {
+      // `agent.tool_result` records a hash and no mime, so this is the only way
+      // an image a tool produced is reachable at all.
+      const c = rig().connect();
+      const session = await c.createSession({ title: 's', goal: 'g' });
+      const data = bytes(512, 3);
+      const sha = await c.putBlob(session.sessionId, data, 'image/png');
+
+      expect(await c.getBlob(session.sessionId, sha)).not.toBeNull();
+    });
+
+    it('answers null for bytes that are not here, rather than throwing', async () => {
+      // A log outlives the bytes it references. A missing picture is a thing to
+      // say, not an error to raise in the middle of a transcript.
+      const c = rig().connect();
+      const session = await c.createSession({ title: 's', goal: 'g' });
+      expect(await c.getBlob(session.sessionId, sha256Of(bytes(16, 1)), 'image/png')).toBeNull();
+    });
+  });
 });
