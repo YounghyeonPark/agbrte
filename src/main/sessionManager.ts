@@ -1868,6 +1868,31 @@ export class SessionManager extends EventEmitter {
     input: SpawnChildInput,
     actor?: Actor,
   ): Promise<Session> {
+    const prepared = await this.prepareChild(parentSessionId, input);
+    const child = await this.createSession(prepared.create, actor);
+    this.live(child.sessionId).contract = input.contract;
+    await this.recordChild(parentSessionId, child, prepared.parentBudget, input.contract, actor);
+    return this.live(child.sessionId).session;
+  }
+
+  /**
+   * Everything a spawn decides *before* anything changes (§4.3).
+   *
+   * Split out because the three steps of a spawn happen on two machines once a
+   * child can live elsewhere: this one on the parent's host, the creation on the
+   * target's, and `recordChild` back on the parent's. Keeping them one method
+   * meant the middle step could only ever be `this.createSession`.
+   *
+   * **Nothing here mutates.** Every refusal is raised, the reservation is
+   * computed, the brief is built — and the parent's budget is untouched until
+   * `recordChild`. That ordering is what makes a distributed spawn safe without
+   * a two-phase commit: a creation that fails leaves no debit behind, because
+   * the debit had not happened.
+   */
+  async prepareChild(
+    parentSessionId: SessionId,
+    input: SpawnChildInput,
+  ): Promise<{ create: CreateSessionInput; parentBudget: SessionBudget }> {
     const parent = this.live(parentSessionId);
 
     // Depth first, because it is the cheapest thing to be wrong about and the
@@ -1935,8 +1960,9 @@ export class SessionManager extends EventEmitter {
       ...(input.verbatimTurns !== undefined ? { verbatimTurns: input.verbatimTurns } : {}),
     });
 
-    const child = await this.createSession(
-      {
+    return {
+      parentBudget: reserved.parent,
+      create: {
         title: input.title,
         goal: input.scope,
         /**
@@ -1981,30 +2007,43 @@ export class SessionManager extends EventEmitter {
         },
         ...(input.target !== undefined ? { target: input.target } : {}),
       },
-      actor,
-    );
+    };
+  }
 
-    const live = this.live(child.sessionId);
-    // Kept so the child can be held to it when it reports back, without having
-    // to re-read a brief to find out what shape its own answer must take.
-    live.contract = input.contract;
+  /**
+   * Commit the spawn on the parent: the debit, the reference, the event (§4.3).
+   *
+   * The only step that changes the parent, and it runs after the child exists —
+   * so a creation that failed costs nothing, and `prepareChild` can be called
+   * against a host that never ends up hosting anything.
+   */
+  async recordChild(
+    parentSessionId: SessionId,
+    child: Session,
+    parentBudget: SessionBudget,
+    contract: ResultContract,
+    actor?: Actor,
+  ): Promise<void> {
+    const parent = this.live(parentSessionId);
 
     const ref: ChildRef = {
       sessionId: child.sessionId,
       instanceId: child.instanceId,
       target: child.target,
       title: child.title,
-      contract: input.contract,
+      contract,
+      // Read from the child as it was handed over, not from a live session: for
+      // a child on another host there is no local object to read.
       lastKnown: {
-        state: live.session.state,
+        state: child.state,
         checklistDone: 0,
         checklistTotal: 0,
-        updatedAt: live.session.updatedAt,
+        updatedAt: child.updatedAt,
         cost: 0,
       },
     };
 
-    parent.session.budget = reserved.parent;
+    parent.session.budget = parentBudget;
     parent.session.children.push(ref);
     await parent.store.append(
       { type: 'session.spawned_child', child: ref },
@@ -2012,8 +2051,6 @@ export class SessionManager extends EventEmitter {
     );
 
     this.emit('session', parent.session);
-    this.emit('session', live.session);
-    return live.session;
   }
 
 /**
