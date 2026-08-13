@@ -446,6 +446,7 @@ export function App(): JSX.Element {
                   agents={active.agents}
                   selected={focusedAgent}
                   onSelect={setFocusedAgent}
+                  onEffort={(agentId, mode) => store.setReasoning(agentId, mode)}
                 />
                 <Transcript
                   events={

@@ -524,3 +524,46 @@ describe('SessionManager — reasoning effort', () => {
     expect(projection.agents[0]?.reasoning, 'the log did not carry it').toEqual({ mode: 'max' });
   });
 });
+
+describe('SessionManager — changing the effort', () => {
+  it('records the change so a restart keeps it', async () => {
+    const sm = manager(undefined, { reasoningControl: 'effort' });
+    const session = await sm.createSession({ title: 's', goal: 'g' });
+    const agent = await sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    await sm.setReasoning(session.sessionId, agent.agentId, { mode: 'low' });
+
+    const projection = await sm.projection(session.sessionId);
+    expect(projection.agents[0]?.reasoning, 'only the live object changed').toEqual({ mode: 'low' });
+  });
+
+  /**
+   * Refused by name, not accepted and dropped.
+   *
+   * `reasoning_effort` is not a field a model without the capability ignores —
+   * Ollama answers 400 — so storing it quietly would turn every later turn into
+   * a failed request, and whoever set it would have no reason to connect the two.
+   */
+  it('refuses a target that cannot take one, and says which', async () => {
+    const sm = manager(undefined, { reasoningControl: 'none' });
+    const session = await sm.createSession({ title: 's', goal: 'g' });
+    const agent = await sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    await expect(sm.setReasoning(session.sessionId, agent.agentId, { mode: 'max' })).rejects.toThrow(
+      /does not take a reasoning effort/,
+    );
+    expect(sm.get(session.sessionId).agents[0]?.spec.reasoning).toBeUndefined();
+  });
+
+  it('writes nothing when the effort is already what was asked for', async () => {
+    const sm = manager(undefined, { reasoningControl: 'effort' });
+    const session = await sm.createSession({ title: 's', goal: 'g' });
+    const agent = await sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    const before = (await sm.projection(session.sessionId)).lastSeq;
+    // Admitted at max already; a no-op must not put a line in the transcript
+    // saying something changed.
+    await sm.setReasoning(session.sessionId, agent.agentId, { mode: 'max' });
+    expect((await sm.projection(session.sessionId)).lastSeq).toBe(before);
+  });
+});

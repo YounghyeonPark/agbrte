@@ -29,6 +29,7 @@
  */
 
 import type {
+  ReasoningRequest,
   AccessRole,
   AgentRecord,
   ContentBlock,
@@ -181,7 +182,7 @@ export interface HostIdentity {
  * remedy offered on a mismatch is "restart this host", so a confident guess
  * here would cost somebody their running turn, and silence is the safe value.
  */
-export const SESSION_PROTOCOL_VERSION = 9;
+export const SESSION_PROTOCOL_VERSION = 10;
 
 /**
  * The oldest client a host will serve.
@@ -213,6 +214,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'template.apply': 5,
   'template.delete': 5,
   'models.list': 8,
+  'session.setReasoning': 10,
   'models.install': 9,
   'models.progress': 9,
 };
@@ -335,6 +337,13 @@ export type SessionCommand =
       blocks?: ContentBlock[];
     }
   | { t: 'session.interrupt'; id: RequestId; sessionId: string; agentId?: string }
+  | {
+      t: 'session.setReasoning';
+      id: RequestId;
+      sessionId: string;
+      agentId: string;
+      mode: ReasoningRequest['mode'];
+    }
   | { t: 'session.events'; id: RequestId; sessionId: string; fromSeq: number }
   | { t: 'session.projection'; id: RequestId; sessionId: string }
   | { t: 'session.queueDepth'; id: RequestId; sessionId: string }

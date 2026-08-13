@@ -427,6 +427,14 @@ export class SessionHostServer {
           );
           return undefined;
 
+        case 'session.setReasoning':
+          // A write: it changes how the agent behaves on every later turn.
+          this.requireWrite(client, 'setReasoning');
+          await manager.setReasoning(command.sessionId as SessionId, command.agentId as AgentId, {
+            mode: command.mode,
+          });
+          return undefined;
+
         case 'session.events':
           return manager.events(command.sessionId as SessionId, command.fromSeq);
 

@@ -206,6 +206,14 @@ export function reduceEvents(
         });
         break;
 
+      case 'agent.reasoning_changed': {
+        // The projected seat is what a rebuilt spec is made from, so a change
+        // that only reached the live object would be lost on the next restart.
+        const seat = p.agents.find((a) => a.agentId === ev.agentId);
+        if (seat) seat.reasoning = ev.to;
+        break;
+      }
+
       case 'agent.text':
       case 'agent.stopped':
       case 'agent.started':

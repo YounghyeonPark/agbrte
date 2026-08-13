@@ -32,6 +32,7 @@ import {
   type SendRequest,
   type UpdateState,
 } from '../shared/ipc/contract.js';
+import type { ReasoningMode } from '../shared/ipc/contract.js';
 import type {
   PermissionDecision,
   PermissionRequest,
@@ -133,6 +134,8 @@ const api: AgbrteApi = {
     send: (r: SendRequest) => ipcRenderer.invoke(CH.sessionsSend, r),
     interrupt: (sessionId: string, agentId?: string) =>
       ipcRenderer.invoke(CH.sessionsInterrupt, sessionId, agentId),
+    setReasoning: (sessionId: string, agentId: string, mode: ReasoningMode) =>
+      ipcRenderer.invoke(CH.sessionsSetReasoning, sessionId, agentId, mode),
     exportMarkdown: (sessionId: string, opts?: { toolArgs?: 'full' | 'summary' }) =>
       ipcRenderer.invoke(CH.sessionsExport, sessionId, opts),
     search: (query: string, limit?: number) => ipcRenderer.invoke(CH.sessionsSearch, query, limit),

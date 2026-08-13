@@ -42,6 +42,7 @@ import {
 } from '@shared/ipc/contract.js';
 import type { PreviewForwards } from '../preview/forwards.js';
 import type {
+  ReasoningRequest,
   AgentId,
   InstanceId,
   AgbrteEvent,
@@ -790,6 +791,10 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
 
   handle(CH.sessionsInterrupt, (sessionId: string, agentId?: string) =>
     fleet.interrupt(sessionId as SessionId, agentId as AgentId | undefined),
+  );
+
+  handle(CH.sessionsSetReasoning, (sessionId: string, agentId: string, mode: ReasoningRequest['mode']) =>
+    fleet.setReasoning(sessionId as SessionId, agentId as AgentId, { mode }),
   );
 
   handle(CH.sessionsSince, (sessionId: string, fromSeq: number) =>

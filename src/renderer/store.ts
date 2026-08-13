@@ -15,6 +15,7 @@
 import { create } from 'zustand';
 import type {
   EventBatch,
+  ReasoningMode,
   HostInfo,
   RuntimeInfo,
   SessionSnapshot,
@@ -86,6 +87,8 @@ export interface AgbrteState {
    */
   send(text: string, to?: string, blocks?: ContentBlock[]): Promise<void>;
   interrupt(): Promise<void>;
+  /** Move a seat's reasoning effort (§3.4). Rejects loudly rather than silently. */
+  setReasoning(agentId: string, mode: ReasoningMode): Promise<void>;
   respond(requestId: string, allow: boolean): Promise<void>;
   /** Answer a split an agent proposed on the open session (§4.3). */
   respondSplit(proposalId: string, approved: boolean): Promise<void>;
@@ -339,6 +342,18 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
       applySnapshot(set, get, await agbrte().sessions.snapshot(activeId));
       set({ sessions: await agbrte().sessions.list() });
     }
+  },
+
+  async setReasoning(agentId, mode) {
+    const { activeId } = get();
+    if (activeId === null) return;
+    // Through `guard`, so a host too old to know the command — or a model that
+    // takes no effort — says so on screen instead of leaving the select showing
+    // a value nothing accepted.
+    await guard(set, async () => {
+      await agbrte().sessions.setReasoning(activeId, agentId, mode);
+      applySnapshot(set, get, await agbrte().sessions.snapshot(activeId));
+    });
   },
 
   async interrupt() {

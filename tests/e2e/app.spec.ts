@@ -679,3 +679,66 @@ test.describe('the start guide', () => {
     }
   });
 });
+
+test.describe('reasoning effort', () => {
+  /**
+   * The control, end to end (§3.4).
+   *
+   * `AgentSpec.reasoning` was plumbed to the provider and nothing set it. A
+   * select that changes a value main never stores is the same defect one layer
+   * up, and a unit test cannot see it — the renderer, the IPC, the fleet, the
+   * session protocol and the manager are five places this has to cross.
+   */
+  test('says so when the model takes no effort, rather than offering a dead control', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      await createSession(agbrte.window, 'Effort');
+      // `echo` reports `reasoningControl: 'none'`, which is the common case for
+      // a local model and the one a greyed-out dropdown would misdescribe.
+      await addAgent(agbrte.window, 'echo');
+
+      await expect(agbrte.window.locator('[data-testid=roster-effort-unavailable]')).toBeVisible();
+      await expect(agbrte.window.locator('[data-testid=roster-effort]')).toHaveCount(0);
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * The control actually moving the value, across the five places it must cross:
+   * renderer, IPC, fleet, session protocol, manager.
+   *
+   * `qwen3:0.6b` is here because it reports `thinking` in its Ollama
+   * capabilities — measured, not assumed — and is small enough to keep this
+   * quick. The assertion is on the log, because that is where a change has to
+   * land for a restart to keep it; a select showing a new value proves only that
+   * React re-rendered.
+   */
+  test('moves the effort, and writes it down', async () => {
+    const thinker = 'qwen3:0.6b';
+    test.skip(!(await modelAvailable(thinker)), `needs ${thinker} — run \`ollama pull ${thinker}\``);
+
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      await createSession(agbrte.window, 'Effort');
+      await addAgent(agbrte.window, 'agbrte-harness', thinker);
+
+      const effort = agbrte.window.locator('[data-testid=roster-effort]');
+      // Admitted at the default rather than left for the person to set.
+      await expect(effort).toHaveValue('max');
+
+      await effort.selectOption('low');
+      await expect(async () => {
+        expect(await whatTheAgentDid(repo)).toContain('agent.reasoning_changed');
+      }).toPass({ timeout: FIRST_ATTEMPT });
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});

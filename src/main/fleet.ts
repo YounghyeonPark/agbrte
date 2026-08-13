@@ -37,6 +37,7 @@ import type { PreviewServer, PreviewServerLog } from './preview/servers.js';
 import type { SessionTemplate } from './store/templates.js';
 import type { ModelNeed } from './runtime/registry.js';
 import type {
+  ReasoningRequest,
   AccessRole,
   AgentId,
   AgentRecord,
@@ -922,6 +923,14 @@ export class Fleet extends EventEmitter {
 
   async interrupt(sessionId: SessionId, agentId?: AgentId): Promise<void> {
     return this.ownerOf(sessionId).connection.interrupt(sessionId, agentId);
+  }
+
+  async setReasoning(
+    sessionId: SessionId,
+    agentId: AgentId,
+    reasoning: ReasoningRequest,
+  ): Promise<void> {
+    return this.ownerOf(sessionId).connection.setReasoning(sessionId, agentId, reasoning);
   }
 
   async events(sessionId: SessionId, fromSeq = 0): Promise<AgbrteEvent[]> {

@@ -214,6 +214,18 @@ export type EventBody =
       reasoning?: ReasoningRequest;
     }
   | {
+      /**
+       * The effort a seat was moved to after admission (§3.4).
+       *
+       * Its own event rather than a rewrite of `agent.created`, because the log
+       * is append-only and because *when* it changed is the interesting part: a
+       * transcript where the answers get longer halfway down should say why.
+       */
+      type: 'agent.reasoning_changed';
+      from?: ReasoningRequest;
+      to: ReasoningRequest;
+    }
+  | {
       type: 'agent.started';
       /** `fresh` only when there is genuinely no prior history to carry. */
       resumeMode: 'fresh' | 'native' | 'rehydrated';

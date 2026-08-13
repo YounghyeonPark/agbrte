@@ -107,6 +107,9 @@ export interface SshHostInfo {
   port?: number;
 }
 
+/** The effort scale, mirrored from `ReasoningRequest` for the client surface. */
+export type ReasoningMode = 'off' | 'auto' | 'low' | 'medium' | 'high' | 'max';
+
 export interface RuntimeInfo {
   id: string;
   version: string;
@@ -578,6 +581,14 @@ export interface AgbrteApi {
     /** Resolves when the turn completes, which may be minutes. */
     send(r: SendRequest): Promise<void>;
     interrupt(sessionId: string, agentId?: string): Promise<void>;
+    /**
+     * Move a seat to a different reasoning effort (§3.4).
+     *
+     * Rejects on a target that does not take one, rather than storing it — the
+     * adapter answers 400 to an effort a model cannot use, so a quiet accept
+     * would break every later turn far from the control that caused it.
+     */
+    setReasoning(sessionId: string, agentId: string, mode: ReasoningMode): Promise<void>;
     /** Events since `fromSeq`, for filling a gap the renderer detected. */
     since(sessionId: string, fromSeq: number): Promise<AgbrteEvent[]>;
     /**
@@ -749,6 +760,7 @@ export const CH = {
   previewClose: 'agbrte:preview.close',
   previewRecheck: 'agbrte:preview.recheck',
   sessionsInterrupt: 'agbrte:sessions.interrupt',
+  sessionsSetReasoning: 'agbrte:sessions.setReasoning',
   sessionsSince: 'agbrte:sessions.since',
   sessionsExport: 'agbrte:sessions.export',
   sessionsSearch: 'agbrte:sessions.search',

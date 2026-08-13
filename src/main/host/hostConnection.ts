@@ -28,6 +28,7 @@ import {
 
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import type {
+  ReasoningRequest,
   AccessRole,
   AgentId,
   ContentBlock,
@@ -475,6 +476,19 @@ export class HostConnection extends EventEmitter {
       sessionId,
       ...(agentId !== undefined ? { agentId } : {}),
     });
+  }
+
+  /**
+   * Refused by name on a host too old to know the command (§6.7).
+   *
+   * The alternative is sending it and having an older host ignore an unknown
+   * field, which would leave the control looking as though it worked.
+   */
+  setReasoning(sessionId: SessionId, agentId: AgentId, reasoning: ReasoningRequest): Promise<void> {
+    // `require`, not a hand-rolled check: the refusal already has one shape and
+    // one message, and a second copy is how two of them start disagreeing.
+    this.require('session.setReasoning');
+    return this.call({ t: 'session.setReasoning', sessionId, agentId, mode: reasoning.mode });
   }
 
   search(query: string, limit?: number): Promise<SearchHit[]> {

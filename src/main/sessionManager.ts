@@ -35,6 +35,7 @@ import {
   type AttentionReason,
   type ChildRef,
   type CompactedHistory,
+  type ReasoningRequest,
   type Annotation,
   type ImageBlock,
   type EventOrigin,
@@ -1116,6 +1117,44 @@ export class SessionManager extends EventEmitter {
         reason: 'the agent that asked is no longer running',
       });
     }
+  }
+
+  /**
+   * Move a seat to a different reasoning effort (§3.4).
+   *
+   * Refused **by name** on a target that cannot take one, rather than accepted
+   * and dropped. `reasoning_effort` is not a field a model without the
+   * capability ignores — it is a 400 — so silently storing an effort here would
+   * turn every later turn into a failed request, and the person who set it
+   * would have no reason to connect the two.
+   *
+   * Written to the log rather than only to the live object: the projected seat
+   * is what a rebuilt spec is made from, and a change that lived in memory
+   * would vanish at the next restart while the transcript looked complete.
+   */
+  async setReasoning(sessionId: SessionId, agentId: AgentId, to: ReasoningRequest): Promise<void> {
+    const live = this.live(sessionId);
+    const record = live.session.agents.find((a) => a.agentId === agentId);
+    if (record === undefined) throw new Error(`no agent ${agentId} in this session`);
+
+    if (record.resolvedCapabilities.reasoningControl !== 'effort') {
+      throw new Error(
+        `${record.spec.model?.modelId ?? record.spec.runtimeId} does not take a reasoning effort`,
+      );
+    }
+
+    const from = record.spec.reasoning;
+    if (from?.mode === to.mode) return;
+
+    record.spec.reasoning = to;
+    const spec = live.specs.get(agentId);
+    if (spec !== undefined) spec.reasoning = to;
+
+    await live.store.append(
+      { type: 'agent.reasoning_changed', ...(from !== undefined ? { from } : {}), to },
+      { agentId },
+    );
+    this.touch(live);
   }
 
   private contextFor(live: LiveSession, spec: AgentSpec): RuntimeContext {
