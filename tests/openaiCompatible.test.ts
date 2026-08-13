@@ -366,3 +366,73 @@ describe('probe — capability by demonstration (§3.3)', () => {
     expect(calls.length).toBeGreaterThan(afterFirst);
   });
 });
+
+/**
+ * Whether a model can be asked to think harder (§3.3, §3.4).
+ *
+ * `reasoningControl` was the constant `'none'` — true of every model anyone had
+ * tried, and false as a rule. `AgentSpec.reasoning` is plumbed from the seat all
+ * the way to this adapter, so a hard-coded `'none'` meant the field could never
+ * be honoured whatever was loaded: a capability describing the adapter's limits
+ * while claiming to describe the target's.
+ *
+ * Ollama answers the question directly. `/api/show` returns a `capabilities`
+ * array — `qwen2.5:7b` reports `['completion','tools']`, and a thinking model
+ * adds `'thinking'`. Measured against the local server rather than read from a
+ * changelog.
+ */
+describe('reasoning support', () => {
+  const show = (capabilities: string[]) => ({
+    capabilities,
+    model_info: { 'qwen2.context_length': 32_768 },
+  });
+
+  it('offers effort control when the model says it can think', async () => {
+    stubFetch({ '/api/show': show(['completion', 'tools', 'thinking']), '/models': { data: [] } });
+    const caps = await new OpenAiCompatibleProvider().probe(LOCAL, 'thinker');
+    expect(caps.reasoningControl).toBe('effort');
+  });
+
+  it('does not offer it for a model that only completes and calls tools', async () => {
+    stubFetch({ '/api/show': show(['completion', 'tools']), '/models': { data: [] } });
+    const caps = await new OpenAiCompatibleProvider().probe(LOCAL, 'plain');
+    expect(caps.reasoningControl).toBe('none');
+  });
+
+  it('treats an unanswerable probe as cannot rather than can', async () => {
+    // A server that is not Ollama says nothing about thinking. Silence is not
+    // an admission of capability — §3.3's direction of travel for every row.
+    stubFetch({ '/models': { data: [] } });
+    const caps = await new OpenAiCompatibleProvider().probe(LOCAL, 'unknown');
+    expect(caps.reasoningControl).toBe('none');
+  });
+
+  it('still reads the context window from the same answer', async () => {
+    // One `/api/show` now serves both facts. Asking twice for a body already in
+    // hand is how two facts end up describing different moments.
+    stubFetch({ '/api/show': show(['completion']), '/models': { data: [] } });
+    const caps = await new OpenAiCompatibleProvider().probe(LOCAL, 'plain');
+    expect(caps.contextWindow).toBe(32_768);
+    expect(calls.filter((c) => c.url.includes('/api/show'))).toHaveLength(1);
+  });
+
+  it('puts the requested effort on the wire', async () => {
+    // The half that makes the capability true. A `reasoningControl: 'effort'`
+    // that no request carries describes something the adapter does not do.
+    stubFetch({ '/chat/completions': chat({ content: 'ok' }) });
+    await new OpenAiCompatibleProvider().invoke(
+      request({ reasoning: { mode: 'max' } }),
+      signal(),
+    );
+    expect(lastChatBody().reasoning_effort).toBe('max');
+  });
+
+  it('sends nothing for auto, which is what sending nothing already means', async () => {
+    stubFetch({ '/chat/completions': chat({ content: 'ok' }) });
+    await new OpenAiCompatibleProvider().invoke(
+      request({ reasoning: { mode: 'auto' } }),
+      signal(),
+    );
+    expect(lastChatBody()).not.toHaveProperty('reasoning_effort');
+  });
+});

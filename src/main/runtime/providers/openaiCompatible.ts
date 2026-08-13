@@ -61,6 +61,20 @@ export interface OpenAiCompatibleOptions {
   keyFor?: (endpointId: string) => string | undefined;
 }
 
+interface ShowResponse {
+  model_info?: Record<string, unknown>;
+  /** Ollama's own list, e.g. `['completion','tools']` or `[…,'thinking']`. */
+  capabilities?: string[];
+}
+
+/** The window a model declares, or the conservative floor when it declares none. */
+function contextLengthFrom(shown: ShowResponse | null): number {
+  for (const [k, v] of Object.entries(shown?.model_info ?? {})) {
+    if (k.endsWith('.context_length') && typeof v === 'number') return v;
+  }
+  return CONSERVATIVE_CONTEXT;
+}
+
 export class OpenAiCompatibleProvider implements ModelProvider {
   readonly id = OPENAI_COMPATIBLE_PROVIDER_ID;
   readonly version = '0.0.1';
@@ -95,7 +109,24 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     const hit = this.probeCache.get(key);
     if (hit) return hit;
 
-    const contextWindow = await this.contextWindowOf(endpoint, modelId);
+    const shown = await this.show(endpoint, modelId);
+    const contextWindow = contextLengthFrom(shown);
+    /*
+     * Asked of the model, not assumed of the server (§3.3).
+     *
+     * This was the constant `'none'`, which was true of every model anyone had
+     * tried and false as a rule: Ollama reports a `capabilities` array, and a
+     * thinking model carries `thinking` in it — `qwen2.5:7b` reports
+     * `['completion','tools']`, `deepseek-r1` and `qwen3` add the third. A
+     * hard-coded `'none'` means `AgentSpec.reasoning` can never be honoured no
+     * matter what is loaded, which is a capability declaring the product's
+     * limits rather than the target's.
+     *
+     * Absent stays `'none'`. A server that does not answer `/api/show` is not an
+     * admission that it can think; the effort control is then simply not offered.
+     */
+    const reasoningControl: RuntimeCapabilities['reasoningControl'] =
+      (shown?.capabilities ?? []).includes('thinking') ? 'effort' : 'none';
 
     let tools: RuntimeCapabilities['tools'] = 'none';
     let schemaProfile: RuntimeCapabilities['schemaProfile'] = 'text-protocol';
@@ -145,7 +176,16 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       maxOutputTokens: Math.min(4_096, Math.floor(contextWindow / 4)),
       serverSideCompaction: false,
       caching: 'none',
-      reasoningControl: 'none',
+      reasoningControl,
+      /*
+       * Still `'none'`, deliberately. Ollama returns thinking on its own
+       * `/api/chat`, and whether it reaches *this* OpenAI-compatible path as
+       * `reasoning_content` has not been observed here — no thinking-capable
+       * model is installed on the machine that measured the rest of this table.
+       * §3.13's whole point is that a declared row and an observed one are
+       * different claims, so this stays at the honest floor until something has
+       * watched it arrive.
+       */
       reasoningVisible: 'none',
       input: { image: false, audio: false, pdf: false, video: false },
       // A local server bills nothing; `free` is the truth, not a placeholder.
@@ -164,6 +204,19 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       model: req.modelId,
       stream: false,
       max_tokens: req.maxOutputTokens,
+      /*
+       * Sent, not merely accepted. A `reasoningControl: 'effort'` that no
+       * request ever carries is a capability describing something the adapter
+       * does not do — the shape this project keeps finding and the reason the
+       * probe above was worth changing at all.
+       *
+       * `'auto'` and `'off'` are omitted rather than sent: the first means "let
+       * the model decide", which is what sending nothing already means, and the
+       * second is not an effort level the wire format has.
+       */
+      ...(req.reasoning !== undefined && req.reasoning.mode !== 'auto' && req.reasoning.mode !== 'off'
+        ? { reasoning_effort: req.reasoning.mode }
+        : {}),
       messages: toWireMessages(req),
       ...(req.tools && req.tools.length > 0
         ? { tools: req.tools.map(toWireTool), tool_choice: 'auto' }
@@ -215,7 +268,14 @@ export class OpenAiCompatibleProvider implements ModelProvider {
   }
 
   /** Ollama exposes the real context length; other servers may not. */
-  private async contextWindowOf(endpoint: ModelEndpoint, modelId: string): Promise<number> {
+  /**
+   * One `/api/show`, because two facts come out of it.
+   *
+   * This used to be a context-window fetch that threw the rest of the answer
+   * away, and asking twice for a body already in hand is how the two facts end
+   * up describing different moments.
+   */
+  private async show(endpoint: ModelEndpoint, modelId: string): Promise<ShowResponse | null> {
     const base = (endpoint.baseUrl ?? DEFAULT_BASE_URL).replace(/\/v1\/?$/, '');
     try {
       const res = await fetch(`${base}/api/show`, {
@@ -224,15 +284,13 @@ export class OpenAiCompatibleProvider implements ModelProvider {
         body: JSON.stringify({ model: modelId }),
         signal: AbortSignal.timeout(10_000),
       });
-      if (!res.ok) return CONSERVATIVE_CONTEXT;
-      const json = (await res.json()) as { model_info?: Record<string, unknown> };
-      for (const [k, v] of Object.entries(json.model_info ?? {})) {
-        if (k.endsWith('.context_length') && typeof v === 'number') return v;
-      }
+      if (!res.ok) return null;
+      return (await res.json()) as ShowResponse;
     } catch {
-      // Not an Ollama server, or unreachable.
+      // Not an Ollama server, or unreachable. Null means "could not tell",
+      // which every reader below degrades from rather than guesses past.
+      return null;
     }
-    return CONSERVATIVE_CONTEXT;
   }
 
   /**
