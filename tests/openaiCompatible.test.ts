@@ -416,23 +416,57 @@ describe('reasoning support', () => {
     expect(calls.filter((c) => c.url.includes('/api/show'))).toHaveLength(1);
   });
 
-  it('puts the requested effort on the wire', async () => {
+  it('puts the requested effort on the wire for a model that takes it', async () => {
     // The half that makes the capability true. A `reasoningControl: 'effort'`
     // that no request carries describes something the adapter does not do.
-    stubFetch({ '/chat/completions': chat({ content: 'ok' }) });
-    await new OpenAiCompatibleProvider().invoke(
-      request({ reasoning: { mode: 'max' } }),
-      signal(),
-    );
+    stubFetch({
+      '/api/show': show(['completion', 'tools', 'thinking']),
+      '/models': { data: [] },
+      '/chat/completions': chat({ content: 'ok' }),
+    });
+    const provider = new OpenAiCompatibleProvider();
+    await provider.probe(LOCAL, 'thinker');
+    await provider.invoke(request({ modelId: 'thinker', reasoning: { mode: 'max' } }), signal());
     expect(lastChatBody().reasoning_effort).toBe('max');
   });
 
-  it('sends nothing for auto, which is what sending nothing already means', async () => {
+  /**
+   * The one that matters, because getting it wrong is not a no-op.
+   *
+   * Measured against a live Ollama: `reasoning_effort` is parsed and validated
+   * rather than tolerated — `"banana"` returns 400 — and sending *any* value to
+   * a model without the `thinking` capability returns 400 as well. So an
+   * ungated send does not quietly do nothing; it fails every turn the moment a
+   * seat carries an effort and the model behind it is ordinary.
+   */
+  it('withholds it from a model that would reject the request', async () => {
+    stubFetch({
+      '/api/show': show(['completion', 'tools']),
+      '/models': { data: [] },
+      '/chat/completions': chat({ content: 'ok' }),
+    });
+    const provider = new OpenAiCompatibleProvider();
+    await provider.probe(LOCAL, 'plain');
+    await provider.invoke(request({ modelId: 'plain', reasoning: { mode: 'max' } }), signal());
+    expect(lastChatBody()).not.toHaveProperty('reasoning_effort');
+  });
+
+  it('withholds it when the model was never probed', async () => {
+    // Unprobed is "cannot tell", and §3.3 spends that in the safe direction.
     stubFetch({ '/chat/completions': chat({ content: 'ok' }) });
-    await new OpenAiCompatibleProvider().invoke(
-      request({ reasoning: { mode: 'auto' } }),
-      signal(),
-    );
+    await new OpenAiCompatibleProvider().invoke(request({ reasoning: { mode: 'max' } }), signal());
+    expect(lastChatBody()).not.toHaveProperty('reasoning_effort');
+  });
+
+  it('sends nothing for auto, which is what sending nothing already means', async () => {
+    stubFetch({
+      '/api/show': show(['completion', 'tools', 'thinking']),
+      '/models': { data: [] },
+      '/chat/completions': chat({ content: 'ok' }),
+    });
+    const provider = new OpenAiCompatibleProvider();
+    await provider.probe(LOCAL, 'thinker');
+    await provider.invoke(request({ modelId: 'thinker', reasoning: { mode: 'auto' } }), signal());
     expect(lastChatBody()).not.toHaveProperty('reasoning_effort');
   });
 });

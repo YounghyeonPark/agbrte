@@ -199,24 +199,38 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     return caps;
   }
 
+  /** Whether this request may carry `reasoning_effort` at all. */
+  private takesEffort(req: ProviderRequest): boolean {
+    const mode = req.reasoning?.mode;
+    if (mode === undefined || mode === 'auto' || mode === 'off') return false;
+    const caps = this.probeCache.get(`${req.endpoint.endpointId}::${req.modelId}`);
+    return caps?.reasoningControl === 'effort';
+  }
+
   async invoke(req: ProviderRequest, opts: { signal: AbortSignal }): Promise<ProviderResult> {
     const body = {
       model: req.modelId,
       stream: false,
       max_tokens: req.maxOutputTokens,
       /*
-       * Sent, not merely accepted. A `reasoningControl: 'effort'` that no
-       * request ever carries is a capability describing something the adapter
-       * does not do — the shape this project keeps finding and the reason the
-       * probe above was worth changing at all.
+       * Sent only where the model takes it, and that is not a nicety.
+       *
+       * Measured against a live Ollama: `reasoning_effort` is **parsed and
+       * validated**, not tolerated — `"banana"` comes back 400 — and sending
+       * any value at all to a model without the `thinking` capability is also
+       * **400**. So an ungated send does not degrade to a no-op; it kills every
+       * request the moment a seat carries an effort and the model behind it is
+       * ordinary. The first version of this did exactly that.
+       *
+       * The gate is the probe's own answer, read from the cache `probe()` fills
+       * before any turn runs. Missing means unprobed, and unprobed means do not
+       * send — the same direction §3.3 takes everywhere else.
        *
        * `'auto'` and `'off'` are omitted rather than sent: the first means "let
        * the model decide", which is what sending nothing already means, and the
        * second is not an effort level the wire format has.
        */
-      ...(req.reasoning !== undefined && req.reasoning.mode !== 'auto' && req.reasoning.mode !== 'off'
-        ? { reasoning_effort: req.reasoning.mode }
-        : {}),
+      ...(this.takesEffort(req) ? { reasoning_effort: req.reasoning?.mode } : {}),
       messages: toWireMessages(req),
       ...(req.tools && req.tools.length > 0
         ? { tools: req.tools.map(toWireTool), tool_choice: 'auto' }
