@@ -447,7 +447,19 @@ class AgbrteHarnessHandle implements AgentHandle {
     payload: string,
     blocks?: ContentBlock[],
   ): Promise<void> {
-    this.emit({ type: 'tool_result', id: call.id, ok, summary });
+    /*
+     * The hashes travel with the result so the transcript can show what the
+     * model was shown. Blocks without bytes — text the tool chose to send as a
+     * block — have nothing to point at and are skipped.
+     */
+    const blobs = (blocks ?? []).flatMap((b) => ('sha256' in b ? [b.sha256 as string] : []));
+    this.emit({
+      type: 'tool_result',
+      id: call.id,
+      ok,
+      summary,
+      ...(blobs.length > 0 ? { blobs } : {}),
+    });
     // The model must see the outcome, including a denial and its reason, so it
     // can adapt instead of retrying blindly (§13).
     this.messages.push({

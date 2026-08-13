@@ -180,8 +180,8 @@ async function showPicture(
   const found =
     event.type === 'capture.attached'
       ? { sha256: event.sha256, mime: event.mime }
-      : event.type === 'agent.tool_result' && event.resultSha256 !== undefined
-        ? { sha256: event.resultSha256, mime: undefined }
+      : event.type === 'agent.tool_result' && (event.resultBlobs?.length ?? 0) > 0
+        ? { sha256: event.resultBlobs![0]!, mime: undefined }
         : null;
   if (found === null) return;
 

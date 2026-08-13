@@ -397,7 +397,7 @@ export type RuntimeEvent =
   /** The model's working-out, kept apart from its answer (§3.9). */
   | { type: 'reasoning'; text: string }
   | { type: 'tool_use'; id: string; tool: string; args: unknown }
-  | { type: 'tool_result'; id: string; ok: boolean; summary: string }
+  | { type: 'tool_result'; id: string; ok: boolean; summary: string; blobs?: string[] }
   /**
    * What a turn spent.
    *

@@ -650,3 +650,60 @@ describe('compacting a history that is filling the window', () => {
     expect(events.some((e) => e.type === 'stopped')).toBe(true);
   });
 });
+
+/**
+ * Non-text a tool produced, recorded rather than only shown to the model (§12.1).
+ *
+ * `browser_screenshot` hands back an `ImageBlock`, and the harness pushes it in
+ * front of the model as a user message so the agent can see its own output. The
+ * *event* said nothing about it: `resultSha256` was declared and never written,
+ * so a screenshot reached the model and left no trace a person could open. Both
+ * readers of that field — the CLI's inline images and the artifacts panel — were
+ * built against something nothing set.
+ */
+describe('what a tool handed back', () => {
+  const withBlocks = (blocks: unknown) =>
+    new StubProvider([
+      {
+        toolCalls: [{ id: 'c1', name: 'read', args: { file_path: 'target.ts' } }],
+        stop: { kind: 'tool_calls' },
+      },
+      { content: [{ type: 'text', text: 'done' }] },
+    ]);
+
+  it('puts every hash on the tool_result event', async () => {
+    const runtime = new AgbrteHarnessRuntime({
+      provider: withBlocks(null),
+      endpointFor: () => ENDPOINT,
+      // A tool that answers with two images, which is the case recording only
+      // the first would quietly halve.
+      tools: [
+        {
+          name: 'read',
+          description: 'x',
+          parameters: { type: 'object', properties: {} },
+          run: async () => ({
+            ok: true,
+            summary: 'two shots',
+            content: 'the images follow',
+            blocks: [
+              { type: 'image', sha256: 'aaa', mime: 'image/png', width: 1, height: 1, bytes: 1 },
+              { type: 'image', sha256: 'bbb', mime: 'image/png', width: 1, height: 1, bytes: 1 },
+            ],
+          }),
+        },
+      ] as never,
+    });
+
+    const handle = await runtime.start(spec(), context());
+    const collected: Promise<RuntimeEvent[]> = (async () => {
+      const out: RuntimeEvent[] = [];
+      for await (const ev of handle.events) out.push(ev);
+      return out;
+    })();
+    await handle.send({ content: [{ type: 'text', text: 'go' }] });
+
+    const result = (await collected).find((e) => e.type === 'tool_result');
+    expect(result).toMatchObject({ blobs: ['aaa', 'bbb'] });
+  });
+});

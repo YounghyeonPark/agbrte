@@ -18,6 +18,7 @@ import {
   type EventOrigin,
   type ProgressSignal,
   type RuntimeEvent,
+  type Sha256,
   type SessionState,
   type StopReason,
 } from '@shared/types/index.js';
@@ -152,7 +153,13 @@ export async function pumpAgent(
 
       case 'tool_result':
         await store.append(
-          { type: 'agent.tool_result', toolUseId: ev.id, ok: ev.ok, summary: ev.summary },
+          {
+            type: 'agent.tool_result',
+            toolUseId: ev.id,
+            ok: ev.ok,
+            summary: ev.summary,
+            ...(ev.blobs !== undefined ? { resultBlobs: ev.blobs as Sha256[] } : {}),
+          },
           meta,
         );
         eventsWritten += 1;

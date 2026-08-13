@@ -100,7 +100,19 @@ export type EventBody =
       ok: boolean;
       /** Full output goes to a blob; the log keeps a bounded summary. */
       summary: string;
-      resultSha256?: Sha256;
+      /**
+       * Hashes of the non-text a tool produced (§12.1).
+       *
+       * This was `resultSha256`, singular, and nothing ever set it — so the
+       * screenshot `browser_screenshot` hands back reached the model and left no
+       * trace a person could open. Plural because a tool may return several and
+       * recording the first would put the model and the reader in front of
+       * different evidence, which is the gap this closes rather than moves.
+       *
+       * Safe to retype rather than migrate: it had no writers, so no log in
+       * existence carries the old shape.
+       */
+      resultBlobs?: Sha256[];
       path?: EncodedPath;
     }
   | { type: 'agent.stopped'; stop: StopReason }

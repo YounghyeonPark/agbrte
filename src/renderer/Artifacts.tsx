@@ -21,43 +21,15 @@
  *
  * Two shapes, because the log records them differently. `capture.attached`
  * carries a hash *and* a mime, being something a person attached. A tool's
- * output carries `resultSha256` and no type at all, so the type is sniffed from
+ * output carries `resultBlobs` and no type at all, so the type is sniffed from
  * the bytes on arrival — which is also why a row cannot say what it holds until
  * it has been opened.
  */
 
 import { useState, type JSX } from 'react';
 import type { AgbrteEvent } from '../shared/types/index.js';
+import { artifactsIn, type Entry } from './artifactList.js';
 import { LABEL } from './App.js';
-
-interface Entry {
-  sha256: string;
-  mime?: string;
-  /** Which part of the session produced it — the panel groups on this. */
-  origin: 'attached' | 'produced';
-  at: string;
-}
-
-/** Everything in the held window that has bytes behind it, newest last. */
-export function artifactsIn(events: readonly AgbrteEvent[]): Entry[] {
-  const seen = new Set<string>();
-  const out: Entry[] = [];
-  for (const event of events) {
-    const entry: Entry | null =
-      event.type === 'capture.attached'
-        ? { sha256: event.sha256, mime: event.mime, origin: 'attached', at: event.at }
-        : event.type === 'agent.tool_result' && event.resultSha256 !== undefined
-          ? { sha256: event.resultSha256, origin: 'produced', at: event.at }
-          : null;
-    // One row per blob: the same screenshot attached to three turns is one
-    // picture, and a panel that repeats it buries the others.
-    if (entry !== null && !seen.has(entry.sha256)) {
-      seen.add(entry.sha256);
-      out.push(entry);
-    }
-  }
-  return out;
-}
 
 const GROUPS: Array<{ origin: Entry['origin']; label: string }> = [
   { origin: 'produced', label: 'produced by a tool' },
