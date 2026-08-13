@@ -170,13 +170,23 @@ export async function rehydrate(
   let verbatim = allTurns.slice(-keep);
   let summarized = allTurns.length - verbatim.length;
 
-  let droppedOpaque = 0;
-  if (opts.dropOpaqueReasoning) {
-    // Nothing in the current event schema carries opaque reasoning, so this is
-    // zero today. Counted rather than assumed so the boundary is already
-    // reported when a provider-specific block type does arrive.
-    droppedOpaque = 0;
-  }
+  /*
+   * A real count now that `agent.reasoning` exists.
+   *
+   * `turnsFrom` carries user turns and agent text and nothing else, so the
+   * model's working-out is left behind either way — this flag does not choose
+   * the behaviour, it asks for the boundary to be *reported*. A seed that
+   * silently lost the reasoning would leave a rehydrated agent unable to explain
+   * a conclusion it can still see itself having reached.
+   *
+   * Not carried even within one runtime, deliberately: a scratchpad replayed as
+   * conversation is a model reading its own thinking back as though someone had
+   * said it, and §3.9 calls this opaque precisely because its shape belongs to
+   * the provider rather than to the transcript.
+   */
+  const droppedOpaque = opts.dropOpaqueReasoning
+    ? events.filter((e) => e.type === 'agent.reasoning').length
+    : 0;
 
   const brief = (): NormalizedTurn => ({
     role: 'system',

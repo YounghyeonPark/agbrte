@@ -297,6 +297,15 @@ class AgbrteHarnessHandle implements AgentHandle {
        * §10 requires out loud: a cost exists and we cannot see it, which is not
        * the same as zero and not the same as missing.
        */
+      /*
+       * Emitted before the answer, which is the order it was produced in. A
+       * transcript that showed the conclusion above the working-out would read
+       * as though the model justified itself afterwards.
+       */
+      if (result.reasoning !== undefined) {
+        this.emit({ type: 'reasoning', text: result.reasoning });
+      }
+
       this.emit({
         type: 'usage',
         inputTokens: result.usage.inputTokens,

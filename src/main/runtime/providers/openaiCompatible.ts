@@ -34,6 +34,13 @@ interface ChatChoice {
   finish_reason?: string;
   message?: {
     content?: string | null;
+    /**
+     * The model's working-out. `reasoning` is Ollama's spelling — measured with
+     * `qwen3:0.6b` — and `reasoning_content` is the one vLLM and several
+     * gateways use for the same field.
+     */
+    reasoning?: string;
+    reasoning_content?: string;
     tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>;
   };
 }
@@ -178,15 +185,14 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       caching: 'none',
       reasoningControl,
       /*
-       * Still `'none'`, deliberately. Ollama returns thinking on its own
-       * `/api/chat`, and whether it reaches *this* OpenAI-compatible path as
-       * `reasoning_content` has not been observed here — no thinking-capable
-       * model is installed on the machine that measured the rest of this table.
-       * §3.13's whole point is that a declared row and an observed one are
-       * different claims, so this stays at the honest floor until something has
-       * watched it arrive.
+       * `'raw'` where the model thinks, and observed rather than assumed: a
+       * `qwen3:0.6b` turn through this endpoint comes back with 600-odd
+       * characters in a `reasoning` field. It is raw rather than a summary —
+       * the model's own scratchpad, not a rendering of it — and the adapter now
+       * carries it, which is what makes the row true. §3.13 keeps declared and
+       * observed apart, and this one is observed.
        */
-      reasoningVisible: 'none',
+      reasoningVisible: reasoningControl === 'effort' ? 'raw' : 'none',
       input: { image: false, audio: false, pdf: false, video: false },
       // A local server bills nothing; `free` is the truth, not a placeholder.
       pricing: endpoint.locality === 'cloud' ? 'opaque' : 'free',
@@ -266,9 +272,24 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     const text = typeof message?.content === 'string' ? message.content : '';
     const content: ContentBlock[] = text.length > 0 ? [{ type: 'text', text }] : [];
 
+    /*
+     * `reasoning`, and `reasoning_content` as the other spelling in the wild.
+     *
+     * Measured against Ollama's OpenAI-compatible endpoint with `qwen3:0.6b`:
+     * the field comes back as `reasoning`. vLLM and several gateways use
+     * `reasoning_content` for the same thing, and reading both costs one `??`.
+     */
+    const thought =
+      typeof message?.reasoning === 'string'
+        ? message.reasoning
+        : typeof message?.reasoning_content === 'string'
+          ? message.reasoning_content
+          : undefined;
+
     return {
       content,
       toolCalls,
+      ...(thought !== undefined && thought.length > 0 ? { reasoning: thought } : {}),
       stop: mapFinishReason(choice?.finish_reason, toolCalls.length > 0),
       usage: {
         inputTokens: res.usage?.prompt_tokens ?? 0,

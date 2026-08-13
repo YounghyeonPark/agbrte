@@ -741,4 +741,36 @@ test.describe('reasoning effort', () => {
       await rm(repo, { recursive: true, force: true });
     }
   });
+
+  /**
+   * The working-out reaching the transcript (§3.9).
+   *
+   * `reasoningVisible: 'raw'` is a claim that the model's thinking is available
+   * through this adapter. It was `'none'` while the field came back on the wire
+   * and the adapter dropped it — the row would have described something no
+   * caller could reach. This is the test that makes the row true.
+   */
+  test('keeps what the model thought, folded away from what it said', async () => {
+    const thinker = 'qwen3:0.6b';
+    test.skip(!(await modelAvailable(thinker)), `needs ${thinker} — run \`ollama pull ${thinker}\``);
+
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      await createSession(agbrte.window, 'Thinking');
+      await addAgent(agbrte.window, 'agbrte-harness', thinker);
+      await send(agbrte.window, 'What is 17 times 23?');
+
+      const row = agbrte.window.locator('[data-testid=row-reasoning]');
+      await expect(row).toBeVisible({ timeout: SECOND_ATTEMPT });
+      // Folded: the answer is what a transcript is read for, and the working-out
+      // is often several times its length.
+      await expect(row).not.toHaveAttribute('open', /.*/);
+      await expect(await whatTheAgentDid(repo)).toContain('agent.reasoning');
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
 });

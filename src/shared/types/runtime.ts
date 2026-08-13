@@ -394,6 +394,8 @@ export interface AgentHandle {
 /** What an adapter emits; the host translates these into durable log events. */
 export type RuntimeEvent =
   | { type: 'text'; text: string }
+  /** The model's working-out, kept apart from its answer (§3.9). */
+  | { type: 'reasoning'; text: string }
   | { type: 'tool_use'; id: string; tool: string; args: unknown }
   | { type: 'tool_result'; id: string; ok: boolean; summary: string }
   /**

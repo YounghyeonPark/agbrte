@@ -132,6 +132,16 @@ export async function pumpAgent(
         eventsWritten += 1;
         break;
 
+      case 'reasoning':
+        // Stamped with the runtime that produced it, so §3.9's boundary can be
+        // enforced later without guessing which adapter shaped the text.
+        await store.append(
+          { type: 'agent.reasoning', text: ev.text, provider: opts.origin.runtimeId ?? 'unknown' },
+          meta,
+        );
+        eventsWritten += 1;
+        break;
+
       case 'tool_use':
         await store.append(
           { type: 'agent.tool_use', toolUseId: ev.id, tool: ev.tool, args: ev.args },

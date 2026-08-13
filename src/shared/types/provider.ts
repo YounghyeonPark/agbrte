@@ -100,6 +100,15 @@ export interface ProviderResult {
   toolCalls: NormalizedToolCall[];
   stop: StopReason;
   usage: ProviderUsage;
+  /**
+   * The model's own scratchpad, when it kept one and the wire carried it.
+   *
+   * Separate from `content` because it is a different kind of thing: an answer
+   * is addressed to the reader, and this is the working-out. §3.9 calls it
+   * *opaque* — it is provider-shaped and cannot be replayed into a different
+   * runtime, which is what `dropOpaqueReasoning` exists to enforce.
+   */
+  reasoning?: string;
   /** Retained for debugging; never interpreted upstream of the adapter. */
   raw: unknown;
 }

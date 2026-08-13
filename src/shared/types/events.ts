@@ -77,6 +77,22 @@ export type EventBody =
   | { type: 'session.state'; from: SessionState; to: SessionState; reason?: string }
   | { type: 'user.turn'; content: ContentBlock[] }
   | { type: 'agent.text'; text: string }
+  | {
+      /**
+       * What the model thought before answering (§3.4, §3.9).
+       *
+       * Its own event rather than `agent.text` with a flag, because the two are
+       * read differently: an answer is the record of what was said, and this is
+       * evidence about how it was reached — folded away by default, and dropped
+       * rather than replayed when a session is seeded into a different runtime.
+       *
+       * `provider` is stamped so that drop can be decided later without
+       * guessing which adapter shaped it.
+       */
+      type: 'agent.reasoning';
+      text: string;
+      provider: string;
+    }
   | { type: 'agent.tool_use'; toolUseId: string; tool: string; args: unknown }
   | {
       type: 'agent.tool_result';

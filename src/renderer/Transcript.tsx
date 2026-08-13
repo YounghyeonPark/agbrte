@@ -132,6 +132,27 @@ export function EventRow({
         </div>
       );
 
+    case 'agent.reasoning':
+      /*
+       * Folded by default, because it is evidence rather than an answer.
+       *
+       * Open by default would bury every reply under the working-out that
+       * produced it — often several times its length — and a transcript is read
+       * for what was decided first and how second. `<details>` rather than a
+       * custom toggle: it is keyboard-reachable, findable by the browser's own
+       * text search when open, and needs no state of its own.
+       */
+      return (
+        <details data-testid="row-reasoning" className={META_ROW}>
+          <summary className="cursor-pointer">
+            thought for {event.text.length.toLocaleString()} characters
+          </summary>
+          <div className="text-muted mt-1 whitespace-pre-wrap font-mono text-[11px]">
+            {event.text}
+          </div>
+        </details>
+      );
+
     case 'permission.decided':
       // Shown because §13 requires every decision be recorded; a transcript that
       // hides the allows reads as though the gate was never consulted.
