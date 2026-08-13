@@ -306,6 +306,15 @@ const INBOX_EVENT_WINDOW = 500;
  * in circles stops before it becomes expensive. The refusal is recorded, so a
  * roster that keeps hitting it is visible rather than merely slow.
  */
+/**
+ * What a seat thinks at when it says nothing and the model takes an effort.
+ *
+ * `max` because the targets this is aimed at are local: the cost of thinking
+ * longer is electricity and latency rather than a bill, and a workbench for
+ * unattended runs would rather wait than be asked twice.
+ */
+const DEFAULT_REASONING = 'max' as const;
+
 const MAX_MESSAGE_HOPS = 8;
 
 /**
@@ -565,6 +574,19 @@ export class SessionManager extends EventEmitter {
       spec.workspacePath = worktree.path;
     }
 
+    /*
+     * The default effort is chosen here and nowhere earlier, because here is the
+     * first point anything knows whether the model takes one (§3.3).
+     *
+     * A seat that asked for nothing gets `max` on a target that can think, and
+     * nothing at all on one that cannot — the adapter rejects an effort a model
+     * does not support outright, so a blanket default would break every plain
+     * model rather than degrade on it.
+     */
+    if (spec.reasoning === undefined && admission.capabilities.reasoningControl === 'effort') {
+      spec.reasoning = { mode: DEFAULT_REASONING };
+    }
+
     const record: AgentRecord = {
       agentId: spec.agentId,
       role: spec.role,
@@ -606,6 +628,7 @@ export class SessionManager extends EventEmitter {
         // default-shaped lookalike.
         ...(spec.systemPrompt !== undefined ? { systemPrompt: spec.systemPrompt } : {}),
         ...(Object.keys(spec.limits).length > 0 ? { limits: spec.limits } : {}),
+        ...(spec.reasoning !== undefined ? { reasoning: spec.reasoning } : {}),
       },
       {
         agentId: spec.agentId,
@@ -2375,6 +2398,7 @@ export class SessionManager extends EventEmitter {
         workspacePath: this.deps.workspaceRoot,
         ...(projected.model !== undefined ? { model: projected.model } : {}),
         ...(projected.systemPrompt !== undefined ? { systemPrompt: projected.systemPrompt } : {}),
+        ...(projected.reasoning !== undefined ? { reasoning: projected.reasoning } : {}),
       };
 
       const admission = await this.deps.registry.admit(spec, projected.isolation, {});

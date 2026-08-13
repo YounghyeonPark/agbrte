@@ -481,3 +481,46 @@ describe('SessionManager — compaction', () => {
     expect(projection.state).toBe('awaiting_input');
   });
 });
+
+/**
+ * The effort a seat thinks at (DESIGN.md §3.4, §3.3).
+ *
+ * `AgentSpec.reasoning` was plumbed from the seat to the provider and nothing
+ * ever set it — the same shape `systemPrompt` had. The default belongs at
+ * admission because admission is the first point anything knows whether the
+ * model takes an effort at all: the adapter rejects one outright on a model
+ * that cannot think, so a blanket default would break every plain model rather
+ * than degrade on it.
+ */
+describe('SessionManager — reasoning effort', () => {
+  it('defaults to max where the target can be asked to think', async () => {
+    const sm = manager(undefined, { reasoningControl: 'effort' });
+    const session = await sm.createSession({ title: 's', goal: 'g' });
+    const agent = await sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    expect(sm.get(session.sessionId).agents[0]?.spec.reasoning).toEqual({ mode: 'max' });
+    expect(agent.spec.reasoning).toEqual({ mode: 'max' });
+  });
+
+  it('asks for nothing from a target that cannot take it', async () => {
+    // Not a no-op on the wire: an effort sent to a model without the capability
+    // is a 400 from Ollama, so defaulting blindly would fail every turn.
+    const sm = manager(undefined, { reasoningControl: 'none' });
+    const session = await sm.createSession({ title: 's', goal: 'g' });
+    await sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    expect(sm.get(session.sessionId).agents[0]?.spec.reasoning).toBeUndefined();
+  });
+
+  it('records it, so a restart does not quietly think less', async () => {
+    // The reason `agent.created` already carries `systemPrompt` and `limits`:
+    // a seat that came back at the model's default would look identical in the
+    // transcript while behaving differently.
+    const sm = manager(undefined, { reasoningControl: 'effort' });
+    const session = await sm.createSession({ title: 's', goal: 'g' });
+    await sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    const projection = await sm.projection(session.sessionId);
+    expect(projection.agents[0]?.reasoning, 'the log did not carry it').toEqual({ mode: 'max' });
+  });
+});

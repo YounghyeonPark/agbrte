@@ -8,7 +8,7 @@
  */
 
 import type { AgentId, SessionId } from './ids.js';
-import type { ModelRef } from './runtime.js';
+import type { ModelRef, ReasoningRequest } from './runtime.js';
 import type { PermissionFidelity } from './policy.js';
 import type {
   ArtifactRef,
@@ -63,6 +63,8 @@ export interface ProjectedAgent {
   permissionFidelity: PermissionFidelity;
   /** Carried so a reattached session rebuilds the spec it actually ran under. */
   systemPrompt?: string;
+  /** Carried so a restart rebuilds the effort it was admitted with (§3.4). */
+  reasoning?: ReasoningRequest;
   limits?: { maxTurns?: number; maxToolCalls?: number; tokenCeiling?: number; wallClockMs?: number };
 }
 

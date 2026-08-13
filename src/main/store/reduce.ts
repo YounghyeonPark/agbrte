@@ -201,6 +201,7 @@ export function reduceEvents(
           permissionFidelity: ev.permissionFidelity,
           ...(ev.model !== undefined ? { model: ev.model } : {}),
           ...(ev.systemPrompt !== undefined ? { systemPrompt: ev.systemPrompt } : {}),
+          ...(ev.reasoning !== undefined ? { reasoning: ev.reasoning } : {}),
           ...(ev.limits !== undefined ? { limits: ev.limits } : {}),
         });
         break;

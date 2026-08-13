@@ -19,7 +19,13 @@ import type { AgentId, EventId, SessionId, Sha256 } from './ids.js';
 import type { ContentBlock, DowngradeNote } from './content.js';
 import type { EncodedPath } from './paths.js';
 import type { PermissionDecision, PolicyRule } from './policy.js';
-import type { AgentMessage, ModelRef, RuntimeCapabilities, StopReason } from './runtime.js';
+import type {
+  AgentMessage,
+  ModelRef,
+  ReasoningRequest,
+  RuntimeCapabilities,
+  StopReason,
+} from './runtime.js';
 import type { PermissionFidelity } from './policy.js';
 import type { Actor, ChildRef, SessionBrief, SessionState, SplitProposal } from './session.js';
 
@@ -199,6 +205,13 @@ export type EventBody =
        */
       systemPrompt?: string;
       limits?: { maxTurns?: number; maxToolCalls?: number; tokenCeiling?: number; wallClockMs?: number };
+      /**
+       * Recorded for exactly the reason above. An agent that came back from a
+       * restart thinking at the model's default instead of the effort it was
+       * admitted with would look identical in the transcript — the silent
+       * behaviour change this event exists to prevent (§3.4).
+       */
+      reasoning?: ReasoningRequest;
     }
   | {
       type: 'agent.started';
