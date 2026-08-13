@@ -34,9 +34,8 @@ import {
   type AgentSpec,
   type AttentionReason,
   type ChildRef,
+  type CreateSessionInput,
   type CompactedHistory,
-  type SessionBrief,
-  type TreePosition,
   type ReasoningRequest,
   type Annotation,
   type ImageBlock,
@@ -58,8 +57,6 @@ import {
   type AgentId,
   type SessionId,
   type Actor,
-  describeTarget,
-  sameTarget,
 } from '@shared/types/index.js';
 import { SessionStore, type SessionMeta } from './store/sessionStore.js';
 import { workspaceLayout } from './store/layout.js';
@@ -83,49 +80,6 @@ import {
 } from './worktree.js';
 import type { Isolation, RoleRequirements, RuntimeRegistry } from './runtime/registry.js';
 import { defaultPolicyForTarget, evaluatePolicy } from './policy/evaluate.js';
-
-export interface CreateSessionInput {
-  title: string;
-  goal: string;
-  target?: ExecutionTarget;
-  policy?: ToolPolicy;
-  /**
-   * What this session is allowed to spend (§4.3).
-   *
-   * Absent by default, and absent means unbudgeted rather than zero — most
-   * sessions are a person working, and imposing a ceiling nobody chose would
-   * stop turns for a reason the user never set. A tree, though, cannot be
-   * carved out of nothing: `spawnChild` refuses on a parent with no budget,
-   * because inventing one would put a number nobody agreed to at the root of a
-   * subtree.
-   */
-  budget?: SessionBudget;
-  /**
-   * Splits this session may make without asking (§17 Q8).
-   *
-   * Set when the run is created, which is when the person is present. Absent
-   * means every split asks, which is §4.3's rule and stays the default.
-   */
-  splitGrant?: { count: number; maxDepth: number };
-  /**
-   * Everything a child inherits, when the session being created is one (§4.3).
-   *
-   * Set at creation rather than patched afterwards, because a child on another
-   * host is created by a *different* manager — the one that owns that
-   * workspace — and the reaching-in that `spawnChild` does locally
-   * (`this.live(child.sessionId).tree = …`) has nothing to reach. Passing it in
-   * is what makes the same code path work on either machine.
-   *
-   * The brief is written to the child's own log by whoever creates it, so a
-   * session resumed in three weeks still knows why it exists whichever machine
-   * it woke up on.
-   */
-  child?: {
-    tree: TreePosition;
-    brief: SessionBrief;
-    contract?: ResultContract;
-  };
-}
 
 export interface NewAgentInput {
   role: AgentRole;
@@ -335,6 +289,17 @@ const INBOX_EVENT_WINDOW = 500;
  * unattended runs would rather wait than be asked twice.
  */
 const DEFAULT_REASONING = 'max' as const;
+
+/** A proposal, as the spawn that answers it. One reading, used by both paths. */
+function spawnInputFor(proposal: SplitProposal): SpawnChildInput {
+  return {
+    title: proposal.title,
+    scope: proposal.scope,
+    outOfScope: proposal.outOfScope,
+    contract: proposal.contract,
+    tokenCeiling: proposal.tokenCeiling,
+  };
+}
 
 const MAX_MESSAGE_HOPS = 8;
 
@@ -1912,31 +1877,23 @@ export class SessionManager extends EventEmitter {
       );
     }
 
-    /**
-     * A child runs on the host that spawned it, and saying otherwise is a lie
-     * in the record (§4.3, §15 Phase 6).
+    /*
+     * A child runs where it was created, and now that can be elsewhere.
      *
-     * `spawnChild` creates the child through `this.createSession` — *this*
-     * manager, which owns one workspace on one host. A `target` naming another
-     * machine set the child's `target` field and changed nothing about where it
-     * ran, so the log said `ssh` while the agent worked locally. That is worse
-     * than the feature being missing: an absent feature is noticed, and this one
-     * was only noticed by whoever later trusted the field — roll-up asking a
-     * machine that never had the session, or a person reading a transcript.
+     * This refused a differing `target` by name for a long time, and the
+     * refusal was right while it lasted: `spawnChild` created the child through
+     * `this.createSession` — *this* manager, one workspace, one host — so a
+     * `target` naming another machine set a field and changed nothing. The log
+     * said `ssh` while the agent worked locally, which is worse than the
+     * feature being absent: an absent feature is noticed, and that one was only
+     * noticed by whoever later trusted the field.
      *
-     * §4.3 already says the cross-host consequences are open ("tree budget has
-     * no single owner", `needsAttention` bubbling across hosts). §15 marked the
-     * phase done anyway. Refusing is what makes the two agree until the fleet
-     * can own a spawn.
+     * What lifts it is not this method. `prepareChild` decides without
+     * mutating, `createSession` takes the inherited position and brief, and
+     * `recordChild` commits — so the fleet can run the three against two hosts
+     * (§17 Q5). Reached here, both halves are on one machine and there is
+     * nothing to route.
      */
-    if (input.target !== undefined && !sameTarget(input.target, parent.session.target)) {
-      throw new SplitRefused(
-        `a child on a different machine is not built: this session runs on ` +
-          `${describeTarget(parent.session.target)} and the child would be created here anyway. ` +
-          `Attach that machine and start the work there, or spawn on the same host.`,
-      );
-    }
-
     const budget = parent.session.budget;
     if (budget === undefined) {
       // A parent with no ceiling cannot carve one out, and inventing one would
@@ -2306,12 +2263,30 @@ export class SessionManager extends EventEmitter {
     decision: { approved: boolean; reason?: string },
     actor?: Actor,
   ): Promise<Session | null> {
-    const live = this.live(sessionId);
-    const proposal = live.pendingSplits.get(proposalId);
+    const proposal = this.live(sessionId).pendingSplits.get(proposalId);
     if (proposal === undefined) throw new Error(`no pending split ${proposalId}`);
+    if (!(await this.settleSplit(sessionId, proposalId, decision, actor))) return null;
 
-    // Cleared first: `spawnChild` can refuse on a limit, and a proposal left
-    // pending after it was answered would ask the same question forever.
+    return this.spawnChild(sessionId, spawnInputFor(proposal), actor);
+  }
+
+  /**
+   * Record that a proposal was answered, whichever way (§4.3).
+   *
+   * Shared by both entry points so the parent's history reads the same however
+   * the child was created. Cleared *before* any spawn is attempted: a spawn can
+   * refuse on a limit, and a proposal left pending after it was answered would
+   * ask the same question forever.
+   *
+   * Returns whether the caller should go on to make a child.
+   */
+  private async settleSplit(
+    sessionId: SessionId,
+    proposalId: string,
+    decision: { approved: boolean; reason?: string },
+    actor?: Actor,
+  ): Promise<boolean> {
+    const live = this.live(sessionId);
     live.pendingSplits.delete(proposalId);
     live.session.pendingSplits = [...live.pendingSplits.values()];
     await live.store.append(
@@ -2327,19 +2302,32 @@ export class SessionManager extends EventEmitter {
     live.session.needsAttention = this.ownAttention(live);
     this.touch(live);
     this.rollUp(live);
+    return decision.approved;
+  }
 
-    if (!decision.approved) return null;
-    return this.spawnChild(
-      sessionId,
-      {
-        title: proposal.title,
-        scope: proposal.scope,
-        outOfScope: proposal.outOfScope,
-        contract: proposal.contract,
-        tokenCeiling: proposal.tokenCeiling,
-      },
-      actor,
-    );
+  /**
+   * Answer a split and work out the child, without creating it (§17 Q5).
+   *
+   * `respondSplit` with the creation left out, for the case where the child
+   * belongs on another machine. Everything that changes the *parent* — clearing
+   * the proposal, recording the decision — happens here, because that is the
+   * parent's own history and it is settled either way. Everything that changes
+   * the parent's *budget* does not, because the child does not exist yet.
+   */
+  async prepareSplit(
+    sessionId: SessionId,
+    proposalId: string,
+    decision: { approved: boolean; reason?: string },
+    actor?: Actor,
+  ): Promise<{ create: CreateSessionInput; parentBudget: SessionBudget; contract: ResultContract } | null> {
+    const proposal = this.live(sessionId).pendingSplits.get(proposalId);
+    if (proposal === undefined) throw new Error(`no pending split ${proposalId}`);
+
+    const settled = await this.settleSplit(sessionId, proposalId, decision, actor);
+    if (!settled) return null;
+
+    const prepared = await this.prepareChild(sessionId, spawnInputFor(proposal));
+    return { ...prepared, contract: proposal.contract };
   }
 
   /**

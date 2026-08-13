@@ -31,12 +31,14 @@ import { byAttentionThenRecency, describeTarget, sameTarget } from '@shared/type
 import type { HostConnection } from './host/hostConnection.js';
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import { requireTransport } from './host/transports.js';
+import { SplitRefused } from './sessionManager.js';
 import type { SearchHit } from './store/searchSessions.js';
 import type { ListeningPort } from './preview/ports.js';
 import type { PreviewServer, PreviewServerLog } from './preview/servers.js';
 import type { SessionTemplate } from './store/templates.js';
 import type { ModelNeed } from './runtime/registry.js';
 import type {
+  CreateSessionInput,
   ReasoningRequest,
   AccessRole,
   AgentId,
@@ -834,9 +836,39 @@ export class Fleet extends EventEmitter {
   async respondSplit(
     sessionId: SessionId,
     proposalId: string,
-    decision: { approved: boolean; reason?: string },
+    /** `instanceId` picks the machine; absent means the parent's own (§17 Q5). */
+    decision: { approved: boolean; reason?: string; instanceId?: string },
   ): Promise<Session | null> {
-    return this.ownerOf(sessionId).connection.respondSplit(sessionId, proposalId, decision);
+    const parent = this.ownerOf(sessionId);
+    const elsewhere = decision.approved ? this.hostFor(decision.instanceId, parent) : null;
+    // The ordinary case, and the one every existing test drives: the child
+    // belongs where its parent already is, so the parent's host does all three
+    // steps itself and nothing crosses a boundary.
+    if (elsewhere === null) {
+      return parent.connection.respondSplit(sessionId, proposalId, decision);
+    }
+
+    /*
+     * Three steps on two machines (§17 Q5).
+     *
+     * Safe without a two-phase commit because of the order the local path
+     * already had: preparing changes nothing, so a creation that fails on the
+     * far host leaves no debit on the near one. The parent's proposal *is*
+     * settled by step one either way — that is the parent's own history, and it
+     * was answered whatever becomes of the child.
+     */
+    const prepared = await parent.connection.prepareSplit(sessionId, proposalId, decision);
+    if (prepared === null) return null;
+
+    const child = await elsewhere.connection.createSession(prepared.create);
+    this.owners.set(child.sessionId, elsewhere.instanceId);
+    await parent.connection.recordChild(
+      sessionId,
+      child,
+      prepared.parentBudget,
+      prepared.contract,
+    );
+    return child;
   }
 
   async listOnDisk(): Promise<
@@ -856,10 +888,7 @@ export class Fleet extends EventEmitter {
     return entry ? snapshot(entry) : null;
   }
 
-  async createSession(
-    instanceId: InstanceId,
-    input: { title: string; goal: string },
-  ): Promise<Session> {
+  async createSession(instanceId: InstanceId, input: CreateSessionInput): Promise<Session> {
     const entry = this.require(instanceId);
     const session = await entry.connection.createSession(input);
     this.owners.set(session.sessionId, instanceId);
@@ -935,6 +964,30 @@ export class Fleet extends EventEmitter {
 
   async blob(sessionId: SessionId, sha256: Sha256, mime?: string): Promise<Buffer | null> {
     return this.ownerOf(sessionId).connection.getBlob(sessionId, sha256, mime);
+  }
+
+  /**
+   * The host an approved child should run on, or `null` for the parent's own.
+   *
+   * Chosen by whoever approves, not named by the agent that proposed. §4.3 keeps
+   * splits user-approved because a decomposition mistake is expensive, and the
+   * same person is the one who knows which machine should do the work — an
+   * agent naming a host would be picking from a fleet it cannot see.
+   *
+   * An unknown instance is refused rather than quietly run here. Falling back to
+   * local is the old bug in a new hat: the record would say one machine and the
+   * work would happen on another.
+   */
+  private hostFor(instanceId: string | undefined, parent: Entry): Entry | null {
+    if (instanceId === undefined || instanceId === parent.instanceId) return null;
+    const host = this.entries.get(instanceId as InstanceId);
+    if (host === undefined) {
+      throw new SplitRefused(
+        `this split asks for a child on host ${instanceId}, which is not attached; ` +
+          'attach that machine first, or approve the child where the parent runs',
+      );
+    }
+    return host;
   }
 
   async events(sessionId: SessionId, fromSeq = 0): Promise<AgbrteEvent[]> {

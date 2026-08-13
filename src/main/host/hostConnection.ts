@@ -18,6 +18,7 @@ import type { SessionTemplate } from '../store/templates.js';
 import { EventEmitter } from 'node:events';
 import {
   COMMAND_SINCE,
+  type PreparedChild,
   SESSION_PROTOCOL_VERSION,
   type AppSideSessionChannel,
   type HostIdentity,
@@ -29,6 +30,8 @@ import {
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import type {
   ReasoningRequest,
+  ResultContract,
+  SessionBudget,
   AccessRole,
   AgentId,
   ContentBlock,
@@ -271,7 +274,10 @@ export class HostConnection extends EventEmitter {
   }
 
   createSession(input: { title: string; goal: string }): Promise<Session> {
-    return this.call({ t: 'session.create', title: input.title, goal: input.goal });
+    // Both shapes: the strings so a host older than v12 still makes the
+    // session it always made, and the whole input so a newer one makes the
+    // session that was actually asked for.
+    return this.call({ t: 'session.create', title: input.title, goal: input.goal, input });
   }
 
   resumeSession(sessionId: SessionId): Promise<Session> {
@@ -503,6 +509,36 @@ export class HostConnection extends EventEmitter {
       ...(mime !== undefined ? { mime } : {}),
     });
     return b64 === null ? null : Buffer.from(b64, 'base64');
+  }
+
+  /** Settle a split and decide the child, without creating it (§17 Q5). */
+  prepareSplit(
+    sessionId: SessionId,
+    proposalId: string,
+    decision: { approved: boolean; reason?: string },
+  ): Promise<PreparedChild | null> {
+    // `require`, not a silent skip: a host too old to prepare cannot host the
+    // parent of a cross-host child, and the caller has to say which feature is
+    // missing rather than spawn somewhere unintended.
+    this.require('session.prepareSplit');
+    return this.call({
+      t: 'session.prepareSplit',
+      sessionId,
+      proposalId,
+      approved: decision.approved,
+      ...(decision.reason !== undefined ? { reason: decision.reason } : {}),
+    });
+  }
+
+  /** Commit a spawn on the parent once the child exists elsewhere (§17 Q5). */
+  recordChild(
+    sessionId: SessionId,
+    child: Session,
+    parentBudget: SessionBudget,
+    contract: ResultContract,
+  ): Promise<void> {
+    this.require('session.recordChild');
+    return this.call({ t: 'session.recordChild', sessionId, child, parentBudget, contract });
   }
 
   search(query: string, limit?: number): Promise<SearchHit[]> {

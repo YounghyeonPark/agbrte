@@ -29,7 +29,10 @@
  */
 
 import type {
+  CreateSessionInput,
   ReasoningRequest,
+  ResultContract,
+  SessionBudget,
   AccessRole,
   AgentRecord,
   ContentBlock,
@@ -182,7 +185,20 @@ export interface HostIdentity {
  * remedy offered on a mismatch is "restart this host", so a confident guess
  * here would cost somebody their running turn, and silence is the safe value.
  */
-export const SESSION_PROTOCOL_VERSION = 11;
+/**
+ * What a parent's host decided a child should be, before anything created it.
+ *
+ * Named rather than inlined because three places have to agree on it — the
+ * manager that computes it, the wire, and the fleet that hands it to another
+ * host — and a shape spelled out three times is a shape that drifts.
+ */
+export interface PreparedChild {
+  create: CreateSessionInput;
+  parentBudget: SessionBudget;
+  contract: ResultContract;
+}
+
+export const SESSION_PROTOCOL_VERSION = 12;
 
 /**
  * The oldest client a host will serve.
@@ -216,6 +232,8 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'models.list': 8,
   'session.setReasoning': 10,
   'blob.get': 11,
+  'session.prepareSplit': 12,
+  'session.recordChild': 12,
   'models.install': 9,
   'models.progress': 9,
 };
@@ -318,7 +336,25 @@ export type SessionCommand =
    */
   | { t: 'session.search'; id: RequestId; query: string; limit?: number }
   | { t: 'session.get'; id: RequestId; sessionId: string }
-  | { t: 'session.create'; id: RequestId; title: string; goal: string }
+  /**
+   * `input` alongside `title`/`goal`, not replacing them (§17 Q5).
+   *
+   * The command carried two strings, so every other field a session can be
+   * created with — its budget, its policy, and now the position and brief a
+   * child inherits — was dropped at the wire and silently defaulted on the far
+   * side. That was invisible while only a local manager created children.
+   *
+   * The old fields stay because `COMMAND_SINCE` cannot express a field
+   * addition: a v11 host reads them and ignores what it does not know, which is
+   * the same session it would have made before.
+   */
+  | {
+      t: 'session.create';
+      id: RequestId;
+      title: string;
+      goal: string;
+      input?: CreateSessionInput;
+    }
   | { t: 'session.resume'; id: RequestId; sessionId: string }
   | { t: 'session.addAgent'; id: RequestId; sessionId: string; input: unknown }
   /**
@@ -389,6 +425,32 @@ export type SessionCommand =
    * show rather than an error to raise.
    */
   | { t: 'blob.get'; id: RequestId; sessionId: string; sha256: string; mime?: string }
+  /**
+   * Answer a split and work out what the child should be, without creating it
+   * (§4.3, §17 Q5).
+   *
+   * The half of a spawn that belongs to the parent's host. It raises every
+   * refusal, reserves against the parent's budget and builds the brief — and
+   * changes nothing, so a creation that then fails on the other machine leaves
+   * no debit behind. Returns `null` when the split was declined.
+   */
+  | {
+      t: 'session.prepareSplit';
+      id: RequestId;
+      sessionId: string;
+      proposalId: string;
+      approved: boolean;
+      reason?: string;
+    }
+  /** Commit a spawn on the parent once the child exists elsewhere (§4.3). */
+  | {
+      t: 'session.recordChild';
+      id: RequestId;
+      sessionId: string;
+      child: Session;
+      parentBudget: SessionBudget;
+      contract: ResultContract;
+    }
   /**
    * One chunk of a blob, base64 in a JSON message.
    *

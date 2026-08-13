@@ -57,6 +57,8 @@ interface HostOptions {
  * Cached by root so re-attaching the same path meets the *same* host, which is
  * what a real second connection would find.
  */
+const managersByRoot = new Map<string, SessionManager>();
+
 function makeFleet(opts: HostOptions = {}): Fleet {
   const hosts = new Map<string, SessionHostServer>();
 
@@ -71,12 +73,17 @@ function makeFleet(opts: HostOptions = {}): Fleet {
           label: 'Echo',
           model: 'none',
         });
+        const manager = new SessionManager({
+          registry,
+          workspaceRoot,
+          instanceId: identity.instanceId,
+        });
+        // A split proposal comes from an agent, not from a client — there is no
+        // fleet method for it and there should not be. Holding the manager lets
+        // a test raise one the way one is really raised.
+        managersByRoot.set(workspaceRoot, manager);
         server = new SessionHostServer({
-          manager: new SessionManager({
-            registry,
-            workspaceRoot,
-            instanceId: identity.instanceId,
-          }),
+          manager,
           identity: {
             instanceId: identity.instanceId,
             lineageId: identity.lineageId,
@@ -687,4 +694,111 @@ describe('a guard that cannot see refuses', () => {
       /link dropped mid-call/,
     );
   }, 30_000);
+});
+
+/**
+ * A child on a machine its parent is not on (§4.3, §17 Q5).
+ *
+ * This was refused by name for a long time, and the refusal was right: the field
+ * that said where a child ran set nothing, so the log claimed `ssh` while the
+ * agent worked locally. §4.3 named two blockers. Budget turned out not to be one
+ * — `reserveForChild` is pure and the parent's debit lands after the child
+ * exists, so a creation that fails changes nothing anywhere and no two-phase
+ * commit is needed. What was left was that a spawn was one method that could
+ * only call `this.createSession`.
+ *
+ * Three steps on two hosts now: decide on the parent's, create on the target's,
+ * commit back on the parent's.
+ */
+describe('spawning a child on another host', () => {
+  const propose = async (root: string, sessionId: string): Promise<void> => {
+    await managersByRoot.get(root)!.proposeSplit(sessionId as never, proposal);
+  };
+
+  const proposal = {
+    title: 'port the parser',
+    scope: 'port the parser to the new AST',
+    outOfScope: ['the CLI surface'],
+    contract: { summaryMaxTokens: 500, artifacts: [] },
+    tokenCeiling: 10_000,
+    why: 'compacted twice and the checklist is still growing',
+  };
+
+  it('creates it there, and records it here', async () => {
+    const fleet = makeFleet();
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
+
+    const parent = await fleet.createSession(a.instanceId, {
+      title: 'overnight',
+      goal: 'g',
+      budget: { tokenCeiling: 100_000, spent: 0, reservedForChildren: 0 },
+    });
+    await propose(a.workspaceRoot, parent.sessionId);
+    const proposalId = (await fleet.get(parent.sessionId)).pendingSplits[0]!.proposalId;
+
+    const child = await fleet.respondSplit(parent.sessionId, proposalId, {
+      approved: true,
+      instanceId: b.instanceId,
+    });
+
+    // On B, and saying so — the field that used to be a label is now the
+    // routing decision.
+    expect(child?.instanceId).toBe(b.instanceId);
+    expect((await fleet.list()).find((s) => s.sessionId === child?.sessionId)?.instanceId).toBe(
+      b.instanceId,
+    );
+
+    // And the parent, on A, knows it has one — with the reservation applied.
+    const after = await fleet.get(parent.sessionId);
+    expect(after.children.map((c) => c.sessionId)).toEqual([child?.sessionId]);
+    expect(after.budget?.reservedForChildren).toBe(10_000);
+  });
+
+  it('gives the child its brief and its place in the tree', async () => {
+    // The half that used to be done by reaching into a live session, which a
+    // child on another host does not have.
+    const fleet = makeFleet();
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
+
+    const parent = await fleet.createSession(a.instanceId, {
+      title: 'overnight',
+      goal: 'g',
+      budget: { tokenCeiling: 100_000, spent: 0, reservedForChildren: 0 },
+    });
+    await propose(a.workspaceRoot, parent.sessionId);
+    const proposalId = (await fleet.get(parent.sessionId)).pendingSplits[0]!.proposalId;
+    const child = await fleet.respondSplit(parent.sessionId, proposalId, {
+      approved: true,
+      instanceId: b.instanceId,
+    });
+
+    const seen = await fleet.get(child!.sessionId);
+    expect(seen.tree.parentSessionId).toBe(parent.sessionId);
+    expect(seen.tree.ancestry).toEqual([parent.sessionId]);
+    expect(seen.budget?.tokenCeiling).toBe(10_000);
+
+    // Durable, so a session resumed in three weeks still knows why it exists.
+    const events = await fleet.events(child!.sessionId);
+    expect(events.some((e) => e.type === 'session.brief_received')).toBe(true);
+  });
+
+  it('refuses a host that is not attached rather than running it here', async () => {
+    const fleet = makeFleet();
+    const a = await fleet.attach(local(await makeRoot()));
+    const parent = await fleet.createSession(a.instanceId, {
+      title: 'overnight',
+      goal: 'g',
+      budget: { tokenCeiling: 100_000, spent: 0, reservedForChildren: 0 },
+    });
+    await propose(a.workspaceRoot, parent.sessionId);
+    const proposalId = (await fleet.get(parent.sessionId)).pendingSplits[0]!.proposalId;
+
+    // Falling back to local is the old bug in a new hat: the record would say
+    // one machine and the work would happen on another.
+    await expect(
+      fleet.respondSplit(parent.sessionId, proposalId, { approved: true, instanceId: 'nope' }),
+    ).rejects.toThrow(/not attached/);
+  });
 });

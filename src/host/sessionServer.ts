@@ -382,7 +382,7 @@ export class SessionHostServer {
         case 'session.create':
           this.requireWrite(client, 'create a session');
           return manager.createSession(
-            { title: command.title, goal: command.goal },
+            command.input ?? { title: command.title, goal: command.goal },
             client.actor,
           );
 
@@ -433,6 +433,28 @@ export class SessionHostServer {
           await manager.setReasoning(command.sessionId as SessionId, command.agentId as AgentId, {
             mode: command.mode,
           });
+          return undefined;
+
+        case 'session.prepareSplit':
+          // A write: it settles a proposal and decides a child, even though the
+          // child is made elsewhere.
+          this.requireWrite(client, 'answer a split');
+          return manager.prepareSplit(
+            command.sessionId as SessionId,
+            command.proposalId,
+            { approved: command.approved, ...(command.reason !== undefined ? { reason: command.reason } : {}) },
+            client.actor,
+          );
+
+        case 'session.recordChild':
+          this.requireWrite(client, 'record a child');
+          await manager.recordChild(
+            command.sessionId as SessionId,
+            command.child,
+            command.parentBudget,
+            command.contract,
+            client.actor,
+          );
           return undefined;
 
         case 'blob.get': {

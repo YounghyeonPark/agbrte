@@ -3,6 +3,7 @@
  */
 
 import type { AgentId, InstanceId, SessionId } from './ids.js';
+import type { ToolPolicy } from './policy.js';
 import type { NormalizedTurn } from './content.js';
 import type { AgentRole, AgentSpec, ModelRef, RuntimeCapabilities } from './runtime.js';
 import type { ExecutionTarget } from './target.js';
@@ -428,4 +429,52 @@ export interface ModelChip {
   runtimeId: string;
   authKind: 'api-key' | 'vendor-cli-session' | 'none';
   fidelity: RuntimeCapabilities['permissionFidelity'];
+}
+
+/*
+ * Moved here from `SessionManager` when a child became creatable on another
+ * host: this is now a request that crosses the wire, and a request shape that
+ * lives in one process is a shape the other one has to restate.
+ */
+export interface CreateSessionInput {
+  title: string;
+  goal: string;
+  target?: ExecutionTarget;
+  policy?: ToolPolicy;
+  /**
+   * What this session is allowed to spend (§4.3).
+   *
+   * Absent by default, and absent means unbudgeted rather than zero — most
+   * sessions are a person working, and imposing a ceiling nobody chose would
+   * stop turns for a reason the user never set. A tree, though, cannot be
+   * carved out of nothing: `spawnChild` refuses on a parent with no budget,
+   * because inventing one would put a number nobody agreed to at the root of a
+   * subtree.
+   */
+  budget?: SessionBudget;
+  /**
+   * Splits this session may make without asking (§17 Q8).
+   *
+   * Set when the run is created, which is when the person is present. Absent
+   * means every split asks, which is §4.3's rule and stays the default.
+   */
+  splitGrant?: { count: number; maxDepth: number };
+  /**
+   * Everything a child inherits, when the session being created is one (§4.3).
+   *
+   * Set at creation rather than patched afterwards, because a child on another
+   * host is created by a *different* manager — the one that owns that
+   * workspace — and the reaching-in that `spawnChild` does locally
+   * (`this.live(child.sessionId).tree = …`) has nothing to reach. Passing it in
+   * is what makes the same code path work on either machine.
+   *
+   * The brief is written to the child's own log by whoever creates it, so a
+   * session resumed in three weeks still knows why it exists whichever machine
+   * it woke up on.
+   */
+  child?: {
+    tree: TreePosition;
+    brief: SessionBrief;
+    contract?: ResultContract;
+  };
 }
