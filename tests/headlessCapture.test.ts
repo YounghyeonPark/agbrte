@@ -16,6 +16,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { createServer } from 'node:http';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { SessionManager } from '@main/sessionManager.js';
+import { RuntimeRegistry } from '@main/runtime/registry.js';
+import { openWorkspace } from '@main/store/identity.js';
 import { captureUrl, findBrowser, NoBrowser } from '@main/capture/headless.js';
 import { decodePng, isPng } from '@main/content/png.js';
 import { screenshotTool, type ToolContext } from '@main/tools/index.js';
@@ -180,4 +186,54 @@ describe.skipIf(browser === null)('against a real browser', () => {
       server.close();
     }
   }, 120_000);
+});
+
+/**
+ * A screenshot travelling all the way to a person (§12).
+ *
+ * The pieces were each covered and never joined: the browser renders (above),
+ * the tool hands back an `ImageBlock`, the harness records its hash on the
+ * event, and `blob.get` reads bytes home. Every one of those passed while the
+ * chain did nothing, because the field the last two agree on had no writer.
+ *
+ * This walks it: render, store, ask for it back by hash alone — which is what
+ * the artifacts panel does, since a tool result carries no mime — and check the
+ * bytes are the same PNG that went in.
+ */
+describe.skipIf(browser === null)('from a browser to something a person can open', () => {
+  it('stores what it rendered and reads it back by hash', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<body style="margin:0;background:#00ff00"></body>');
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    const port = (server.address() as { port: number }).port;
+
+    const dir = await mkdtemp(join(tmpdir(), 'agbrte-shot-'));
+    try {
+      const instanceId = (await openWorkspace(dir)).instanceId;
+      const sm = new SessionManager({
+        registry: new RuntimeRegistry(),
+        workspaceRoot: dir,
+        instanceId,
+      });
+      const session = await sm.createSession({ title: 's', goal: 'g' });
+
+      const shot = await captureUrl(`http://127.0.0.1:${port}/`, {
+        viewport: { width: 200, height: 150, dpr: 1 },
+      });
+      const sha = await sm.attachBlob(session.sessionId, shot.png, 'image/png');
+
+      // By hash alone: `agent.tool_result` records no mime, so this is exactly
+      // the call the panel makes for anything a tool produced. It resolves
+      // through the store's `<sha>.*` scan or it resolves not at all.
+      const back = await sm.readBlob(session.sessionId, sha);
+      expect(back, 'the bytes did not come home').not.toBeNull();
+      expect(isPng(back!)).toBe(true);
+      expect(Buffer.from(back!).equals(shot.png)).toBe(true);
+    } finally {
+      server.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -662,7 +662,8 @@ describe('compacting a history that is filling the window', () => {
  * built against something nothing set.
  */
 describe('what a tool handed back', () => {
-  const withBlocks = (blocks: unknown) =>
+  /** A turn that calls one tool, then answers. The tool is supplied per test. */
+  const callsATool = () =>
     new StubProvider([
       {
         toolCalls: [{ id: 'c1', name: 'read', args: { file_path: 'target.ts' } }],
@@ -673,7 +674,7 @@ describe('what a tool handed back', () => {
 
   it('puts every hash on the tool_result event', async () => {
     const runtime = new AgbrteHarnessRuntime({
-      provider: withBlocks(null),
+      provider: callsATool(),
       endpointFor: () => ENDPOINT,
       // A tool that answers with two images, which is the case recording only
       // the first would quietly halve.
