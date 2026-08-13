@@ -35,6 +35,8 @@ import {
   type AttentionReason,
   type ChildRef,
   type CompactedHistory,
+  type SessionBrief,
+  type TreePosition,
   type ReasoningRequest,
   type Annotation,
   type ImageBlock,
@@ -105,6 +107,24 @@ export interface CreateSessionInput {
    * means every split asks, which is §4.3's rule and stays the default.
    */
   splitGrant?: { count: number; maxDepth: number };
+  /**
+   * Everything a child inherits, when the session being created is one (§4.3).
+   *
+   * Set at creation rather than patched afterwards, because a child on another
+   * host is created by a *different* manager — the one that owns that
+   * workspace — and the reaching-in that `spawnChild` does locally
+   * (`this.live(child.sessionId).tree = …`) has nothing to reach. Passing it in
+   * is what makes the same code path work on either machine.
+   *
+   * The brief is written to the child's own log by whoever creates it, so a
+   * session resumed in three weeks still knows why it exists whichever machine
+   * it woke up on.
+   */
+  child?: {
+    tree: TreePosition;
+    brief: SessionBrief;
+    contract?: ResultContract;
+  };
 }
 
 export interface NewAgentInput {
@@ -470,12 +490,31 @@ export class SessionManager extends EventEmitter {
             },
           }
         : {}),
-      // A session created directly is a root of its own tree (§4.3).
-      tree: { rootSessionId: sessionId, depth: 0, ancestry: [] },
+      // A session created directly is a root of its own tree (§4.3); one
+      // created *as* a child is given its position, because the manager that
+      // owns the parent may not be this one.
+      tree: input.child?.tree ?? { rootSessionId: sessionId, depth: 0, ancestry: [] },
       children: [],
       peerSessionIds: [],
       pendingSplits: [],
     };
+
+    /*
+     * The brief is written to the child's own log by whoever creates it.
+     *
+     * §4.3: "the brief is durable, not an opening prompt" — a session resumed in
+     * three weeks still knows why it exists, and that has to hold whichever
+     * machine it woke up on. `spawnChild` used to append this itself, reaching
+     * into a live session it had just created; that reach is exactly what a
+     * cross-host child does not have.
+     */
+    if (input.child !== undefined) {
+      await store.append({
+        type: 'session.brief_received',
+        brief: input.child.brief,
+        parentSessionId: input.child.tree.ancestry.at(-1)!,
+      });
+    }
 
     // Live forwarding for the UI (§7). Wired here rather than from the IPC
     // layer so exactly one place knows which session a store belongs to, and
@@ -1917,31 +1956,38 @@ export class SessionManager extends EventEmitter {
          * sibling with it.
          */
         policy: clonePolicy(parent.policy),
+        budget: reserved.child,
+        /*
+         * Passed in rather than patched on afterwards.
+         *
+         * This used to create the session and then reach into it — `const live =
+         * this.live(child.sessionId); live.session.tree = …` — which works only
+         * because the child happens to be in *this* manager's map. Handing the
+         * inherited position and brief to whoever creates the session is what
+         * lets the same code create it on another host, and it removes a window
+         * where a child existed with a root's tree and no brief.
+         */
+        child: {
+          tree: {
+            rootSessionId: parent.session.tree.rootSessionId,
+            parentSessionId,
+            depth,
+            // Root-first, and carrying the parent: this is what a breadcrumb
+            // renders from and what stops a cycle being createable at all.
+            ancestry: [...parent.session.tree.ancestry, parentSessionId],
+          },
+          brief: built.brief,
+          ...(input.contract !== undefined ? { contract: input.contract } : {}),
+        },
         ...(input.target !== undefined ? { target: input.target } : {}),
       },
       actor,
     );
 
     const live = this.live(child.sessionId);
-    live.session.tree = {
-      rootSessionId: parent.session.tree.rootSessionId,
-      parentSessionId,
-      depth,
-      // Root-first, and carrying the parent: this is what a breadcrumb renders
-      // from and what stops a cycle being createable at all.
-      ancestry: [...parent.session.tree.ancestry, parentSessionId],
-    };
-    live.session.budget = reserved.child;
     // Kept so the child can be held to it when it reports back, without having
     // to re-read a brief to find out what shape its own answer must take.
     live.contract = input.contract;
-
-    // Durable on the child, so a session resumed in three weeks still knows why
-    // it exists (§4.3: "the brief is durable, not an opening prompt").
-    await live.store.append(
-      { type: 'session.brief_received', brief: built.brief, parentSessionId },
-      { ...(actor !== undefined ? { actor } : {}) },
-    );
 
     const ref: ChildRef = {
       sessionId: child.sessionId,
