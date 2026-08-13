@@ -97,6 +97,56 @@ export interface FleetDeps {
   maxBackoffMs?: number;
 }
 
+/**
+ * Raise a blocked descendant onto its ancestors, across hosts (§4.3, §17 Q5).
+ *
+ * `SessionManager.rollUp` does this within a host by walking its own map of live
+ * sessions. That map is one workspace, so the moment a parent and child sit on
+ * different machines the walk finds nothing and stops — silently, which is the
+ * shape §15's criterion cannot survive: *a permission prompt raised by the
+ * deepest child appears in the top-level Needs-you rail*.
+ *
+ * **Derived here rather than pushed to the parent's host.** The fleet already
+ * receives every session from every host, so the information is in hand;
+ * writing it into the parent's log instead would record, in one machine's
+ * durable history, a fact belonging to another's — and would need a new command,
+ * a new event, and an answer for what happens when the far host is unreachable.
+ * A view can be recomputed on the next list; a log entry cannot be taken back.
+ *
+ * The descendant's own reason travels up with a `from` breadcrumb, matching
+ * `recomputeAttention` exactly and for the reason written there: *something below
+ * this needs you* is not actionable unless you can get to it. Two bubbling rules
+ * that disagreed about what a raised attention says would be worse than one that
+ * stops at a host boundary, because the disagreement would be invisible.
+ */
+function bubbleAcrossHosts(sessions: Session[]): Session[] {
+  const byId = new Map(sessions.map((s) => [s.sessionId, s]));
+
+  for (const session of sessions) {
+    const raised = session.needsAttention;
+    // Only what a session is asking on its own behalf climbs. Re-raising an
+    // already-bubbled attention would attribute a grandchild's question to its
+    // parent as though the parent had asked it.
+    if (raised === null || raised.from !== undefined) continue;
+
+    for (const ancestorId of session.tree.ancestry) {
+      const ancestor = byId.get(ancestorId as SessionId);
+      // Absent means that host is not attached. Nothing to raise it onto, and
+      // nothing lost: attaching recomputes this from the same sessions.
+      if (ancestor === undefined) continue;
+      // An ancestor with a question of its own keeps it — its own is nearer the
+      // person than a descendant's.
+      if (ancestor.needsAttention !== null) continue;
+      ancestor.needsAttention = {
+        reason: raised.reason,
+        since: raised.since,
+        from: { sessionId: session.sessionId, title: session.title, path: [session.title] },
+      };
+    }
+  }
+  return sessions;
+}
+
 /** One attached host: a workspace, the process owning it, and its sessions. */
 export interface AttachedHost {
   instanceId: InstanceId;
@@ -829,7 +879,7 @@ export class Fleet extends EventEmitter {
         return sessions;
       }),
     );
-    return perHost.flat().sort(byAttentionThenRecency);
+    return bubbleAcrossHosts(perHost.flat()).sort(byAttentionThenRecency);
   }
 
   /** Answer a split proposal on whichever host owns the session (§4.3). */

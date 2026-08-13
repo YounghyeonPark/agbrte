@@ -802,3 +802,91 @@ describe('spawning a child on another host', () => {
     ).rejects.toThrow(/not attached/);
   });
 });
+
+/**
+ * §15's criterion, across a machine boundary (§4.3, §17 Q5).
+ *
+ * > a permission prompt raised by the deepest child appears in the top-level
+ * > Needs-you rail
+ *
+ * `rollUp` walks one host's map of live sessions, so a parent on another
+ * machine was never reached and the rail stayed quiet — the failure that says
+ * nothing, which is the one this repository keeps finding. Derived here from
+ * sessions the fleet already holds, rather than written into the parent's log:
+ * a view can be recomputed, a durable entry about another machine cannot be
+ * taken back.
+ */
+describe('a blocked child on another host', () => {
+  const proposal = {
+    title: 'port the parser',
+    scope: 'port the parser to the new AST',
+    outOfScope: ['the CLI surface'],
+    contract: { summaryMaxTokens: 500, artifacts: [] },
+    tokenCeiling: 10_000,
+    why: 'compacted twice and the checklist is still growing',
+  };
+
+  it('reaches its parent, and says which session to go to', async () => {
+    const fleet = makeFleet({
+      script: [{ kind: 'stop', stop: { kind: 'quota_exhausted', scope: 'weekly' } }],
+    });
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
+
+    const parent = await fleet.createSession(a.instanceId, {
+      title: 'overnight',
+      goal: 'g',
+      budget: { tokenCeiling: 100_000, spent: 0, reservedForChildren: 0 },
+    });
+    await managersByRoot.get(a.workspaceRoot)!.proposeSplit(parent.sessionId as never, proposal);
+    const proposalId = (await fleet.get(parent.sessionId)).pendingSplits[0]!.proposalId;
+    const child = await fleet.respondSplit(parent.sessionId, proposalId, {
+      approved: true,
+      instanceId: b.instanceId,
+    });
+
+    // Block the child, on B.
+    const agent = await fleet.addAgent(child!.sessionId, { role: 'worker', runtimeId: 'echo' });
+    await fleet.send(child!.sessionId, agent.agentId, TEXT);
+
+    const listed = await fleet.list();
+    const seenParent = listed.find((s) => s.sessionId === parent.sessionId);
+
+    expect(seenParent?.needsAttention?.reason).toBe('quota_exhausted');
+    // The breadcrumb, because "something below this needs you" is not
+    // actionable unless you can get to it.
+    expect(seenParent?.needsAttention?.from?.sessionId).toBe(child?.sessionId);
+  });
+
+  it('leaves an ancestor with a question of its own alone', async () => {
+    // Its own is nearer the person than a descendant's, and overwriting it
+    // would answer the wrong question first.
+    const fleet = makeFleet({
+      script: [{ kind: 'stop', stop: { kind: 'quota_exhausted', scope: 'weekly' } }],
+    });
+    const a = await fleet.attach(local(await makeRoot()));
+    const b = await fleet.attach(local(await makeRoot()));
+
+    const parent = await fleet.createSession(a.instanceId, {
+      title: 'overnight',
+      goal: 'g',
+      budget: { tokenCeiling: 100_000, spent: 0, reservedForChildren: 0 },
+    });
+    await managersByRoot.get(a.workspaceRoot)!.proposeSplit(parent.sessionId as never, proposal);
+    const proposalId = (await fleet.get(parent.sessionId)).pendingSplits[0]!.proposalId;
+    const child = await fleet.respondSplit(parent.sessionId, proposalId, {
+      approved: true,
+      instanceId: b.instanceId,
+    });
+
+    // Block both: the parent on A first, then the child on B.
+    const parentAgent = await fleet.addAgent(parent.sessionId, { role: 'worker', runtimeId: 'echo' });
+    await fleet.send(parent.sessionId, parentAgent.agentId, TEXT);
+    const childAgent = await fleet.addAgent(child!.sessionId, { role: 'worker', runtimeId: 'echo' });
+    await fleet.send(child!.sessionId, childAgent.agentId, TEXT);
+
+    const seenParent = (await fleet.list()).find((s) => s.sessionId === parent.sessionId);
+    // Its own, so no breadcrumb pointing elsewhere.
+    expect(seenParent?.needsAttention?.from).toBeUndefined();
+  });
+});
