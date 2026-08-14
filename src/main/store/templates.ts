@@ -32,6 +32,12 @@
  * Checklist items keep their text and lose their progress, because a template of
  * a finished checklist is a checklist that starts finished.
  *
+ * `standingGrant` and `splitGrant` are dropped with particular intent. §17 Q19's
+ * whole design is *per session, never a setting* — and a grant captured into a
+ * committed file would be exactly the preference somebody turned on months ago
+ * and forgot, now travelling to colleagues by `git clone`. A template may say
+ * who runs and where; it may never say "don't ask".
+ *
  * **And never a credential.** `AuthMode` carries an `endpointId` or a `cliId` and
  * no secret, which is what makes this safe to commit at all — §13's rule is that
  * credentials never reach a file that travels, and this file is designed to

@@ -202,6 +202,17 @@ async function main(): Promise<number> {
         // sits beside the installed app rather than inside any workspace: it
         // describes the build, not the folder being worked in.
         loadConformance: () => loadReport(join(resolve(here, '..', '..'), 'conformance')),
+        // The browser's About page describes this server, which is the honest
+        // subject: the tab is looking at whatever this process runs. No
+        // `runtime` block — Electron versions belong to the desktop app.
+        about: {
+          name: 'Agbrte',
+          version: AGBRTE_VERSION,
+          description:
+            'Agent Bridge Terminal — durable, bridge-owned agent sessions you attach to from any device.',
+          license: 'Apache-2.0',
+          homepage: 'https://github.com/YounghyeonPark/agbrte',
+        },
       },
       rendererDir: resolve(here, '../renderer'),
       port: Number(value('--port') ?? 7717),

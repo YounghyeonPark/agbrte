@@ -34,6 +34,8 @@ import { Artifacts } from './Artifacts.js';
 import { Roster } from './Roster.js';
 import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
+import { Welcome } from './Welcome.js';
+import { About } from './About.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import { useAgbrte } from './store.js';
 import { Composer, EventRow, PermissionPrompt, SplitPrompt, Transcript, summarize } from './Transcript.js';
@@ -98,9 +100,15 @@ export const LABEL = 'text-[10px] uppercase tracking-wider';
 export function App(): JSX.Element {
   const store = useAgbrte();
   const [attaching, setAttaching] = useState<false | 'local' | 'remote'>(false);
-  // Toggled open even with a session showing, because a guide you can only
-  // reach from an empty window is unreachable exactly when it is wanted.
-  const [guide, setGuide] = useState(false);
+  /*
+   * Which full-pane page is open over whatever else is showing, or `none`.
+   *
+   * One field for both pages rather than two booleans, because they occupy the
+   * same pane and two booleans can both be true. Toggled open even with a
+   * session showing, because a page you can only reach from an empty window is
+   * unreachable exactly when it is wanted.
+   */
+  const [view, setView] = useState<'none' | 'guide' | 'about'>('none');
   /*
    * Which pane a narrow screen is showing. Above `md` both are up and this is
    * ignored.
@@ -234,10 +242,21 @@ export function App(): JSX.Element {
               className="btn"
               data-testid="show-guide"
               title="How Agbrte is used"
-              aria-pressed={guide}
-              onClick={() => setGuide((open) => !open)}
+              aria-pressed={view === 'guide'}
+              onClick={() => setView((open) => (open === 'guide' ? 'none' : 'guide'))}
             >
               Guide
+            </button>
+            {/* The menu bar used to be the one place an About lived; with the
+                bar gone this button is its whole surface. */}
+            <button
+              className="btn"
+              data-testid="show-about"
+              title="Version and license"
+              aria-pressed={view === 'about'}
+              onClick={() => setView((open) => (open === 'about' ? 'none' : 'about'))}
+            >
+              About
             </button>
             <button
               className="btn"
@@ -380,27 +399,37 @@ export function App(): JSX.Element {
           </div>
         )}
 
-        {active === null && !guide && sessions.length > 0 ? (
-          /* The dashboard once there is something to show, the guide when there
-             is not. An empty grid teaches nothing and a guide is noise once you
-             have sessions running — which of the two is useful is decided by
-             whether any exist, not by a preference. */
+        {view === 'about' ? (
+          <About />
+        ) : view === 'guide' ? (
+          <StartGuide
+            hasHosts={hosts.length > 0}
+            onAttachLocal={() => {
+              setView('none');
+              setAttaching('local');
+            }}
+            onAttachRemote={() => {
+              setView('none');
+              setAttaching('remote');
+            }}
+          />
+        ) : active === null && sessions.length > 0 ? (
+          /* The dashboard once there is something to show, the welcome when
+             there is not. An empty grid teaches nothing and a greeting is noise
+             once you have sessions running — which of the two is useful is
+             decided by whether any exist, not by a preference. */
           <Dashboard
             sessions={sessions}
             hosts={hosts}
             onOpen={(sessionId, instanceId) => void store.openSession(sessionId, instanceId)}
           />
-        ) : active === null || guide ? (
-          <StartGuide
+        ) : active === null ? (
+          /* A greeting, not the guide: the first screen greets, and the
+             explanation waits under the button that names it (Welcome.tsx). */
+          <Welcome
             hasHosts={hosts.length > 0}
-            onAttachLocal={() => {
-              setGuide(false);
-              setAttaching('local');
-            }}
-            onAttachRemote={() => {
-              setGuide(false);
-              setAttaching('remote');
-            }}
+            onAttachLocal={() => setAttaching('local')}
+            onAttachRemote={() => setAttaching('remote')}
           />
         ) : (
           <>

@@ -18,7 +18,7 @@
 import type { AgentId, EventId, SessionId, Sha256 } from './ids.js';
 import type { ContentBlock, DowngradeNote } from './content.js';
 import type { EncodedPath } from './paths.js';
-import type { PermissionDecision, PolicyRule } from './policy.js';
+import type { PermissionDecision, PolicyRule, ToolPolicy } from './policy.js';
 import type {
   AgentMessage,
   ModelRef,
@@ -172,13 +172,81 @@ export type EventBody =
       tool: string;
       args: unknown;
       decision: PermissionDecision;
-      /** Whether policy decided it outright or a human was asked. */
-      via: 'policy' | 'user' | 'escalation-guard';
+      /**
+       * Whether policy decided it outright, a human was asked, or the
+       * session's standing grant settled it (§17 Q19).
+       *
+       * `'standing-grant'` is its own value and must be: recording an ungated
+       * call as `'policy'` would make *"the workspace policy allows writes
+       * here"* and *"a person said yes to everything up front"* the same
+       * sentence in the log, and they are different claims about who is
+       * answerable.
+       */
+      via: 'policy' | 'user' | 'escalation-guard' | 'standing-grant';
       /** The deciding rule and the value its `match` was tested against. */
       rule?: PolicyRule;
       subject?: string | null;
       toolUseId?: string;
     }
+  /**
+   * The session's gate was relaxed: every `ask` from here on is answered yes
+   * without a prompt (§17 Q19).
+   *
+   * An event rather than a field patched onto the session, because "when was
+   * the gate relaxed and by whom" is a fact about the transcript — the calls
+   * before this line were gated, the ones after it were not, and the
+   * envelope's `at` and `actor` are the answer. Refusals are untouched: a
+   * policy `deny` and the escalation guard still decide exactly as before,
+   * and every settled call still writes its own `permission.decided`. What
+   * the grant removes is the question, not the account of it.
+   *
+   * `policy` is the policy the grant was granted *beside*, and it travels with
+   * the grant for the reason §17 Q18's budget travels with the compaction ask:
+   * one opinion rather than two that can drift. The session's effective policy
+   * is otherwise not durable — a restart rebuilds it from the target's
+   * defaults — and restoring the grant without the policy it was scoped
+   * against would restore only the permissive half of the pair: a `deny` the
+   * person configured would degrade to `ask` and the grant would answer it
+   * yes, unattended. Carried here, the pair survives together or not at all.
+   */
+  | { type: 'permission.standing_grant'; policy: ToolPolicy }
+  /**
+   * An MCP server was attached to this session and listed its tools (§17 Q20).
+   *
+   * The provenance line for every `mcp__…` call that follows: which command,
+   * with which argument list, offered which tools. `envKeys` records the
+   * *names* of the environment variables handed to the process and never the
+   * values — §13's rule that a credential never reaches a file that travels,
+   * applied to the one place it would otherwise leak by convenience. This is
+   * also why resume does not silently reconnect: the log deliberately does not
+   * hold enough to restart a server whose auth lived in `env`.
+   */
+  | {
+      type: 'mcp.attached';
+      serverId: string;
+      command: string;
+      args?: string[];
+      envKeys?: string[];
+      toolNames: string[];
+    }
+  /**
+   * An MCP server named at creation could not be attached (§17 Q20, §3.5).
+   *
+   * Recorded rather than thrown: the session still runs with what did attach,
+   * and a degradation nobody is told about becomes "the agent just ignores
+   * that tool". The failure is in the transcript where the missing tools
+   * would have been.
+   */
+  | { type: 'mcp.failed'; serverId: string; reason: string }
+  /**
+   * A skill was injected into this session (§17 Q21).
+   *
+   * Carries the whole body, like `session.brief_received` carries the brief:
+   * a skill is pure data with no credential in it, so the log can hold what
+   * the model may later read — which is what makes a skill survive a restart
+   * when an MCP server deliberately cannot.
+   */
+  | { type: 'skill.attached'; skillId: string; description: string; instructions: string }
   | {
       type: 'usage';
       inputTokens: number;
@@ -321,6 +389,10 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'permission.requested',
   'permission.withdrawn',
   'permission.decided',
+  'permission.standing_grant',
+  'mcp.attached',
+  'mcp.failed',
+  'skill.attached',
   'usage',
   'content.downgraded',
   'capture.attached',

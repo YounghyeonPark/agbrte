@@ -165,6 +165,22 @@ export function EventRow({
         </div>
       );
 
+    case 'permission.standing_grant':
+      // The line every later `via standing-grant` refers back to (§17 Q19):
+      // where the questions stopped, and on whose say-so. Bookkeeping would be
+      // the wrong bucket for a change in who is answerable.
+      return (
+        <div
+          data-testid="row-standing-grant"
+          className={`${META_ROW} border-line justify-center border-t pt-2 text-[11px]`}
+        >
+          <span>
+            ⚖ standing grant{event.actor?.label !== undefined ? ` · ${event.actor.label}` : ''} —
+            every ask from here on is allowed without a prompt
+          </span>
+        </div>
+      );
+
     case 'agent.stopped':
       return (
         <div

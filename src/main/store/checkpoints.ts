@@ -23,7 +23,12 @@ import { PRIVATE_DIR_MODE, checkpointName } from './layout.js';
 // 2: the projection carries `lastSeqIds`. A v1 checkpoint has no record of
 // which events sat at its `lastSeq`, so it cannot be resumed from safely; it is
 // ignored and the log is replayed in full, which is always correct.
-export const CHECKPOINT_VERSION = 2;
+// 3: the projection carries `standingGrant` (§17 Q19) and `skills` (§17 Q21).
+// A v2 checkpoint cut after either event folded it into nothing: resuming
+// from one would silently re-arm the gate against the log's own
+// `via: 'standing-grant'` lines, or drop a skill the transcript says was
+// attached. One bump for both, because both landed before any v3 shipped.
+export const CHECKPOINT_VERSION = 3;
 
 export interface Checkpoint {
   version: number;

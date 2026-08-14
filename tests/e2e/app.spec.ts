@@ -642,38 +642,66 @@ ${await whatIsOnScreen(agbrte.window)}`,
  * that it *appears* — a guide rendered only under a condition nobody hits is the
  * same as no guide, and that is a wiring fact, not a component fact.
  */
-test.describe('the start guide', () => {
-  test('explains the app before a session is open, and stays reachable after', async () => {
+test.describe('the first screen, the guide, and about', () => {
+  test('greets first, and keeps the explanation one button away', async () => {
     const repo = await makeRepo();
     const agbrte = await launch(repo);
 
     try {
+      const welcome = agbrte.window.locator('[data-testid=welcome]');
       const guide = agbrte.window.locator('[data-testid=start-guide]');
 
       // A host is already attached at launch, so this is the "attached, nothing
-      // open" state — the one a returning user sees.
-      await expect(guide).toBeVisible();
-      await expect(guide).toHaveAttribute('data-compact', 'true');
-      await expect(guide).toContainText('Sessions run on a host');
+      // open" state — the one a returning user sees. It greets; it does not
+      // explain. The explanation moved behind the button that names it.
+      await expect(welcome).toBeVisible();
+      await expect(welcome).toHaveAttribute('data-compact', 'true');
+      await expect(guide).toBeHidden();
 
       // The promise that is not yet kept. §17 Q13 is open, there is no web
       // client, and an empty state is the last place anyone re-reads — so a
       // phone must not be advertised here until it works.
-      await expect(guide).not.toContainText(/phone/i);
+      await expect(welcome).not.toContainText(/phone/i);
 
       await createSession(agbrte.window, 'Guide check');
-      await expect(guide).toBeHidden();
+      await expect(welcome).toBeHidden();
 
       // Reachable with a session open: there is no way to deselect one, so
       // without this the guide is gone for good after the first minute.
       await agbrte.window.click('[data-testid=show-guide]');
       await expect(guide).toBeVisible();
+      await expect(guide).toContainText('Sessions run on a host');
+      // The usage half: what to press, in the order it can be pressed.
+      await expect(guide.locator('[data-testid=guide-steps]')).toContainText('Attach a host');
+      await expect(guide).not.toContainText(/phone/i);
 
       // The remote route opens the attach panel already on remote, rather than
       // dropping the user on the local tab to find it again.
       await agbrte.window.click('[data-testid=guide-attach-remote]');
       await expect(agbrte.window.locator('[data-testid=attach-panel]')).toBeVisible();
       await expect(agbrte.window.locator('[data-testid=attach-alias]')).toBeVisible();
+    } finally {
+      await agbrte.close();
+    }
+  });
+
+  test('about says what is running, from the process that knows', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      await agbrte.window.click('[data-testid=show-about]');
+      const about = agbrte.window.locator('[data-testid=about]');
+      await expect(about).toBeVisible();
+
+      // The version comes over IPC from `app.getVersion()` — the same
+      // package.json the build was made from, not a copy in the bundle.
+      await expect(about.locator('[data-testid=about-version]')).toHaveText(/^\d+\.\d+\.\d+/);
+      await expect(about.locator('[data-testid=about-license]')).toHaveText('Apache-2.0');
+
+      // A toggle, not a one-way door.
+      await agbrte.window.click('[data-testid=show-about]');
+      await expect(about).toBeHidden();
     } finally {
       await agbrte.close();
     }

@@ -32,7 +32,7 @@ test('serves the app and drives a session over a socket', async ({ page }) => {
     // The host the server was started for appears, which means the socket
     // carried a real call and a real reply.
     await expect(page.locator('[data-testid=host]')).toBeVisible({ timeout: 20_000 });
-    await expect(page.locator('[data-testid=start-guide]')).toBeVisible();
+    await expect(page.locator('[data-testid=welcome]')).toBeVisible();
 
     // A round trip that writes: creating a session goes over the socket to the
     // host and comes back as a push.

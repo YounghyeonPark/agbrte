@@ -133,6 +133,27 @@ export function reduceEvents(
         p.pendingPermissions = p.pendingPermissions.filter((r) => r.requestId !== ev.requestId);
         break;
 
+      case 'skill.attached':
+        // Whole config, so resume rebuilds the skill from here (§17 Q21).
+        // Replace-by-id keeps a replayed attach idempotent.
+        p.skills = [
+          ...p.skills.filter((s) => s.id !== ev.skillId),
+          { id: ev.skillId, description: ev.description, instructions: ev.instructions },
+        ];
+        break;
+
+      case 'permission.standing_grant':
+        // The envelope is the record: `at` says when the gate was relaxed and
+        // `actor` says by whom (§17 Q19). Folded so the grant survives a
+        // restart along with the transcript it explains — and `policy` with
+        // it, so what is restored is the pair, never the permissive half.
+        p.standingGrant = {
+          grantedAt: ev.at,
+          policy: ev.policy,
+          ...(ev.actor !== undefined ? { grantedBy: ev.actor } : {}),
+        };
+        break;
+
       case 'usage':
         p.usage.inputTokens += ev.inputTokens;
         p.usage.outputTokens += ev.outputTokens;
@@ -273,5 +294,7 @@ function cloneProjection(p: SessionProjection): SessionProjection {
     usage: { ...p.usage },
     stats: { ...p.stats },
     needsAttention: p.needsAttention ? { ...p.needsAttention } : null,
+    standingGrant: p.standingGrant ? { ...p.standingGrant } : null,
+    skills: p.skills.map((s) => ({ ...s })),
   };
 }

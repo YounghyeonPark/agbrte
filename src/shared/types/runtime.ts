@@ -323,7 +323,45 @@ export interface RuntimeContext {
   peers?: AgentId[];
   /** Single egress endpoint; the gateway routes by provider. Absent unless auth is api-key. */
   modelEgress?: { baseUrl: string; token: string };
+  /**
+   * Tools injected into this *session*, beyond the runtime's own suite (§17 Q20).
+   *
+   * How MCP reaches an agent, and deliberately the only way it does: the
+   * connection to an MCP server is session state — created with the session,
+   * recorded in its log, dying with it — so the *host* owns it and the runtime
+   * is handed closures, exactly as `capture` and `sendMessage` arrive. A
+   * runtime that connected to MCP servers itself would own something that
+   * outlives no restart and appears in no transcript, which is the §17.1 rule
+   * ("the harness may decide, and may not own") violated in one line.
+   *
+   * Every call still goes through `requestPermission`: a session tool is a
+   * tool, not a bypass. Optional like `sendMessage`, and for the same reason —
+   * an adapter running its own tool suite (an installed CLI) has no loop these
+   * could enter.
+   */
+  sessionTools?: SessionTool[];
   abortSignal: AbortSignal;
+}
+
+/**
+ * One tool the session carries with it (§17 Q20).
+ *
+ * A narrower shape than the harness's own `ToolDefinition` on purpose: that
+ * type's context (leases, workspace root, roster) belongs to the harness's
+ * built-ins, while a session tool executes wherever the *host* connected it —
+ * an MCP server process, today — and needs none of it. The runtime wraps this
+ * into its own suite; the host builds it around a connection it owns.
+ */
+export interface SessionTool {
+  /** Namespaced by origin (`mcp__<serverId>__<tool>`), so it can never shadow a built-in. */
+  name: string;
+  description: string;
+  /** JSON Schema for the arguments, degraded per target by the runtime (§3.5). */
+  schema: object;
+  run(
+    args: Record<string, unknown>,
+    signal: AbortSignal,
+  ): Promise<{ ok: boolean; summary: string; content: string }>;
 }
 
 /**

@@ -33,8 +33,8 @@ test('lays out at the device width, one pane at a time', async ({ page }) => {
 
     // The main pane owns the screen. The desktop's fixed 300px sidebar would
     // leave about 90px for everything else, so below `md` exactly one shows —
-    // and the one worth showing is where the dashboard and the guide are.
-    const main = page.locator('[data-testid=start-guide]');
+    // and the one worth showing is where the dashboard and the welcome are.
+    const main = page.locator('[data-testid=welcome]');
     await expect(main).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('[data-testid=host]')).toBeHidden();
 

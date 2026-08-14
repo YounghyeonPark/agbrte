@@ -98,6 +98,31 @@ describe('a template is a projection of a session', () => {
     expect(template.fromSessionId).toBe(sessionId);
   }, 30_000);
 
+  it('never captures a grant, because a template is a committed file', async () => {
+    /**
+     * §17 Q19's whole design is *per session, never a setting*. A standing
+     * grant that survived into a template would be exactly the preference
+     * somebody turned on months ago and forgot — travelling to colleagues by
+     * `git clone`, which is worse. Same for a split grant (§17 Q8).
+     */
+    const { manager } = await realSession();
+    const granted = await manager.createSession(
+      {
+        title: 'overnight',
+        goal: 'g',
+        standingGrant: true,
+        splitGrant: { count: 2, maxDepth: 2 },
+      },
+      { id: 'uid:1000', via: 'peer-credential', label: 'Alice' },
+    );
+    await manager.addAgent(granted.sessionId, { role: 'worker', runtimeId: 'echo' });
+
+    const text = JSON.stringify(fromSession(await manager.get(granted.sessionId), 'Overnight'));
+    for (const leaked of ['standingGrant', 'splitGrant', 'grantedBy', 'grantedAt']) {
+      expect(text, `${leaked} survived into the template`).not.toContain(leaked);
+    }
+  }, 30_000);
+
   it('starts a checklist unfinished', async () => {
     const { manager, sessionId } = await realSession();
     const session = await manager.get(sessionId);

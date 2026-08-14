@@ -35,6 +35,7 @@ import {
   type DetectedPortDto,
   type ForwardDto,
   type CaptureSourceInfo,
+  type AboutInfo,
   type SendRequest,
   type SessionSnapshot,
   type SshHostInfo,
@@ -120,6 +121,15 @@ export interface IpcDeps {
    * not know what it ships.
    */
   shippingVersion?: string;
+  /**
+   * What the About page shows: name, version, license (§7).
+   *
+   * Injected for the same reason `shippingVersion` is — this module also backs
+   * the web bridge, where there is no Electron to ask. Absent means the caller
+   * had nothing better than the fallback below, which says so honestly rather
+   * than inventing a version.
+   */
+  about?: AboutInfo;
   /**
    * The screen, when this client has one (§12.1).
    *
@@ -348,6 +358,19 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     fleet.installProgress(instanceId as InstanceId),
   );
 
+  handle(CH.appAbout, (): AboutInfo =>
+    deps.about ?? {
+      // The honest fallback for a caller that supplied nothing: the name is a
+      // constant, and "unknown" is a truthful version where inventing one
+      // would put a number on an About page nobody can trace to a build.
+      name: 'Agbrte',
+      version: deps.shippingVersion ?? 'unknown',
+      description: 'Durable agent sessions you attach to from anywhere.',
+      license: 'Apache-2.0',
+      homepage: 'https://github.com/YounghyeonPark/agbrte',
+    },
+  );
+
   handle(CH.updateState, () =>
     Promise.resolve(
       deps.updates?.()?.state() ?? {
@@ -416,7 +439,12 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   handle(CH.sessionsList, () => fleet.list());
 
   handle(CH.sessionsCreate, (r: CreateSessionRequest) =>
-    fleet.createSession(r.instanceId as InstanceId, { title: r.title, goal: r.goal }),
+    fleet.createSession(r.instanceId as InstanceId, {
+      title: r.title,
+      goal: r.goal,
+      ...(r.mcpServers !== undefined ? { mcpServers: r.mcpServers } : {}),
+      ...(r.skills !== undefined ? { skills: r.skills } : {}),
+    }),
   );
 
   handle(

@@ -111,6 +111,19 @@ function truncate(text: string): string {
   return `${kept}\n\n[truncated — ${text.length - MAX_OUTPUT} more characters. Narrow the request.]`;
 }
 
+/**
+ * The same cap, for tools defined outside this file (§17 Q7, Q20).
+ *
+ * "Every tool truncates its output at 8,000 characters" is a property §17 Q7
+ * *depends on* — it is what keeps a parent from re-inflating a child's context
+ * explosion — and `tools.test.ts` asserts it. A session-injected tool that
+ * returned unbounded output would break the property from outside this file,
+ * so the cap is exported rather than re-invented where it could drift.
+ */
+export function truncateToolOutput(text: string): string {
+  return truncate(text);
+}
+
 function fail(summary: string): ToolResult {
   return { ok: false, summary, content: summary };
 }

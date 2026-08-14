@@ -214,6 +214,102 @@ export interface SplitGrant {
   maxDepth: number;
 }
 
+/**
+ * Permission to run without asking, granted up front (§17 Q19).
+ *
+ * A long unattended run stops at the first `bash`, which is §13 working — and
+ * also the reason people reach for a global "don't ask me". The shape is the
+ * one `SplitGrant` arrived at, for the same reasons: **per session, never a
+ * setting**, so it cannot become a preference somebody turned on months ago
+ * and forgot; recorded as a `permission.standing_grant` event, so the
+ * transcript says when the gate was relaxed and by whom; and every call it
+ * settles still writes `permission.decided` (`via: 'standing-grant'`), so the
+ * audit trail is complete rather than empty.
+ *
+ * What it settles is the *question* — an `ask` outcome — and nothing else. A
+ * policy `deny` and the escalation guard stand untouched, because those are
+ * refusals, not questions, and `ToolPolicy.defaultAction` stays the literal
+ * `'ask'`: the grant lives beside the policy rather than teaching the policy
+ * language to say "allow everything".
+ *
+ * A child session does not inherit it (§4.3): it is its own session and starts
+ * asking again. Inheriting would make one decision at the root silently govern
+ * work the person granting it had not seen.
+ */
+export interface StandingGrant {
+  /** When the gate was relaxed — the grant event's own timestamp. */
+  grantedAt: string;
+  /** Who relaxed it. Absent when no identified person made the session. */
+  grantedBy?: Actor;
+}
+
+/**
+ * One MCP server injected into a session (§17 Q20).
+ *
+ * Session-scoped on purpose — the same reasoning as `StandingGrant`: a server
+ * attached to *this session* is decided when the person is present, recorded
+ * in this session's log, and cannot become an app-wide setting somebody
+ * configured months ago. There is no workspace or app-level MCP registry to
+ * drift out of; what a session could reach is exactly what its transcript
+ * says it could.
+ *
+ * v1 is stdio only: the host spawns `command` and speaks JSON-RPC over its
+ * pipes, on the machine that owns the workspace — where the tools' effects
+ * land, and where §13's gate already sits.
+ */
+export interface McpServerConfig {
+  /**
+   * Names the server in tool names (`mcp__<id>__<tool>`), events, and
+   * refusals. Lowercase letters, digits, `-` and `_` only, enforced at
+   * creation: it is spliced into identifiers the policy engine matches on.
+   */
+  id: string;
+  command: string;
+  args?: string[];
+  /**
+   * Environment for the spawned process. Values are treated as credentials:
+   * the log records the *names* only (§13 — a secret never reaches a file
+   * that travels), which is also why a resumed session does not silently
+   * reconnect: the values died with the process that held them.
+   */
+  env?: Record<string, string>;
+  cwd?: string;
+}
+
+/**
+ * One skill injected into a session (§17 Q21) — §17.1's "progressive
+ * instruction loading", built as session state like Q20's MCP servers.
+ *
+ * A skill is instructions, deferred: the model sees `skill__<id>` in its tool
+ * list with the description, and loads the body only when the work calls for
+ * it — which is what keeps ten skills from being ten pages of system prompt.
+ * Loading is policy-`allow`ed by an explicit, inspectable rule written at
+ * creation, because the body is text the person supplied when they made the
+ * session; gating them from reading their own instructions back would be
+ * noise wearing §13's clothes.
+ *
+ * Unlike an MCP server there is no credential and no process, so the log can
+ * carry the whole thing — which is why a skill survives a restart and an MCP
+ * server deliberately does not.
+ */
+export interface SkillConfig {
+  /** Same allow-list as an MCP id: it becomes `skill__<id>`, a policy-matched name. */
+  id: string;
+  /** What the model reads when deciding whether to load it. */
+  description: string;
+  /** The body. Capped at creation to the tool-output limit §17 Q7 relies on. */
+  instructions: string;
+}
+
+/** What one attached server offers, as the session record shows it (§17 Q20). */
+export interface McpServerStatus {
+  id: string;
+  /** Namespaced tool names this server contributed. Empty when it failed. */
+  tools: string[];
+  /** Set when the server could not be attached. Recorded, not hidden (§3.5). */
+  error?: string;
+}
+
 /** Budget actually available to this session's own agents right now. */
 export function availableTokens(b: SessionBudget): number {
   return Math.max(0, b.tokenCeiling - b.spent - b.reservedForChildren);
@@ -336,6 +432,12 @@ export interface Session {
   budget?: SessionBudget;
   /** Splits this session may make without asking (§17 Q8). Absent means none. */
   splitGrant?: SplitGrant;
+  /** Runs without asking (§17 Q19). Absent means every `ask` asks, as always. */
+  standingGrant?: StandingGrant;
+  /** MCP servers attached to this session (§17 Q20). Absent means none ever were. */
+  mcp?: McpServerStatus[];
+  /** Skills injected into this session (§17 Q21), shown as id + description. */
+  skills?: Array<{ id: string; description: string }>;
   /**
    * What is blocking here, or beneath here (§4.3, §10).
    *
@@ -459,6 +561,31 @@ export interface CreateSessionInput {
    * means every split asks, which is §4.3's rule and stays the default.
    */
   splitGrant?: { count: number; maxDepth: number };
+  /**
+   * Answer every `ask` with yes, for this session only (§17 Q19).
+   *
+   * Set when the run is created, which is when the person is present and
+   * thinking about the run — never inferred at the moment they are not.
+   * `false` is stored as no grant at all, for the reason a `splitGrant` of
+   * zero is: a field that only exists to be misread.
+   */
+  standingGrant?: boolean;
+  /**
+   * MCP servers to attach at creation (§17 Q20).
+   *
+   * On the input rather than added later, for the reason the standing grant
+   * is: the person deciding what this session may reach is present at
+   * creation. Each attach — or failure to — is recorded in the log. Children
+   * do not inherit these; a child session is its own session and names its
+   * own, like everything else it does not silently receive.
+   */
+  mcpServers?: McpServerConfig[];
+  /**
+   * Skills to inject at creation (§17 Q21). Session-scoped and durable in the
+   * log — unlike an MCP server, a skill is pure data, so a restart rebuilds
+   * it. Children do not inherit these either.
+   */
+  skills?: SkillConfig[];
   /**
    * Everything a child inherits, when the session being created is one (§4.3).
    *

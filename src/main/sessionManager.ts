@@ -19,6 +19,7 @@ import {
   byAttentionThenRecency,
   TREE_LIMITS,
   isPaused,
+  isTerminal,
   newAgentId,
   newSessionId,
   uuidv7,
@@ -57,7 +58,11 @@ import {
   type AgentId,
   type SessionId,
   type Actor,
+  type SessionTool,
+  type SkillConfig,
 } from '@shared/types/index.js';
+import { McpConnection } from './mcp/client.js';
+import { truncateToolOutput } from './tools/index.js';
 import { SessionStore, type SessionMeta } from './store/sessionStore.js';
 import { workspaceLayout } from './store/layout.js';
 import { addCost } from '@shared/cost.js';
@@ -222,6 +227,16 @@ interface LiveSession {
   pendingSplits: Map<string, SplitProposal>;
   /** What this session owes its parent, from the brief it was spawned with. */
   contract?: ResultContract;
+  /**
+   * Live MCP connections, keyed by server id (§17 Q20).
+   *
+   * Owned here — beside the log and the gate — never by a runtime: §17.1's
+   * rule, and also the practical one, since the process dies with this manager
+   * and a runtime holding it would hold a corpse after every restart.
+   */
+  mcp: Map<string, McpConnection>;
+  /** Skills injected into this session (§17 Q21). Pure data; rebuilt on resume. */
+  skills: SkillConfig[];
 }
 
 export interface SessionManagerDeps {
@@ -396,6 +411,13 @@ export class SessionManager extends EventEmitter {
   /** Stop the stall sweeper. Sessions are unaffected; they live in the log. */
   dispose(): void {
     clearInterval(this.sweeper);
+    // MCP servers are child processes of *this* process and die with the
+    // manager either way; killing them here just makes it orderly. The
+    // sessions themselves are untouched — they live in the log (§17 Q20).
+    for (const live of this.sessions.values()) {
+      for (const connection of live.mcp.values()) connection.dispose();
+      live.mcp.clear();
+    }
   }
 
   /**
@@ -421,6 +443,45 @@ export class SessionManager extends EventEmitter {
   }
 
   async createSession(input: CreateSessionInput, actor?: Actor): Promise<Session> {
+    /*
+     * Refused before anything exists (§17 Q20). A server id is spliced into
+     * tool names the policy engine matches on and into event fields, so it is
+     * allow-listed like a template name rather than sanitized — and checked
+     * before `SessionStore.create`, because a refusal that leaves a session
+     * directory behind is a refusal that made something.
+     */
+    for (const server of input.mcpServers ?? []) {
+      if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(server.id)) {
+        throw new Error(
+          `MCP server id "${server.id}" — lowercase letters, digits, - and _ only, ` +
+            `because the id becomes part of tool names policy rules match on`,
+        );
+      }
+      if ((input.mcpServers ?? []).filter((s) => s.id === server.id).length > 1) {
+        throw new Error(`two MCP servers named "${server.id}" — ids must be unique in a session`);
+      }
+    }
+    for (const skill of input.skills ?? []) {
+      if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(skill.id)) {
+        throw new Error(
+          `skill id "${skill.id}" — lowercase letters, digits, - and _ only, ` +
+            `because the id becomes the tool name policy rules match on`,
+        );
+      }
+      if ((input.skills ?? []).filter((s) => s.id === skill.id).length > 1) {
+        throw new Error(`two skills named "${skill.id}" — ids must be unique in a session`);
+      }
+      // Refused rather than truncated: §17 Q7's cap applies to every tool
+      // output, and instructions that arrive cut off would be a skill that
+      // silently teaches half of what its author wrote.
+      if (truncateToolOutput(skill.instructions) !== skill.instructions) {
+        throw new Error(
+          `skill "${skill.id}" is ${skill.instructions.length} characters; ` +
+            `tool output is capped at 8,000, so it would reach the model truncated — split it`,
+        );
+      }
+    }
+
     const sessionId = newSessionId();
     const createdAt = this.now().toISOString();
 
@@ -464,6 +525,108 @@ export class SessionManager extends EventEmitter {
       pendingSplits: [],
     };
 
+    // The §13 defaults are selected from the target, not left to the caller.
+    // Computed here — once — because the standing grant event below carries it
+    // and the live entry holds it, and two computations would be two chances
+    // for the grant to be recorded against rules the session does not run.
+    // Cloned so pushing the skill rules below never mutates a caller's object.
+    const policy = clonePolicy(input.policy ?? defaultPolicyForTarget(session.target.kind));
+
+    /*
+     * Loading a skill is allowed by an explicit rule, not by a widened default
+     * (§17 Q21). The body is text the person supplied at creation; gating them
+     * from reading their own instructions back would be a prompt per paragraph.
+     * A rule rather than a bypass, so it is inspectable, a user `deny` still
+     * outranks it, and every load writes `permission.decided` via 'policy'
+     * naming the rule that settled it.
+     */
+    for (const skill of input.skills ?? []) {
+      policy.rules.push({ tool: `skill__${skill.id}`, action: 'allow' });
+    }
+
+    /*
+     * The grant is an event, not only a field (§17 Q19): a transcript has to
+     * say when the gate was relaxed and by whom, and the envelope's `at` and
+     * `actor` are that answer. Every call it later settles still writes its
+     * own `permission.decided`, so this line marks where the questions
+     * stopped — never where the record did.
+     *
+     * `false` is stored as no grant at all, like a splitGrant of zero: a
+     * field nobody can act on only exists to be misread. The live field is
+     * built *from the appended envelope*, so "when was the gate relaxed" has
+     * one answer whether it is read live or refolded after a restart. And the
+     * event carries `policy` — the rules the person relaxed the gate beside —
+     * because the effective policy is not otherwise durable, and a restart
+     * that restored the grant onto rebuilt defaults would restore only the
+     * permissive half of what was decided.
+     */
+    if (input.standingGrant === true) {
+      const granted = await store.append(
+        { type: 'permission.standing_grant', policy },
+        { ...(actor !== undefined ? { actor } : {}) },
+      );
+      session.standingGrant = {
+        grantedAt: granted.at,
+        ...(actor !== undefined ? { grantedBy: actor } : {}),
+      };
+    }
+
+    /*
+     * Attach the session's MCP servers, each outcome recorded (§17 Q20).
+     *
+     * A failure attaches nothing and refuses nothing: the session still runs
+     * with what did connect, and the `mcp.failed` line sits in the transcript
+     * where the missing tools would have been (§3.5). The attach event records
+     * env *names* only — the values are credentials, and a credential never
+     * reaches a file that travels (§13). That asymmetry is also why a resumed
+     * session does not silently reconnect: the log deliberately cannot.
+     */
+    // Durable whole (§17 Q21): a skill is pure data, so the log carries what
+    // the model may later read and a resume rebuilds it from there — the
+    // asymmetry with MCP above is the credential, not the mechanism.
+    for (const skill of input.skills ?? []) {
+      await store.append(
+        {
+          type: 'skill.attached',
+          skillId: skill.id,
+          description: skill.description,
+          instructions: skill.instructions,
+        },
+        { ...(actor !== undefined ? { actor } : {}) },
+      );
+      session.skills ??= [];
+      session.skills.push({ id: skill.id, description: skill.description });
+    }
+
+    const mcpConnections = new Map<string, McpConnection>();
+    for (const server of input.mcpServers ?? []) {
+      session.mcp ??= [];
+      try {
+        const connection = await McpConnection.connect(server);
+        mcpConnections.set(server.id, connection);
+        const toolNames = connection.tools.map((t) => `mcp__${server.id}__${t.name}`);
+        await store.append(
+          {
+            type: 'mcp.attached',
+            serverId: server.id,
+            command: server.command,
+            ...(server.args !== undefined ? { args: server.args } : {}),
+            ...(server.env !== undefined ? { envKeys: Object.keys(server.env) } : {}),
+            toolNames,
+          },
+          { ...(actor !== undefined ? { actor } : {}) },
+        );
+        session.mcp.push({ id: server.id, tools: toolNames });
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        await store.append(
+          { type: 'mcp.failed', serverId: server.id, reason },
+          { ...(actor !== undefined ? { actor } : {}) },
+        );
+        session.mcp.push({ id: server.id, tools: [], error: reason });
+      }
+    }
+
     /*
      * The brief is written to the child's own log by whoever creates it.
      *
@@ -492,10 +655,9 @@ export class SessionManager extends EventEmitter {
     this.sessions.set(sessionId, {
       session,
       store,
-      // The §13 defaults are selected from the target, not left to the caller.
       // An empty default policy meant every call fell through to `ask`, which is
       // safe but means the documented local/remote distinction never applied.
-      policy: input.policy ?? defaultPolicyForTarget(session.target.kind),
+      policy,
       handles: new Map(),
       specs: new Map(),
       aborts: new Map(),
@@ -504,6 +666,8 @@ export class SessionManager extends EventEmitter {
       hops: new Map<AgentId, number>(),
       worktrees: new Map<AgentId, Worktree>(),
       pendingSplits: new Map<string, SplitProposal>(),
+      mcp: mcpConnections,
+      skills: [...(input.skills ?? [])],
     });
 
     this.emit('session', session);
@@ -614,6 +778,33 @@ export class SessionManager extends EventEmitter {
       this.emit('progress', live.session.sessionId, {
         kind: 'phase',
         detail: `${spec.agentId} asked for worktree isolation and is running shared: ${downgraded}`,
+        at: this.now().toISOString(),
+      });
+    }
+
+    /*
+     * Same rule, for the standing grant (§17 Q19, §3.10). The grant settles
+     * asks per call, which needs a gate we can answer per call. On a
+     * `precomputed-allowlist` runtime an `ask` compiles to deny before the
+     * process starts, so the grant is reached only through deny-and-resume
+     * rounds — bounded, a restart each, and unavailable where the CLI cannot
+     * resume at all. Said now, while the person who granted is still here,
+     * rather than discovered as a stalled run the next morning — the exact
+     * moment §3.5 says a degradation must be named. The adapter is not told
+     * about the grant; this is the orchestrator describing the seam, not the
+     * seam being moved.
+     */
+    if (
+      live.session.standingGrant !== undefined &&
+      admission.capabilities.permissionFidelity !== 'callback'
+    ) {
+      this.emit('progress', live.session.sessionId, {
+        kind: 'phase',
+        detail:
+          `${spec.agentId} runs a ${admission.capabilities.permissionFidelity} gate, so this ` +
+          `session's standing grant cannot answer its asks per call: each new ask costs a ` +
+          `deny-and-resume round, and calls settled by a widened allowlist term are accounted ` +
+          `by the CLI rather than the log`,
         at: this.now().toISOString(),
       });
     }
@@ -1177,7 +1368,67 @@ export class SessionManager extends EventEmitter {
       capture: (o) => this.captureUrl(live, o),
       proposeSplit: (proposal) => void this.proposeSplit(live.session.sessionId, proposal, spec.agentId),
       compact: (budgetTokens) => this.compact(live, spec, budgetTokens),
+      // Only when something is actually injected: an empty array would make
+      // every runtime merge nothing on every turn for every session.
+      ...(live.mcp.size > 0 || live.skills.length > 0
+        ? { sessionTools: this.sessionToolsFor(live) }
+        : {}),
     };
+  }
+
+  /**
+   * The session's MCP tools, as closures over connections this manager owns
+   * (§17 Q20).
+   *
+   * Namespaced `mcp__<serverId>__<tool>`, which keeps them out of the
+   * built-ins' namespace by construction and gives policy rules a stable name
+   * to match. None of these names is in §13's designated-argument table, so an
+   * `allow` pattern cannot be written for them and every call falls to the
+   * explicit rules or `defaultAction: 'ask'` — fail-closed is the default
+   * posture for tools the gate cannot see into.
+   *
+   * Output passes through the same 8,000-character cap as the built-ins,
+   * because §17 Q7's answer *is* that cap: a session tool with unbounded
+   * output would reopen the context explosion from outside `tools/index.ts`.
+   */
+  private sessionToolsFor(live: LiveSession): SessionTool[] {
+    const tools: SessionTool[] = [];
+    // Skills first (§17 Q21): each is a tool that returns its own body — the
+    // model sees the description in the tool list and pays for the
+    // instructions only when the work calls for them, which is §17.1's
+    // "progressive instruction loading" wearing the suite it already had.
+    for (const skill of live.skills) {
+      tools.push({
+        name: `skill__${skill.id}`,
+        description: `Load the "${skill.id}" instructions: ${skill.description}`,
+        schema: { type: 'object', properties: {} },
+        run: async () => ({
+          ok: true,
+          summary: `skill ${skill.id} loaded`,
+          // Capped at creation, so this passes through whole — the refusal
+          // there is what makes no-truncation here a fact and not a hope.
+          content: skill.instructions,
+        }),
+      });
+    }
+    for (const [serverId, connection] of live.mcp) {
+      for (const tool of connection.tools) {
+        tools.push({
+          name: `mcp__${serverId}__${tool.name}`,
+          description: tool.description,
+          schema: tool.inputSchema,
+          run: async (args, signal) => {
+            const result = await connection.call(tool.name, args, signal);
+            return {
+              ok: result.ok,
+              summary: `${serverId}:${tool.name} ${result.ok ? 'ok' : 'failed'}`,
+              content: truncateToolOutput(result.text),
+            };
+          },
+        });
+      }
+    }
+    return tools;
   }
 
   /**
@@ -1450,6 +1701,24 @@ export class SessionManager extends EventEmitter {
       return decision;
     }
 
+    /*
+     * The standing grant settles the question and only the question (§17 Q19).
+     *
+     * It is checked after policy has answered, and only an `ask` reaches it:
+     * a policy `deny` and the escalation guard are refusals, not questions,
+     * and they stand exactly as they would without the grant. The decision is
+     * still written per call — `via: 'standing-grant'`, never `'policy'`,
+     * because "the workspace policy allows writes here" and "a person said
+     * yes to everything up front" are different claims about who is
+     * answerable. Scope `once`: the grant does not widen the agent's policy,
+     * so revoking it is nothing more than the session ending.
+     */
+    if (live.session.standingGrant !== undefined) {
+      const decision: PermissionDecision = { result: 'allow', scope: 'once' };
+      await this.logDecision(live, request, decision, 'standing-grant', evaluation);
+      return decision;
+    }
+
     if (this.pending.has(request.requestId)) {
       // Overwriting would drop the first promise and wedge that turn forever.
       throw new Error(`duplicate permission request id ${request.requestId}`);
@@ -1531,7 +1800,7 @@ export class SessionManager extends EventEmitter {
     live: LiveSession,
     request: PermissionRequest,
     decision: PermissionDecision,
-    via: 'policy' | 'user' | 'escalation-guard',
+    via: 'policy' | 'user' | 'escalation-guard' | 'standing-grant',
     evaluation?: { rule: PolicyRule | null; subject: string | null },
     /** Only ever set when `via` is `'user'` — policy is not a person. */
     actor?: Actor,
@@ -1616,6 +1885,15 @@ export class SessionManager extends EventEmitter {
       to,
       ...(reason !== undefined ? { reason } : {}),
     });
+
+    // A finished session has no more turns to serve tools to, and an MCP
+    // server is a running process: keeping it alive past `done` would be a
+    // child process owned by nothing anyone can see (§17 Q20).
+    if (isTerminal(live.session.state)) {
+      for (const connection of live.mcp.values()) connection.dispose();
+      live.mcp.clear();
+    }
+
     this.emit('state', live.session.sessionId, to, from);
   }
 
@@ -1937,6 +2215,11 @@ export class SessionManager extends EventEmitter {
          * A copy rather than the object, for the reason `addAgent` copies: a
          * grant made in the child would otherwise widen the parent, and every
          * sibling with it.
+         *
+         * The parent's `standingGrant` is deliberately *not* here (§17 Q19).
+         * A child is its own session and starts asking again: inheriting
+         * would make one decision at the root silently govern work the person
+         * granting it had not seen.
          */
         policy: clonePolicy(parent.policy),
         budget: reserved.child,
@@ -2491,6 +2774,23 @@ export class SessionManager extends EventEmitter {
     };
 
     const target: ExecutionTarget = { kind: 'local' };
+    /*
+     * Restored from the log, not re-granted: the person said yes once, for
+     * this session, and a restart is still this session (§17 Q19). Dropping
+     * it here would silently re-arm the gate mid-run — the overnight stall
+     * the grant exists to remove, brought back by a host restart.
+     *
+     * Restored as a *pair*. The session's effective policy is not otherwise
+     * durable — the line below rebuilds it from the target's defaults — and
+     * before the grant existed that loss was fail-closed: a `deny` the person
+     * had configured degraded to `ask`, and a person got asked. A restored
+     * grant answers asks unattended, so restoring it alone would convert
+     * every lost refusal into a silent yes. The grant event carries the
+     * policy it was granted beside for exactly this line; `!= null` rather
+     * than `!== null` because a projection from an older host arrives with
+     * the field absent, and absent must read as "no grant", never "one".
+     */
+    const grant = projection.standingGrant;
     const session: Session = {
       sessionId,
       instanceId: this.deps.instanceId,
@@ -2504,6 +2804,17 @@ export class SessionManager extends EventEmitter {
       checklist: projection.checklist,
       artifacts: projection.artifacts,
       needsAttention: projection.needsAttention,
+      ...(grant != null
+        ? {
+            standingGrant: {
+              grantedAt: grant.grantedAt,
+              ...(grant.grantedBy !== undefined ? { grantedBy: grant.grantedBy } : {}),
+            },
+          }
+        : {}),
+      ...(projection.skills.length > 0
+        ? { skills: projection.skills.map((s) => ({ id: s.id, description: s.description })) }
+        : {}),
       tree: { rootSessionId: sessionId, depth: 0, ancestry: [] },
       children: projection.children,
       peerSessionIds: [],
@@ -2518,11 +2829,32 @@ export class SessionManager extends EventEmitter {
       hops: new Map<AgentId, number>(),
       worktrees: new Map<AgentId, Worktree>(),
       pendingSplits: new Map<string, SplitProposal>(),
-      policy: defaultPolicyForTarget(target.kind),
+      // The pair, or the defaults: a granted session resumes under the rules
+      // the gate was relaxed beside. Cloned so the projection — which may be
+      // a checkpoint another fold continues from — is never handed out as a
+      // live, mutable object.
+      policy: grant != null ? clonePolicy(grant.policy) : defaultPolicyForTarget(target.kind),
       handles: new Map(),
       specs: new Map(),
       aborts: new Map(),
+      // Deliberately empty: an MCP server's env held credentials the log does
+      // not carry (§17 Q20), so a restart cannot honestly reconnect. The
+      // transcript's `mcp.attached` lines say what used to be here.
+      mcp: new Map(),
+      // And deliberately full: a skill is pure data the log carries whole
+      // (§17 Q21), so a restart is still the session that had it.
+      skills: projection.skills.map((s) => ({ ...s })),
     };
+    // The rules that let skills load travel with the skills, not with luck:
+    // the defaults never had them. Skipped where already present — a granted
+    // session's restored policy carries them, since the rules were pushed
+    // before the grant event snapshotted it.
+    for (const skill of live.skills) {
+      const name = `skill__${skill.id}`;
+      if (!live.policy.rules.some((r) => r.tool === name && r.action === 'allow')) {
+        live.policy.rules.push({ tool: name, action: 'allow' });
+      }
+    }
     this.sessions.set(sessionId, live);
 
     for (const projected of projection.agents) {

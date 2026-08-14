@@ -163,7 +163,27 @@ class AgbrteHarnessHandle implements AgentHandle {
     private readonly caps: RuntimeCapabilities,
     private readonly opts: AgbrteHarnessOptions,
   ) {
-    this.tools = opts.tools ?? DEFAULT_TOOLS;
+    /*
+     * The runtime's suite plus whatever the *session* carries (§17 Q20).
+     *
+     * Session tools arrive as closures over connections the host owns — MCP
+     * servers, today — and are wrapped rather than re-typed: `ToolContext`
+     * carries leases and workspace paths a remote tool has no claim to, so
+     * the wrapper hands over only the arguments and the abort signal. They
+     * enter `this.tools` and nothing else, which means `runTool`'s gate and
+     * `declaredTools()`'s schema degradation apply to them exactly as to the
+     * built-ins — a session tool is a tool, not a side door.
+     */
+    const injected: ToolDefinition[] = (ctx.sessionTools ?? []).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      schema: tool.schema,
+      run: async (args, toolCtx) => {
+        const result = await tool.run(args, toolCtx.signal);
+        return { ok: result.ok, summary: result.summary, content: result.content };
+      },
+    }));
+    this.tools = [...(opts.tools ?? DEFAULT_TOOLS), ...injected];
     this.leases = opts.leases ?? new WorkspaceLeases();
     // A rehydrated seed is conversation, not tool mechanics — it replays as
     // ordinary turns (§5.4).

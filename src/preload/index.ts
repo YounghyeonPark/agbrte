@@ -66,6 +66,9 @@ const api: AgbrteApi = {
       ipcRenderer.invoke(CH.hostsInstallModel, instanceId, endpointId, tag),
     installProgress: (instanceId: string) => ipcRenderer.invoke(CH.hostsInstallProgress, instanceId),
   },
+  app: {
+    about: () => ipcRenderer.invoke(CH.appAbout),
+  },
   update: {
     state: () => ipcRenderer.invoke(CH.updateState),
     installNow: () => ipcRenderer.invoke(CH.updateInstall),

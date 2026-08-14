@@ -40,6 +40,47 @@ export interface StartGuideProps {
   onAttachRemote: () => void;
 }
 
+/**
+ * The first run, step by step.
+ *
+ * Ordered because the app is ordered: each step is impossible before the one
+ * above it, so the list doubles as "where am I stuck". Every step names the
+ * control it happens on, because "start a session" without saying where is a
+ * scavenger hunt in six words.
+ */
+const STEPS: Array<{ title: string; detail: string }> = [
+  {
+    title: 'Attach a host',
+    detail:
+      'A folder on this machine, or a workspace on a server over ssh — the buttons below, or Attach host… in the top bar.',
+  },
+  {
+    title: 'Start a session',
+    detail:
+      'Press + on the host in the sidebar and give it a title and a goal. The goal is what the transcript answers to.',
+  },
+  {
+    title: 'Add an agent',
+    detail:
+      'Pick a runtime — an installed CLI, a local model, or an API endpoint — and a model where one is called for.',
+  },
+  {
+    title: 'Say what you want',
+    detail:
+      'Type a turn. Attach a screenshot or dictate where this client can; everything sent is in the transcript.',
+  },
+  {
+    title: 'Answer when asked',
+    detail:
+      'Consequential tools stop and ask first. Prompts appear on the session, in the sidebar, and in the inbox — nothing runs unreviewed by default.',
+  },
+  {
+    title: 'Leave whenever you like',
+    detail:
+      'Close the window mid-run; the session continues on its host. Come back through the sidebar, or search every host from the box on the left.',
+  },
+];
+
 /** A consequence of sessions living on the host, and why it is worth knowing. */
 const CONSEQUENCES: Array<{ title: string; detail: string }> = [
   {
@@ -116,6 +157,19 @@ export function StartGuide({ hasHosts, onAttachLocal, onAttachRemote }: StartGui
             <span className="text-muted text-xs leading-relaxed">{item.detail}</span>
           </div>
         ))}
+      </div>
+
+      <div className="grid gap-3" data-testid="guide-steps">
+        <span className={`${LABEL} text-muted`}>How it's used</span>
+        <ol className="grid list-none gap-3">
+          {STEPS.map((step, index) => (
+            <li key={step.title} className="grid grid-cols-[1.5rem_1fr] gap-x-1">
+              <span className="text-muted text-[13px]">{index + 1}.</span>
+              <span className="text-[13px]">{step.title}</span>
+              <span className="text-muted col-start-2 text-xs leading-relaxed">{step.detail}</span>
+            </li>
+          ))}
+        </ol>
       </div>
 
       {hasHosts && (

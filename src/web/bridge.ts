@@ -122,6 +122,12 @@ const api: AgbrteApi = {
     installProgress: call(CH.hostsInstallProgress),
   },
 
+  // Routed to the server: what the About page describes is the program serving
+  // this page, and the server is the only side that knows what it is running.
+  app: {
+    about: call(CH.appAbout),
+  },
+
   /*
    * A browser cannot update the application it is looking at.
    *

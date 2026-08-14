@@ -177,6 +177,12 @@ function render(
           : ''
       }${who}`;
 
+    case 'permission.standing_grant':
+      // The line every later `via standing-grant` refers back to (§17 Q19). An
+      // export that dropped it would show the questions stopping for no stated
+      // reason, attributed to nobody.
+      return `> ⚖️ **standing grant** — every ask from here on is allowed without a prompt${who}`;
+
     case 'agent.stopped':
       return `> ■ stopped: \`${event.stop.kind}\`${'limit' in event.stop ? ` (${String(event.stop.limit)})` : ''}`;
 

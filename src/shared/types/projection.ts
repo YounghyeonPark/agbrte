@@ -9,7 +9,7 @@
 
 import type { AgentId, SessionId } from './ids.js';
 import type { ModelRef, ReasoningRequest } from './runtime.js';
-import type { PermissionFidelity } from './policy.js';
+import type { PermissionFidelity, ToolPolicy } from './policy.js';
 import type {
   ArtifactRef,
   AttentionReason,
@@ -17,6 +17,8 @@ import type {
   ChildRef,
   SessionBrief,
   SessionState,
+  SkillConfig,
+  StandingGrant,
 } from './session.js';
 
 export interface UsageTotals {
@@ -108,6 +110,27 @@ export interface SessionProjection {
     askedAt: string;
   }>;
   stats: ProjectionStats;
+  /**
+   * The gate was relaxed for this session (§17 Q19), folded from
+   * `permission.standing_grant`. In the projection because the grant must
+   * survive a restart the same way the transcript it explains does — a
+   * reloaded session that silently resumed asking would contradict its own
+   * log's `via: 'standing-grant'` lines.
+   *
+   * `policy` rides along from the event so a resume restores the *pair*: the
+   * grant, and the rules it was granted beside. Restoring the grant onto a
+   * default-rebuilt policy would turn every rule the person tightened into an
+   * ask the grant then answers yes — the permissive half surviving alone.
+   */
+  standingGrant: (StandingGrant & { policy: ToolPolicy }) | null;
+  /**
+   * Skills injected into this session (§17 Q21), folded from `skill.attached`.
+   *
+   * Whole configs, not references: a skill is pure data, so unlike an MCP
+   * server it is rebuilt on resume from here — the log is the truth and it
+   * holds the truth entire.
+   */
+  skills: SkillConfig[];
   /** Non-zero means the log had unparseable lines — real corruption (§5.1). */
   skippedLines: number;
   /** Set on a child session; durable, so a late resume still knows why it exists. */
@@ -139,6 +162,8 @@ export function emptyProjection(sessionId: SessionId): SessionProjection {
       downgrades: 0,
       captures: 0,
     },
+    standingGrant: null,
+    skills: [],
     skippedLines: 0,
     brief: null,
     parentSessionId: null,

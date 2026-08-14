@@ -15,7 +15,7 @@
  */
 
 import { loadReport } from './conformance.js';
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, Menu, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { delimiter, dirname, join } from 'node:path';
 import { registerIpc } from './ipc/register.js';
@@ -39,6 +39,22 @@ const DEV_URL = process.env['AGBRTE_DEV_SERVER'];
  * taskbar slot.
  */
 if (process.platform === 'win32') app.setAppUserModelId('dev.agbrte.app');
+
+/*
+ * No menu bar on Windows and Linux.
+ *
+ * Electron's default menu is a template's: File/Edit/View with reload and zoom,
+ * none of which names anything this app does — everything real lives in the
+ * window itself, and the About and Guide pages replaced the one thing a Help
+ * menu would have held. `null` rather than `autoHideMenuBar`, which keeps the
+ * bar one Alt-press away and makes it look like a setting rather than a
+ * removal.
+ *
+ * macOS keeps its application menu: the menu bar lives on the system there,
+ * costs the window nothing, and removing it takes ⌘C/⌘V with it — Cmd
+ * accelerators only exist through menu roles.
+ */
+if (process.platform !== 'darwin') Menu.setApplicationMenu(null);
 
 let fleet: Fleet | null = null;
 let ipc: { dispose: () => void } | null = null;
@@ -238,6 +254,22 @@ app.whenReady().then(async () => {
     // The same number `connectRemoteHost` stamps onto a bundle it deploys, so
     // a host reporting a different one is reporting older code.
     shippingVersion: app.getVersion(),
+    // What the About page shows. License and homepage restate package.json,
+    // which the renderer cannot read; the version is asked of Electron, which
+    // reads the same file — one source with two readers, not two sources.
+    about: {
+      name: 'Agbrte',
+      version: app.getVersion(),
+      description:
+        'Agent Bridge Terminal — durable, bridge-owned agent sessions you attach to from any device.',
+      license: 'Apache-2.0',
+      homepage: 'https://github.com/YounghyeonPark/agbrte',
+      runtime: {
+        electron: process.versions.electron,
+        node: process.versions.node,
+        platform: `${process.platform} ${process.arch}`,
+      },
+    },
   });
 
   for (const root of roots) {

@@ -34,7 +34,9 @@ import type {
   Annotation,
   ContentBlock,
   ImageBlock,
+  McpServerConfig,
   PermissionDecision,
+  SkillConfig,
   PermissionRequest,
   PermissionResolved,
   Session,
@@ -124,6 +126,14 @@ export interface CreateSessionRequest {
   instanceId: string;
   title: string;
   goal: string;
+  /**
+   * MCP servers to attach to the new session (§17 Q20). Session-scoped by
+   * design — there is no app-level MCP registry for these to default from.
+   * The commands run on the session's host, where the workspace is.
+   */
+  mcpServers?: McpServerConfig[];
+  /** Skills to inject at creation (§17 Q21). Session-scoped, durable in the log. */
+  skills?: SkillConfig[];
 }
 
 export interface AddAgentRequest {
@@ -293,6 +303,24 @@ export interface SessionSnapshot {
 }
 
 // ----------------------------------------------------------------- the surface
+
+/**
+ * What this installation is, for the About page.
+ *
+ * Injected by whichever process serves the API rather than read by the
+ * renderer, because the renderer has no filesystem and the browser client's
+ * honest answer is "whatever the server runs". `runtime` is absent in a
+ * browser — a tab has no Electron or Node version of its own to report.
+ */
+export interface AboutInfo {
+  name: string;
+  version: string;
+  description: string;
+  /** SPDX identifier, e.g. `Apache-2.0`. The full text ships as `LICENSE`. */
+  license: string;
+  homepage: string;
+  runtime?: { electron?: string; node?: string; platform?: string };
+}
 
 /**
  * What the app knows about its own next version.
@@ -633,6 +661,10 @@ export interface AgbrteApi {
       decision: PermissionDecision,
     ): Promise<'answered' | 'already-answered' | 'unknown'>;
   };
+  /** This installation: name, version, license. What the About page shows. */
+  app: {
+    about(): Promise<AboutInfo>;
+  };
   /**
    * Updating this app (§13).
    *
@@ -728,6 +760,7 @@ export const CH = {
   hostsInstallProgress: 'agbrte:hosts.installProgress',
   updateState: 'agbrte:update.state',
   updateInstall: 'agbrte:update.install',
+  appAbout: 'agbrte:app.about',
   hostsRuntimes: 'agbrte:hosts.runtimes',
   hostsConformance: 'agbrte:hosts.conformance',
   inboxList: 'agbrte:inbox.list',

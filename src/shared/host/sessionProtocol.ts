@@ -347,6 +347,15 @@ export type SessionCommand =
    * The old fields stay because `COMMAND_SINCE` cannot express a field
    * addition: a v11 host reads them and ignores what it does not know, which is
    * the same session it would have made before.
+   *
+   * `input.standingGrant` (§17 Q19) rides in the same envelope and needs the
+   * same per-field safety argument written down: a host that predates it drops
+   * the field silently, and the session it makes **asks on every gate** — the
+   * old behaviour exactly, over-asking rather than over-allowing. The returned
+   * `Session` honestly lacks `standingGrant`, so a client that cares can see
+   * the grant did not take. A field whose silent drop widened permission
+   * instead would need `MIN_CLIENT_PROTOCOL`, which is the lever for shape
+   * changes — this one degrades in the only acceptable direction.
    */
   | {
       t: 'session.create';
