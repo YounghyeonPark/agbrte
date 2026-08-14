@@ -45,7 +45,11 @@
 .NOTES
   Requires elevation. From a normal window:
 
-      Start-Process powershell -Verb RunAs -ArgumentList '-NoExit','-ExecutionPolicy','Bypass','-File','C:\dev\loom\scripts\enable-sshd.ps1'
+      Start-Process powershell -Verb RunAs -ArgumentList '-NoExit','-ExecutionPolicy','Bypass','-File',"$PWD\scripts\enable-sshd.ps1"
+
+  Written against the current directory rather than a fixed one: the checkout
+  has moved once already, and a path baked into a comment is a path that goes
+  quietly wrong.
 #>
 
 $ErrorActionPreference = 'Stop'
