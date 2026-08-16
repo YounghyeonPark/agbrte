@@ -5,11 +5,16 @@ import { join } from 'node:path';
 import { AdmissionRefused, SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
+import { AgbrteHarnessRuntime } from '@main/runtime/runtimes/agbrteHarness.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { defaultLocalPolicy, evaluatePolicy } from '@main/policy/evaluate.js';
 import type {
   InstanceId,
+  ModelEndpoint,
+  ModelProvider,
   PermissionRequest,
+  ProviderRequest,
+  ProviderResult,
   RuntimeCapabilities,
   ToolPolicy,
 } from '@shared/types/index.js';
@@ -479,6 +484,135 @@ describe('SessionManager — compaction', () => {
 
     const projection = await sm.projection(session.sessionId);
     expect(projection.state).toBe('awaiting_input');
+  });
+});
+
+/**
+ * What the model is actually shown on turn two, and on turn ten (§5.4, §3.7).
+ *
+ * Driven through the real harness against a recording provider rather than
+ * through `echo`, because the claim under test spans the whole owner path: the
+ * manager releases the handle at the end of a turn, `rehydrate()` rebuilds the
+ * conversation from the log, the harness replays it, and the provider is handed
+ * `ProviderRequest.messages`. `echo` would prove the seed was built; only a
+ * provider proves it arrived.
+ *
+ * The reported bug was "the agent remembers nothing" and the plumbing was
+ * innocent — a live `qwen2.5:7b` session carries turn one into turn two, and the
+ * two-turn case here passes with or without the fix. The failure was further
+ * out: a fixed six-turn ceiling ran *before* the token budget in `rehydrate()`,
+ * so from the fourth exchange onward every earlier turn was dropped no matter
+ * how much window was free. That is what the long case pins.
+ */
+describe('SessionManager — what the model is shown on later turns', () => {
+  /** Answers anything, and keeps every request it was given. */
+  class RecordingProvider implements ModelProvider {
+    readonly id = 'recorder';
+    readonly version = '0.0.1';
+    readonly requests: ProviderRequest[] = [];
+
+    async listModels() {
+      return [{ modelId: 'recorder-model' }];
+    }
+
+    async probe(): Promise<RuntimeCapabilities> {
+      return {
+        nativeResume: false,
+        interruptible: true,
+        subagents: false,
+        streaming: false,
+        streamingToolArgs: false,
+        tools: 'none',
+        parallelToolCalls: 'none',
+        schemaProfile: 'text-protocol',
+        toolResultPairing: 'batched',
+        permissionFidelity: 'callback',
+        // Deliberately roomy: the point of the long case is that nothing was
+        // anywhere near the budget when the turns went missing.
+        contextWindow: 128_000,
+        maxOutputTokens: 4_096,
+        serverSideCompaction: false,
+        caching: 'none',
+        reasoningControl: 'none',
+        reasoningVisible: 'none',
+        input: { image: false, audio: false, pdf: false, video: false },
+        pricing: 'free',
+        costReporting: 'per-request',
+        tokenCounter: 'local-estimate',
+        quotaModel: 'per-token-billing',
+      };
+    }
+
+    async invoke(req: ProviderRequest): Promise<ProviderResult> {
+      // Snapshotted: the harness keeps mutating the array it passed.
+      this.requests.push(JSON.parse(JSON.stringify(req)) as ProviderRequest);
+      return {
+        content: [{ type: 'text', text: `noted (${this.requests.length})` }],
+        toolCalls: [],
+        stop: { kind: 'end_turn' },
+        usage: { inputTokens: 1, outputTokens: 1 },
+        raw: {},
+      };
+    }
+  }
+
+  const ENDPOINT: ModelEndpoint = {
+    endpointId: 'test',
+    providerId: 'recorder',
+    auth: { kind: 'none' },
+    locality: 'app-local',
+    dataHandling: { provider: 'recorder' },
+  };
+
+  async function harnessSession(): Promise<{
+    provider: RecordingProvider;
+    send: (text: string) => Promise<void>;
+  }> {
+    const provider = new RecordingProvider();
+    const registry = new RuntimeRegistry();
+    registry.register(
+      new AgbrteHarnessRuntime({ provider, endpointFor: () => ENDPOINT }),
+      { label: 'Harness', model: 'required' },
+    );
+    const sm = new SessionManager({ registry, workspaceRoot: root, instanceId });
+    const session = await sm.createSession({ title: 's', goal: 'g' });
+    const agent = await sm.addAgent(session.sessionId, {
+      role: 'worker',
+      runtimeId: 'agbrte-harness',
+      model: { providerId: 'recorder', modelId: 'recorder-model' },
+    });
+    return {
+      provider,
+      send: (text) => sm.send(session.sessionId, agent.agentId, TEXT(text)),
+    };
+  }
+
+  const wire = (req: ProviderRequest | undefined): string => JSON.stringify(req?.messages ?? []);
+
+  it('carries the first turn into the second', async () => {
+    const { provider, send } = await harnessSession();
+    await send('my name is Ada');
+    await send('what is my name?');
+
+    expect(provider.requests).toHaveLength(2);
+    // Turn one saw only itself; turn two must see both.
+    expect(wire(provider.requests[0])).not.toContain('what is my name?');
+    expect(wire(provider.requests[1])).toContain('my name is Ada');
+    expect(wire(provider.requests[1])).toContain('what is my name?');
+  });
+
+  it('still carries it ten turns later, while the window is nowhere near full', async () => {
+    const { provider, send } = await harnessSession();
+    await send('my name is Ada');
+    for (let i = 0; i < 9; i += 1) await send(`filler ${i}`);
+
+    const last = provider.requests.at(-1);
+    // 128k of window and a seed of a few hundred tokens: nothing here had any
+    // business being dropped. It was, by a turn count that outranked the budget.
+    expect(last?.messages.length ?? 0).toBeGreaterThan(6);
+    expect(wire(last)).toContain('my name is Ada');
+    // And the brief must not claim a summary exists for what it dropped.
+    expect(wire(last)).not.toContain('summarized rather than quoted');
   });
 });
 

@@ -33,7 +33,20 @@ import type { SessionStore, SessionMeta } from './sessionStore.js';
 export interface RehydrateOptions {
   /** Ceiling for the assembled seed. Callers pass `contextWindow * 0.5`. */
   budgetTokens: number;
-  /** Most recent turns carried word for word. */
+  /**
+   * A **ceiling** on how many recent turns are carried word for word, for a
+   * caller that wants a small seed for its own reasons — `buildBrief` passes
+   * `0`, because a brief is a statement of scope and not a transcript (§4.3).
+   *
+   * Absent means *no ceiling*, and `budgetTokens` alone decides. That is the
+   * important default and it used to be `6`. A fixed turn count applied before
+   * the budget cannot help but win: six short turns are a few hundred tokens
+   * against a budget of twenty thousand, so `budgetTokens` never bound
+   * anything, and every session — however large its window — was cut back to
+   * the last three exchanges on every single turn. The seed is bounded by the
+   * budget, which is what the caller measured the window with; a second,
+   * unrelated bound underneath it is not conservatism, it is amnesia.
+   */
   verbatimTurns?: number;
   /**
    * Set when seeding a *different* runtime or provider than produced the log.
@@ -50,7 +63,15 @@ export interface RehydrateResult {
   seed: NormalizedTurn[];
   /** Highest `seq` the seed accounts for. */
   seededThroughSeq: number;
-  /** Turns summarized rather than carried verbatim. */
+  /**
+   * Turns the seed does **not** carry, because they did not fit.
+   *
+   * The name is older than the behaviour and is left alone deliberately — it is
+   * part of a signature `buildBrief` and the compaction path both read, and
+   * renaming it is a change to coordinate rather than to slip in. What it
+   * counts is turns dropped, and `narrate()` now says so in those words instead
+   * of promising a summary nothing wrote.
+   */
   summarizedTurns: number;
   droppedOpaque: number;
   /** Conservative estimate — see `estimateTokens`. */
@@ -59,7 +80,13 @@ export interface RehydrateResult {
   isEmpty: boolean;
 }
 
-const DEFAULT_VERBATIM_TURNS = 6;
+/**
+ * No turn-count ceiling by default. See `RehydrateOptions.verbatimTurns`.
+ *
+ * Named rather than inlined so the *absence* of a limit is a deliberate value
+ * at the one place that reads it, not a `??` that looks like an oversight.
+ */
+const NO_TURN_CEILING = Number.POSITIVE_INFINITY;
 
 /**
  * Deliberately crude and deliberately *over*-estimating.
@@ -113,8 +140,19 @@ function turnsFrom(events: readonly AgbrteEvent[]): NormalizedTurn[] {
 function narrate(projection: SessionProjection, summarized: number): string[] {
   const lines: string[] = [];
   if (summarized > 0) {
+    /*
+     * Says dropped, because dropped is what happened.
+     *
+     * This read "are summarized rather than quoted. Ask if you need detail."
+     * Nothing summarizes them — `rehydrate` carries turns or leaves them out —
+     * and there is nobody to ask: the agent has no route to the log, which is
+     * the whole premise of §17.18. So the line described a capability that did
+     * not exist, to a reader that would act on it, about the one subject it
+     * must not be wrong on: what it can and cannot still see.
+     */
     lines.push(
-      `${summarized} earlier turn(s) are summarized rather than quoted. Ask if you need detail.`,
+      `${summarized} earlier turn(s) did not fit the context budget and are not ` +
+        `included here. Treat anything older than the conversation below as unseen.`,
     );
   }
   const { stats } = projection;
@@ -165,8 +203,10 @@ export async function rehydrate(
   ]);
 
   const allTurns = turnsFrom(events);
-  const keep = Math.max(0, opts.verbatimTurns ?? DEFAULT_VERBATIM_TURNS);
+  const keep = Math.max(0, opts.verbatimTurns ?? NO_TURN_CEILING);
 
+  // `slice(-Infinity)` is the whole array — the ceiling is off unless a caller
+  // asked for one, and the budget below is then the only thing that decides.
   let verbatim = allTurns.slice(-keep);
   let summarized = allTurns.length - verbatim.length;
 
@@ -212,16 +252,30 @@ export async function rehydrate(
     ],
   });
 
-  const sizeOf = (turns: NormalizedTurn[]): number =>
-    turns.reduce(
-      (sum, t) => sum + t.content.reduce((s, b) => s + estimateTokens(blockText(b)), 0),
-      0,
-    );
+  const turnSize = (t: NormalizedTurn): number =>
+    t.content.reduce((s, b) => s + estimateTokens(blockText(b)), 0);
 
-  // Drop the oldest verbatim turns until the whole seed fits. The brief is never
-  // dropped: an agent with conversation but no goal is worse off than one with a
-  // goal and no conversation.
-  while (verbatim.length > 0 && sizeOf([brief(), ...verbatim]) > opts.budgetTokens) {
+  const sizeOf = (turns: NormalizedTurn[]): number =>
+    turns.reduce((sum, t) => sum + turnSize(t), 0);
+
+  /*
+   * Drop the oldest verbatim turns until the whole seed fits. The brief is never
+   * dropped: an agent with conversation but no goal is worse off than one with a
+   * goal and no conversation.
+   *
+   * Sizes are measured once and carried in a running total. That was a detail
+   * while a hard six-turn ceiling ran first — the loop could only ever run a
+   * handful of times — and it stops being one the moment the budget is the only
+   * bound: re-summing the whole conversation on every drop is quadratic in the
+   * length of a session, which is the shape that turns a week-old transcript
+   * into a stall at the start of every turn.
+   */
+  const sizes = verbatim.map(turnSize);
+  let carried = sizes.reduce((sum, n) => sum + n, 0);
+  // Recomputed each pass rather than hoisted: `summarized` is what `narrate`
+  // reports, so the brief genuinely does change size as turns are dropped.
+  while (verbatim.length > 0 && sizeOf([brief()]) + carried > opts.budgetTokens) {
+    carried -= sizes.shift() as number;
     verbatim = verbatim.slice(1);
     summarized += 1;
   }
