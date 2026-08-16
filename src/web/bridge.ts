@@ -118,6 +118,7 @@ const api: AgbrteApi = {
     conformance: call(CH.hostsConformance),
     update: call(CH.hostsUpdate),
     models: call(CH.hostsModels),
+    modelCapabilities: call(CH.hostsModelCapabilities),
     installModel: call(CH.hostsInstallModel),
     installProgress: call(CH.hostsInstallProgress),
   },
@@ -217,6 +218,7 @@ const api: AgbrteApi = {
     since: call(CH.sessionsSince),
     exportMarkdown: call(CH.sessionsExport),
     search: call(CH.sessionsSearch),
+    rawLog: call(CH.sessionsRawLog),
   },
   permissions: {
     pending: call(CH.permissionsPending),

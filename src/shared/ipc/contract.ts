@@ -26,7 +26,7 @@
  * the previous single-workspace shape was the limitation.
  */
 
-import type { InboxEntry, MatrixCell } from '../types/index.js';
+import type { InboxEntry, MatrixCell, ModelCapabilityHint } from '../types/index.js';
 import type {
   AgentRecord,
   AgentRole,
@@ -36,6 +36,7 @@ import type {
   ImageBlock,
   McpServerConfig,
   PermissionDecision,
+  RawTail,
   SkillConfig,
   PermissionRequest,
   PermissionResolved,
@@ -353,6 +354,17 @@ export interface EndpointModelsDto {
   runner?: 'ollama' | 'openai-compatible';
   canInstall?: boolean;
   installHint?: string;
+  /**
+   * What each listed model says about itself, where anything says anything
+   * (§3.3, §3.5).
+   *
+   * The free half of the answer, so a list of names can carry the two or three
+   * facts that decide whether a model can do the job. Absent — or absent for one
+   * model — means *nobody could tell*, which the picker renders as unknown. A
+   * host older than v14 omits it entirely and the picker shows the plain list it
+   * always did.
+   */
+  capabilities?: ModelCapabilityHint[];
 }
 
 /** How far one install has got, as the renderer polls it. */
@@ -402,6 +414,23 @@ export interface AgbrteApi {
      * since an empty list is indistinguishable from "no models here".
      */
     models(instanceId: string): Promise<EndpointModelsDto[]>;
+    /**
+     * Establish what one model can actually do, before it is chosen (§3.3).
+     *
+     * Asked for one model, never for a list: this is the expensive half — it
+     * probes, and `openai-compatible` probes by making real requests. `models`
+     * carries the free half for every row.
+     *
+     * **`null` means this host cannot be asked** — it is older than the command
+     * — and is deliberately different from a hint whose claims are absent, which
+     * means it was asked and could not tell. A client that collapses the two
+     * turns "update your host" into "this model cannot call tools".
+     */
+    modelCapabilities(
+      instanceId: string,
+      endpointId: string,
+      modelId: string,
+    ): Promise<ModelCapabilityHint | null>;
     /**
      * Begin installing a model on that host (§3.8).
      *
@@ -644,6 +673,16 @@ export interface AgbrteApi {
      * them means you should stop looking.
      */
     search(query: string, limit?: number): Promise<SearchResults>;
+    /**
+     * The raw stdout/stderr tail of a CLI seat's subprocess (§3.12).
+     *
+     * Read-only observation, not a terminal: the structured transcript stays
+     * the truth, and this is the "what is the CLI actually printing" window
+     * beside it. `null` means the seat has no raw stream to show — a harness
+     * or echo agent, or a host too old to serve it — and the UI hides the
+     * toggle rather than showing an empty pane.
+     */
+    rawLog(sessionId: string, agentId: string): Promise<RawTail | null>;
   };
   permissions: {
     pending(): Promise<PermissionRequest[]>;
@@ -756,6 +795,7 @@ export const CH = {
   hostsShutdown: 'agbrte:hosts.shutdown',
   hostsUpdate: 'agbrte:hosts.update',
   hostsModels: 'agbrte:hosts.models',
+  hostsModelCapabilities: 'agbrte:hosts.modelCapabilities',
   hostsInstallModel: 'agbrte:hosts.installModel',
   hostsInstallProgress: 'agbrte:hosts.installProgress',
   updateState: 'agbrte:update.state',
@@ -806,6 +846,7 @@ export const CH = {
   sessionsSince: 'agbrte:sessions.since',
   sessionsExport: 'agbrte:sessions.export',
   sessionsSearch: 'agbrte:sessions.search',
+  sessionsRawLog: 'agbrte:sessions.rawLog',
   permissionsPending: 'agbrte:permissions.pending',
   permissionsRespond: 'agbrte:permissions.respond',
   ack: 'agbrte:ack',

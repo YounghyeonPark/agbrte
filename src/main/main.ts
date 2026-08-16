@@ -77,6 +77,17 @@ const HOST_RUNTIMES: FleetRuntime[] = [
     model: 'required',
   },
   { id: 'echo', label: 'Echo (no model)', version: '0.0.1', model: 'none' },
+  /*
+   * The installed CLIs (§3.12). Listed here so the reconciliation in
+   * `Fleet.attach` — an intersection with what the host's `ready` handshake
+   * reports — can let them through: the host *detects* these per machine and
+   * offers `cli:<id>` only where the binary answered, so a host without
+   * Claude Code simply never reports it and nothing is offered that would
+   * fail at the first spawn. Absent from this list they were dropped even
+   * when detected, which put a working runtime behind an app-side constant.
+   */
+  { id: 'cli:claude-code', label: 'Claude Code (installed CLI)', version: '0.0.1', model: 'optional' },
+  { id: 'cli:gemini-cli', label: 'Gemini CLI (installed)', version: '0.0.1', model: 'optional' },
 ];
 
 /**

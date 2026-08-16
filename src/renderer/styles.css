@@ -144,6 +144,36 @@
   @apply disabled:cursor-default disabled:opacity-45 disabled:hover:border-line disabled:hover:text-muted;
 }
 
+/*
+ * A capability badge, on the row where a model is chosen (§3.3, §3.5).
+ *
+ * Words, not colour, on the same rule §3.10 applies to the gate badge — `no
+ * tools` has to survive being printed, screenshotted and read by somebody who
+ * cannot distinguish the two tones. The tones only *reinforce* three states the
+ * text already carries: ordinary, a limit that changes what the agent can be
+ * asked to do, and nobody-checked.
+ *
+ * `cap-unknown` is deliberately the quietest of the three. An unchecked
+ * capability must not look like a checked one in either direction, and drawing
+ * it as a warning would make every model on a server that does not self-describe
+ * look broken.
+ */
+@utility cap-badge {
+  @apply border-line rounded-[2px] border px-1 py-0 text-[10px] leading-4 whitespace-nowrap;
+}
+
+@utility cap-plain {
+  @apply text-muted;
+}
+
+@utility cap-warn {
+  @apply text-state-fail border-state-fail/40;
+}
+
+@utility cap-unknown {
+  @apply text-muted border-dashed opacity-70;
+}
+
 /* One line, ellipsised. Used for paths and titles in the fixed-width sidebar,
    where a long value must not be allowed to widen the column. */
 @utility truncate-line {
@@ -155,6 +185,55 @@
 @utility wrap-anywhere {
   @apply break-words whitespace-pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/*
+ * The working indicator's motion (`WorkingDots` in Transcript.tsx).
+ *
+ * `working` has no colour on purpose — see `stateTone` — so during a long turn
+ * the only mark it left was static text, which reads as *frozen* exactly when
+ * the app is doing the most. Motion is the one channel left that says "alive"
+ * without spending a hue, and it is CSS-driven so ten working sessions cost
+ * zero timers in the renderer: an `animation-delay` per dot, not a setInterval
+ * per row.
+ *
+ * Plain rules rather than `@theme` keyframes, deliberately. A `--animate-*`
+ * token is only emitted when a utility references it, which is the same shape
+ * as the `btn-quiet` failure above — a name that can go silently inert. Author
+ * CSS in the entry file is always in the bundle, and the build check greps for
+ * it there.
+ *
+ * `backwards` fill holds the delayed dots at the 0% keyframe during their
+ * delay; without it they sit at full opacity for the first fraction of a
+ * second and the ripple starts with a stutter.
+ */
+@keyframes working-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+
+.working-dots > span {
+  animation: working-dot 1.2s ease-in-out infinite backwards;
+}
+.working-dots > span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.working-dots > span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* The state is still worth stating for people who have asked motion to stop;
+   with the animation gone the dots rest at full opacity — a static ellipsis. */
+@media (prefers-reduced-motion: reduce) {
+  .working-dots > span {
+    animation: none;
+  }
 }
 
 /*

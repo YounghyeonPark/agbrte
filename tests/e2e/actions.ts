@@ -14,6 +14,13 @@ import { expect, type Page } from '@playwright/test';
  *
  * Sessions belong to a host now, so there is no global "new session" — the
  * button lives in that host's group.
+ *
+ * Asserts the picker, which holds only while nothing is remembered for that
+ * host: a successful `addAgent` saves the choice as a default, and the next
+ * zero-agent session on the same host auto-adds it and lands in the chat.
+ * Every launch gets a throwaway profile, so the first session per host in a
+ * test is always the picker — a *second* one on the same host is not, and has
+ * to be driven by hand (see "remembers the agent choice" in app.spec.ts).
  */
 export async function createSession(page: Page, title: string, host?: string): Promise<void> {
   const group = hostGroup(page, host);
@@ -31,45 +38,51 @@ export function hostGroup(page: Page, label?: string) {
 }
 
 /**
- * Add an agent, choosing a runtime through the Radix select.
+ * Add an agent, choosing what will run through the Radix select.
+ *
+ * One choice, not two. The picker's list is flat — a runtime that needs a model
+ * contributes one entry per model its host can reach, one that does not
+ * contributes a single entry — so options are addressed by `data-runtime` and
+ * `data-model` rather than by the encoded `data-value`, which is the picker's
+ * own business.
  *
  * The options render into a portal, so they are addressed from the page root
  * rather than from within the trigger.
  */
 export async function addAgent(page: Page, runtimeId: string, model?: string): Promise<void> {
   await page.click('[data-testid=runtime-trigger]');
-  await page.click(`[data-testid=runtime-option][data-value="${runtimeId}"]`);
 
-  if (model !== undefined) {
+  if (model === undefined) {
+    await page.click(`[data-testid=runtime-option][data-runtime="${runtimeId}"]`);
+  } else {
     /*
-     * The model control is a dropdown when the host could list what it serves
-     * and a plain field when it could not — `/v1/models` is optional, so both
-     * shapes are real. This takes whichever route a person would.
+     * Prefer the listed entry, fall back to typing.
      *
-     * It was `fill` alone, which broke the moment the control became a `select`.
-     * Worth handling properly rather than forcing the input back: the branch
-     * where a wanted model is *not* offered is exactly the escape hatch that
-     * makes a closed dropdown honest, and this is the only thing exercising it.
+     * Both branches are real: `/v1/models` is optional in the OpenAI-compatible
+     * shape, so a host that cannot list what it serves offers only the "another
+     * model…" entry — the escape hatch that makes a closed list honest, and the
+     * only thing exercising it.
+     *
+     * The wait is because the list arrives a round trip after the picker opens:
+     * without it this races the host's answer and would take the typed branch on
+     * a fast machine and the listed one on a slow one.
      */
-    const control = page.locator('[data-testid=model-id]');
-    await expect(control).toBeVisible();
+    const listed = page.locator(
+      `[data-testid=runtime-option][data-runtime="${runtimeId}"][data-model="${model}"]`,
+    );
+    try {
+      await listed.waitFor({ state: 'visible', timeout: 15_000 });
+    } catch {
+      // Not offered — the typed entry below is the route.
+    }
 
-    if ((await control.evaluate((el) => el.tagName)) === 'SELECT') {
-      const offered = await control
-        .locator('option')
-        // Structural, not `HTMLOptionElement`: this config compiles with
-        // `lib: ["ES2022"]` and no DOM, so naming a DOM interface here type
-        // checks in an editor and fails the build.
-        .evaluateAll((els) => els.map((el) => (el as unknown as { value: string }).value));
-      if (offered.includes(model)) {
-        await control.selectOption(model);
-      } else {
-        // "Type a model id…", which swaps the select for a field.
-        await control.selectOption('__type__');
-        await page.fill('[data-testid=model-id]', model);
-      }
+    if ((await listed.count()) > 0) {
+      await listed.click();
     } else {
-      await page.fill('[data-testid=model-id]', model);
+      await page.click(`[data-testid=runtime-option][data-runtime="${runtimeId}"][data-typed=true]`);
+      const field = page.locator('[data-testid=model-id]');
+      await expect(field).toBeVisible();
+      await field.fill(model);
     }
   }
 
@@ -94,12 +107,18 @@ export async function attachedHosts(page: Page): Promise<string[]> {
     .evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-label') ?? ''));
 }
 
-/** The runtime ids the agent host advertised, read from the open select. */
+/**
+ * The runtime ids the agent host advertised, read from the open select.
+ *
+ * Deduplicated, because one runtime now contributes one entry per model it can
+ * reach — the question this answers is still "which runtimes did the handshake
+ * report", and that must not change with how many models happen to be pulled.
+ */
 export async function runtimeOptions(page: Page): Promise<string[]> {
   await page.click('[data-testid=runtime-trigger]');
-  const values = await page.locator('[data-testid=runtime-option]').evaluateAll((nodes) =>
-    nodes.map((n) => n.getAttribute('data-value') ?? ''),
-  );
+  const values = await page
+    .locator('[data-testid=runtime-option]')
+    .evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-runtime') ?? ''));
   await page.keyboard.press('Escape');
-  return values;
+  return [...new Set(values)];
 }

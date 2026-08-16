@@ -48,7 +48,9 @@ export function Artifacts({
   if (entries.length === 0) return null;
 
   return (
-    <section data-testid="artifacts" className="grid gap-2">
+    // `shrink-0`: a fixed row beside the transcript, which is the only child of
+    // the session column allowed to give up height (see SessionHeader).
+    <section data-testid="artifacts" className="grid shrink-0 gap-2">
       <h2 className={LABEL}>artifacts</h2>
       {GROUPS.map(({ origin, label }) => {
         const group = entries.filter((e) => e.origin === origin);

@@ -168,6 +168,51 @@ test.describe('the shell', () => {
     }
   });
 
+  test('remembers the agent choice, so the next session opens in the chat', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      // First session in a fresh profile: nothing is remembered, so the picker
+      // shows exactly as it always has (createSession asserts it).
+      await createSession(agbrte.window, 'First run');
+      await addAgent(agbrte.window, 'echo');
+
+      // Second session on the same host: the remembered choice is added
+      // automatically and the composer is the first thing standing. Driven by
+      // hand rather than through createSession, because that helper's picker
+      // assertion is exactly what no longer holds here.
+      const group = hostGroup(agbrte.window);
+      await group.locator('[data-testid=new-session]').click();
+      await group.locator('[data-testid=new-title]').fill('Second run');
+      await group.locator('[data-testid=new-submit]').click();
+      // The switch has to land before the pane is trusted: for a beat after
+      // submit the *first* session's composer is still on screen, and a message
+      // typed into it unmounts with it.
+      await expect(agbrte.window.locator('[data-testid=session-title]')).toHaveText('Second run');
+      await expect(agbrte.window.locator('[data-testid=composer-input]')).toBeVisible();
+      await expect(agbrte.window.locator('[data-testid=picker]')).toHaveCount(0);
+
+      // A real seat, not a rendering: a turn runs with no further setup.
+      await send(agbrte.window, 'straight to work');
+      await expect(agbrte.window.locator('[data-testid=row-user]')).toContainText(
+        'straight to work',
+      );
+      await expect(agbrte.window.locator('[data-testid=row-agent]')).toBeVisible();
+
+      // The mid-session menu folds the same form back in, and adding through it
+      // grows the roster rather than replacing the seat.
+      await agbrte.window.click('[data-testid=change-agent]');
+      await expect(agbrte.window.locator('[data-testid=picker]')).toBeVisible();
+      await addAgent(agbrte.window, 'echo');
+      await expect(agbrte.window.locator('[data-testid=picker]')).toHaveCount(0);
+      await expect(agbrte.window.locator('[data-testid=roster-agent]')).toHaveCount(2);
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   test('a transcript survives an app restart', async () => {
     const repo = await makeRepo();
 
@@ -663,8 +708,29 @@ test.describe('the first screen, the guide, and about', () => {
       // phone must not be advertised here until it works.
       await expect(welcome).not.toContainText(/phone/i);
 
+      /*
+       * The one-shot is on screen in both places it is promised.
+       *
+       * Presence, not a press: its first step is the native folder dialog,
+       * which Playwright cannot answer, so clicking here would hang the run
+       * rather than test it. What is checkable — and what actually regressed
+       * before, for the guide — is whether a control exists anywhere a person
+       * will look. The greeting points at the button beside it, so the old copy
+       * naming a `+` three steps away must be gone.
+       */
+      await expect(welcome.locator('[data-testid=welcome-new-session]')).toBeVisible();
+      await expect(agbrte.window.locator('[data-testid=new-session-oneshot]')).toBeVisible();
+      await expect(welcome).not.toContainText('press +');
+
       await createSession(agbrte.window, 'Guide check');
       await expect(welcome).toBeHidden();
+
+      // The fast path is an addition, so the granular controls it shortcuts are
+      // still here — and the header button survives a session being open, which
+      // is when a second workspace is most likely to be wanted.
+      await expect(agbrte.window.locator('[data-testid=new-session-oneshot]')).toBeVisible();
+      await expect(agbrte.window.locator('[data-testid=add-host]')).toBeVisible();
+      await expect(hostGroup(agbrte.window).locator('[data-testid=new-session]')).toBeVisible();
 
       // Reachable with a session open: there is no way to deselect one, so
       // without this the guide is gone for good after the first minute.

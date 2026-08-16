@@ -42,6 +42,7 @@ import {
   type Actor,
   type AgentId,
   type AgentSpec,
+  type ModelCapabilityHint,
   type RuntimeCapabilities,
   type SessionId,
   type Sha256,
@@ -86,6 +87,15 @@ export interface SessionHostOptions {
    * which a client would show as "this machine has no models".
    */
   models?: () => Promise<EndpointModels[]>;
+  /**
+   * What one model can actually do (§3.3), for a client about to choose it.
+   *
+   * A separate callback from `models` for the same reason it is a separate
+   * command: this one probes and that one does not. Absent means this host
+   * cannot answer — `agbrte serve` with no agent host — and the command says so
+   * rather than returning an empty hint, which reads as "asked, nobody knows".
+   */
+  modelCapabilities?: (endpointId: string, modelId: string) => Promise<ModelCapabilityHint>;
   /** Starts a pull and reports on every one started. Absent where nothing can. */
   installModel?: (endpointId: string, tag: string) => Promise<void>;
   installProgress?: () => Promise<ModelInstallProgress[]>;
@@ -488,6 +498,13 @@ export class SessionHostServer {
           );
         }
 
+        case 'agent.rawLog':
+          // A read, like `session.events` beside it: the same bytes a client
+          // with any role already watches arrive parsed in the transcript,
+          // minus the parsing. Gating it would withhold the raw form of what
+          // the role is explicitly allowed to see.
+          return manager.rawLog(command.sessionId as SessionId, command.agentId as AgentId);
+
         case 'runtime.capabilities':
           return probeCapabilities(manager, this.opts.identity, command.runtimeId);
 
@@ -513,6 +530,26 @@ export class SessionHostServer {
             );
           }
           return ask();
+        }
+
+        case 'models.capabilities': {
+          /*
+           * A read, and gated as one — but the cost is not a read's.
+           *
+           * It probes: for `openai-compatible` that is real inference requests
+           * at whatever the endpoint charges. Not write-gated, because nothing
+           * about the work changes and a read-only client choosing a model for a
+           * session it may not start is a legitimate thing to do. What keeps it
+           * from being a way to spend somebody's money is that the client asks
+           * for one model at a time, for the one in front of a person.
+           */
+          const ask = this.opts.modelCapabilities;
+          if (ask === undefined) {
+            throw new Error(
+              'this host cannot establish model capabilities — it is running without an agent host',
+            );
+          }
+          return ask(command.endpointId, command.modelId);
         }
 
         case 'inbox.list':

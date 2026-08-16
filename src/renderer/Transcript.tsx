@@ -15,48 +15,89 @@ import { Dictate } from './Dictate.js';
 const META_ROW = 'text-muted flex items-baseline gap-2 text-xs';
 const CODE = 'text-accent rounded-[2px] bg-raised px-2 py-px font-mono text-[11px]';
 
+/**
+ * Three dots that light up in sequence: the mark that a turn is in flight.
+ *
+ * All motion is in the stylesheet (`working-dot` in styles.css) — an
+ * `animation-delay` per dot, no timer per row, because a React interval for
+ * every working session is exactly the leak the renderer discipline forbids.
+ * Under `prefers-reduced-motion` the same markup rests as a static ellipsis.
+ *
+ * `aria-hidden`, because the word beside it already says "working" and a
+ * screen reader spelling out three periods helps nobody.
+ */
+export function WorkingDots(): JSX.Element {
+  return (
+    <span className="working-dots" aria-hidden="true">
+      <span>.</span>
+      <span>.</span>
+      <span>.</span>
+    </span>
+  );
+}
+
 export function Transcript({
   events,
   renderRow,
+  working = false,
 }: {
   events: AgbrteEvent[];
   renderRow: (event: AgbrteEvent) => ReactNode;
+  /**
+   * True while the session's turn is in flight, so the tail shows motion where
+   * the next event will land. Session state, not an event: it is the one thing
+   * here that is *about* the log rather than in it.
+   */
+  working?: boolean;
 }): JSX.Element {
   const endRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
 
   // Follow the tail only when already at the bottom. Scrolling unconditionally
   // yanks the view away the moment you scroll up to read something.
+  // `working` is a dependency because the indicator row appearing moves the
+  // bottom just as a new event does.
   useEffect(() => {
     if (atBottomRef.current) endRef.current?.scrollIntoView({ block: 'end' });
-  }, [events]);
+  }, [events, working]);
 
   return (
     <div
       data-testid="transcript"
       /*
-       * A measure, not the window.
+       * Fluid, where a 72ch cap used to be.
        *
-       * The transcript is prose — the agent's replies, the user's turns — and it
-       * was set across the whole pane, which on a 1440px window runs well past
-       * 150 characters a line. Beyond roughly 75 the eye loses the start of the
-       * next line on the return sweep, which is why every tradition that has had
-       * to be read for hours settles near 65.
+       * The cap bought a readable measure and paid for it with the window: on a
+       * maximised screen the right half of the pane was empty dark space, and
+       * the state rows, prompts and composer around the transcript all ran
+       * full-width past the column they were meant to frame. Line length is the
+       * rows' business now — the bubbles cap themselves as fractions of the
+       * pane, so they track a resize instead of ignoring it.
        *
-       * On the container rather than on each row: the rows differ — a user turn
-       * aligns right, a state line centres — and constraining them individually
-       * would make every new row re-decide the measure. It stays left rather
-       * than centring so the transcript and the composer below it share an edge;
-       * a column that floats in the middle of its pane is a second alignment for
-       * no reason.
+       * The explicit `minmax(0,1fr)` track is what keeps the horizontal
+       * scrollbar off the pane. A grid track will not shrink below its
+       * content's minimum by default, so one unbroken line — a long path in a
+       * tool summary, a rule of box-drawing characters — widened the track past
+       * the container and gave the transcript its own scrollbar. Wide content
+       * wraps or scrolls inside its own row; the pane never scrolls sideways.
        */
-      className="grid min-h-0 w-full max-w-[72ch] flex-1 content-start gap-3 overflow-y-auto p-4"
+      className="grid min-h-0 w-full flex-1 [grid-template-columns:minmax(0,1fr)] content-start gap-3 overflow-y-auto overflow-x-hidden px-6 py-4"
       onScroll={(e) => {
         const el = e.currentTarget;
         atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       }}
     >
       {events.map((event) => renderRow(event))}
+      {working && (
+        /* A whisper at the tail, in the meta-row voice: mid-turn the place the
+           next event will appear shows life rather than a frozen last line. */
+        <div data-testid="row-working" className={META_ROW}>
+          <span>
+            working
+            <WorkingDots />
+          </span>
+        </div>
+      )}
       <div ref={endRef} />
     </div>
   );
@@ -118,7 +159,10 @@ export function EventRow({
         <div data-testid="row-tool" className={META_ROW}>
           {who}
           <code className={CODE}>{event.tool}</code>
-          <span className="truncate-line font-mono text-[11px]">{summarize(event.args)}</span>
+          {/* `min-w-0`, because a flex item will not shrink below its content —
+              without it the ellipsis never engages and the untruncated line is
+              what used to widen the whole pane. */}
+          <span className="truncate-line min-w-0 font-mono text-[11px]">{summarize(event.args)}</span>
         </div>
       );
 
@@ -128,7 +172,7 @@ export function EventRow({
           data-testid={event.ok ? 'row-result' : 'row-result-failed'}
           className={`${META_ROW} ${event.ok ? '' : 'text-state-fail'}`}
         >
-          <span className="truncate-line">{event.summary}</span>
+          <span className="truncate-line min-w-0">{event.summary}</span>
         </div>
       );
 
@@ -147,7 +191,10 @@ export function EventRow({
           <summary className="cursor-pointer">
             thought for {event.text.length.toLocaleString()} characters
           </summary>
-          <div className="text-muted mt-1 whitespace-pre-wrap font-mono text-[11px]">
+          {/* `overflow-x-auto`: pre-wrap wraps at break points and an ASCII
+              diagram has none, so an unbroken run scrolls inside this box
+              rather than putting a scrollbar on the pane. */}
+          <div className="text-muted mt-1 overflow-x-auto whitespace-pre-wrap font-mono text-[11px]">
             {event.text}
           </div>
         </details>
@@ -225,7 +272,7 @@ export function PermissionPrompt({
       role="alertdialog"
       aria-label={`Permission requested for ${tool}`}
       data-testid="prompt"
-      className="border-state-paused mx-4 flex items-center justify-between gap-4 rounded-[2px] border bg-panel px-4 py-3"
+      className="border-state-paused mx-4 flex shrink-0 items-center justify-between gap-4 rounded-[2px] border bg-panel px-4 py-3"
     >
       <div className="grid min-w-0 gap-1">
         <strong data-testid="prompt-tool">{tool}</strong>
@@ -275,7 +322,7 @@ export function SplitPrompt({
       aria-label={`Split proposed: ${proposal.title}`}
       data-testid="split-prompt"
       data-proposal={proposal.proposalId}
-      className="border-accent mx-4 grid gap-2 rounded-[2px] border bg-panel px-4 py-3"
+      className="border-accent mx-4 grid shrink-0 gap-2 rounded-[2px] border bg-panel px-4 py-3"
     >
       <div className="grid gap-1">
         <strong data-testid="split-title">Split off: {proposal.title}</strong>
@@ -350,7 +397,9 @@ export function Composer({
 
   return (
     <form
-      className="border-line relative flex items-end gap-3 border-t px-4 py-3"
+      // `shrink-0`: a fixed row beside the transcript, which is the only child
+      // of the session column allowed to give up height (see SessionHeader).
+      className="border-line relative flex shrink-0 items-end gap-3 border-t px-4 py-3"
       onSubmit={(e) => {
         e.preventDefault();
         submit();

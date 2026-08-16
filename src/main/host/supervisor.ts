@@ -21,6 +21,7 @@ import type {
   AgentHandle,
   AgentRuntime,
   AgentSpec,
+  ModelCapabilityHint,
   RuntimeCapabilities,
   RuntimeContext,
 } from '@shared/types/index.js';
@@ -117,6 +118,25 @@ export class HostSupervisor {
     await client.ready;
     const value = await client.request({ t: 'models', id: client.mintId() });
     return (value ?? []) as EndpointModels[];
+  }
+
+  /**
+   * What one model can actually do (§3.3).
+   *
+   * Separate from `models()` because the cost is: this one probes, which for
+   * `openai-compatible` means real inference requests. Asked for a model
+   * somebody chose, never for a list.
+   */
+  async modelCapabilities(endpointId: string, modelId: string): Promise<ModelCapabilityHint> {
+    const client = this.current();
+    await client.ready;
+    const value = await client.request({
+      t: 'model.capabilities',
+      id: client.mintId(),
+      endpointId,
+      modelId,
+    });
+    return value as ModelCapabilityHint;
   }
 
   get restartCount(): number {

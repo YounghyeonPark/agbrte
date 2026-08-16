@@ -24,7 +24,8 @@
  */
 
 // React 19 no longer declares a global `JSX` namespace; it is exported instead.
-import { useEffect, useMemo, useState, type JSX } from 'react';
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
+import { loadAgentDefault, resolveAgentDefault, saveAgentDefault } from './agentDefaults.js';
 import { AttachHost } from './AttachHost.js';
 import { Dashboard } from './Dashboard.js';
 import { SupportMatrix } from './SupportMatrix.js';
@@ -37,13 +38,21 @@ import { StartGuide } from './StartGuide.js';
 import { Welcome } from './Welcome.js';
 import { About } from './About.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
+import { CapabilityBadges } from './CapabilityBadges.js';
+import { panelBadges, rowBadges, toolWarning, worthChecking } from './modelCapabilities.js';
 import { useAgbrte } from './store.js';
-import { Composer, EventRow, PermissionPrompt, SplitPrompt, Transcript, summarize } from './Transcript.js';
+import { Composer, EventRow, PermissionPrompt, SplitPrompt, Transcript, WorkingDots, summarize } from './Transcript.js';
 import { Preview } from './Preview.js';
+import { TerminalView } from './TerminalView.js';
 import type { EndpointModelsDto, ModelInstallDto, SessionTemplateDto } from '@shared/ipc/contract.js';
 import CATALOGUE from '../shared/models/catalogue.json' with { type: 'json' };
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
-import type { MatrixCell, Session, SessionState } from '../shared/types/index.js';
+import type {
+  MatrixCell,
+  ModelCapabilityHint,
+  Session,
+  SessionState,
+} from '../shared/types/index.js';
 import type { UpdateState } from '../shared/ipc/contract.js';
 
 /** Session-state colour, by what the state *means* (§4.1). */
@@ -135,8 +144,109 @@ export function App(): JSX.Element {
    * devices attached to one session should not fight over what each is reading.
    */
   const [focusedAgent, setFocusedAgent] = useState<string | null>(null);
+  /**
+   * Whether the mid-session agent form is open (§4.2's roster growing).
+   *
+   * View state, like `focusedAgent`: which forms are unfolded is a way of
+   * looking at a session, not a fact about it.
+   */
+  const [changingAgent, setChangingAgent] = useState(false);
+  /*
+   * Chat or raw terminal, and whether the seat has a raw side at all (§3.12).
+   *
+   * Availability is probed rather than inferred from the runtime id — the
+   * owner answers `null` for a seat with no raw stream (harness, echo, an old
+   * host), and branching on runtime identity here is exactly the leakage the
+   * probe exists to avoid. View state like the rest: which pane is showing is
+   * a way of looking, not a fact about the session.
+   */
+  const [terminal, setTerminal] = useState(false);
+  const [rawAvailable, setRawAvailable] = useState(false);
+  /**
+   * The session an automatic first-agent add is in flight for, or `null`.
+   *
+   * Held so the picker is not flashed for the half-second the add takes — the
+   * promise of a remembered default is landing *in the chat*, not watching a
+   * form fill itself in. On failure this clears and the picker returns, which
+   * is the fallback: the error banner says why, the form says what to do.
+   */
+  const [autoAdding, setAutoAdding] = useState<string | null>(null);
+  /**
+   * Sessions an auto-add was already attempted for — attempted, not finished.
+   *
+   * A ref rather than state because the guard has to be synchronous: the effect
+   * below re-runs on every `active` push, and `addAgent` is slow enough that two
+   * runs would otherwise both find zero agents and add two seats. Added to
+   * before the call, never removed on failure — one attempt per session, then
+   * the picker.
+   */
+  const autoAddTried = useRef(new Set<string>());
+  /**
+   * Where the one-shot has got to, or `null` when it is not running.
+   *
+   * One line rather than a step counter or a spinner per stage: the whole point
+   * of collapsing four controls into one is that the person stops tracking
+   * stages, and a progress display with its own stages hands them back.
+   */
+  const [starting, setStarting] = useState<string | null>(null);
   const { hosts, runtimesByHost, conformanceByHost, inbox, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
     store;
+
+  // Probed per session and per first seat, after the store is in hand (see the
+  // state's comment above for why a probe rather than a runtime-id branch).
+  const rawAgentId = active?.agents[0]?.agentId ?? null;
+  const rawAgentStatus = active?.agents[0]?.status ?? null;
+
+  // A different seat is a different question, so the answer is thrown away and
+  // the pane returns to chat. The only place availability goes back to false.
+  useEffect(() => {
+    setTerminal(false);
+    setRawAvailable(false);
+  }, [active?.sessionId, rawAgentId]);
+
+  /*
+   * Asked while a turn is in flight, not once when the seat appeared.
+   *
+   * `SessionManager.rawLog` answers `null` both for a seat with no raw side and
+   * for one *between turns* — a finished turn releases its handle and the tail
+   * lives and dies with it. Asking once, at the moment the seat first appeared,
+   * therefore always landed before any handle had ever existed: the answer was
+   * `null` for every runtime, and the toggle never appeared at all.
+   *
+   * A turn in flight is both the one window in which a handle exists and the
+   * only time somebody wants to watch one, so that is when this asks. `working`
+   * is the trigger rather than the seat's own `running` because of the order
+   * `runTurn` does things in: the handle is opened first, then the session is
+   * pushed as `working`, and only then is the seat marked `running` — so the
+   * session state is the first push that is guaranteed to have a handle behind
+   * it. Both are watched, and it keeps asking while either holds, because one
+   * poll landing in a gap should not cost the toggle for the whole turn.
+   *
+   * Latched: a seat that has shown a raw stream once has a raw side, and taking
+   * the toggle away between turns would close the pane out from under a reader.
+   */
+  useEffect(() => {
+    const sessionId = active?.sessionId;
+    if (sessionId === undefined || rawAgentId === null || rawAvailable) return;
+    let alive = true;
+    const ask = (): void =>
+      void window.agbrte.sessions.rawLog(sessionId, rawAgentId).then(
+        (t) => {
+          if (alive && t !== null) setRawAvailable(true);
+        },
+        () => undefined,
+      );
+    ask();
+    // Only while a turn runs: a harness seat will never answer, and polling one
+    // forever is a request a second that cannot succeed.
+    const turning = active?.state === 'working' || rawAgentStatus === 'running';
+    const timer = turning ? setInterval(ask, 1_000) : null;
+    return () => {
+      alive = false;
+      if (timer !== null) clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.sessionId, rawAgentId, rawAgentStatus, active?.state, rawAvailable]);
 
   /**
    * The newest agent line in the open session (§12.4).
@@ -182,6 +292,124 @@ export function App(): JSX.Element {
     };
   }, []);
 
+  // A different session is a different form: one left open does not follow.
+  useEffect(() => setChangingAgent(false), [active?.sessionId]);
+
+  /*
+   * A session with no agents gets the remembered default, silently (§4.2).
+   *
+   * Only when the remembered choice is still offerable on this host — runtime
+   * reported, model remembered where required, endpoint still present — which
+   * `resolveAgentDefault` decides by the same rules the picker enforces. When
+   * nothing valid is remembered, nothing happens and the picker shows exactly
+   * as before: the first run teaches the form, every later run skips it.
+   *
+   * Waits for `runtimesByHost` to hold an answer for this host rather than
+   * treating "not answered yet" as "no runtimes": the entry is absent until the
+   * host's handshake lands, and the effect re-runs when it does.
+   */
+  useEffect(() => {
+    if (active === null || active.agents.length > 0) return;
+    if (autoAddTried.current.has(active.sessionId)) return;
+    const host = hosts.find((h) => h.instanceId === active.instanceId);
+    const runtimes = runtimesByHost[active.instanceId];
+    if (host === undefined || runtimes === undefined) return;
+    const remembered = loadAgentDefault(active.instanceId);
+    if (remembered === null) return;
+    const args = resolveAgentDefault(remembered, runtimes, host.endpoints);
+    if (args === null) return;
+
+    // Marked before the call, synchronously — the double-add guard.
+    autoAddTried.current.add(active.sessionId);
+    const sessionId = active.sessionId;
+    setAutoAdding(sessionId);
+    // Failure surfaces through the store's error banner like any other add;
+    // clearing `autoAdding` is what brings the picker back as the fallback.
+    void useAgbrte
+      .getState()
+      .addAgent(args.runtimeId, args.modelId, args.endpointId)
+      .finally(() => setAutoAdding((current) => (current === sessionId ? null : current)));
+  }, [active, hosts, runtimesByHost]);
+
+  /**
+   * Add a seat and, if it landed, make the choice the new default for this host.
+   *
+   * Success is the filter: a runtime that failed to start or a model the host
+   * refused must not become what every future session silently reaches for.
+   */
+  const addAgentRemembering = async (
+    runtimeId: string,
+    modelId: string | null,
+    endpointId?: string,
+  ): Promise<void> => {
+    const session = active;
+    if (session === null) return;
+    const added = await store.addAgent(runtimeId, modelId, endpointId);
+    if (!added) return;
+    saveAgentDefault(session.instanceId, {
+      runtimeId,
+      // The same shape `addAgent` sent, providerId included (store.ts fixes it
+      // to `openai-compatible`), so replaying it later is replaying this add.
+      model:
+        modelId !== null && modelId !== ''
+          ? {
+              providerId: 'openai-compatible',
+              modelId,
+              ...(endpointId !== undefined ? { endpointId } : {}),
+            }
+          : null,
+    });
+    setChangingAgent(false);
+  };
+
+  /**
+   * A folder, a session on it, and the chat — one press (§10, §15).
+   *
+   * **An added path, not a replacement.** `Attach host…` and the per-host `+`
+   * are untouched and stay the route for anything this cannot express: a
+   * machine over ssh, a second and third session in one workspace, a session
+   * from a template, a title that is not the folder's name. What this serves is
+   * the common case — one session per folder — where those four controls are
+   * four questions with only one answer each.
+   *
+   * The steps run in order and stop where they fail, leaving the user at the
+   * furthest point reached with the error banner saying why. That is
+   * deliberate: an attached host and a session in the list are worth keeping
+   * even when the next step did not happen, and there is nothing to undo that
+   * would not also throw away work. Cancelling the folder picker is not a
+   * failure and says nothing.
+   *
+   * Step three — the agent — is not here. A session with no agents is what the
+   * auto-add effect above is for: it adds this host's remembered choice and the
+   * composer is what appears. With nothing valid remembered the picker shows
+   * instead, which is the fallback rather than a failure, and choosing there
+   * once is what makes every later run of this land in the chat.
+   */
+  const newSessionOneShot = async (): Promise<void> => {
+    // A full-pane page would otherwise cover the session this is about to open,
+    // and below `md` the main pane is where the progress line and the error
+    // banner live — the sidebar this may have been pressed from is not.
+    setView('none');
+    setPane('main');
+    setStarting('Choose a folder to work in…');
+    try {
+      const host = await store.attachLocalHost();
+      // Cancelled, or refused with the banner already saying why. Either way
+      // nothing is attached, which is as far as this got.
+      if (host === null) return;
+
+      // The folder's name, with no title dialog. Somebody who wants to name a
+      // session still can — that is what the per-host `+` form is for.
+      const title = folderName(host.root) ?? (host.label === '' ? 'New session' : host.label);
+      setStarting(`Starting a session in ${title}…`);
+      // Goal and title the same string: §7's `create` requires a goal, and
+      // inventing prose for one would put words in the user's mouth.
+      await store.createSession(host.instanceId, title, title);
+    } finally {
+      setStarting(null);
+    }
+  };
+
   const runtimesHere = active === null ? [] : (runtimesByHost[active.instanceId] ?? []);
   const conformanceHere = active === null ? [] : (conformanceByHost[active.instanceId] ?? []);
 
@@ -215,7 +443,11 @@ export function App(): JSX.Element {
             moves a button down intact instead. */}
         <header className="border-line flex flex-wrap items-center justify-between gap-y-2 border-b p-4">
           <h1 className="text-base tracking-wide">Agbrte</h1>
-          <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+          {/* The group itself wraps too. It gained an About button and with
+              four controls it is wider than the 300px column, and a group that
+              can neither shrink nor wrap pokes past the sidebar border into
+              the main pane. Buttons still move down intact, never mid-word. */}
+          <div className="flex min-w-0 flex-wrap items-center gap-2 whitespace-nowrap">
             {/* §11: the durable record of what the notifier could not deliver —
                 while focused, in a browser, or with the app closed entirely. */}
             <Inbox
@@ -266,6 +498,28 @@ export function App(): JSX.Element {
               {attaching !== false ? 'Cancel' : 'Attach host…'}
             </button>
           </div>
+
+          {/* The one primary action in the app, on its own line.
+
+              `basis-full` rather than a fifth control in the group above: at
+              300px that row already wraps, and a button that matters more than
+              its neighbours cannot say so from the end of a queue of four. It
+              is the accent because this is where a person acts — the same rule
+              that colours a session needing attention.
+
+              The `data-testid` is unique to this one; the Welcome screen's copy
+              of the same action carries `welcome-new-session`, because two
+              elements sharing a testid is a strict-mode failure in every test
+              that reaches for it while both are on screen. */}
+          <button
+            className="btn text-accent basis-full"
+            data-testid="new-session-oneshot"
+            title="Pick a folder and start working in it"
+            disabled={starting !== null}
+            onClick={() => void newSessionOneShot()}
+          >
+            {starting !== null ? 'Starting…' : 'New session'}
+          </button>
         </header>
 
         {/* Below the header rather than in it: a fleet-wide search is a thing you
@@ -283,7 +537,13 @@ export function App(): JSX.Element {
           />
         )}
 
-        <nav className="grid min-h-0 content-start gap-4 overflow-y-auto p-2">
+        {/* `overflow-x-hidden`: at fractional display scales (150% Windows) the
+            aside's 1px border rounds the nav's content box to 299px while its
+            children lay out at 300, and that 1px of phantom overflow paints a
+            full-width horizontal scrollbar across the sidebar. Nothing here is
+            meant to scroll sideways, so hide the axis rather than chase the
+            rounding. */}
+        <nav className="grid min-h-0 content-start gap-4 overflow-x-hidden overflow-y-auto p-2">
           {hosts.length === 0 && (
             <p className="text-muted p-2 text-xs">No hosts attached yet.</p>
           )}
@@ -334,6 +594,22 @@ export function App(): JSX.Element {
               dismiss
             </button>
           </div>
+        )}
+
+        {starting !== null && (
+          /* One line for the whole sequence, in the pane the session will land
+             in. Below the error banner, and it goes when the sequence stops —
+             what a failure leaves behind is the banner above and the app's own
+             state: a host now in the sidebar, or a session in its list. Those
+             are durable answers to "how far did it get"; a line of text that
+             outlives the attempt is not. */
+          <p
+            data-testid="new-session-progress"
+            role="status"
+            className="text-muted mx-4 mt-3 text-xs"
+          >
+            {starting}
+          </p>
         )}
 
         {/* The hosts pane holds the only way to attach a machine or start a
@@ -428,6 +704,8 @@ export function App(): JSX.Element {
              explanation waits under the button that names it (Welcome.tsx). */
           <Welcome
             hasHosts={hosts.length > 0}
+            starting={starting !== null}
+            onNewSession={() => void newSessionOneShot()}
             onAttachLocal={() => setAttaching('local')}
             onAttachRemote={() => setAttaching('remote')}
           />
@@ -438,6 +716,12 @@ export function App(): JSX.Element {
               host={hosts.find((h) => h.instanceId === active.instanceId) ?? null}
               onInterrupt={() => void store.interrupt()}
               onBack={() => store.closeSession()}
+              /* Only once there is a seat: with zero agents the picker *is* the
+                 pane, and a button that toggles a second copy of what is
+                 already showing reads as broken. */
+              {...(active.agents.length > 0
+                ? { onToggleAgent: () => setChangingAgent((open) => !open), agentMenuOpen: changingAgent }
+                : {})}
             />
 
             {/* §6.8. Remote only: a local dev server is already on localhost, and
@@ -453,21 +737,42 @@ export function App(): JSX.Element {
             />
 
             {active.agents.length === 0 ? (
-              <AgentPicker
-                runtimes={runtimesHere}
-                conformance={conformanceHere}
-                endpoints={hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []}
-                // Bound to the open session's host: "which models" is a question
-                // about a machine, and the picker does not know which one it is
-                // looking at.
-                listModels={() => window.agbrte.hosts.models(active.instanceId)}
-                installModel={(endpointId, tag) =>
-                  window.agbrte.hosts.installModel(active.instanceId, endpointId, tag)
-                }
-                installProgress={() => window.agbrte.hosts.installProgress(active.instanceId)}
-                onAdd={store.addAgent}
-                busy={busy}
-              />
+              autoAdding === active.sessionId ? (
+                /* The remembered default is being added; the form it replaces
+                   stays hidden so the session lands in the chat, not on a form
+                   filling itself in. Failure clears this and the picker below
+                   is the fallback, with the error banner saying why. */
+                <p className="text-muted m-auto p-6 text-xs" data-testid="auto-add">
+                  Starting your usual agent…
+                </p>
+              ) : (
+                <AgentPicker
+                  /* Remounted per host: the model list it holds is that host's
+                     answer, and §13 will not have one machine's endpoints shown
+                     while an agent is added on another. */
+                  key={active.instanceId}
+                  runtimes={runtimesHere}
+                  conformance={conformanceHere}
+                  endpoints={hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []}
+                  // Bound to the open session's host: "which models" is a question
+                  // about a machine, and the picker does not know which one it is
+                  // looking at.
+                  listModels={() => window.agbrte.hosts.models(active.instanceId)}
+                  // The expensive half of the same question (§3.3): asked for
+                  // one model, when somebody is looking at it.
+                  checkModel={(endpointId, modelId) =>
+                    window.agbrte.hosts.modelCapabilities(active.instanceId, endpointId, modelId)
+                  }
+                  installModel={(endpointId, tag) =>
+                    window.agbrte.hosts.installModel(active.instanceId, endpointId, tag)
+                  }
+                  installProgress={() => window.agbrte.hosts.installProgress(active.instanceId)}
+                  // Remembering on success is what makes the *next* session
+                  // skip this form entirely (agentDefaults.ts).
+                  onAdd={addAgentRemembering}
+                  busy={busy}
+                />
+              )
             ) : (
               <>
                 {/* §13: a heterogeneous roster is gated heterogeneously, and the
@@ -482,6 +787,58 @@ export function App(): JSX.Element {
                   onSelect={setFocusedAgent}
                   onEffort={(agentId, mode) => store.setReasoning(agentId, mode)}
                 />
+                {changingAgent && (
+                  /* The same picker the empty session shows, folded in under
+                     the roster it grows — Roster already renders any number of
+                     seats, so "change the agent" is "add another seat" (§4.2).
+                     Bounded and scrollable so an unfolded model browser cannot
+                     crush the transcript below it (see SessionHeader on why
+                     fixed rows around the transcript must hold their height). */
+                  <div className="border-line max-h-[45%] shrink-0 overflow-y-auto border-b">
+                    <AgentPicker
+                      key={active.instanceId}
+                      runtimes={runtimesHere}
+                      conformance={conformanceHere}
+                      endpoints={
+                        hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []
+                      }
+                      listModels={() => window.agbrte.hosts.models(active.instanceId)}
+                      checkModel={(endpointId, modelId) =>
+                        window.agbrte.hosts.modelCapabilities(
+                          active.instanceId,
+                          endpointId,
+                          modelId,
+                        )
+                      }
+                      installModel={(endpointId, tag) =>
+                        window.agbrte.hosts.installModel(active.instanceId, endpointId, tag)
+                      }
+                      installProgress={() => window.agbrte.hosts.installProgress(active.instanceId)}
+                      // Success saves the choice as the new default and closes
+                      // the form; failure leaves it open with the error banner.
+                      onAdd={addAgentRemembering}
+                      busy={busy}
+                    />
+                  </div>
+                )}
+                {rawAvailable && (
+                  /* Only where a raw stream exists — a toggle to an empty pane
+                     teaches people the feature does nothing. */
+                  <div className="flex shrink-0 justify-end px-6 pt-2">
+                    <button
+                      className="btn text-[11px]"
+                      data-testid="show-terminal"
+                      title="Raw CLI output"
+                      aria-pressed={terminal}
+                      onClick={() => setTerminal((open) => !open)}
+                    >
+                      {terminal ? 'Chat' : 'Terminal'}
+                    </button>
+                  </div>
+                )}
+                {terminal && rawAvailable && rawAgentId !== null ? (
+                  <TerminalView sessionId={active.sessionId} agentId={rawAgentId} />
+                ) : (
                 <Transcript
                   events={
                     focusedAgent === null
@@ -494,7 +851,11 @@ export function App(): JSX.Element {
                   renderRow={(e) => (
                     <EventRow key={e.seq} event={e} by={agentLabel(active.agents, e.agentId)} />
                   )}
+                  /* Motion at the tail while the turn runs, so a long silence
+                     reads as "busy" rather than "hung" (see WorkingDots). */
+                  working={active.state === 'working'}
                 />
+                )}
                 {pending.map((p) => (
                   <PermissionPrompt
                     key={p.requestId}
@@ -532,6 +893,21 @@ export function App(): JSX.Element {
       </main>
     </div>
   );
+}
+
+/**
+ * The folder's own name, out of a path this process must not parse with `path`.
+ *
+ * The renderer is sandboxed — no Node built-ins — and even if it were not, the
+ * separator belongs to the *host*, not to this window: a workspace reached over
+ * ssh is posix while the app runs on Windows. So both separators, and empty
+ * segments dropped, because a trailing slash would otherwise name the session
+ * after nothing. `null` where there is no segment at all (`/`), which the caller
+ * answers with the host's own label.
+ */
+function folderName(root: string): string | null {
+  const parts = root.split(/[\\/]/).filter((part) => part !== '' && part !== '.');
+  return parts.at(-1) ?? null;
 }
 
 /** One host and its sessions, with §10's target badge. */
@@ -588,10 +964,15 @@ function HostGroup({
           </span>
         </div>
         <div className="flex shrink-0 gap-1">
+          {/* Kept, and not superseded. `new-session-oneshot` in the header is a
+              fast path for one session in a folder you have not attached yet;
+              this is how you get the *second* one in a workspace, a session
+              named something other than its folder, or one built from a
+              template. Removing it would trade a shortcut for a capability. */}
           <button
             className="btn px-2 py-1 text-xs"
             data-testid="new-session"
-            title="New session on this host"
+            title="Another session on this host"
             onClick={() => setAdding((v) => !v)}
           >
             +
@@ -770,15 +1151,28 @@ function SessionHeader({
   host,
   onInterrupt,
   onBack,
+  onToggleAgent,
+  agentMenuOpen,
 }: {
   session: Session;
   host: HostInfo | null;
   onInterrupt: () => void;
   /** Only reachable below `md`, where the session is the whole screen. */
   onBack: () => void;
+  /** Folds the agent form in and out mid-session. Absent hides the button. */
+  onToggleAgent?: () => void;
+  agentMenuOpen?: boolean;
 }): JSX.Element {
   return (
-    <div className="border-line safe-top flex items-start justify-between gap-4 border-b px-4 py-4">
+    /*
+     * `shrink-0`, and on every fixed row the session column stacks around the
+     * transcript. The transcript is the one child meant to give up height, but
+     * a flex row squeezed past its minimum keeps *painting* its overflow — and
+     * the roster's wrapped chip row is measured one line tall by the engine, so
+     * under pressure it was compressed and the first transcript line (a red
+     * failed-tool notice, typically) rendered on top of its chips.
+     */
+    <div className="border-line safe-top flex shrink-0 items-start justify-between gap-4 border-b px-4 py-4">
       <div className="flex min-w-0 items-start gap-2">
         {/* Hidden from `md` up, where the list is already on screen and a back
             arrow would point at nothing. */}
@@ -791,7 +1185,12 @@ function SessionHeader({
           ‹
         </button>
       <div className="min-w-0">
-        <h2 className="truncate-line text-[15px]">{session.title}</h2>
+        {/* The testid is what lets a test know *which* session's pane it is
+            looking at before it types into it — switching sessions leaves the
+            old pane on screen for a beat, and a fill aimed at that vanishes. */}
+        <h2 className="truncate-line text-[15px]" data-testid="session-title">
+          {session.title}
+        </h2>
         <p className="text-muted truncate-line mt-1 text-xs">
           {/* Which host, in the header too: with several attached, the sidebar
               grouping alone is easy to lose track of once you have scrolled. */}
@@ -803,10 +1202,27 @@ function SessionHeader({
       <div className="flex shrink-0 items-center gap-3">
         <span data-testid="session-state" className={`${LABEL} ${stateTone(session.state)}`}>
           {session.state.replace(/_/g, ' ')}
+          {/* The same pulse as the transcript tail: `working` carries no colour
+              (see stateTone), so mid-turn this label is motion or nothing. The
+              sidebar and dashboard stay quiet — here it is the sole indicator. */}
+          {session.state === 'working' && <WorkingDots />}
         </span>
         {session.state === 'working' && (
           <button className="btn" onClick={onInterrupt}>
             Interrupt
+          </button>
+        )}
+        {/* Quiet, like Export: adding a seat is occasional, and the defaults it
+            changes are this client's, not the session's. */}
+        {onToggleAgent !== undefined && (
+          <button
+            className="btn-quiet text-xs"
+            data-testid="change-agent"
+            title="Add another agent, or a different runtime and model"
+            aria-pressed={agentMenuOpen === true}
+            onClick={onToggleAgent}
+          >
+            Agent…
           </button>
         )}
         <button
@@ -842,11 +1258,202 @@ async function saveTranscript(session: Session): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+/**
+ * Display names for the runtimes this app knows about.
+ *
+ * Mirrored rather than carried: `RuntimeInfo` (§7's contract) is `{id, version,
+ * model}` and the labels live with the fleet's runtime table in `main.ts`, so
+ * widening the IPC surface to move a piece of prose across it would be a poor
+ * trade. Anything unlisted falls back to its id, which is what was shown before
+ * this map existed — so a runtime a host invents is offered, not hidden.
+ */
+const RUNTIME_LABELS: Readonly<Record<string, string>> = {
+  'agbrte-harness': 'Agbrte harness',
+  echo: 'Echo (no model)',
+  'cli:claude-code': 'Claude Code (installed CLI)',
+  'cli:gemini-cli': 'Gemini CLI (installed)',
+};
+
+function runtimeLabel(id: string): string {
+  return RUNTIME_LABELS[id] ?? id;
+}
+
+/**
+ * One thing a person can pick: what will run, with the runtime implied.
+ *
+ * The picker used to ask twice — runtime, then model — and the two questions
+ * were not independent: the answer to the first decided whether the second one
+ * existed, which meant you had to know which runtimes take a model before you
+ * could answer either. Flattening them asks the question people actually have.
+ * A runtime that needs a model contributes one entry per reachable model; one
+ * that does not contributes exactly one entry.
+ */
+interface AgentChoice {
+  /**
+   * The select's value, and stable across refreshes.
+   *
+   * A bare runtime id where no model is involved — so `echo` stays addressable
+   * as `echo`, by a person reading the DOM and by the e2e helpers.
+   */
+  value: string;
+  runtimeId: string;
+  /** What it will run, or `null`: no model at all, or one still to be typed. */
+  modelId: string | null;
+  endpointId?: string;
+  /** The escape hatch. Reveals a field for a model the host did not list. */
+  typed?: boolean;
+  label: string;
+  /** Secondary text — which recipient, or which runtime. */
+  hint?: string;
+  /**
+   * What this model can do, as far as the host could say for free (§3.3).
+   *
+   * Absent for a runtime that takes no model, for the escape hatch, and for a
+   * host older than protocol v14 — three different reasons that all mean the
+   * same thing to a reader: nobody could tell, so nothing is claimed.
+   */
+  capabilities?: ModelCapabilityHint;
+}
+
+/**
+ * The flat list, from what the host reports and what its endpoints serve.
+ *
+ * Pure, and outside the component, because the invariant worth keeping is
+ * structural: **every runtime yields at least one entry**. A model list that
+ * failed to load must not make a runtime unpickable, so a required-model runtime
+ * always ends with its "another model…" entry whether or not anything was listed
+ * — which is also the whole of the old manual-entry path, kept.
+ */
+function buildChoices(
+  runtimes: RuntimeInfo[],
+  answers: EndpointModelsDto[],
+  endpoints: HostInfo['endpoints'],
+): AgentChoice[] {
+  const out: AgentChoice[] = [];
+  for (const runtime of runtimes) {
+    if (runtime.model !== 'required') {
+      // `optional` lands here with `none`: an installed CLI has its own model
+      // configured where it lives, and asking again in this window offered a
+      // second answer to a question the CLI had already settled.
+      out.push({
+        value: runtime.id,
+        runtimeId: runtime.id,
+        modelId: null,
+        label: runtimeLabel(runtime.id),
+      });
+      continue;
+    }
+    for (const answer of answers) {
+      for (const model of answer.models) {
+        // Matched by name because that is what the host keyed it by. Absent is
+        // ordinary — an endpoint that does not self-describe, a host too old to
+        // carry the field, a model past the host's describe limit — and every
+        // one of those renders as unknown rather than as a missing badge.
+        const hint = answer.capabilities?.find((c) => c.modelId === model);
+        out.push({
+          value: `${runtime.id}::${answer.endpointId}::${model}`,
+          runtimeId: runtime.id,
+          modelId: model,
+          endpointId: answer.endpointId,
+          label: model,
+          ...(hint !== undefined ? { capabilities: hint } : {}),
+          /*
+           * The recipient, on the entry itself.
+           *
+           * §13 wants where the code goes legible at the moment of choosing, and
+           * with two endpoints the same model name appears twice in this list
+           * meaning two different things — one of them possibly the network.
+           */
+          hint: endpoints.find((e) => e.id === answer.endpointId)?.label ?? answer.endpointId,
+        });
+      }
+    }
+    out.push({
+      value: `${runtime.id}::__type__`,
+      runtimeId: runtime.id,
+      modelId: null,
+      typed: true,
+      label: 'Another model…',
+      hint: runtimeLabel(runtime.id),
+    });
+  }
+  return out;
+}
+
+/**
+ * What the selected model can do, before it is chosen (§3.3, §3.5).
+ *
+ * The panel form of the badges on each row, and it exists because a row has
+ * space for two words and the consequence of `no tools` is a sentence: an agent
+ * on a model that cannot call tools **can only chat**. Nobody was told that, and
+ * the way it presented was four ignored requests to search.
+ *
+ * Three states are kept apart here and they are the whole design:
+ *
+ *  - **probed** — the model was run once and behaved this way;
+ *  - **declared** — the server said so, which small models routinely get wrong;
+ *  - **unknown** — nobody asked, which is neither a yes nor a no.
+ *
+ * `onCheck` is absent where there is nothing to ask — the escape hatch has no
+ * model id yet — and the button is hidden once a claim is probed, because
+ * re-probing spends a request to re-learn what the host already cached.
+ */
+function ModelCapabilities({
+  hint,
+  busy,
+  note,
+  onCheck,
+}: {
+  hint: ModelCapabilityHint | undefined;
+  busy: boolean;
+  note: string | null;
+  onCheck?: () => void;
+}): JSX.Element {
+  const warning = toolWarning(hint);
+  return (
+    <div className="grid gap-1" data-testid="model-capabilities">
+      <div className="flex flex-wrap items-center gap-1">
+        <CapabilityBadges badges={panelBadges(hint)} />
+        {busy ? (
+          <span className="text-muted text-[11px]">checking…</span>
+        ) : onCheck !== undefined && worthChecking(hint) ? (
+          <button
+            type="button"
+            className="btn-quiet text-[11px]"
+            data-testid="check-model"
+            /* Said on the control, because the cost is not obvious: this runs
+               the model twice, and on a paid endpoint that is somebody's
+               money. It is why the check is a button there and automatic on a
+               local server (§3.3). */
+            title="Ask this model to call a tool and report what came back. Runs two short requests."
+            onClick={onCheck}
+          >
+            Check
+          </button>
+        ) : null}
+      </div>
+
+      {warning !== null && (
+        <p className="text-state-fail m-0 text-[11px]" data-testid="capability-warning">
+          {warning}
+        </p>
+      )}
+
+      {note !== null && (
+        <p className="text-muted m-0 text-[11px]" data-testid="capability-note">
+          {note}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function AgentPicker({
   runtimes,
   conformance,
   endpoints,
   listModels,
+  checkModel,
   installModel,
   installProgress,
   onAdd,
@@ -858,43 +1465,129 @@ function AgentPicker({
   endpoints: HostInfo['endpoints'];
   /** Asks the host this picker belongs to what its endpoints serve now (§3.8). */
   listModels: () => Promise<EndpointModelsDto[]>;
+  /**
+   * Establishes what *one* model can do, paying the probe (§3.3).
+   *
+   * `null` means this host cannot be asked at all — it predates the command —
+   * which is a different sentence from a hint that could establish nothing, and
+   * has a different remedy: update the host rather than choose another model.
+   */
+  checkModel: (endpointId: string, modelId: string) => Promise<ModelCapabilityHint | null>;
   installModel: (endpointId: string, tag: string) => Promise<void>;
   installProgress: () => Promise<ModelInstallDto[]>;
   onAdd: (runtimeId: string, modelId: string | null, endpointId?: string) => Promise<void>;
   busy: boolean;
 }): JSX.Element {
-  const [runtimeId, setRuntimeId] = useState('');
-  const [modelId, setModelId] = useState('qwen2.5:7b');
-  const [endpointId, setEndpointId] = useState('');
-  /*
-   * What the host says it can serve, asked rather than assumed.
+  /**
+   * The chosen entry's `value`, or `null` while nobody has chosen.
    *
-   * Empty until somebody presses refresh. Not fetched on mount: the question
-   * costs a round trip to every endpoint the host has — a hosted API over a slow
-   * link included — and opening the roster is not the same as being about to add
-   * an agent. It is a request, so it gets a button.
+   * `null` rather than seeding it with the first option, because the list grows
+   * under us: models arrive a round trip after this opens, and a value written
+   * on mount pins the selection to whatever was offerable before the host
+   * answered — which is the "another model…" entry, i.e. an empty text field
+   * where a list of ready models was about to appear. Untouched means "the first
+   * entry", recomputed every render; one click makes it a real choice and it
+   * stops moving.
    */
-  const [knownModels, setKnownModels] = useState<string[]>([]);
+  const [chosen, setChosen] = useState<string | null>(null);
+  /** The escape hatch's field: a model the host did not list. */
+  const [typedModel, setTypedModel] = useState('qwen2.5:7b');
+  /** Which recipient a *typed* model goes to. Listed ones carry their own. */
+  const [endpointId, setEndpointId] = useState('');
+  /**
+   * What the host says its endpoints serve, verbatim.
+   *
+   * Kept per endpoint rather than flattened to a name list: the endpoint is half
+   * of what an entry means (§13), and `canInstall` / `installHint` come from the
+   * same answer.
+   */
+  const [answers, setAnswers] = useState<EndpointModelsDto[]>([]);
   const [modelsNote, setModelsNote] = useState<string | null>(null);
   const [modelsBusy, setModelsBusy] = useState(false);
-  /** Which endpoints can take an install, from the same answer as the list. */
-  const [installable, setInstallable] = useState<EndpointModelsDto[]>([]);
   const [browsing, setBrowsing] = useState(false);
-  /** Set when somebody chose "Type a model id…", or nothing could be listed. */
-  const [manualModel, setManualModel] = useState(false);
   const [installs, setInstalls] = useState<ModelInstallDto[]>([]);
+  /** One list per mounted picker. See the effect below. */
+  const asked = useRef(false);
+  /**
+   * Probes this picker has paid for, keyed `endpoint::model`.
+   *
+   * Held here rather than merged into `answers`, so the two sources stay
+   * distinguishable: `answers` is what the host volunteered for free, this is
+   * what was established by running the model. They are shown the same way but
+   * they are not the same claim, and the badge says which (§3.3).
+   */
+  const [probed, setProbed] = useState<Record<string, ModelCapabilityHint>>({});
+  /** The `endpoint::model` currently being checked, if any. */
+  const [checking, setChecking] = useState<string | null>(null);
+  /**
+   * Why nothing could be checked — chiefly, a host that predates the command.
+   *
+   * Carries the model it is about, because the selection moves. A note left over
+   * from the previous entry sits under the new one's badges and reads as being
+   * about it, which is a wrong sentence rather than a stale one.
+   */
+  const [checkNote, setCheckNote] = useState<{ key: string; text: string } | null>(null);
+  /**
+   * Keys already asked about, so an automatic check fires once.
+   *
+   * A ref rather than state: re-rendering on it would be the thing that
+   * re-triggers the effect, and StrictMode runs effects twice on purpose.
+   */
+  const attempted = useRef(new Set<string>());
 
   /**
    * Failures are reported in place rather than raised.
    *
    * An endpoint being unreachable is ordinary — a laptop away from the machine
-   * running its Ollama — the other endpoints still answered, and the field is
-   * still usable by typing. A host too old to answer is a *different* sentence
-   * from "no models", and has to read as one.
+   * running its Ollama — the other endpoints still answered, and the "another
+   * model…" entry still takes a typed id. A host too old to answer is a
+   * *different* sentence from "no models", and has to read as one.
    */
-  /** The one endpoint that can take an install, if exactly one can. */
-  const installTarget = installable.find((e) => e.canInstall === true);
+  const refreshModels = async (): Promise<void> => {
+    setModelsBusy(true);
+    try {
+      const found = await listModels();
+      setAnswers(found);
+      const count = new Set(found.flatMap((a) => a.models)).size;
+      const failed = found.filter((a) => a.error !== undefined);
+      setModelsNote(
+        failed.length > 0
+          ? `${count} found. ${failed.map((f) => `${f.endpointId}: ${f.error}`).join('; ')}`
+          : count > 0
+            ? `${count} reachable from that host.`
+            : 'That host reported no models. Type one if you know it is there.',
+      );
+    } catch (err) {
+      setModelsNote(err instanceof Error ? err.message : String(err));
+    } finally {
+      setModelsBusy(false);
+    }
+  };
 
+  /*
+   * Ask once, when this picker opens and a model could be part of the answer.
+   *
+   * The old rule — ask when a model-taking runtime is *selected* — was written
+   * when the runtime came first and the model second. With one list the models
+   * are the list, so waiting for a selection would mean opening on a dropdown
+   * that does not yet contain the thing you came to choose.
+   *
+   * The cost is unchanged in practice: the harness was the first runtime and so
+   * the default selection, which made the old rule fire on mount anyway. And
+   * this form is only ever on screen because somebody is adding an agent — the
+   * roster reads fine without it.
+   *
+   * Guarded by a ref, not by the dependency list: `runtimes` is rebuilt on every
+   * host push, and a fresh array identity is not a new question.
+   */
+  const wantsModels = runtimes.some((r) => r.model === 'required');
+  useEffect(() => {
+    if (!wantsModels || asked.current) return;
+    asked.current = true;
+    void refreshModels();
+    // `refreshModels` is redefined every render; listing it would ask on each.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsModels]);
 
   /*
    * Poll only while the menu is open.
@@ -923,60 +1616,145 @@ function AgentPicker({
     };
   }, [browsing, installProgress]);
 
-  const refreshModels = async (): Promise<void> => {
-    setModelsBusy(true);
+  const choices = useMemo(
+    () => buildChoices(runtimes, answers, endpoints),
+    [runtimes, answers, endpoints],
+  );
+  // Falls back to the first entry both while untouched and if a chosen model
+  // disappears from a later refresh — the list is the authority on what is
+  // there, and a selection pointing at nothing is a disabled button with no
+  // explanation.
+  const value = chosen !== null && choices.some((c) => c.value === chosen) ? chosen : (choices[0]?.value ?? '');
+  const current = choices.find((c) => c.value === value);
+  /** Whether the chosen entry involves a model at all. */
+  const needsModel = current !== undefined && (current.typed === true || current.modelId !== null);
+  /** The recipient this add would use: the entry's own, or the typed one's. */
+  const endpoint =
+    current?.endpointId !== undefined
+      ? endpoints.find((e) => e.id === current.endpointId)
+      : (endpoints.find((e) => e.id === endpointId) ?? endpoints[0]);
+
+  /**
+   * The best claim about one model: what was probed here, else what the host
+   * volunteered. Never merged — a probed answer replaces a declared one whole,
+   * because the two disagree exactly when the declaration was wrong.
+   */
+  const hintOf = (choice: AgentChoice | undefined): ModelCapabilityHint | undefined => {
+    if (choice === undefined || choice.modelId === null) return undefined;
+    return probed[`${choice.endpointId ?? ''}::${choice.modelId}`] ?? choice.capabilities;
+  };
+
+  /**
+   * The selected entry, when it names something a probe could be run against.
+   *
+   * Narrowed once here rather than inside the markup, and it covers the escape
+   * hatch too: a model typed into that field is exactly the case where nothing
+   * is known — `/v1/models` is optional, so a server that cannot list what it
+   * serves cannot describe it either — and leaving the one entry with no answer
+   * unable to *get* one would make the honest path the least informed one.
+   */
+  const checkable = ((): { endpointId: string; modelId: string } | null => {
+    if (current === undefined) return null;
+    const modelId = current.typed === true ? typedModel.trim() : current.modelId;
+    const from = current.endpointId ?? endpoint?.id;
+    if (modelId === null || modelId === '' || from === undefined) return null;
+    return { endpointId: from, modelId };
+  })();
+
+  const currentHint =
+    checkable !== null
+      ? (probed[`${checkable.endpointId}::${checkable.modelId}`] ?? current?.capabilities)
+      : undefined;
+
+  /**
+   * Pay for one probe, for the model in front of somebody.
+   *
+   * Deliberately per model and never per list: this makes real requests to the
+   * endpoint, which is why §3.13 refused to do it on host attach. The answer is
+   * cached on the host, in the same provider the run will use — so the turn that
+   * follows does not pay for it again.
+   */
+  const check = async (endpointIdOf: string, modelId: string): Promise<void> => {
+    const key = `${endpointIdOf}::${modelId}`;
+    if (checking !== null) return;
+    attempted.current.add(key);
+    setChecking(key);
+    setCheckNote(null);
     try {
-      const answers = await listModels();
-      const found = [...new Set(answers.flatMap((a) => a.models))].sort();
-      setKnownModels(found);
-      setInstallable(answers);
-      const failed = answers.filter((a) => a.error !== undefined);
-      setModelsNote(
-        failed.length > 0
-          ? `${found.length} found. ${failed.map((f) => `${f.endpointId}: ${f.error}`).join('; ')}`
-          : found.length > 0
-            ? `${found.length} reachable from that host.`
-            : 'That host reported no models. Type one if you know it is there.',
-      );
+      const hint = await checkModel(endpointIdOf, modelId);
+      if (hint === null) {
+        // Not "this model cannot" — "this host cannot be asked". Different
+        // sentence, different remedy, and collapsing them would blame a model
+        // for an out-of-date host.
+        setCheckNote({
+          key,
+          text: 'This host is too old to check what a model can do. Update it to find out.',
+        });
+        return;
+      }
+      setProbed((was) => ({ ...was, [key]: hint }));
+      if (hint.error !== undefined) setCheckNote({ key, text: hint.error });
     } catch (err) {
-      setModelsNote(err instanceof Error ? err.message : String(err));
+      setCheckNote({ key, text: err instanceof Error ? err.message : String(err) });
     } finally {
-      setModelsBusy(false);
+      setChecking(null);
     }
   };
-  const endpoint = endpoints.find((e) => e.id === endpointId) ?? endpoints[0];
-  const selected = useMemo(() => runtimes.find((r) => r.id === runtimeId), [runtimes, runtimeId]);
 
   /*
-   * Load the list once, when a model is first actually needed.
+   * Check the selected model automatically — but only where it is free.
    *
-   * Not on mount, and not on a click. On mount would ask every endpoint the host
-   * has — a hosted API over a slow link included — for somebody who opened the
-   * roster to read it. On a click means a dropdown that is empty until you find
-   * the button that fills it, which is the failure that made a `datalist` the
-   * wrong answer here in the first place.
+   * The incident this feature exists for happened to somebody who had no reason
+   * to press anything, so waiting for a click would leave it half-fixed. But a
+   * probe is two real requests, and firing those at a *paid* endpoint because a
+   * menu opened would spend somebody's money and send a prompt over the network
+   * without them asking. `authenticated` is the honest proxy for "this costs
+   * something", and it is the same flag the recipient line below reads.
    *
-   * Choosing a runtime that takes a model is the moment the question becomes
-   * real, so that is when it is asked. `needsModel` rather than the runtime id:
-   * switching between two model-driven runtimes does not change the answer.
+   * Skipped when the claim is already probed: the host caches, but a round trip
+   * per render is still a round trip.
    */
-  const needsModel = selected !== undefined && selected.model !== 'none';
   useEffect(() => {
-    if (!needsModel) return;
-    if (knownModels.length > 0 || modelsBusy || modelsNote !== null) return;
-    void refreshModels();
-    // `refreshModels` is redefined every render and listing it here would ask on
-    // every one of them.
+    if (current === undefined || current.typed === true || current.modelId === null) return;
+    if (current.endpointId === undefined) return;
+    if (endpoint === undefined || endpoint.authenticated) return;
+    const key = `${current.endpointId}::${current.modelId}`;
+    if (attempted.current.has(key) || !worthChecking(hintOf(current))) return;
+    void check(current.endpointId, current.modelId);
+    // `check` and `hintOf` are redefined every render; listing them would make
+    // this fire on each. The keys below are what actually decide — `checking`
+    // included, so a selection made while another probe is in flight is picked
+    // up when that one finishes rather than dropped.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsModel]);
+  }, [current?.value, endpoint?.id, endpoint?.authenticated, checking]);
 
-  // Runtimes arrive asynchronously per host, so the initial list is often empty.
-  // Without this the picker stays unselected and "Add agent" is permanently
-  // disabled — and the list differs per host, so it can change under us.
-  useEffect(() => {
-    if (runtimes.length === 0) return;
-    if (!runtimes.some((r) => r.id === runtimeId)) setRuntimeId(runtimes[0]!.id);
-  }, [runtimes, runtimeId]);
+  const knownModels = useMemo(
+    () => [...new Set(answers.flatMap((a) => a.models))],
+    [answers],
+  );
+  /** The one endpoint that can take an install, if exactly one can. */
+  const installTarget = answers.find((e) => e.canInstall === true);
+
+  /**
+   * "Use" in the catalogue: select the entry for that tag, or type it in.
+   *
+   * Scoped to the runtime already chosen where it can be — with two
+   * model-driven runtimes the same tag appears twice, and picking a model out
+   * of a catalogue is not a request to change which runtime runs it.
+   */
+  const chooseModel = (tag: string): void => {
+    const mine = (c: AgentChoice): boolean => c.runtimeId === current?.runtimeId;
+    const listed = choices.filter((c) => c.modelId === tag);
+    const pick = listed.find(mine) ?? listed[0];
+    if (pick !== undefined) {
+      setChosen(pick.value);
+      return;
+    }
+    setTypedModel(tag);
+    const typed = choices.filter((c) => c.typed === true);
+    const hatch = typed.find(mine) ?? typed[0];
+    if (hatch !== undefined) setChosen(hatch.value);
+  };
 
   return (
     <div className="m-auto grid w-full max-w-md gap-3 p-6" data-testid="picker">
@@ -989,88 +1767,102 @@ function AgentPicker({
       ) : (
         <>
           <label className="text-muted grid gap-1 text-xs">
-            Runtime
+            What will run
             <RuntimeSelect
-              value={runtimeId}
-              onChange={setRuntimeId}
-              options={runtimes.map((r) => ({ value: r.id, label: `${r.id} (${r.version})` }))}
+              value={value}
+              onChange={setChosen}
+              options={choices.map((c) => ({
+                value: c.value,
+                label: c.label,
+                ...(c.hint !== undefined ? { hint: c.hint } : {}),
+                runtimeId: c.runtimeId,
+                modelId: c.modelId,
+                ...(c.typed === true ? { typed: true } : {}),
+                /*
+                 * Only on the entries a badge can be true of.
+                 *
+                 * A runtime that runs no model of ours — an installed CLI, echo
+                 * — has no per-model answer to give, and the escape hatch has no
+                 * model yet. Painting `tools: unknown` on those would be four
+                 * words of noise on a row whose capabilities §3.13's matrix
+                 * below already covers.
+                 */
+                ...(c.modelId !== null ? { badges: rowBadges(hintOf(c)) } : {}),
+              }))}
             />
           </label>
 
-          {/* §3.13: choosing a runtime shows what it can actually do here. Beside
-              the picker rather than on a settings page, because this is the one
-              moment the answer changes a decision. */}
-          <SupportMatrix cells={conformance} runtimeId={runtimeId} />
+          {/* §3.13: the choice shows what its runtime can actually do here. Bound
+              to the *entry's* runtime, which is now something a person picks
+              without naming — all the more reason to keep saying it. */}
+          <SupportMatrix cells={conformance} runtimeId={current?.runtimeId ?? ''} />
 
-          {/* Shown unless the runtime takes no model at all. A wrapped harness
-              that ignores the field invites a silent no-op — but an installed
-              CLI takes one *optionally*, and hiding the field there made the
-              choice unreachable rather than unavailable (§3.12). */}
-          {selected !== undefined && selected.model !== 'none' && (
-            <label className="text-muted grid gap-1 text-xs">
-              Model
-              {/*
-                A dropdown of what the host actually serves, with a way out.
+          {/*
+            What the *chosen* model can do, in full (§3.3, §3.5).
 
-                The list is the only authority on the question — it is the models
-                that endpoint has *right now*. But `/v1/models` is optional in
-                the OpenAI-compatible shape, so a closed dropdown would make a
-                server that does not implement it unusable through a UI that had
-                merely failed to ask. Hence the last option: choosing it reveals
-                the text field, so an unlisted model stays reachable without
-                making everybody type.
-              */}
-              <div className="flex gap-2">
-                {manualModel || knownModels.length === 0 ? (
-                  <input
-                    className="field"
-                    data-testid="model-id"
-                    placeholder="e.g. qwen2.5-coder:7b"
-                    value={modelId}
-                    onChange={(e) => setModelId(e.target.value)}
-                  />
-                ) : (
-                  <select
-                    className="field"
-                    data-testid="model-id"
-                    value={knownModels.includes(modelId) ? modelId : ''}
-                    onChange={(e) => {
-                      if (e.target.value === '__type__') {
-                        setManualModel(true);
-                        return;
-                      }
-                      setModelId(e.target.value);
-                    }}
-                  >
-                    {/* Only when the current value is not in the list — an empty
-                        option that lingers is a way to choose nothing. */}
-                    {!knownModels.includes(modelId) && <option value="">Choose a model…</option>}
-                    {knownModels.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                    <option value="__type__">Type a model id…</option>
-                  </select>
-                )}
+            Beside the matrix rather than inside it, because they answer
+            different questions with different evidence: that one is per runtime
+            and comes from conformance runs, this one is per model and comes
+            from a probe or the server's own account of itself. Folding a
+            per-model claim into a per-runtime grid is precisely the bug §3.3
+            calls out — "keying on `runtimeId` alone is the bug that makes a 3B
+            model inherit a frontier model's declared abilities".
+          */}
+          {needsModel && (
+            <ModelCapabilities
+              hint={currentHint}
+              busy={checkable !== null && checking === `${checkable.endpointId}::${checkable.modelId}`}
+              note={
+                checkable !== null &&
+                checkNote?.key === `${checkable.endpointId}::${checkable.modelId}`
+                  ? checkNote.text
+                  : null
+              }
+              {...(checkable !== null
+                ? { onCheck: () => void check(checkable.endpointId, checkable.modelId) }
+                : {})}
+            />
+          )}
+
+          {/* Only where a model is part of the answer. Under the one select
+              rather than beside a second one: refreshing and installing are
+              things you do *to the list*, and a person choosing an installed CLI
+              is not looking at a list of local models. */}
+          {needsModel && (
+            <div className="text-muted grid gap-1 text-xs">
+              {current?.typed === true && (
+                /*
+                  The escape hatch, and the whole reason a closed list is honest.
+
+                  `/v1/models` is optional in the OpenAI-compatible shape, so a
+                  server that does not implement it would otherwise be unusable
+                  through a UI that had merely failed to ask.
+                */
+                <input
+                  className="field"
+                  data-testid="model-id"
+                  placeholder="e.g. qwen2.5-coder:7b"
+                  value={typedModel}
+                  onChange={(e) => setTypedModel(e.target.value)}
+                />
+              )}
+
+              <div className="flex items-baseline gap-2">
+                <small className="text-muted min-w-0 grow text-[11px]">
+                  {modelsNote ??
+                    'An Ollama or other OpenAI-compatible model reachable from that host.'}
+                </small>
                 <button
                   type="button"
                   className="btn-quiet shrink-0 text-xs"
                   data-testid="refresh-models"
                   title="Ask this host what its endpoints serve now"
                   disabled={modelsBusy}
-                  onClick={() => {
-                    setManualModel(false);
-                    void refreshModels();
-                  }}
+                  onClick={() => void refreshModels()}
                 >
                   {modelsBusy ? '…' : 'Refresh'}
                 </button>
               </div>
-              <small className="text-muted text-[11px]">
-                {modelsNote ??
-                  'An Ollama or other OpenAI-compatible model reachable from that host.'}
-              </small>
 
               <button
                 type="button"
@@ -1091,7 +1883,7 @@ function AgentPicker({
 
                     Every tag here was checked against the registry when the
                     catalogue was generated — one invented entry was caught that
-                    way — but the field above still takes anything, because the
+                    way — but "another model…" still takes anything, because the
                     catalogue is there to save somebody knowing that "a good
                     small coding model" is spelled `qwen2.5-coder:7b`.
                   */}
@@ -1109,7 +1901,7 @@ function AgentPicker({
                       only side that knows which runner it is talking to.
                     */
                     <p className="text-muted m-0 text-[11px]">
-                      {installable.find((e) => e.installHint !== undefined)?.installHint ??
+                      {answers.find((e) => e.installHint !== undefined)?.installHint ??
                         'Refresh to find out whether this host can install models.'}
                     </p>
                   ) : null}
@@ -1141,7 +1933,7 @@ function AgentPicker({
                               <button
                                 type="button"
                                 className="btn-quiet text-[11px]"
-                                onClick={() => setModelId(m.tag)}
+                                onClick={() => chooseModel(m.tag)}
                               >
                                 Use
                               </button>
@@ -1175,7 +1967,11 @@ function AgentPicker({
                   </div>
                 </div>
               )}
-              {endpoints.length > 1 && (
+
+              {/* Only for a typed model: a listed one already names its endpoint
+                  in the entry that was chosen, and offering to override it would
+                  be a second answer to a question already settled. */}
+              {current?.typed === true && endpoints.length > 1 && (
                 <label className="text-muted mt-1 grid gap-1 text-xs">
                   Sent to
                   <select
@@ -1192,6 +1988,7 @@ function AgentPicker({
                   </select>
                 </label>
               )}
+
               {endpoint !== undefined && (
                 /*
                  * Named before the first turn, not after. §13 requires that
@@ -1199,7 +1996,8 @@ function AgentPicker({
                  * transmitted, and a picker that shows only a model name is
                  * exactly that quiet change — the recipient has to be legible at
                  * the moment of choosing, which is the only moment it can still
-                 * be reconsidered.
+                 * be reconsidered. Collapsing two dropdowns into one does not
+                 * get to collapse this.
                  */
                 <small
                   data-testid="endpoint-provider"
@@ -1210,20 +2008,25 @@ function AgentPicker({
                     : `Stays on the host — ${endpoint.provider}.`}
                 </small>
               )}
-            </label>
+            </div>
           )}
 
           <button
             className="btn"
             data-testid="add-agent"
-            disabled={busy || runtimeId === ''}
-            onClick={() =>
-              void onAdd(
-                runtimeId,
-                selected !== undefined && selected.model !== 'none' ? modelId : null,
-                endpoint?.id,
-              )
+            disabled={
+              busy || current === undefined || (current.typed === true && typedModel.trim() === '')
             }
+            onClick={() => {
+              if (current === undefined) return;
+              void onAdd(
+                current.runtimeId,
+                current.typed === true ? typedModel.trim() : current.modelId,
+                // Unchanged contract: the store drops this when the model is
+                // null, so a no-model runtime is unaffected either way.
+                needsModel ? endpoint?.id : undefined,
+              );
+            }}
           >
             Add agent
           </button>

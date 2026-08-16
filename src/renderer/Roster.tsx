@@ -75,7 +75,10 @@ export function Roster({
   return (
     <div
       data-testid="roster"
-      className="border-line flex flex-wrap items-center gap-2 border-b px-4 py-2"
+      // `shrink-0` for the same reason as every fixed row around the transcript
+      // (see SessionHeader): a wrapped flex row is measured one line tall, so
+      // without it this was the row the column chose to crush.
+      className="border-line flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2"
     >
       <button
         type="button"

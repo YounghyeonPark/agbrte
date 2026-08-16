@@ -96,7 +96,9 @@ export function Preview({
   };
 
   return (
-    <div className="border-line flex flex-wrap items-center gap-2 border-t px-3 py-2 text-xs">
+    // `shrink-0`: a fixed row beside the transcript, which is the only child of
+    // the session column allowed to give up height (see SessionHeader).
+    <div className="border-line flex shrink-0 flex-wrap items-center gap-2 border-t px-3 py-2 text-xs">
       <span className="text-muted">Preview a port on that machine</span>
       <input
         className={FIELD}

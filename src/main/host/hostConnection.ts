@@ -37,9 +37,11 @@ import type {
   ContentBlock,
   AgentRecord,
   AgbrteEvent,
+  ModelCapabilityHint,
   PermissionDecision,
   InboxEntry,
   PermissionRequest,
+  RawTail,
   RuntimeCapabilities,
   Session,
   SessionId,
@@ -375,6 +377,19 @@ export class HostConnection extends EventEmitter {
     return this.call<EndpointModels[]>({ t: 'models.list' });
   }
 
+  /**
+   * What one model can actually do (§3.3).
+   *
+   * `require` rather than a silent empty hint, on the same reasoning as
+   * `models`: a host too old to answer must read as *cannot tell you*. An empty
+   * hint means "asked, and nothing could be established", and showing that for a
+   * host that was never asked would make an old host look like a broken model.
+   */
+  async modelCapabilities(endpointId: string, modelId: string): Promise<ModelCapabilityHint> {
+    this.require('models.capabilities');
+    return this.call<ModelCapabilityHint>({ t: 'models.capabilities', endpointId, modelId });
+  }
+
   /** Start a pull. Returns once it has begun, not once it has finished. */
   async installModel(endpointId: string, tag: string): Promise<void> {
     this.require('models.install');
@@ -559,6 +574,17 @@ export class HostConnection extends EventEmitter {
 
   queueDepth(sessionId: SessionId): Promise<number> {
     return this.call({ t: 'session.queueDepth', sessionId });
+  }
+
+  /**
+   * The raw CLI tail behind one agent's running turn (§3.12), or `null`.
+   *
+   * `async` so the version gate rejects rather than throwing synchronously —
+   * see `previewPorts`.
+   */
+  async rawLog(sessionId: SessionId, agentId: AgentId): Promise<RawTail | null> {
+    this.require('agent.rawLog');
+    return this.call<RawTail | null>({ t: 'agent.rawLog', sessionId, agentId });
   }
 
   respondSplit(

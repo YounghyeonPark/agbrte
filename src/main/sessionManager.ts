@@ -47,6 +47,7 @@ import {
   type AgbrteEvent,
   type PermissionDecision,
   type PermissionRequest,
+  type RawTail,
   type RuntimeContext,
   type Session,
   type SessionBudget,
@@ -883,6 +884,25 @@ export class SessionManager extends EventEmitter {
   /** Turns waiting behind the one running, for a client to display. */
   queueDepth(agentId: AgentId): number {
     return this.queues.get(agentId)?.length ?? 0;
+  }
+
+  /**
+   * The raw stdout/stderr tail of the subprocess behind one agent (§3.12, §7).
+   *
+   * `null` covers two ordinary states and no error states: a runtime whose
+   * handles have no subprocess to show, and an agent between turns — a
+   * finished turn releases its handle (see `runTurn`), and the tail lives and
+   * dies with it. Both read the same to a viewer, and honestly so: in both,
+   * nothing is printing right now. The durable record is the event log; this
+   * is a live window for watching a long turn, not a second transcript.
+   */
+  rawLog(sessionId: SessionId, agentId: AgentId): RawTail | null {
+    const live = this.live(sessionId);
+    // Validated so an unknown agent is an error rather than a quiet null —
+    // null already carries two meanings above, and "you asked about nobody"
+    // must not become a third.
+    this.agent(live, agentId);
+    return live.handles.get(agentId)?.rawTail?.() ?? null;
   }
 
   /**

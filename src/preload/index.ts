@@ -62,6 +62,8 @@ const api: AgbrteApi = {
       ipcRenderer.invoke(CH.hostsAddRemote, alias, workspaceRoot),
     update: (instanceId: string) => ipcRenderer.invoke(CH.hostsUpdate, instanceId),
     models: (instanceId: string) => ipcRenderer.invoke(CH.hostsModels, instanceId),
+    modelCapabilities: (instanceId: string, endpointId: string, modelId: string) =>
+      ipcRenderer.invoke(CH.hostsModelCapabilities, instanceId, endpointId, modelId),
     installModel: (instanceId: string, endpointId: string, tag: string) =>
       ipcRenderer.invoke(CH.hostsInstallModel, instanceId, endpointId, tag),
     installProgress: (instanceId: string) => ipcRenderer.invoke(CH.hostsInstallProgress, instanceId),
@@ -144,6 +146,8 @@ const api: AgbrteApi = {
     exportMarkdown: (sessionId: string, opts?: { toolArgs?: 'full' | 'summary' }) =>
       ipcRenderer.invoke(CH.sessionsExport, sessionId, opts),
     search: (query: string, limit?: number) => ipcRenderer.invoke(CH.sessionsSearch, query, limit),
+    rawLog: (sessionId: string, agentId: string) =>
+      ipcRenderer.invoke(CH.sessionsRawLog, sessionId, agentId),
     since: (sessionId: string, fromSeq: number) =>
       ipcRenderer.invoke(CH.sessionsSince, sessionId, fromSeq),
   },

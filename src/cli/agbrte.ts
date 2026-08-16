@@ -182,6 +182,10 @@ async function main(): Promise<number> {
       runtimes: [
         { id: 'echo', label: 'Echo', version: '0.0.1', model: 'none' },
         { id: 'agbrte-harness', label: 'Agbrte harness', version: '0.0.1', model: 'required' },
+        // Same list as the desktop app: the host detects these and reports
+        // them only where the binary answered (§3.12).
+        { id: 'cli:claude-code', label: 'Claude Code (installed CLI)', version: '0.0.1', model: 'optional' },
+        { id: 'cli:gemini-cli', label: 'Gemini CLI (installed)', version: '0.0.1', model: 'optional' },
       ],
       connect: async () =>
         connectOrSpawnHost({

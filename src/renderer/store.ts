@@ -65,6 +65,21 @@ export interface AgbrteState {
 
   boot(): Promise<void>;
   addHost(): Promise<void>;
+  /**
+   * The native picker, an attach, and the host it produced (§6.2, §10).
+   *
+   * Separate from `addHost` only because it hands the host *back*: the one-shot
+   * path in App.tsx has to create a session on the folder it just attached, and
+   * searching `hosts` afterwards for "the new one" is a guess — attaching a
+   * folder that is already attached adds nothing to that list.
+   *
+   * Which is not an error, and this is where that is decided: `fleet.attach` is
+   * idempotent by `instanceId` and returns the host already running, so
+   * re-choosing an attached folder reuses it. `null` covers a cancelled picker
+   * and a failure alike; the second has already put a line in the error banner,
+   * and the first is not a failure at all.
+   */
+  attachLocalHost(): Promise<HostInfo | null>;
   loadSshHosts(): Promise<void>;
   addRemoteHost(alias: string, workspaceRoot: string): Promise<boolean>;
   removeHost(instanceId: string): Promise<void>;
@@ -72,11 +87,19 @@ export interface AgbrteState {
   shutdownHost(instanceId: string): Promise<boolean>;
   /** Restart a host onto the bundle this build ships (§6.3). */
   updateHost(instanceId: string): Promise<void>;
+  /**
+   * Create a session and open it, so the caller lands *in* it (§10).
+   *
+   * The open is part of this rather than a second call every caller makes,
+   * which is what lets the one-shot path in App.tsx be a sequence of two.
+   * A refusal is the error banner and no session; nothing to return either way.
+   */
   createSession(instanceId: string, title: string, goal: string): Promise<void>;
   openSession(sessionId: string, instanceId?: string): Promise<void>;
   /** Deselect, so a narrow screen can show the list again. */
   closeSession(): void;
-  addAgent(runtimeId: string, modelId: string | null, endpointId?: string): Promise<void>;
+  /** True when the seat was actually added — what makes it worth remembering. */
+  addAgent(runtimeId: string, modelId: string | null, endpointId?: string): Promise<boolean>;
   /** `to` addresses one agent in a roster; absent means the first (§4.2). */
   /**
    * A turn from the user, optionally carrying what they pointed at (§12).
@@ -187,10 +210,22 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
   },
 
   async addHost() {
+    // The attach panel wants the side effect and nothing else; the host it
+    // produced is the one-shot path's business (see `attachLocalHost`).
+    await get().attachLocalHost();
+  },
+
+  async attachLocalHost() {
     const host = await guard(set, () => agbrte().hosts.add());
-    // Null means the picker was cancelled, which is not a failure.
-    if (host === undefined || host === null) return;
+    // `null` means the picker was cancelled and `undefined` means it threw —
+    // neither leaves a host to work with, and only the second is a failure,
+    // which `guard` has already put in the banner.
+    if (host === undefined || host === null) return null;
+    // Re-listed even when the folder was already attached: `boot` is also what
+    // refreshes the sessions on disk, and a workspace attached elsewhere in the
+    // meantime may have gained some.
     await get().boot();
+    return host;
   },
 
   async loadSshHosts() {
@@ -295,8 +330,11 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
 
   async addAgent(runtimeId, modelId, endpointId) {
     const sessionId = get().activeId;
-    if (sessionId === null) return;
-    await guard(set, async () => {
+    if (sessionId === null) return false;
+    // `guard` turns a failure into the error banner and `undefined`, so the
+    // boolean is "did the seat land" — which is what decides whether the choice
+    // becomes the remembered default (agentDefaults.ts).
+    const added = await guard(set, async () => {
       await agbrte().sessions.addAgent({
         sessionId,
         role: 'lead',
@@ -312,7 +350,9 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
           : {}),
       });
       applySnapshot(set, get, await agbrte().sessions.snapshot(sessionId));
+      return true;
     });
+    return added === true;
   },
 
   async send(text, to, blocks) {

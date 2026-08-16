@@ -37,7 +37,7 @@ import {
   OpenAiCompatibleProvider,
   OPENAI_COMPATIBLE_PROVIDER_ID,
 } from '@main/runtime/providers/openaiCompatible.js';
-import type { ModelEndpoint } from '@shared/types/index.js';
+import type { ModelCapabilityHint, ModelEndpoint, ModelProvider } from '@shared/types/index.js';
 
 /**
  * `parentPort` in a utilityProcess: `postMessage` plus a `message` event.
@@ -123,7 +123,19 @@ class ForkChannel implements HostSideChannel {
  * runtime ids from the host's `ready` handshake, so anything missing here simply
  * does not appear in the UI rather than failing at `addAgent`.
  */
-export async function buildHostRegistry(endpoints: EndpointRegistry): Promise<RuntimeRegistry> {
+export async function buildHostRegistry(
+  endpoints: EndpointRegistry,
+  /**
+   * The provider the harness will run on.
+   *
+   * Taken as an argument so the *same instance* — and therefore the same probe
+   * cache — answers the picker's "what can this model do" and the run that
+   * follows it. Two instances would probe twice: once to draw a badge and again
+   * on the first turn, which is two inference requests for one answer and, worse,
+   * two answers that can disagree.
+   */
+  provider: ModelProvider = new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) }),
+): Promise<RuntimeRegistry> {
   const registry = new RuntimeRegistry();
 
   /**
@@ -146,7 +158,7 @@ export async function buildHostRegistry(endpoints: EndpointRegistry): Promise<Ru
       leases,
       // The credential lookup lives with the provider, which is the only place a
       // request is actually made. The endpoint it resolves carries no secret.
-      provider: new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) }),
+      provider,
       endpointFor: (endpointId) => endpoints.resolve(endpointId),
     }),
     { label: 'Agbrte harness', model: 'required' },
@@ -224,8 +236,20 @@ const endpoints = await loadEndpoints();
  * and the local one is unreachable whenever the laptop is elsewhere. One
  * endpoint being down is not a reason to have no answer about the others.
  */
+const provider = new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) });
+
+/**
+ * How many models per endpoint are asked to describe themselves.
+ *
+ * A bound rather than a preference. Self-description is one cheap metadata read
+ * per model (§3.3 prefers it over probing precisely because it is), but "cheap"
+ * times an unbounded list is a burst fired by somebody opening a menu. Beyond
+ * this the hint is simply absent, which the picker already renders as *unknown*
+ * — the same degradation as an endpoint that does not self-describe at all.
+ */
+const SELF_DESCRIBE_LIMIT = 64;
+
 const modelLister = async (): Promise<EndpointModels[]> => {
-  const provider = new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) });
   return Promise.all(
     endpoints.list().map(async ({ id, baseUrl }): Promise<EndpointModels> => {
       // Asked together because a client needs both to draw one control: the
@@ -238,7 +262,8 @@ const modelLister = async (): Promise<EndpointModels[]> => {
       };
       try {
         const found = await provider.listModels(endpoints.resolve(id));
-        return { endpointId: id, models: found.map((m) => m.modelId), ...capability };
+        const models = found.map((m) => m.modelId);
+        return { endpointId: id, models, ...capability, ...(await hintsFor(id, models)) };
       } catch (err) {
         return {
           endpointId: id,
@@ -249,6 +274,58 @@ const modelLister = async (): Promise<EndpointModels[]> => {
       }
     }),
   );
+};
+
+/**
+ * The free half of §3.3, for a whole list.
+ *
+ * `describe` never runs a model: it reads what the server says about itself and
+ * hands back any probe already in this process's cache. The expensive half is
+ * `model.capabilities` below, asked for one model at a time.
+ *
+ * A model that throws is left out rather than reported as incapable — an absent
+ * hint is the honest "nobody could tell", and `false` would be a claim.
+ */
+async function hintsFor(
+  endpointId: string,
+  models: string[],
+): Promise<{ capabilities?: ModelCapabilityHint[] }> {
+  if (provider.describe === undefined) return {};
+  const describe = provider.describe.bind(provider);
+  const endpoint = endpoints.resolve(endpointId);
+  const hints = await Promise.all(
+    models.slice(0, SELF_DESCRIBE_LIMIT).map(async (modelId) => {
+      try {
+        return await describe(endpoint, modelId);
+      } catch {
+        return null;
+      }
+    }),
+  );
+  const kept = hints.filter((h): h is ModelCapabilityHint => h !== null);
+  return kept.length > 0 ? { capabilities: kept } : {};
+}
+
+/**
+ * What one model can actually do, paying the probe (§3.3).
+ *
+ * Asked for a model somebody selected, never for a list. The failure is
+ * returned as a hint carrying `error` rather than thrown, so a picker shows one
+ * sentence about the model it asked about instead of losing the row.
+ */
+const modelCapabilities = async (
+  endpointId: string,
+  modelId: string,
+): Promise<ModelCapabilityHint> => {
+  try {
+    const endpoint = endpoints.resolve(endpointId);
+    // Fills the cache `describe()` and the harness both read, so this is paid
+    // for once per (endpoint, model) however many times it is asked.
+    await provider.probe(endpoint, modelId);
+    return (await provider.describe?.(endpoint, modelId)) ?? { endpointId, modelId };
+  } catch (err) {
+    return { endpointId, modelId, error: err instanceof Error ? err.message : String(err) };
+  }
 };
 
 /*
@@ -272,8 +349,11 @@ const modelInstaller = {
 
 new AgentHostServer(
   channel,
-  await buildHostRegistry(endpoints),
+  // The same provider instance the lister and the probe use: one cache, so a
+  // capability shown in the picker is the capability the run was started with.
+  await buildHostRegistry(endpoints, provider),
   endpoints.list(),
   modelLister,
   modelInstaller,
+  modelCapabilities,
 );

@@ -26,6 +26,7 @@
 import type {
   CompactedHistory,
   AgentSpec,
+  ModelCapabilityHint,
   NormalizedTurn,
   PermissionAsk,
   PermissionDecision,
@@ -65,6 +66,23 @@ export interface EndpointModels {
   canInstall?: boolean;
   /** When it cannot: what to do instead, in the user's terms. */
   installHint?: string;
+  /**
+   * What each listed model can do, as far as anything here can say for free
+   * (§3.3, §3.5).
+   *
+   * Carried with the list for the same reason `runner` is: a client needs both
+   * to draw one row, and a second round trip per model to fill in a badge would
+   * be N round trips fired by opening a menu.
+   *
+   * **Free means free.** These are self-descriptions — one `/api/show` per
+   * model against a server that has one — plus any probe result already cached
+   * on this host. Nothing here runs a model. The expensive answer is
+   * `model.capabilities`, asked for the one model somebody actually chose.
+   *
+   * Absent, or an absent entry, means *nobody asked or nobody could tell*, which
+   * a client must render as unknown rather than as no.
+   */
+  capabilities?: ModelCapabilityHint[];
 }
 
 /** How far one model install has got. Reported per attempt, never deleted. */
@@ -102,6 +120,16 @@ export type HostCommand =
    * the wrong shape for a list that changes by design.
    */
   | { t: 'models'; id: RequestId }
+  /**
+   * Establish what one model can do, spending whatever that costs (§3.3).
+   *
+   * The counterpart to the free hints on `models` above, and separate from them
+   * because the cost is: `openai-compatible` answers this by *making real
+   * requests*, so it is asked once, for the model somebody selected, and never
+   * for a list. The answer is cached in the provider, which is the same cache
+   * the run that follows will read — the probe is paid for once whoever asks.
+   */
+  | { t: 'model.capabilities'; id: RequestId; endpointId: string; modelId: string }
   /** Begin pulling a model into an endpoint that can accept one. */
   | { t: 'model.install'; id: RequestId; endpointId: string; tag: string }
   /** How far every install started on this host has got. */

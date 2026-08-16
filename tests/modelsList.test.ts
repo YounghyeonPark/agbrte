@@ -83,6 +83,57 @@ describe('a host answers what its endpoints serve', () => {
         answer.models.length > 0 || answer.error !== undefined,
         `${answer.endpointId} returned nothing and gave no reason`,
       ).toBe(true);
+
+      // The v14 field. Absent is a legitimate answer — nothing here
+      // self-describes, or a model was past the host's describe limit — and
+      // every hint that *is* present belongs to a model that was listed.
+      for (const hint of answer.capabilities ?? []) {
+        expect(answer.models).toContain(hint.modelId);
+        expect(hint.endpointId).toBe(answer.endpointId);
+      }
     }
+  }, 60_000);
+
+  /**
+   * The expensive half, across the same four layers (§3.3).
+   *
+   * The point of running it here rather than against the provider directly is
+   * the wiring: a hint has to survive `models.capabilities` → session host →
+   * agent host → provider and come back with its confidence labels intact, and
+   * an in-memory double of any of those would be testing the double.
+   *
+   * The model is one nobody has: an unreachable or unknown model must come back
+   * as **unknown with a reason**, never as a model that cannot call tools. That
+   * distinction is the whole feature — one sends you to pull a model, the other
+   * sends you to pick a different one.
+   */
+  it('answers per model, and says unknown rather than no when it cannot tell', async () => {
+    if (!(await built())) throw new Error(`run \`npm run build\` first — ${HOST_BUNDLE} is missing`);
+
+    const connection = await connectOrSpawnHost({
+      workspaceRoot: root,
+      hostEntry: HOST_BUNDLE,
+      execPath: process.execPath,
+      startupTimeoutMs: 20_000,
+    });
+    open.push(connection);
+    const identity = await connection.ready;
+
+    expect(connection.supports('models.capabilities')).toBe(true);
+
+    const endpointId = (identity.endpoints ?? [])[0]?.id;
+    expect(endpointId, 'a host reports at least one endpoint').toBeDefined();
+    if (endpointId === undefined) return;
+
+    const hint = await connection.modelCapabilities(endpointId, 'agbrte-no-such-model');
+
+    expect(hint.endpointId).toBe(endpointId);
+    expect(hint.modelId).toBe('agbrte-no-such-model');
+    // Nothing could be established about a model that is not there.
+    expect(hint.tools).toBeUndefined();
+    expect(hint.error, 'a hint that establishes nothing must say why').toBeDefined();
+    // What is knowable without asking anything stays knowable: this adapter
+    // flattens an image whatever the model could do (§3.13).
+    expect(hint.imageInput).toEqual({ value: false, from: 'configured' });
   }, 60_000);
 });

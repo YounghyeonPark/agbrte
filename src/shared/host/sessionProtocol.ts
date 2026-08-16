@@ -161,6 +161,22 @@ export interface HostIdentity {
  * restriction that did not exist before — would need `MIN_CLIENT_PROTOCOL`,
  * which is the lever that does exist for shape changes.
  *
+ * ## v14 adds a command, and a field to `models.list` — one of each case
+ *
+ * `models.capabilities` is a command, which is the case this table handles
+ * cleanly: a v13 host does not have it, `supports()` says so, and the picker
+ * shows *unknown* for the model somebody selected rather than an answer it
+ * invented or an error it cannot explain.
+ *
+ * The field needs the per-field argument v6 established. `models.list` gained
+ * `capabilities` — what each listed model says about itself. A v13 host omits
+ * it, and the client reads the absence as **nobody could tell**, which is
+ * exactly today's behaviour: no badges, and the same list of names that shipped
+ * before this existed. The degradation is to the old screen rather than to a
+ * wrong one, and — the property that actually matters here — an absent claim is
+ * never rendered as `false`. A field whose silent drop would have made a model
+ * look incapable rather than unknown would need `MIN_CLIENT_PROTOCOL`.
+ *
  * ## v9 adds installing, and one field to an existing reply
  *
  * `models.install` and `models.progress` are commands, so `COMMAND_SINCE`
@@ -198,7 +214,7 @@ export interface PreparedChild {
   contract: ResultContract;
 }
 
-export const SESSION_PROTOCOL_VERSION = 12;
+export const SESSION_PROTOCOL_VERSION = 14;
 
 /**
  * The oldest client a host will serve.
@@ -236,6 +252,8 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'session.recordChild': 12,
   'models.install': 9,
   'models.progress': 9,
+  'agent.rawLog': 13,
+  'models.capabilities': 14,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -299,6 +317,25 @@ export type SessionCommand =
    * fact.
    */
   | { t: 'models.list'; id: RequestId }
+  /**
+   * What one model can actually do, established rather than assumed (§3.3, §3.5).
+   *
+   * A separate command from `models.list` because the costs are not comparable.
+   * The list carries what is free — a server's own account of itself, and probes
+   * this host has already run — while this one *probes*, which for
+   * `openai-compatible` is real inference requests behind a long timeout. §3.13
+   * has the precedent: probing every runtime on attach took the end-to-end suite
+   * from one minute to nine and was asking about a model nobody had chosen. So
+   * this is asked once, for the model in front of somebody.
+   *
+   * Answering is `ModelCapabilityHint`, whose every claim is optional and
+   * labelled with how it was established. A capability that could not be
+   * established is absent, and a client must show that as unknown — the reason
+   * this command exists is a user who picked a model that could not call tools
+   * and was told nothing, and "unknown" rendered as "no" is the same failure
+   * with the sign flipped.
+   */
+  | { t: 'models.capabilities'; id: RequestId; endpointId: string; modelId: string }
   /**
    * Start pulling a model into an endpoint that can accept one (§3.8).
    *
@@ -393,6 +430,17 @@ export type SessionCommand =
   | { t: 'session.events'; id: RequestId; sessionId: string; fromSeq: number }
   | { t: 'session.projection'; id: RequestId; sessionId: string }
   | { t: 'session.queueDepth'; id: RequestId; sessionId: string }
+  /**
+   * The raw stdout/stderr tail of the CLI subprocess behind one agent (§3.12).
+   *
+   * A read, so any role may ask: these are the same bytes a client already
+   * watches arrive parsed through `session.events`, minus the parsing. Served
+   * on request like `preview.log` rather than pushed — a bounded tail polled
+   * by the one pane looking at it costs less than a push channel every client
+   * would receive. `null` is the ordinary answer between turns: a one-shot
+   * CLI's process is the turn (§3.12), and the tail lives and dies with it.
+   */
+  | { t: 'agent.rawLog'; id: RequestId; sessionId: string; agentId: string }
   /**
    * What one runtime declares it can do, on this host.
    *

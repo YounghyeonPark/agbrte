@@ -351,6 +351,11 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   handle(CH.hostsShutdown, (instanceId: string) => fleet.shutdownHost(instanceId as InstanceId));
   handle(CH.hostsUpdate, (instanceId: string) => fleet.updateHost(instanceId as InstanceId));
   handle(CH.hostsModels, (instanceId: string) => fleet.models(instanceId as InstanceId));
+  handle(
+    CH.hostsModelCapabilities,
+    (instanceId: string, endpointId: string, modelId: string) =>
+      fleet.modelCapabilities(instanceId as InstanceId, endpointId, modelId),
+  );
   handle(CH.hostsInstallModel, (instanceId: string, endpointId: string, tag: string) =>
     fleet.installModel(instanceId as InstanceId, endpointId, tag),
   );
@@ -885,6 +890,9 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   );
 
   handle(CH.sessionsSearch, (query: string, limit?: number) => fleet.search(query, limit));
+  handle(CH.sessionsRawLog, (sessionId: string, agentId: string) =>
+    fleet.rawLog(sessionId as SessionId, agentId as AgentId),
+  );
 
   handle(CH.permissionsPending, async () =>
     (await fleet.pendingPermissions()).map((p) => p.request),

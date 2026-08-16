@@ -368,6 +368,141 @@ describe('probe — capability by demonstration (§3.3)', () => {
 });
 
 /**
+ * What can be said about a model *without* running it (§3.3).
+ *
+ * The picker needs a per-model answer for every row it draws, and `probe()`
+ * costs two inference requests behind a two-minute timeout — §3.13 already paid
+ * that bill once, when probing on host attach took the end-to-end suite from one
+ * minute to nine. So `describe()` reads what the server says about itself and
+ * hands back any probe already cached, and every claim carries which of the two
+ * it came from.
+ *
+ * The asymmetry on tools is the load-bearing part, and it is exactly the
+ * incident: `qwen3:0.6b` is listed by its server as supporting tools and then
+ * fails to emit a well-formed call. A declared yes must not be shown as a fact.
+ */
+describe('describe — what is knowable for free (§3.3)', () => {
+  const shown = (capabilities: string[], contextLength?: number) => ({
+    capabilities,
+    ...(contextLength !== undefined ? { model_info: { 'qwen3.context_length': contextLength } } : {}),
+  });
+
+  it('makes no claim at all about a server that does not self-describe', async () => {
+    // Not Ollama, or unreachable. Every claim it could not establish is absent,
+    // because a UI must be able to say *unknown* — and `false` here would be a
+    // model libelled by a server that was merely quiet.
+    stubFetch({ '/models': { data: [] } });
+    const hint = await new OpenAiCompatibleProvider().describe(LOCAL, 'mystery');
+
+    expect(hint.tools).toBeUndefined();
+    expect(hint.contextWindow).toBeUndefined();
+    expect(hint.reasoningControl).toBeUndefined();
+    expect(hint.schemaProfile).toBeUndefined();
+    // The one thing knowable with nothing asked: this adapter flattens images
+    // whatever the weights can do, so the claim is about the adapter (§3.13).
+    expect(hint.imageInput).toEqual({ value: false, from: 'configured' });
+  });
+
+  it('never runs the model', async () => {
+    stubFetch({ '/api/show': shown(['completion', 'tools'], 32_768) });
+    await new OpenAiCompatibleProvider().describe(LOCAL, 'qwen2.5:7b');
+    expect(calls.filter((c) => c.url.includes('/chat/completions'))).toHaveLength(0);
+  });
+
+  it('offers a declared yes as declared, never as fact', async () => {
+    stubFetch({ '/api/show': shown(['completion', 'tools', 'thinking'], 40_960) });
+    const hint = await new OpenAiCompatibleProvider().describe(LOCAL, 'qwen3:0.6b');
+
+    expect(hint.tools).toEqual({ value: 'native', from: 'self-described' });
+    expect(hint.contextWindow).toEqual({ value: 40_960, from: 'self-described' });
+    expect(hint.reasoningControl).toEqual({ value: 'effort', from: 'self-described' });
+  });
+
+  it('takes a declared no at its word — the server refuses the request', async () => {
+    // Ollama's `CheckCapabilities` rejects a tools request outright for a model
+    // whose template cannot render them, so there is nothing left to prove.
+    stubFetch({ '/api/show': shown(['completion'], 8_192) });
+    const hint = await new OpenAiCompatibleProvider().describe(LOCAL, 'chat-only');
+    expect(hint.tools).toEqual({ value: 'none', from: 'self-described' });
+  });
+
+  it('replaces a declaration with the probe once one has run — the incident', async () => {
+    stubFetch({
+      // The server lists tools; the model answers in prose when asked to call one.
+      '/api/show': shown(['completion', 'tools', 'thinking'], 40_960),
+      '/chat/completions': chat({ content: 'It is sunny in Paris.' }),
+    });
+    const provider = new OpenAiCompatibleProvider();
+
+    expect((await provider.describe(LOCAL, 'qwen3:0.6b')).tools).toEqual({
+      value: 'native',
+      from: 'self-described',
+    });
+
+    await provider.probe(LOCAL, 'qwen3:0.6b');
+
+    const after = await provider.describe(LOCAL, 'qwen3:0.6b');
+    expect(after.tools).toEqual({ value: 'none', from: 'probed' });
+    expect(after.schemaProfile).toEqual({ value: 'text-protocol', from: 'probed' });
+    // Still the server's number, not the probe's floor.
+    expect(after.contextWindow).toEqual({ value: 40_960, from: 'self-described' });
+  });
+
+  it('does not report an unreachable endpoint as a model that cannot call tools', async () => {
+    // `RuntimeCapabilities.tools` stays `none` — the harness must not offer
+    // what it could not verify. The *hint* must not, because "checked, and it
+    // cannot" and "could not check" send a person to fix different things, and
+    // the second one is usually a closed laptop rather than a bad model.
+    stubFetch({}, { status: 500 });
+    const provider = new OpenAiCompatibleProvider();
+
+    expect((await provider.probe(LOCAL, 'unreachable')).tools).toBe('none');
+
+    const hint = await provider.describe(LOCAL, 'unreachable');
+    expect(hint.tools).toBeUndefined();
+    expect(hint.schemaProfile).toBeUndefined();
+    expect(hint.error).toBeDefined();
+  });
+
+  it('keeps a declared no when the probe was refused for lacking the capability', async () => {
+    // Ollama answers a tools request from a model whose template cannot render
+    // them with an error rather than a bad call — so the throw is not silence,
+    // and the server has already said the useful part.
+    stubFetch({ '/api/show': shown(['completion'], 8_192) });
+    const provider = new OpenAiCompatibleProvider();
+    await provider.probe(LOCAL, 'chat-only');
+
+    const hint = await provider.describe(LOCAL, 'chat-only');
+    expect(hint.tools).toEqual({ value: 'none', from: 'self-described' });
+    expect(hint.error).toBeDefined();
+  });
+
+  it('marks an assumed window as assumed rather than showing it as a fact', async () => {
+    stubFetch({ '/chat/completions': chat({ content: 'hi' }) });
+    const provider = new OpenAiCompatibleProvider();
+    await provider.probe(LOCAL, 'quiet');
+
+    const hint = await provider.describe(LOCAL, 'quiet');
+    // The number the harness will size against — and the label that stops it
+    // being read as something the server said.
+    expect(hint.contextWindow).toEqual({ value: 8_192, from: 'configured' });
+    expect(hint.reasoningControl).toEqual({ value: 'none', from: 'configured' });
+  });
+
+  it('answers from the cache the run will use, without asking again', async () => {
+    stubFetch({ '/api/show': shown(['completion', 'tools'], 32_768), '/chat/completions': chat({ content: 'hi' }) });
+    const provider = new OpenAiCompatibleProvider();
+
+    await provider.probe(LOCAL, 'm');
+    const afterProbe = calls.length;
+    await provider.describe(LOCAL, 'm');
+    // A probed model costs nothing to describe: the picker asking about a model
+    // an agent is already running must not re-ask the endpoint.
+    expect(calls.length).toBe(afterProbe);
+  });
+});
+
+/**
  * Whether a model can be asked to think harder (§3.3, §3.4).
  *
  * `reasoningControl` was the constant `'none'` — true of every model anyone had

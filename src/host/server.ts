@@ -17,6 +17,7 @@ import type {
   AgentHandle,
   AgentSpec,
   CompactedHistory,
+  ModelCapabilityHint,
   PermissionDecision,
   RuntimeContext,
 } from '@shared/types/index.js';
@@ -67,6 +68,16 @@ export class AgentHostServer {
       install: (endpointId: string, tag: string) => Promise<void>;
       progress: () => ModelInstallProgress[];
     },
+    /**
+     * Establishes what one model can do, at whatever it costs (§3.3).
+     *
+     * Injected for the same reason as `listModels`: the answer needs a resolved
+     * endpoint, and this server is handed only public ones.
+     */
+    private readonly probeModel?: (
+      endpointId: string,
+      modelId: string,
+    ) => Promise<ModelCapabilityHint>,
   ) {
     channel.onMessage((command) => void this.dispatch(command));
     channel.onClose(() => this.shutdown());
@@ -87,6 +98,17 @@ export class AgentHostServer {
 
       case 'models':
         await this.reply(command.id, async () => (await this.listModels?.()) ?? []);
+        return;
+
+      case 'model.capabilities':
+        await this.reply(command.id, async () => {
+          if (this.probeModel === undefined) {
+            // Thrown rather than answered with an empty hint: an empty hint
+            // means "asked and nobody could tell", and this is "not asked".
+            throw new Error('this host cannot establish model capabilities');
+          }
+          return this.probeModel(command.endpointId, command.modelId);
+        });
         return;
 
       case 'model.install':

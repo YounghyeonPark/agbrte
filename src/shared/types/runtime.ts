@@ -119,6 +119,65 @@ export interface RuntimeCapabilities {
 }
 
 /**
+ * How a single capability claim was established (§3.3).
+ *
+ * > **Three tiers of confidence, and the doc must not blur them.** A field in
+ * > `RuntimeCapabilities` is either *self-described* by the runtime, *probed* by
+ * > us, or *configured* — a constant the adapter was told.
+ *
+ * Named after §3.3's own three words rather than invented ones, because the
+ * whole value of carrying this is that a reader can look up what it means. The
+ * fourth state — nobody established it — is the *absence* of a claim, never a
+ * fourth value: an unknown rendered as a value is the confusion this exists to
+ * prevent.
+ */
+export type CapabilityConfidence = 'probed' | 'self-described' | 'configured';
+
+/** One capability fact and where it came from. Absent ⇒ nobody knows. */
+export interface CapabilityClaim<T> {
+  value: T;
+  from: CapabilityConfidence;
+}
+
+/**
+ * The few things about one model that decide whether it can do the job (§3.3,
+ * §3.5), asked *before* it is chosen.
+ *
+ * This exists because a degradation nobody is told about reads as the feature
+ * being broken. A model whose probe answers `tools: 'none'` can only chat under
+ * `AgbrteHarness` — ask it four times to search and nothing happens, with no
+ * explanation anywhere. The picker is the last moment that is still cheap to
+ * fix, so the facts have to reach it.
+ *
+ * **A subset of `RuntimeCapabilities`, deliberately.** The full shape is 20-odd
+ * fields the orchestrator branches on; this is what a person choosing needs, and
+ * every field is optional because *unknown must render as unknown*. A missing
+ * claim is never rendered as `false` — those are different sentences and the
+ * second one is a lie about a model nobody asked.
+ */
+export interface ModelCapabilityHint {
+  endpointId: string;
+  modelId: string;
+  /** The one that caused the incident: can it call our tools at all (§3.5). */
+  tools?: CapabilityClaim<'native' | 'text-protocol' | 'none'>;
+  /** What survived degradation — a `flat-only` model mis-calls nested tools. */
+  schemaProfile?: CapabilityClaim<SchemaProfile>;
+  contextWindow?: CapabilityClaim<number>;
+  /** Whether *Agbrte* will send it an image, not whether the weights could. */
+  imageInput?: CapabilityClaim<boolean>;
+  reasoningControl?: CapabilityClaim<'effort' | 'budget' | 'none'>;
+  /**
+   * Why nothing could be established.
+   *
+   * Carried with the empty hint rather than thrown, for the same reason
+   * `EndpointModels.error` is: one model being unreachable is not a reason to
+   * have no answer about the others, and "could not ask" is a sentence a picker
+   * can show.
+   */
+  error?: string;
+}
+
+/**
  * Why a turn stopped (§3.9). `quota_exhausted` is deliberately distinct from
  * `rate_limited`: a rate limit clears in seconds and is handled by backoff, a
  * windowed allowance may not clear for hours and must park, not fail.
@@ -407,6 +466,19 @@ export interface UserTurn {
   content: NormalizedTurn['content'];
 }
 
+/**
+ * A bounded tail of raw subprocess output (§3.12, §7).
+ *
+ * The same shape as the preview server log, for the same reason: the
+ * interesting part of a long-running process's output is always the end, and
+ * `dropped` is what keeps a truncated tail honest about being truncated.
+ */
+export interface RawTail {
+  lines: string[];
+  /** Lines dropped off the front, so a shortened tail says it was shortened. */
+  dropped: number;
+}
+
 export interface AgentHandle {
   send(turn: UserTurn): Promise<void>;
   interrupt(): Promise<void>;
@@ -427,6 +499,21 @@ export interface AgentHandle {
   events: AsyncIterable<RuntimeEvent>;
   /** Opaque, runtime-owned, optional. A cache — never truth (§5.4). */
   resumeToken(): string | null;
+  /**
+   * What the subprocess behind this handle actually printed — stdout and
+   * stderr, unparsed (§3.12).
+   *
+   * Optional, and honestly so, like `sendMessage` on `RuntimeContext`: only an
+   * adapter that *has* a subprocess can answer, and the SDK library or the
+   * harness prints nothing a terminal would show. Absent means the UI offers
+   * no raw view rather than one that is permanently empty.
+   *
+   * A live window, not a record: the tail lives and dies with the handle, and
+   * the durable transcript is the event log. Read-only by construction — this
+   * is §3.12's "prefer documented JSON output over a pty" holding its ground;
+   * a tail can be watched, never typed into.
+   */
+  rawTail?(): RawTail;
 }
 
 /** What an adapter emits; the host translates these into durable log events. */

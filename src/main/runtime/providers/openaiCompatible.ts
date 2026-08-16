@@ -16,6 +16,7 @@
 import type {
   ContentBlock,
   DegradedTool,
+  ModelCapabilityHint,
   ModelDescriptor,
   ModelEndpoint,
   ModelProvider,
@@ -74,19 +75,51 @@ interface ShowResponse {
   capabilities?: string[];
 }
 
+/**
+ * What a server said about a model, separated from what we assumed.
+ *
+ * `contextLength: null` is the point of this shape. `contextLengthFrom` folded
+ * "the server told us 32768" and "nothing answered, so assume 8192" into one
+ * number, which is right for `RuntimeCapabilities` — the harness has to size
+ * requests against *something* — and wrong for anything that displays it, since
+ * showing an assumption as a fact is the confusion §3.3 spends three tiers
+ * avoiding.
+ */
+interface SelfDescription {
+  /** Ollama's capability strings, or null where nothing self-describes. */
+  capabilities: string[] | null;
+  /** The window the server reported, or null when it reported none. */
+  contextLength: number | null;
+}
+
 /** The window a model declares, or the conservative floor when it declares none. */
 function contextLengthFrom(shown: ShowResponse | null): number {
+  return declaredContextLength(shown) ?? CONSERVATIVE_CONTEXT;
+}
+
+function declaredContextLength(shown: ShowResponse | null): number | null {
   for (const [k, v] of Object.entries(shown?.model_info ?? {})) {
     if (k.endsWith('.context_length') && typeof v === 'number') return v;
   }
-  return CONSERVATIVE_CONTEXT;
+  return null;
 }
 
 export class OpenAiCompatibleProvider implements ModelProvider {
   readonly id = OPENAI_COMPATIBLE_PROVIDER_ID;
   readonly version = '0.0.1';
 
-  private readonly probeCache = new Map<string, RuntimeCapabilities>();
+  /**
+   * What a probe found, with the self-description it was built on.
+   *
+   * The pair is cached rather than the capabilities alone because a
+   * `contextWindow` of 8192 has two meanings — the server said so, or nothing
+   * answered and this is the floor — and `describe()` has to be able to tell
+   * them apart afterwards.
+   */
+  private readonly probeCache = new Map<
+    string,
+    { caps: RuntimeCapabilities; described: SelfDescription; probeError?: string }
+  >();
 
   constructor(private readonly opts?: OpenAiCompatibleOptions) {}
 
@@ -114,9 +147,13 @@ export class OpenAiCompatibleProvider implements ModelProvider {
   async probe(endpoint: ModelEndpoint, modelId: string): Promise<RuntimeCapabilities> {
     const key = `${endpoint.endpointId}::${modelId}`;
     const hit = this.probeCache.get(key);
-    if (hit) return hit;
+    if (hit) return hit.caps;
 
     const shown = await this.show(endpoint, modelId);
+    const described: SelfDescription = {
+      capabilities: shown?.capabilities ?? null,
+      contextLength: declaredContextLength(shown),
+    };
     const contextWindow = contextLengthFrom(shown);
     /*
      * Asked of the model, not assumed of the server (§3.3).
@@ -138,6 +175,18 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     let tools: RuntimeCapabilities['tools'] = 'none';
     let schemaProfile: RuntimeCapabilities['schemaProfile'] = 'text-protocol';
     let parallel: RuntimeCapabilities['parallelToolCalls'] = 'none';
+    /**
+     * Why the probe request never completed, if it did not.
+     *
+     * `tools: 'none'` stays either way — the harness must not offer tools it
+     * cannot verify — but the two roads to it are not the same claim, and
+     * anything *displaying* the answer has to be able to tell them apart. A
+     * model that answered in prose has been watched failing. An endpoint that
+     * refused the connection has been watched doing nothing at all, and
+     * reporting that as "this model cannot call tools" would put a defect on a
+     * model because a laptop was closed.
+     */
+    let probeError: string | undefined;
 
     try {
       const probe = await this.invoke(
@@ -163,8 +212,11 @@ export class OpenAiCompatibleProvider implements ModelProvider {
           nested !== null && typeof nested === 'object' ? 'strict-subset' : 'flat-only';
         parallel = probe.toolCalls.length > 1 ? 'many' : 'one';
       }
-    } catch {
-      // A failed probe is a `false` capability, never an assumed one.
+    } catch (err) {
+      // A failed probe is a `false` capability, never an assumed one — and the
+      // reason is kept, so a hint can say *unknown* where the capabilities have
+      // to say no.
+      probeError = err instanceof Error ? err.message : String(err);
     }
 
     const caps: RuntimeCapabilities = {
@@ -193,7 +245,7 @@ export class OpenAiCompatibleProvider implements ModelProvider {
        * observed apart, and this one is observed.
        */
       reasoningVisible: reasoningControl === 'effort' ? 'raw' : 'none',
-      input: { image: false, audio: false, pdf: false, video: false },
+      input: { ...ADAPTER_INPUT },
       // A local server bills nothing; `free` is the truth, not a placeholder.
       pricing: endpoint.locality === 'cloud' ? 'opaque' : 'free',
       costReporting: endpoint.locality === 'cloud' ? 'none' : 'per-request',
@@ -201,16 +253,59 @@ export class OpenAiCompatibleProvider implements ModelProvider {
       quotaModel: 'per-token-billing',
     };
 
-    this.probeCache.set(key, caps);
+    this.probeCache.set(key, {
+      caps,
+      described,
+      ...(probeError !== undefined ? { probeError } : {}),
+    });
     return caps;
+  }
+
+  /**
+   * What can be said without running the model (§3.3).
+   *
+   * Two sources, kept apart all the way to the screen: a probe that has already
+   * happened — free, and the only thing that has watched the model behave — and
+   * the server's own account of itself, which is one `/api/show` and is what
+   * §3.3 prefers wherever it exists. Neither is invented: a fact from neither
+   * source is simply absent from the hint.
+   *
+   * Never probes. A picker calls this once per listed model, and a `probe()` per
+   * row would be two inference requests per row behind a two-minute timeout —
+   * the cost §3.13 already refused to pay once, for the same reason.
+   */
+  async describe(endpoint: ModelEndpoint, modelId: string): Promise<ModelCapabilityHint> {
+    const key = `${endpoint.endpointId}::${modelId}`;
+    const hit = this.probeCache.get(key);
+    if (hit !== undefined) {
+      // A probe that never reached the endpoint is not evidence about the
+      // model, so the hint falls back to what the server said about itself and
+      // carries the reason instead.
+      return hit.probeError === undefined
+        ? hintFrom(endpoint.endpointId, modelId, hit.described, hit.caps)
+        : {
+            ...hintFrom(endpoint.endpointId, modelId, hit.described, null),
+            error: hit.probeError,
+          };
+    }
+
+    // Re-read rather than cached: this is the one thing that changes when
+    // somebody re-pulls a model, and the caller is a list somebody refreshed.
+    const shown = await this.show(endpoint, modelId);
+    return hintFrom(
+      endpoint.endpointId,
+      modelId,
+      { capabilities: shown?.capabilities ?? null, contextLength: declaredContextLength(shown) },
+      null,
+    );
   }
 
   /** Whether this request may carry `reasoning_effort` at all. */
   private takesEffort(req: ProviderRequest): boolean {
     const mode = req.reasoning?.mode;
     if (mode === undefined || mode === 'auto' || mode === 'off') return false;
-    const caps = this.probeCache.get(`${req.endpoint.endpointId}::${req.modelId}`);
-    return caps?.reasoningControl === 'effort';
+    const hit = this.probeCache.get(`${req.endpoint.endpointId}::${req.modelId}`);
+    return hit?.caps.reasoningControl === 'effort';
   }
 
   async invoke(req: ProviderRequest, opts: { signal: AbortSignal }): Promise<ProviderResult> {
@@ -379,6 +474,78 @@ export class OpenAiCompatibleProvider implements ModelProvider {
  * mid-run overflow after the work is already expensive.
  */
 const CONSERVATIVE_CONTEXT = 8_192;
+
+/**
+ * What this adapter can carry, whatever the weights could.
+ *
+ * A configured constant in §3.3's sense, and true of the *adapter*: `flatten()`
+ * below turns an image block into `[image … — this model cannot see images]`,
+ * so a vision model reached through here still cannot be shown a screenshot.
+ * Ollama's own `vision` capability is deliberately **not** reported upward,
+ * because reporting it would describe weights this code has no way to reach and
+ * §12's downgrade would still fire — a promise in the UI and a placeholder on
+ * the wire.
+ */
+const ADAPTER_INPUT = { image: false, audio: false, pdf: false, video: false } as const;
+
+/**
+ * One model's facts, each labelled with where it came from (§3.3).
+ *
+ * Pure, and the only place the three tiers are assigned, so "is this claim
+ * probed or merely declared" has one answer rather than one per caller.
+ *
+ * The asymmetry on `tools` is the interesting line and it is deliberate. A
+ * server that lists `tools` for a model is saying its template *can* render
+ * them — `qwen3:0.6b` says exactly that and then fails to emit a well-formed
+ * call, which is the incident this hint exists for — so a declared yes is
+ * offered as `self-described` and never as fact. A declared **no** is much
+ * stronger: Ollama refuses the request outright (`CheckCapabilities` →
+ * "does not support tools"), so there is nothing left to demonstrate.
+ */
+function hintFrom(
+  endpointId: string,
+  modelId: string,
+  described: SelfDescription,
+  caps: RuntimeCapabilities | null,
+): ModelCapabilityHint {
+  const declared = described.capabilities;
+
+  const tools: ModelCapabilityHint['tools'] =
+    caps !== null
+      ? { value: caps.tools, from: 'probed' }
+      : declared === null
+        ? undefined
+        : declared.includes('tools')
+          ? { value: 'native', from: 'self-described' }
+          : { value: 'none', from: 'self-described' };
+
+  const contextWindow: ModelCapabilityHint['contextWindow'] =
+    described.contextLength !== null
+      ? { value: described.contextLength, from: 'self-described' }
+      : caps !== null
+        ? // The floor the harness will actually size against, labelled as the
+          // assumption it is rather than shown as a number the server gave.
+          { value: caps.contextWindow, from: 'configured' }
+        : undefined;
+
+  const reasoningControl: ModelCapabilityHint['reasoningControl'] =
+    declared !== null
+      ? { value: declared.includes('thinking') ? 'effort' : 'none', from: 'self-described' }
+      : caps !== null
+        ? { value: caps.reasoningControl, from: 'configured' }
+        : undefined;
+
+  return {
+    endpointId,
+    modelId,
+    ...(tools !== undefined ? { tools } : {}),
+    ...(caps !== null ? { schemaProfile: { value: caps.schemaProfile, from: 'probed' } } : {}),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    // Knowable with nothing asked at all: it is a fact about this adapter.
+    imageInput: { value: ADAPTER_INPUT.image, from: 'configured' },
+    ...(reasoningControl !== undefined ? { reasoningControl } : {}),
+  };
+}
 
 const PROBE_TOOL: DegradedTool = {
   name: 'get_weather',

@@ -49,9 +49,11 @@ import type {
   InstanceId,
   LineageId,
   AgbrteEvent,
+  ModelCapabilityHint,
   PermissionDecision,
   PermissionRequest,
   InboxEntry,
+  RawTail,
   RuntimeCapabilities,
   Session,
   SessionId,
@@ -694,6 +696,25 @@ export class Fleet extends EventEmitter {
     return this.host(instanceId).connection.models();
   }
 
+  /**
+   * What one model can actually do, before somebody picks it (§3.3).
+   *
+   * `null` for a host too old to answer — three-valued, like `outdated`, and for
+   * the same reason. The two answers a client must never confuse are "asked, and
+   * this model cannot call tools" and "nobody could ask", and an older host must
+   * degrade to the second rather than to the first. The remedy differs too: one
+   * is choose a different model, the other is update the host.
+   */
+  async modelCapabilities(
+    instanceId: InstanceId,
+    endpointId: string,
+    modelId: string,
+  ): Promise<ModelCapabilityHint | null> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('models.capabilities')) return null;
+    return entry.connection.modelCapabilities(endpointId, modelId);
+  }
+
   async installModel(instanceId: InstanceId, endpointId: string, tag: string): Promise<void> {
     await this.host(instanceId).connection.installModel(endpointId, tag);
   }
@@ -1050,6 +1071,20 @@ export class Fleet extends EventEmitter {
 
   async queueDepth(sessionId: SessionId): Promise<number> {
     return this.ownerOf(sessionId).connection.queueDepth(sessionId);
+  }
+
+  /**
+   * The raw CLI tail behind one agent (§3.12).
+   *
+   * `null` for a host too old to answer, like `preview.log` and for the same
+   * reason: the terminal pane polls this every second, and an older host's
+   * honest answer — "I cannot tell you" — has to read as nothing-to-show, not
+   * as an error banner arriving once a second.
+   */
+  async rawLog(sessionId: SessionId, agentId: AgentId): Promise<RawTail | null> {
+    const entry = this.ownerOf(sessionId);
+    if (!entry.connection.supports('agent.rawLog')) return null;
+    return entry.connection.rawLog(sessionId, agentId);
   }
 
   // ------------------------------------------------------------ permissions

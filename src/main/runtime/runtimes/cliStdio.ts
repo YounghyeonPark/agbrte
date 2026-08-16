@@ -59,6 +59,7 @@ import type {
   AgentRuntime,
   AgentSpec,
   PermissionDecision,
+  RawTail,
   RuntimeCapabilities,
   RuntimeContext,
   RuntimeEvent,
@@ -73,6 +74,42 @@ const DEFAULT_MAX_GRANTS = 3;
 
 /** Enough stderr to explain a failure, not enough to hold a runaway log. */
 const STDERR_CAP = 8_192;
+
+/** How many raw lines the terminal view keeps per handle. */
+export const RAW_TAIL_LINES = 2_000;
+
+/**
+ * The raw output of the subprocesses behind one handle.
+ *
+ * The event stream is what these lines *parse to*; this is what they *were* —
+ * NDJSON, update banners, deprecation notices, stderr — so a long turn can be
+ * watched the way a terminal would show it. One buffer per handle rather than
+ * per run, because deny-ask-resume makes a turn span several processes and the
+ * person watching is watching the turn.
+ *
+ * Bounded the way the preview server log is (§6.8): a chatty CLI on a long
+ * turn will happily print megabytes, the interesting part is always the end,
+ * and `dropped` keeps a truncated tail honest about being truncated.
+ */
+export class RawTailBuffer {
+  private readonly lines: string[] = [];
+  private dropped = 0;
+
+  constructor(private readonly cap: number = RAW_TAIL_LINES) {}
+
+  push(line: string): void {
+    this.lines.push(line);
+    while (this.lines.length > this.cap) {
+      this.lines.shift();
+      this.dropped += 1;
+    }
+  }
+
+  /** A copy, so a caller cannot reach back into the ring. */
+  tail(): RawTail {
+    return { lines: [...this.lines], dropped: this.dropped };
+  }
+}
 
 // ------------------------------------------------------------------ spawning
 
@@ -249,6 +286,8 @@ class CliStdioHandle implements AgentHandle {
   private readonly granted: string[] = [];
   private current: CliRun | null = null;
   private interrupted = false;
+  /** Raw stdout/stderr across every spawn this handle makes — §7's terminal view. */
+  private readonly raw = new RawTailBuffer();
 
   /** The compiled policy, fixed before the first spawn — that is the fidelity. */
   private readonly baseAllow: string[];
@@ -337,6 +376,9 @@ class CliStdioHandle implements AgentHandle {
     const seen: { stop: StopReason | null } = { stop: null };
 
     const consume = (line: string): void => {
+      // Into the raw tail *before* parsing: the banner lines `parseLine`
+      // rightly skips are exactly what a person watching raw wants to see.
+      this.raw.push(line);
       const record = parseLine(line);
       // A CLI writes more than its protocol to stdout — update banners,
       // deprecation notices. Skipping them is not tolerance for sloppiness; it
@@ -352,6 +394,9 @@ class CliStdioHandle implements AgentHandle {
         ...(this.manifest.invoke.promptMode === 'stdin' ? { stdin: prompt } : {}),
       });
     } catch (err) {
+      // Still worth a raw line: the terminal view's job is to answer "why is
+      // nothing appearing", and a spawn that failed is the strongest answer.
+      this.raw.push(String(err));
       return { stop: { kind: 'misconfigured', detail: String(err) }, denials };
     }
     this.current = run;
@@ -366,6 +411,12 @@ class CliStdioHandle implements AgentHandle {
     }
 
     const exit = await run.exit;
+    // Stderr reaches the tail at run end rather than live, because `CliRun`
+    // only surfaces it there — a real cost, and a small one: these CLIs stream
+    // their protocol on stdout, and stderr is the epitaph, not the narration.
+    for (const line of exit.stderr.split('\n')) {
+      if (line.trim() !== '') this.raw.push(line);
+    }
     if (seen.stop === null && exit.stderr.length > 0) this.report(exit.stderr.trim().slice(0, 400));
 
     return { stop: seen.stop ?? stopFromExit(exit, this.manifest.detect.binary), denials };
@@ -506,6 +557,11 @@ class CliStdioHandle implements AgentHandle {
   /** The CLI's own session id. A cache, never truth (§5.4). */
   resumeToken(): string | null {
     return this.sessionId;
+  }
+
+  /** What the processes behind this handle actually printed — §7's terminal view. */
+  rawTail(): RawTail {
+    return this.raw.tail();
   }
 
   get events(): AsyncIterable<RuntimeEvent> {

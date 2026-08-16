@@ -17,7 +17,12 @@
  */
 
 import type { ContentBlock } from './content.js';
-import type { ReasoningRequest, RuntimeCapabilities, StopReason } from './runtime.js';
+import type {
+  ModelCapabilityHint,
+  ReasoningRequest,
+  RuntimeCapabilities,
+  StopReason,
+} from './runtime.js';
 
 /** Where a model lives, and how a remote session should reach it (§3.8). */
 export interface ModelEndpoint {
@@ -125,6 +130,22 @@ export interface ModelProvider {
    * enormous.
    */
   probe(endpoint: ModelEndpoint, modelId: string): Promise<RuntimeCapabilities>;
+  /**
+   * What can be said about a model *without* running it (§3.3).
+   *
+   * Optional, and separate from `probe` because the two have costs three orders
+   * of magnitude apart: `probe` makes real inference requests behind a
+   * two-minute timeout, which is why §3.13 refuses to run it for a model nobody
+   * has chosen. This reads whatever the server says about itself — for Ollama a
+   * `/api/show` manifest read — and returns cached probe results where one
+   * exists, so a picker can put a row's facts on screen without spending a turn
+   * per row.
+   *
+   * Every claim carries where it came from, and a claim that could not be
+   * established is **absent**. An adapter with nothing to read returns an empty
+   * hint, which the UI shows as unknown rather than as no.
+   */
+  describe?(endpoint: ModelEndpoint, modelId: string): Promise<ModelCapabilityHint>;
   invoke(req: ProviderRequest, opts: { signal: AbortSignal }): Promise<ProviderResult>;
   /** Provider-native counting only. Never a foreign tokenizer (§3.6). */
   countTokens?(req: ProviderRequest): Promise<number>;
