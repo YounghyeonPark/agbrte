@@ -85,6 +85,54 @@ export class HostSupervisor {
     return (await this.current().ready).runtimeIds;
   }
 
+  /**
+   * Façades for what the running host **actually has**, ready to register.
+   *
+   * `runtimes()` above answers from `opts.runtimes` — a list supplied at
+   * construction, which is right for the ones this process can name before the
+   * host exists and wrong for everything the host *detects*. An installed CLI is
+   * only known to be there after §3.12's probe has run on that machine, so a
+   * static list can never contain it, and the owner registering only the static
+   * list is how a detected runtime came to be advertised and then refused.
+   *
+   * The descriptor comes from the host where it can, and falls back to
+   * `opts.runtimes` where the host is too old to send one. An id with neither is
+   * **left out**: registering it would need a guess at `model`, and guessing
+   * `none` for a CLI makes admission reject every spec naming a model while
+   * guessing `required` makes it reject every spec without one (§17 Q11). Not
+   * offering it is the honest answer, and it is the answer that shipped before.
+   */
+  async advertisedRuntimes(): Promise<Array<{ id: string; label: string; model: ModelNeed; runtime: AgentRuntime }>> {
+    const advert = await this.current().ready;
+    const configured = new Map(this.opts.runtimes.map((r) => [r.id, r]));
+    const described = new Map(advert.runtimes.map((r) => [r.id, r]));
+
+    const out: Array<{ id: string; label: string; model: ModelNeed; runtime: AgentRuntime }> = [];
+    for (const id of advert.runtimeIds) {
+      const descriptor = described.get(id) ?? configured.get(id);
+      if (descriptor === undefined) continue;
+      out.push({
+        id,
+        label: descriptor.label,
+        model: descriptor.model,
+        // The version a client sees for an id the static list does not carry.
+        // `HostedFacade` reports it as the adapter version on every event it
+        // produces, and the *tool* version rides in the label the host chose.
+        runtime: new HostedFacade(
+          () => this.current(),
+          id,
+          configured.get(id)?.version ?? '0.0.1',
+        ),
+      });
+    }
+    return out;
+  }
+
+  /** What the running host looked for and did not find (§3.12). */
+  async detectionNotes(): Promise<Array<{ id: string; label: string; reason: string }>> {
+    return (await this.current().ready).runtimeNotes;
+  }
+
   /** Models the running host can reach, credentials already stripped. */
   async endpoints(): Promise<HostAdvertisement['endpoints']> {
     return (await this.current().ready).endpoints;

@@ -1,5 +1,5 @@
 {
-  "ranAt": "2026-08-12T08:34:34.738Z",
+  "ranAt": "2026-08-17T07:59:00.225Z",
   "results": [
     {
       "runtimeId": "cli:claude-code",
@@ -25,6 +25,13 @@
     {
       "runtimeId": "cli:claude-code",
       "scenarioId": "missing-binary",
+      "adapterVersion": "0.0.1",
+      "evidence": "real-subprocess",
+      "ok": true
+    },
+    {
+      "runtimeId": "cli:claude-code",
+      "scenarioId": "unauthenticated-parks",
       "adapterVersion": "0.0.1",
       "evidence": "real-subprocess",
       "ok": true

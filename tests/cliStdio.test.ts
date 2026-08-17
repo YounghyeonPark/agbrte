@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path';
 import {
   ADAPTER_VERSION,
   CliStdioRuntime,
+  detectCli,
   designatedArg,
   resumeInstruction,
   stopFromExit,
@@ -198,6 +199,60 @@ describe('driving an actual process', () => {
       // attempt budget on a binary that will never appear.
       expect(last).toMatchObject({ type: 'stopped', stop: { kind: 'misconfigured' } });
     }));
+
+  it('parks a CLI that is not logged in, with the command that fixes it', async () =>
+    cliScenario('unauthenticated-parks', async () => {
+      const events = await runTurn(fixtureManifest('no-login'));
+
+      // The trap this exists for: that run's `result` says `subtype: "success"`,
+      // so reading the subtype first reported a turn that never reached the
+      // model as a clean finish — and "Not logged in · Please run /login"
+      // arrived as ordinary assistant text with no route forward.
+      const stop = events.at(-1);
+      expect(stop).toMatchObject({ type: 'stopped', stop: { kind: 'auth' } });
+      // `auth` pauses (§4.1). `end_turn` and `transport` both move on as though
+      // the turn had happened, and `misconfigured` would fail a session that a
+      // login fixes in ten seconds.
+      expect(stop).not.toMatchObject({ stop: { kind: 'end_turn' } });
+
+      // Actionable, and specific enough to type. The category came from the
+      // `error` field; nothing matched on the vendor's sentence.
+      const detail = (stop as { stop: { detail?: string } }).stop.detail ?? '';
+      expect(detail).toContain('claude auth login');
+    }));
+
+  it('remembers why a run was failing when it dies before saying so', async () => {
+    // Ten `api_retry` records naming a rejected credential, then a process that
+    // ends without a `result`. The exit code alone is `transport` — retryable,
+    // and retrying an unauthenticated CLI helps nobody.
+    const events = await runTurn(fixtureManifest('auth-dies'));
+    expect(events.at(-1)).toMatchObject({ type: 'stopped', stop: { kind: 'auth' } });
+  });
+
+  it('lets a retry that recovers finish the turn normally', async () => {
+    // The other half of the same rule: a hint is not a verdict. Failing
+    // attempts followed by one that works is a successful turn, and a run that
+    // parked on the first `api_retry` would strand every session that ever hit
+    // a transient error.
+    const events = await runTurn(fixtureManifest('auth-recovers'));
+    expect(events).toContainEqual({ type: 'text', text: 'worked on retry' });
+    expect(events.at(-1)).toEqual({ type: 'stopped', stop: { kind: 'end_turn' } });
+  });
+
+  it('keeps the session id from the failed run, so the next turn resumes it', async () => {
+    // Checked because the whole promise of `awaiting_credentials` is that the
+    // work is still there: `claude --resume <id>` on the session an
+    // unauthenticated run left behind is what carries it, and that was confirmed
+    // against a real `claude` 2.1.233 (the session file is written at init,
+    // before the credential is ever used).
+    const runtime = new CliStdioRuntime({ manifest: fixtureManifest('no-login') });
+    const handle = await runtime.start(spec(), context());
+    const drained = drain(handle.events);
+    await handle.send({ content: [{ type: 'text', text: 'go' }] });
+    await drained;
+
+    expect(handle.resumeToken()).toBe('sess-fake-1');
+  });
 });
 
 describe('deny, ask, grant, resume', () => {
@@ -526,5 +581,92 @@ describe('naming a model for an installed CLI (§3.12, §17.11)', () => {
     await drain(handle.events);
 
     expect(seen[0]).not.toContain('--model');
+  });
+});
+
+/**
+ * Detection, and the sentence it produces when it fails (§3.12).
+ *
+ * `detectCli` used to answer `DetectedCli | null`, and `null` is where a real
+ * afternoon went. A host that could not find `claude` said nothing to anybody:
+ * the runtime was absent from the handshake, absent from the picker, and absent
+ * from every log. Absence is indistinguishable from a client that forgot to ask,
+ * so the person staring at the gap looks in the wrong place — and the reason had
+ * existed, for a few microseconds, inside a `catch`.
+ *
+ * The three failures are kept apart here because they send somebody to three
+ * different places: *not installed*, *installed and complaining*, and *installed
+ * and answering in an unexpected shape*.
+ */
+describe('finding an installed CLI, and saying why it was not found', () => {
+  /** A spawn that never starts a process, as a missing binary really behaves. */
+  const missing = (code?: string): SpawnCli => () => ({
+    stdout: (async function* () {
+      // Nothing: the process does not exist, so it prints nothing.
+    })(),
+    exit: Promise.resolve({
+      code: null,
+      signal: null,
+      stderr: 'Error: spawn claude ENOENT',
+      ...(code === undefined ? {} : { errorCode: code }),
+    }),
+    kill: () => undefined,
+  });
+
+  const answering = (out: string, code = 0): SpawnCli => () => ({
+    stdout: (async function* () {
+      yield out;
+    })(),
+    exit: Promise.resolve({ code, signal: null, stderr: code === 0 ? '' : 'not logged in\nrun: claude login' }),
+    kill: () => undefined,
+  });
+
+  it('reports a version when the tool is there', async () => {
+    const found = await detectCli(CLAUDE_CODE_MANIFEST, answering('1.2.3 (Claude Code)'));
+    expect(found.found).toBe(true);
+    expect(found.found === true && found.version).toBe('1.2.3');
+  });
+
+  it('names the binary and the OS code when it could not be started', async () => {
+    const found = await detectCli(CLAUDE_CODE_MANIFEST, missing('ENOENT'));
+    expect(found.found).toBe(false);
+    // The binary, because the remedy is about that name and not about ours.
+    expect(found.found === false && found.reason).toContain('claude');
+    // The OS's own word, which is what distinguishes "not installed" from
+    // "installed and not executable by this user".
+    expect(found.found === false && found.reason).toContain('ENOENT');
+    expect(found.found === false && found.reason).toContain('PATH');
+  });
+
+  it('repeats the tool\u2019s own complaint when it ran and failed', async () => {
+    const found = await detectCli(CLAUDE_CODE_MANIFEST, answering('', 1));
+    expect(found.found).toBe(false);
+    // Its first line, not ours: an installed tool refusing to answer knows more
+    // about why than we do, and paraphrasing would lose the actionable half.
+    expect(found.found === false && found.reason).toContain('not logged in');
+    expect(found.found === false && found.reason).toContain('exited 1');
+  });
+
+  it('still offers a tool whose version banner it cannot parse', async () => {
+    /*
+     * Not a skip. The tool answered, which is the thing being detected; a vendor
+     * who reformats `--version` should cost a version string in a label, never a
+     * runtime that vanishes from the picker. Recorded as `unknown` so a
+     * transcript says which is which (§5.1).
+     */
+    const found = await detectCli(CLAUDE_CODE_MANIFEST, answering('Claude Code, latest'));
+    expect(found.found).toBe(true);
+    expect(found.found === true && found.version).toBe('unknown');
+  });
+
+  it('does not throw when the spawn itself refuses', async () => {
+    const explodes: SpawnCli = () => {
+      throw new Error('argv rejected by this platform');
+    };
+    const found = await detectCli(CLAUDE_CODE_MANIFEST, explodes);
+    // A CLI that cannot even be attempted is still an ordinary state of a
+    // machine; the host has to come up regardless (§3.12).
+    expect(found.found).toBe(false);
+    expect(found.found === false && found.reason).toContain('argv rejected');
   });
 });

@@ -35,11 +35,41 @@ export interface AttachOptions {
   path: string;
   /** Answer every permission request with allow. For unattended runs only. */
   autoApprove: boolean;
+  /**
+   * Attach to *this* session, rather than asking which one.
+   *
+   * `--session <id>`, and the reason it exists is the terminal pane in the app
+   * (§7's `shell.open` with `{kind:'agbrte'}`): the pane is already showing one
+   * session, so a client started inside it that asked "which of these five?" —
+   * or, worse, silently made a sixth — would be answering a question the person
+   * has already answered by opening the pane.
+   *
+   * It never creates. An id this host does not have is a refusal naming it,
+   * because the failure it guards against is a second session appearing beside
+   * the one somebody is looking at, which is invisible until the transcripts
+   * disagree.
+   */
+  sessionId?: string;
 }
 
 export async function attach(connection: HostConnection, opts: AttachOptions): Promise<number> {
   const identity = await connection.ready;
   const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: '› ' });
+  /*
+   * Read nothing until somebody is listening.
+   *
+   * `createInterface` starts consuming immediately, and the setup below — the
+   * session lookup, the catch-up read, the pending permissions — is several
+   * round trips long. On a keyboard that costs nothing, because nobody types
+   * into a program that has not drawn its prompt. On a **pipe** it eats the
+   * input: `echo "do the thing" | agbrte attach --session <id>` had its line
+   * read and discarded before the `line` handler existed, then hit EOF, and the
+   * turn was simply never sent — no error, nothing in the log, which for a
+   * client whose whole job is putting turns into a durable log is the worst
+   * shape of failure available. `question()` and `prompt()` both resume, so the
+   * places that do want input still get it.
+   */
+  rl.pause();
 
   /**
    * Print without eating the half-typed line underneath.
@@ -71,10 +101,17 @@ export async function attach(connection: HostConnection, opts: AttachOptions): P
     say(c.dim('transcripts are readable; nothing can run'));
   }
 
-  const session = await chooseSession(connection, rl, say);
+  const session =
+    opts.sessionId === undefined
+      ? await chooseSession(connection, rl, say)
+      : await namedSession(connection, opts.sessionId, say);
   if (session === null) {
     rl.close();
-    return 0;
+    // A named session that is not here is a failure — something asked for this
+    // one by id. An empty *choice* is somebody changing their mind, which is
+    // not, and `chooseSession` returns the same `null` for both, so the exit
+    // code is decided by which of them was asked.
+    return opts.sessionId === undefined ? 0 : 1;
   }
 
   const agentId = await ensureAgent(connection, session, identity.runtimes, rl, say);
@@ -117,13 +154,41 @@ export async function attach(connection: HostConnection, opts: AttachOptions): P
 
   say(c.dim('type to send · Ctrl-C interrupts the turn · Ctrl-D leaves the session running'));
   driving = true;
-  rl.prompt();
+
+  /**
+   * The prompt, which must not be written to a readline that has closed.
+   *
+   * `rl.prompt()` after `close` throws `ERR_USE_AFTER_CLOSE`, and the place it
+   * happens is not one anybody would guess: `echo "do the thing" | agbrte
+   * attach --session <id>` delivers a line and *then* EOF, so the close lands
+   * while the send is still in flight and the throw arrives from inside a
+   * `.finally`. It surfaced as `readline was closed` — an error about our
+   * internals, presented as the user's problem, in place of the turn.
+   */
+  let closed = false;
+  const prompt = (): void => {
+    if (!closed) rl.prompt();
+  };
+  rl.on('close', () => {
+    closed = true;
+  });
+  prompt();
 
   let sending = false;
+  /**
+   * The turn being sent, so `close` can wait for it.
+   *
+   * Without this, a piped line is lost: `close` fires at EOF, `attach` returns,
+   * the caller disconnects and exits, and the send never reaches the host. The
+   * session log simply had no record of a turn the user watched go in — the
+   * worst shape of failure available to a client whose entire job is putting
+   * turns into a durable log.
+   */
+  let inFlight: Promise<unknown> = Promise.resolve();
   rl.on('line', (input) => {
     const text = input.trim();
     if (text === '') {
-      rl.prompt();
+      prompt();
       return;
     }
     if (sending) {
@@ -132,13 +197,14 @@ export async function attach(connection: HostConnection, opts: AttachOptions): P
       say(c.dim('queued behind the running turn'));
     }
     sending = true;
-    void connection
+    inFlight = connection
       .send(session.sessionId, agentId, text)
       .catch((err: unknown) => say(c.fail(err instanceof Error ? err.message : String(err))))
       .finally(() => {
         sending = false;
-        rl.prompt();
+        prompt();
       });
+    void inFlight;
   });
 
   rl.on('SIGINT', () => {
@@ -151,6 +217,8 @@ export async function attach(connection: HostConnection, opts: AttachOptions): P
   });
 
   await new Promise<void>((done) => rl.on('close', done));
+  // The line before EOF is still a turn somebody sent. See `inFlight`.
+  await inFlight;
   connection.off('event', onEvent);
   connection.off('permission', onPermission);
   say(c.dim('detached — the session keeps running'));
@@ -292,6 +360,37 @@ function ask(rl: Interface, query: string): Promise<string> {
   });
 }
 
+/**
+ * The one session that was asked for, loaded from disk if it is not live yet.
+ *
+ * `resumeSession` for a session the host has not loaded, which is the same call
+ * `chooseSession` makes for an on-disk entry — the id is the identity, and
+ * whether the host happens to have it in memory is not something a caller should
+ * have to know. A miss is reported rather than turned into a new session:
+ * "create when absent" is exactly the behaviour that would put a second session
+ * beside the one the pane is showing.
+ */
+async function namedSession(
+  connection: HostConnection,
+  sessionId: string,
+  say: (t: string) => void,
+): Promise<Session | null> {
+  const live = (await connection.list()).find((s) => s.sessionId === sessionId);
+  if (live !== undefined) return live;
+
+  try {
+    return await connection.resumeSession(sessionId as SessionId);
+  } catch {
+    // The reason is always "there is no such session here", and the underlying
+    // error is an ENOENT naming a path inside `.devagents` — our own layout,
+    // presented as though the user had mistyped a filename. What helps instead
+    // is the command that lists what *is* here.
+    say(c.fail(`no session ${sessionId} in this workspace`));
+    say(c.dim('`agbrte ls` lists the ones there are'));
+    return null;
+  }
+}
+
 async function chooseSession(
   connection: HostConnection,
   rl: Interface,
@@ -342,7 +441,16 @@ async function ensureAgent(
   rl: Interface,
   say: (t: string) => void,
 ): Promise<AgentId | null> {
-  const existing = session.agents[0];
+  /*
+   * The session's agent, if it has one (§4.2).
+   *
+   * A session holds exactly one, so this is "seat it if it is empty" and never
+   * "add another" — the host refuses a second seat by name, and this prompt
+   * would be offering something that cannot happen. Retired seats are skipped:
+   * they stay in the roster so old transcript rows keep their name, and a turn
+   * addressed to one is refused.
+   */
+  const existing = session.agents.find((a) => a.status !== 'retired');
   if (existing !== undefined) return existing.agentId;
 
   if (runtimes.length === 0) {

@@ -242,6 +242,9 @@ describe('the suite', () => {
       'grep',
       'bash',
       'message',
+      // Its own name rather than an argument on `message`, so a grant for one
+      // can never widen into the other (§13, §17 Q22).
+      'message_peer',
       'propose_split',
       'screenshot',
     ]);

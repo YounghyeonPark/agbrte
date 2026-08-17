@@ -28,6 +28,7 @@
 import { listListeningPorts, type ListeningPort } from '@main/preview/ports.js';
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import type { PreviewServers } from '@main/preview/servers.js';
+import type { Shells } from '@main/terminal/shell.js';
 import {
   deleteTemplate,
   fromSession,
@@ -63,6 +64,19 @@ export interface SessionHostOptions {
   manager: SessionManager;
   /** Runs preview servers for §6.8. Absent means this host will not start processes. */
   servers?: PreviewServers;
+  /**
+   * The user's own terminals in this workspace.
+   *
+   * Absent means this host will not open one — a host constructed without it, or
+   * one whose machine has no PTY binary beside the bundle. Refused by name
+   * rather than silently unavailable, because a dark button teaches people the
+   * feature does nothing.
+   *
+   * Constructed by the caller and handed in, because the *sink* for its output
+   * is this server: it has to reach one client's channel and no other, and only
+   * this file knows which channel that is.
+   */
+  shells?: Shells<ShellOwner>;
   identity: Omit<HostIdentity, 'protocol' | 'pid'>;
   /**
    * Decides what role a client gets, and who the log will say it was.
@@ -123,10 +137,25 @@ export interface SessionHostOptions {
   now?: () => number;
 }
 
+/**
+ * The token a terminal is opened under, and the way back to its one reader.
+ *
+ * Handed to `Shells` instead of the `Client` itself so the supervisor holds
+ * something it can only `post` to — it has no access to the role, the actor, or
+ * the channel's `close`. Identity is the object, which is why it is minted once
+ * per connection and never recreated: two clients cannot collide, and a client
+ * cannot name another's shell because it has no way to produce that object.
+ */
+export interface ShellOwner {
+  post(message: Parameters<HostSideSessionChannel['post']>[0]): void;
+}
+
 interface Client {
   channel: HostSideSessionChannel;
   role: AccessRole;
   label: string;
+  /** This connection's terminals, keyed by the object `Shells` compares. */
+  shellOwner: ShellOwner;
   /**
    * Fixed at handshake, never re-read.
    *
@@ -185,6 +214,7 @@ export class SessionHostServer {
       role: 'read-only',
       label: 'unknown',
       actor: { id: 'unknown', via: 'asserted' },
+      shellOwner: { post: (message) => channel.post(message) },
     };
     this.clients.add(client);
     this.cancelLinger();
@@ -192,6 +222,17 @@ export class SessionHostServer {
     channel.onMessage((command) => void this.dispatch(client, command));
     channel.onClose(() => {
       this.clients.delete(client);
+      /*
+       * Its terminals go with it, and this is the one place the shell differs
+       * from every other thing this host owns.
+       *
+       * A session, a turn, a preview server: all of those deliberately outlive
+       * the client that started them, because the whole design is that leaving
+       * is not stopping. A terminal is the opposite — it is a *view*, it has
+       * exactly one reader, and with that reader gone it is a program blocked on
+       * a prompt nobody will answer, printing into a buffer nobody will read.
+       */
+      this.opts.shells?.closeOwned(client.shellOwner);
       // A departing client is not a reason to stop. It owns nothing.
       this.armLinger();
     });
@@ -351,6 +392,27 @@ export class SessionHostServer {
           if (template === null) {
             throw new Error(`no template "${command.templateId}" in this workspace`);
           }
+          /*
+           * Refused before anything is created (§4.2).
+           *
+           * A session holds one agent, so a template naming two roles cannot be
+           * applied at all. Checked here rather than left to `addAgent`'s
+           * refusal because that one fires on the *second* seat — by then a
+           * session exists, with one agent and a name taken from a template it
+           * does not match, and the user has to notice and clean it up. Named
+           * roles rather than a count: these files are committed and
+           * hand-editable, so the message has to say what to edit.
+           */
+          if (template.roles.length > 1) {
+            throw new Error(
+              `the template "${template.name}" names ${template.roles.length} agents (` +
+                `${template.roles
+                  .map((r) => `${r.role} · ${r.model?.modelId ?? r.runtimeId}`)
+                  .join(', ')}) and a session holds one. Edit the template to a single role, ` +
+                `or start one session per agent and group them so the models can message ` +
+                `each other.`,
+            );
+          }
           const created = await manager.createSession({
             title: command.title ?? template.name,
             goal: template.goal ?? template.name,
@@ -455,6 +517,27 @@ export class SessionHostServer {
             { approved: command.approved, ...(command.reason !== undefined ? { reason: command.reason } : {}) },
             client.actor,
           );
+
+        case 'session.group':
+          /*
+           * A write, and not a marginal one. Grouping opens a channel *into*
+           * every session named — a member can be woken by a sibling and spend
+           * its budget answering — so a read-only client that could group is a
+           * read-only client that can start work (§7, §17 Q14).
+           */
+          this.requireWrite(client, 'group sessions');
+          return manager.groupSessions(
+            command.sessionIds as SessionId[],
+            command.name,
+            command.groupId,
+            client.actor,
+          );
+
+        case 'session.ungroup':
+          // A write for the mirror-image reason: it closes that channel, and
+          // one client silencing another's group is not a read.
+          this.requireWrite(client, 'remove a session from its group');
+          return manager.ungroupSession(command.sessionId as SessionId, client.actor);
 
         case 'session.recordChild':
           this.requireWrite(client, 'record a child');
@@ -614,6 +697,63 @@ export class SessionHostServer {
           return verified.length;
         }
 
+        case 'shell.open': {
+          /*
+           * A write, and the gate here is the *role*, not §13.
+           *
+           * §13 gates what a model asks for. This is a person with `read-write`
+           * typing on their own machine, and asking them to approve their own
+           * keystrokes would be theatre that taught people to click through
+           * prompts. What the role check does buy is real: a read-only client —
+           * a phone watching a run, a colleague looking over the wire — must
+           * not get a shell on this machine.
+           *
+           * Nothing about it touches the session's durable record. `sessionId`
+           * scopes the pane, and for `{kind:'agbrte'}` it also names the session
+           * our own CLI is told to attach to — which reaches an argv and no
+           * event. Being told to attach is not the same as being logged: if that
+           * CLI then *sends* something, it does so as a client over this same
+           * socket, and the resulting `user.turn` is written by the ordinary
+           * path with the ordinary actor, exactly as a second window's would be.
+           *
+           * `program` is passed through unvalidated *here* on purpose: the check
+           * that matters is "is this one of the things this host detected", and
+           * that question can only be answered where the detection is —
+           * `TerminalPrograms.resolve`, which refuses anything else by name and
+           * whose refusal reaches the client through the ordinary error path.
+           * A shape check here as well would be a second opinion that can only
+           * ever be wrong in the permissive direction.
+           */
+          this.requireWrite(client, 'open a terminal');
+          return this.shells().open(client.shellOwner, {
+            sessionId: command.sessionId,
+            ...(command.program !== undefined ? { program: command.program } : {}),
+            ...(command.cols !== undefined ? { cols: command.cols } : {}),
+            ...(command.rows !== undefined ? { rows: command.rows } : {}),
+          });
+        }
+
+        case 'shell.input':
+          this.requireWrite(client, 'type into a terminal');
+          // `false` for a shell this client does not own or that has already
+          // exited — an answer rather than an error, because a keystroke landing
+          // a millisecond after the program ended is an ordinary race and not
+          // something to put a banner on screen for.
+          return this.shells().write(client.shellOwner, command.shellId, command.data);
+
+        case 'shell.resize':
+          this.requireWrite(client, 'resize a terminal');
+          return this.shells().resize(
+            client.shellOwner,
+            command.shellId,
+            command.cols,
+            command.rows,
+          );
+
+        case 'shell.close':
+          this.requireWrite(client, 'close a terminal');
+          return this.shells().close(client.shellOwner, command.shellId);
+
         case 'permission.pending':
           return manager.pendingPermissions();
 
@@ -692,6 +832,11 @@ export class SessionHostServer {
     if (this.closed) return;
     this.closed = true;
     this.cancelLinger();
+    // Before the channels close rather than relying on each one's `onClose` to
+    // sweep: a host that stops must not leave a shell behind, and depending on
+    // a callback that fires per client makes "all of them" a property of the
+    // loop below rather than something this line states.
+    this.opts.shells?.closeAll();
     this.broadcast({ t: 'push.closing', reason });
     for (const client of this.clients) client.channel.close();
     this.clients.clear();
@@ -713,6 +858,22 @@ export class SessionHostServer {
       throw new Error('this host does not run preview servers');
     }
     return this.opts.servers;
+  }
+
+  /**
+   * The terminal supervisor, or a refusal that names the reason.
+   *
+   * Absent where a host was built without one — a test, or `agbrte serve` — and
+   * saying so beats a `?.` that reports success for a terminal nobody opened.
+   * The other way this is absent is a machine with no PTY binary beside the
+   * bundle, and that one is refused deeper down by `ShellUnavailable`, which
+   * carries the same class of message for the same reason.
+   */
+  private shells(): Shells<ShellOwner> {
+    if (this.opts.shells === undefined) {
+      throw new Error('this host does not open terminals');
+    }
+    return this.opts.shells;
   }
 
   /**

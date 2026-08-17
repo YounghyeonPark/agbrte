@@ -233,6 +233,38 @@ describe('admission', () => {
     const result = await r.admit(spec(), 'shared');
     expect(result.ok === false && result.failures[0]?.code).toBe('unknown_runtime');
   });
+
+  /**
+   * The refusal has to say **which machine**, and what that machine has.
+   *
+   * `runtime "cli:claude-code" is not registered` was true and unreadable: a
+   * person looking at a picker offering exactly that runtime concludes the app
+   * is broken, because from where they are sitting it is the app that put the
+   * row there. The sentence is the last thing standing between a real
+   * disagreement and an afternoon spent in the wrong file.
+   *
+   * The list comes from the registry itself, so it cannot describe a different
+   * set from the one `admit` is about to consult.
+   */
+  it('names what this host does offer, so the refusal reads as being about the host', async () => {
+    const r = registryWith(new EchoRuntime());
+    const result = await r.admit({ ...spec(), runtimeId: 'cli:claude-code' }, 'worktree');
+
+    expect(result.ok).toBe(false);
+    const detail = result.ok === false ? (result.failures[0]?.detail ?? '') : '';
+    expect(detail).toContain('cli:claude-code');
+    expect(detail).toContain('on this host');
+    expect(detail).toContain('echo');
+  });
+
+  /** A host whose agent host never started has nothing, which is its own news. */
+  it('says so plainly when nothing at all is registered', async () => {
+    const result = await new RuntimeRegistry().admit(spec(), 'worktree');
+    const detail = result.ok === false ? (result.failures[0]?.detail ?? '') : '';
+    expect(detail).toContain('neither is anything else');
+    // Never a trailing "offers: " with nothing after it, which reads as a bug.
+    expect(detail).not.toMatch(/offers\s*$/);
+  });
 });
 
 describe('a model is required, optional, or meaningless (§17.11)', () => {

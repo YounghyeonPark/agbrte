@@ -23,12 +23,15 @@ import { readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { globMatch, isInsideWorkspace } from '../policy/evaluate.js';
 import type { WorkspaceLeases } from './leases.js';
+import { PEER_MESSAGE_MAX_CHARS } from '@shared/types/index.js';
 import type {
   AgentId,
   ContentBlock,
   ImageBlock,
   AgentMessage,
   OutboundMessage,
+  OutboundPeerMessage,
+  PeerDelivery,
   SplitProposal,
 } from '@shared/types/index.js';
 
@@ -71,6 +74,16 @@ export interface ToolContext {
   proposeSplit?: (proposal: Omit<SplitProposal, 'proposalId'>) => void;
   /** Who else is here, so a bad address is refused rather than dropped. */
   roster?: AgentId[];
+  /**
+   * Address another session in this session's group (§17 Q22).
+   *
+   * Absent when this session is in no group, and the tool says so rather than
+   * pretending to send — the same honesty `sendMessage` owes a single-agent
+   * session.
+   */
+  sendPeerMessage?: (message: OutboundPeerMessage) => Promise<PeerDelivery>;
+  /** Which sessions may be addressed, so a bad address is refused up front. */
+  groupPeers?: Array<{ sessionId: string; title: string }>;
 }
 
 export interface ToolResult {
@@ -484,6 +497,116 @@ export const messageTool: ToolDefinition = {
 };
 
 /**
+ * Ask another session in this group for help (DESIGN.md §4.2, §17 Q22).
+ *
+ * ## Why this is not an argument on `message`
+ *
+ * Two reasons, and the second is the load-bearing one.
+ *
+ * The vocabulary would collide: `message`'s `to: 'session'` already means
+ * *broadcast to my own roster*, so a `session:` address for somebody else's
+ * session would put two opposite meanings on one word in one schema.
+ *
+ * And a grant would leak. §13's rule is that "always allow this pattern" must
+ * carry its pattern, because a grant widened past what was approved is how a
+ * gate quietly stops being one. `message` and this tool ask for genuinely
+ * different things — one talks to agents sharing this workspace, log and
+ * budget; the other reaches work with its own policy, its own bill and possibly
+ * its own repository — so a person who allowed the first has not allowed the
+ * second. Separate names is the only way the gate can tell them apart.
+ *
+ * Neither name is in §13's designated-argument table, so an `allow` rule with a
+ * `match` never applies to either and every call falls to an explicit rule or
+ * `defaultAction: 'ask'` — fail-closed by construction, exactly as `mcp__…` is.
+ *
+ * ## What it may carry, and why so little
+ *
+ * Text, capped, refused above the cap. §4.3 keeps a child's context narrow with
+ * briefs in and summaries out, both by reference, and a chat channel between
+ * sessions that could carry anything would reintroduce the explosion that buys
+ * — sideways rather than upward. Anything larger than a question belongs in an
+ * artifact the recipient reads **under its own permissions**.
+ */
+export const messagePeerTool: ToolDefinition = {
+  name: 'message_peer',
+  description:
+    'Ask another session in your group for help, or report something to it. ' +
+    `Short text only (${PEER_MESSAGE_MAX_CHARS} characters); to hand over anything larger, ` +
+    'write a file or artifact and name it here so they can read it themselves. ' +
+    'Returns as soon as it is accepted — the other session answers in its own time, ' +
+    'and its answer arrives as a new message rather than as this call returning.',
+  schema: {
+    type: 'object',
+    properties: {
+      to: { type: 'string', description: 'The session id of a member of your group' },
+      kind: { type: 'string', enum: [...MESSAGE_KINDS] },
+      text: { type: 'string' },
+    },
+    required: ['to', 'kind', 'text'],
+    additionalProperties: false,
+  },
+  async run(args, ctx) {
+    if (ctx.sendPeerMessage === undefined) {
+      return fail('this session is not in a group, so there is no other session to message');
+    }
+    const to = args['to'];
+    const kind = args['kind'];
+    const text = args['text'];
+    if (typeof to !== 'string' || typeof text !== 'string') {
+      return fail('to and text must be strings');
+    }
+    if (typeof kind !== 'string' || !MESSAGE_KINDS.includes(kind as (typeof MESSAGE_KINDS)[number])) {
+      return fail(`kind must be one of ${MESSAGE_KINDS.join(', ')}`);
+    }
+
+    // Refused, not shortened. A message cut in half reads as a complete one to
+    // whoever receives it, and the sender is the only party still holding the
+    // context needed to say the thing more briefly (§17 Q21's rule for skills).
+    if (text.length > PEER_MESSAGE_MAX_CHARS) {
+      return fail(
+        `that is ${text.length} characters and a message to another session is capped at ` +
+          `${PEER_MESSAGE_MAX_CHARS}. Put the detail in a file or artifact and name it here — ` +
+          'they can read it themselves, under their own permissions.',
+      );
+    }
+
+    // Checked against the snapshot before sending, the way `message` checks the
+    // roster: an address nobody holds would otherwise look sent, and the sender
+    // would wait for an answer that was never coming.
+    const peers = ctx.groupPeers ?? [];
+    const target = peers.find((p) => p.sessionId === to);
+    if (target === undefined) {
+      return fail(
+        peers.length === 0
+          ? `no session "${to}" in your group, and there is nobody else in it`
+          : `no session "${to}" in your group. Present: ${peers
+              .map((p) => `${p.sessionId} (${p.title})`)
+              .join(', ')}`,
+      );
+    }
+
+    const delivery = await ctx.sendPeerMessage({
+      toSessionId: to,
+      kind: kind as AgentMessage['kind'],
+      text,
+    });
+    // The owner's refusals reach the model verbatim. It knows things this side
+    // cannot — whether that session has finished, whether the exchange has run
+    // past its hop ceiling — and a tool that reported success anyway would be
+    // the "looks sent" failure with an extra layer on top.
+    if (!delivery.accepted) return fail(delivery.reason ?? 'the message was not delivered');
+
+    return {
+      ok: true,
+      summary: `${kind} → ${target.title}`,
+      content:
+        `Sent to ${target.title}. It will work on this in its own turn under its own ` +
+        'permissions; carry on with yours.',
+    };
+  },
+};
+
+/**
  * Ask for this session's scope to be split into a child (DESIGN.md §4.3).
  *
  * The tool §4.3 names, and it splits nothing — it asks. Approval belongs to a
@@ -627,6 +750,7 @@ export const DEFAULT_TOOLS: ToolDefinition[] = [
   grepTool,
   bashTool,
   messageTool,
+  messagePeerTool,
   proposeSplitTool,
   screenshotTool,
 ];

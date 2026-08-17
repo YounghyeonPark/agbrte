@@ -234,7 +234,17 @@ export function EventRow({
           data-testid="row-stopped"
           className={`${META_ROW} border-line justify-center border-t pt-2 text-[11px]`}
         >
-          <span>{event.stop.kind.replace(/_/g, ' ')}</span>
+          {/* The kind is a taxonomy label, and for most stops it is also the
+              whole story. `auth` is the one where it is not: "auth" tells a
+              person that something is wrong with a credential and nothing about
+              what to do, which is how a turn that ended with the CLI asking to
+              be logged in read as ordinary output with no way forward. */}
+          <span>
+            {event.stop.kind.replace(/_/g, ' ')}
+            {event.stop.kind === 'auth' && event.stop.detail !== undefined
+              ? ` — ${event.stop.detail}`
+              : ''}
+          </span>
         </div>
       );
 
@@ -247,6 +257,43 @@ export function EventRow({
           <span>
             {event.from} → {event.to}
             {event.reason !== undefined ? ` (${event.reason})` : ''}
+          </span>
+        </div>
+      );
+
+    /*
+     * A session talking to another session (§17 Q22).
+     *
+     * In the conversation rather than in the bookkeeping bucket, because it is
+     * the reason the turn beside it exists: a session woken by a sibling shows a
+     * `user.turn` nobody typed, and without this line above it that turn reads
+     * as a person's. The panel is a filtered view of these; this is the row in
+     * the timeline they came from.
+     *
+     * A refusal keeps its line, and says so. §4.2 records what a roster tried to
+     * say because that is the interesting part when it misbehaves, and a
+     * transcript showing only the messages that landed would answer the wrong
+     * question one boundary further out.
+     */
+    case 'session.peer_message_sent':
+      return (
+        <div
+          data-testid={event.delivered ? 'row-peer-sent' : 'row-peer-refused'}
+          className={`${META_ROW} ${event.delivered ? '' : 'text-state-fail'}`}
+        >
+          {who}
+          <span className="truncate-line min-w-0">
+            → {event.message.toSessionId} · {event.message.kind}
+            {event.delivered ? '' : ` — not delivered: ${event.refusedBecause ?? 'refused'}`}
+          </span>
+        </div>
+      );
+
+    case 'session.peer_message_received':
+      return (
+        <div data-testid="row-peer-received" className={META_ROW}>
+          <span className="truncate-line min-w-0">
+            ← {event.message.fromSessionId} · {event.message.kind}
           </span>
         </div>
       );

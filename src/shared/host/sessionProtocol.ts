@@ -45,6 +45,7 @@ import type {
   PermissionResolved,
   Session,
   SessionProjection,
+  ShellProgram,
 } from '../types/index.js';
 import type { HostChannel } from './protocol.js';
 
@@ -55,8 +56,35 @@ export interface HostIdentity {
   instanceId: InstanceId;
   lineageId: LineageId;
   workspaceRoot: string;
-  /** Runtime ids the forked agent host actually registered. */
+  /**
+   * Runtime ids this host will actually admit.
+   *
+   * Not "ids the agent host registered", which is what it used to be and is one
+   * process too far away to be true. The agent host registers loops; the *session*
+   * host holds the `RuntimeRegistry` that `admit()` consults, and for a while
+   * those two sets differed — the agent host detected an installed CLI and
+   * reported it here, the session host's registry never gained it, and every
+   * client faithfully offered a runtime the owner would refuse. This field is
+   * the owner's answer, so the picker and the gate cannot disagree.
+   */
   runtimes: string[];
+  /**
+   * Runtimes this host looked for and did not find, and why (§3.12).
+   *
+   * Detection is per machine on purpose — that is the whole reason capabilities
+   * are a function rather than a constant (§3.2) — but a failed detection used
+   * to be *silent*: a host that could not find `claude` said nothing anywhere,
+   * and the runtime was simply absent from every list. Absence reads as a bug in
+   * the client, and it cost somebody a long session.
+   *
+   * One line per manifest, computed once at startup, so this is a handful of
+   * short strings on a message that already carries the endpoint list.
+   *
+   * Absent from a host older than v16, which a client must render as *nothing to
+   * say* rather than as *everything was found*. That is the same degradation
+   * `bundleVersion` takes at v7 and for the same reason: silence is not a claim.
+   */
+  runtimeNotes?: Array<{ id: string; label: string; reason: string }>;
   /**
    * Models this host can reach, with no credentials attached.
    *
@@ -161,6 +189,35 @@ export interface HostIdentity {
  * restriction that did not exist before — would need `MIN_CLIENT_PROTOCOL`,
  * which is the lever that does exist for shape changes.
  *
+ * ## v16 adds a field to `welcome`, which is v7's case exactly
+ *
+ * `HostIdentity.runtimeNotes` says which runtimes this host looked for and did
+ * not find. A host older than v16 sends none, and a client reading the absence
+ * learns what is true — that this host cannot say — rather than being told
+ * everything was found. The screen it degrades to is the one that shipped
+ * before v16: the runtime is simply not listed, with no explanation. Worse than
+ * the new one, and not wrong.
+ *
+ * No `COMMAND_SINCE` entry, because no command was added. The bump exists so a
+ * client can tell "this host has nothing to report" from "this host predates
+ * reporting" — and because §17 Q16's rule is that the number moves whenever the
+ * shape does, so that the one case a version check must catch stays legible.
+ *
+ * ## v15 adds two commands, and one field that needs the v6 argument
+ *
+ * `session.group` and `session.ungroup` are commands, which is the case this
+ * table handles cleanly: a v14 host does not have them, `supports()` says so,
+ * and the UI reports that grouping needs a newer host on that machine rather
+ * than appearing to work and losing the group at the wire.
+ *
+ * The field is `Session.group`, which a v14 host never sets. A client reads its
+ * absence as *this session is in no group* — which is true of every session a
+ * v14 host holds, since nothing there can put one in a group. The degradation
+ * is to the old behaviour rather than a wrong one. Worth stating because the
+ * opposite direction would not be safe: a field whose absence made a session
+ * look *ungrouped while it was messaging* would need `MIN_CLIENT_PROTOCOL`, and
+ * the reason this one is fine is a property of the field, not of the mechanism.
+ *
  * ## v14 adds a command, and a field to `models.list` — one of each case
  *
  * `models.capabilities` is a command, which is the case this table handles
@@ -214,7 +271,70 @@ export interface PreparedChild {
   contract: ResultContract;
 }
 
-export const SESSION_PROTOCOL_VERSION = 14;
+/**
+ * ## v18 adds a field whose absence changes a result, so the client checks
+ *
+ * `session.addAgent` gained `replacing` — the seat a new one takes over from
+ * (§4.2). This is *not* the v6 case. There, a field an old host ignored left the
+ * old behaviour, which was harmless; here an old host ignores it and **adds a
+ * second agent** to a session the user was changing the model of, producing
+ * exactly the roster the rule exists to prevent, and one that cannot then be
+ * saved as a template or rendered without ambiguity.
+ *
+ * `MIN_CLIENT_PROTOCOL` is the wrong lever — that governs which *clients* a host
+ * serves, and the mismatch here runs the other way. So the client asks:
+ * `SESSION_ADDAGENT_REPLACING_SINCE` is checked in `HostConnection.addAgent`, and
+ * a host that predates it is told about rather than sent a field it would drop.
+ * The user sees "that machine's host is too old to change a model in place —
+ * update it", which is a sentence with an action in it, instead of a session
+ * that quietly grew a seat.
+ *
+ * Nothing else needs the bump: a v17 host still seats a *first* agent from a v18
+ * client, because that call carries no `replacing` at all.
+ *
+ * ## v17 adds an interactive terminal, which is four commands and two pushes
+ *
+ * `shell.open` / `shell.input` / `shell.resize` / `shell.close` are commands, so
+ * `COMMAND_SINCE` covers them cleanly: a v16 host does not have them, the client
+ * greys the control and says the host is too old, and every session on that host
+ * keeps working exactly as it did.
+ *
+ * The pushes need the argument the table cannot make. `push.shell` and
+ * `push.shellExit` are only ever produced *in response to* `shell.open`, which a
+ * host that predates them cannot receive — so there is no version in which one
+ * arrives at a client that would not understand it. That is why they are added
+ * without a `MIN_CLIENT_PROTOCOL` bump.
+ *
+ * **The shape is deliberately locality-blind.** Everything on the wire is a
+ * `shellId`, bytes, a size, and a program *selector*; nothing names a machine, a
+ * pid, a file descriptor or a path, and `cwd` is decided by the host rather than
+ * sent by the client. So a host on a build box implements the same four commands
+ * against the same PTY supervisor and the client does not change — the v1
+ * restriction to local hosts is a *deployment* fact (a remote host is two
+ * bundled `.js` files with no `node_modules` beside them, so the native module
+ * is not there), not a protocol one. It also means `{kind:'cli'}` resolves
+ * against the *build box's* installed CLIs the day that restriction lifts, which
+ * is the only answer that could be right.
+ *
+ * `shell.open`'s `program` was added inside v17 rather than as a v18, because
+ * v17 has not shipped: no released host has ever answered a `shell.open` at all,
+ * so there is no deployed peer for which the field is a change. It is optional
+ * regardless, and absent means the shell. `{kind:'agbrte'}` joined the same
+ * union for the same reason, and needs no bump of its own even once v17 ships:
+ * a host that does not know the kind refuses it by name through
+ * `TerminalPrograms.resolve`'s exhaustive `switch`, which is the honest answer
+ * and reaches the client as a sentence rather than as a broken pane.
+ */
+export const SESSION_PROTOCOL_VERSION = 18;
+
+/**
+ * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
+ *
+ * Its own constant rather than an entry in `COMMAND_SINCE`, because the command
+ * is as old as the protocol and it is the *field* that is new — and because the
+ * check it drives is a refusal a person reads, not a greyed-out control.
+ */
+export const SESSION_ADDAGENT_REPLACING_SINCE = 18;
 
 /**
  * The oldest client a host will serve.
@@ -254,6 +374,12 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'models.progress': 9,
   'agent.rawLog': 13,
   'models.capabilities': 14,
+  'session.group': 15,
+  'session.ungroup': 15,
+  'shell.open': 17,
+  'shell.input': 17,
+  'shell.resize': 17,
+  'shell.close': 17,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -437,8 +563,14 @@ export type SessionCommand =
    * watches arrive parsed through `session.events`, minus the parsing. Served
    * on request like `preview.log` rather than pushed — a bounded tail polled
    * by the one pane looking at it costs less than a push channel every client
-   * would receive. `null` is the ordinary answer between turns: a one-shot
-   * CLI's process is the turn (§3.12), and the tail lives and dies with it.
+   * would receive.
+   *
+   * `null` means **this seat has never printed a raw line**, and nothing else.
+   * It used to also mean "between turns", because the tail was held by the
+   * handle and a one-shot CLI's process is the turn — so the answer went back
+   * to `null` the instant the turn ended, and the pane a person opened to read
+   * what had just happened was always empty. The tail is kept by the session
+   * now, which outlives every handle it opens.
    */
   | { t: 'agent.rawLog'; id: RequestId; sessionId: string; agentId: string }
   /**
@@ -499,6 +631,29 @@ export type SessionCommand =
       approved: boolean;
       reason?: string;
     }
+  /**
+   * Put sessions in a group, so they can message each other (§17 Q22).
+   *
+   * **All of them in one command, not one call per session.** A group is one
+   * fact about a set, and a client looping over members would be a client that
+   * can stop halfway — leaving sessions in a group whose other half never
+   * joined, which is exactly the disagreement a single `groupId` per session
+   * exists to prevent. The host resolves every id before it writes anything.
+   *
+   * `groupId` absent mints a new group; present joins an existing one, which is
+   * how a session is added later without the client having to restate the
+   * membership it cannot authoritatively know.
+   *
+   * A write: it changes what a session can reach, and what can reach it.
+   */
+  | {
+      t: 'session.group';
+      id: RequestId;
+      sessionIds: string[];
+      name: string;
+      groupId?: string;
+    }
+  | { t: 'session.ungroup'; id: RequestId; sessionId: string }
   /** Commit a spawn on the parent once the child exists elsewhere (§4.3). */
   | {
       t: 'session.recordChild';
@@ -529,6 +684,57 @@ export type SessionCommand =
       chunk: string;
       final: boolean;
     }
+  /**
+   * Open an interactive terminal in this workspace — **the person's, not an
+   * agent's**.
+   *
+   * A write, and gated as one: it runs programs on this machine. That is the
+   * same reasoning `preview.start` records, and it is worth restating because
+   * the conclusion is the *opposite* of the one §13 would suggest. §13 gates
+   * what a **model** asks for; this is a human client with `read-write` typing
+   * on a keyboard, and there is no meaningful sense in which they should be
+   * asked to approve their own keystrokes. What does apply is the role check: a
+   * read-only phone watching a run must not get a shell on the build box.
+   *
+   * Nothing *this command* does reaches the event log, the turn queue, or the
+   * permission gate, so `sessionId` scopes the pane — and, for the one program
+   * that is a client of this host rather than a program on the machine, names
+   * the session it attaches to. A person then typing a turn into that client
+   * produces events the ordinary way, over this same socket, which is the point
+   * of it and is not a hole in the sentence above.
+   *
+   * No `command`, no `args` and no `cwd`. `program` is a **selector over a
+   * closed set** and not a name: `{kind:'shell'}` for the machine's own login
+   * shell, `{kind:'cli', cliId}` for one of the agent CLIs *this host detected*,
+   * which it resolves against its own `CLI_MANIFESTS`, or `{kind:'agbrte'}` for
+   * our own CLI, which the host finds beside its own bundle. An id it did not
+   * detect is refused by name and carries back the same sentence the picker
+   * already shows for that CLI. A `command` parameter instead would turn this
+   * into a general "execute this" RPC with a terminal's name on it, and a client
+   * could then widen its own reach by asking politely (§7).
+   *
+   * Absent means `{kind:'shell'}`, which is what every client that predates the
+   * field was asking for.
+   */
+  | {
+      t: 'shell.open';
+      id: RequestId;
+      sessionId: string;
+      program?: ShellProgram;
+      cols?: number;
+      rows?: number;
+    }
+  /**
+   * Keystrokes, exactly as the emulator produced them.
+   *
+   * A string rather than base64: this is what the user typed, it is already
+   * text, and every hop between here and the PTY is UTF-8. Base64 would cost a
+   * third more bytes per keypress to encode something that was never binary.
+   */
+  | { t: 'shell.input'; id: RequestId; shellId: string; data: string }
+  | { t: 'shell.resize'; id: RequestId; shellId: string; cols: number; rows: number }
+  /** The pane closed. The PTY goes with it — it is a view, not durable work. */
+  | { t: 'shell.close'; id: RequestId; shellId: string }
   | { t: 'permission.pending'; id: RequestId }
   | { t: 'permission.respond'; id: RequestId; requestId: string; decision: PermissionDecision }
   /**
@@ -561,6 +767,22 @@ export type SessionMessage =
    */
   | { t: 'push.permissionResolved'; resolved: PermissionResolved }
   | { t: 'push.queue'; sessionId: string; agentId: string; depth: number }
+  /**
+   * Terminal output, sent **only to the client that opened it**.
+   *
+   * The one push in this protocol that is not broadcast, and the exception is
+   * the point: every other push describes the session, which is shared, while
+   * this describes one person's screen. A second device showing somebody else's
+   * shell would be a leak wearing a feature's clothes.
+   *
+   * Already coalesced by the host into roughly one message per frame, so this is
+   * not one message per keystroke echo. It carries no `seq`, is never acked, and
+   * is never persisted — there is nothing to refetch, because the log is not
+   * where it lives and a terminal's history is the scrollback in front of you.
+   */
+  | { t: 'push.shell'; shellId: string; data: string }
+  /** The program ended. Sent to the owner, for the same reason. */
+  | { t: 'push.shellExit'; shellId: string; exitCode: number; signal?: number }
   /** The host is going away on purpose, so a client can say so rather than guess. */
   | { t: 'push.closing'; reason: string };
 

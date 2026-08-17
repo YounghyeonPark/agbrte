@@ -67,7 +67,11 @@ export function exportSessionMarkdown(
   out.push(`| Target | ${session.target.kind} |`);
   for (const agent of session.agents) {
     const model = agent.spec.model ? ` · ${agent.spec.model.modelId}` : '';
-    out.push(`| Agent \`${agent.role}\` | ${agent.spec.runtimeId}${model} |`);
+    // A replaced seat is listed and said to be replaced. Dropping it would
+    // leave the rows it wrote attributed to a name the header never mentions;
+    // listing it silently would claim the session runs two models (§4.2).
+    const retired = agent.status === 'retired' ? ' — retired' : '';
+    out.push(`| Agent \`${agent.role}\` | ${agent.spec.runtimeId}${model}${retired} |`);
   }
   out.push(`| Exported | ${now().toISOString()} |`, '');
 
@@ -200,6 +204,32 @@ function render(
         200,
       )}`;
 
+    /*
+     * Kept, and refusals with them (§17 Q22).
+     *
+     * An export is where a transcript leaves the `0700` directory §13 protects
+     * it in, and the question it gets read to answer is "why did this session do
+     * that" — for which "another session asked it to" is the whole answer. A
+     * dropped line here would leave a turn nobody sent.
+     */
+    case 'session.peer_message_sent':
+      return `> ✉️ → session \`${event.message.toSessionId}\` (${event.message.kind}): ${truncate(
+        event.message.text,
+        200,
+      )}${event.delivered ? '' : ` — **not delivered**: ${event.refusedBecause ?? 'refused'}`}`;
+
+    case 'session.peer_message_received':
+      return `> ✉️ ← session \`${event.message.fromSessionId}\` (${event.message.kind}): ${truncate(
+        event.message.text,
+        200,
+      )}`;
+
+    case 'session.joined_group':
+      return `> 👥 joined the group **${event.name}**${who}`;
+
+    case 'session.left_group':
+      return `> 👥 left its group${who}`;
+
     case 'session.state':
       return `> — ${event.from} → ${event.to}${event.reason ? ` (${event.reason})` : ''}`;
 
@@ -208,6 +238,19 @@ function render(
 
     case 'agent.created':
       return `> ＋ agent \`${event.role}\` on ${event.runtimeId}${event.model ? ` · ${event.model.modelId}` : ''}`;
+
+    /*
+     * The model changed here, and an exported transcript has to say so.
+     *
+     * Without this line the file reads as one agent whose answers change
+     * character halfway down for no stated reason — the exact confusion §4.2
+     * writes the event to prevent, and an export is where a reader has least
+     * context to recover it from.
+     */
+    case 'agent.retired':
+      return `> — retired ${event.was ?? 'this session’s agent'}${
+        event.replacedBy !== undefined ? ', replaced by the agent below' : ''
+      }${who}`;
 
     default:
       // Bookkeeping — usage, checklist churn, brief plumbing. Rendering every

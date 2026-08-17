@@ -228,6 +228,12 @@ export function stopReasonSummary(stop: StopReason): string {
       return stop.detail ? `${stop.limit} limit reached: ${stop.detail}` : `${stop.limit} limit reached`;
     case 'misconfigured':
       return `misconfigured: ${stop.detail}`;
+    case 'auth':
+      // The one pause whose remedy is a command somebody has to type, so the
+      // adapter's sentence *is* the reason — "auth" on its own tells a person
+      // that something is wrong with a credential and nothing about which one,
+      // where it lives, or what to do. Absent where no adapter knew (§3.9).
+      return stop.detail ?? 'the credential for this agent cannot currently be used';
     default:
       return stop.kind;
   }

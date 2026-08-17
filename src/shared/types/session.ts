@@ -410,7 +410,19 @@ export interface AgentRecord {
   spec: Omit<AgentSpec, 'workspacePath'>;
   /** Snapshot at start, recorded in the log for reproducibility. */
   resolvedCapabilities: RuntimeCapabilities;
-  status: 'idle' | 'parked' | 'running' | 'blocked' | 'crashed' | 'stopped';
+  /**
+   * `retired` is the one value that is not about a turn (§4.2).
+   *
+   * The other six describe what the seat is doing right now and are rebuilt
+   * from nothing on resume — `stopped` in particular is set when a turn ended
+   * badly, which is a fact about one turn and not about the seat's membership.
+   * `retired` means the seat has been *replaced*: it takes no more turns, it is
+   * not counted when admission asks whether this session already has an agent,
+   * and it stays in the roster forever so the rows it wrote keep their name. It
+   * is folded from `agent.retired` rather than remembered in memory, because a
+   * durable rule that evaporates on restart is not a rule.
+   */
+  status: 'idle' | 'parked' | 'running' | 'blocked' | 'crashed' | 'stopped' | 'retired';
   isolation: 'shared' | 'worktree';
   resumeToken: string | null;
   lastEventSeq: number;
@@ -462,8 +474,27 @@ export interface Session {
   tree: TreePosition;
   /** Cached projection; each child owns its own truth. */
   children: ChildRef[];
-  /** Genuinely unrelated work run alongside — not a parent/child relationship. */
-  peerSessionIds: SessionId[];
+  /**
+   * The group this session was put in, if any (§17 Q22). Absent means none.
+   *
+   * This replaced `peerSessionIds: SessionId[]`, and the replacement was
+   * deliberate rather than incidental. That field was documented as "genuinely
+   * unrelated work run alongside", which is §4.3's peer row — *shares nothing
+   * but the app*. A group shares something: an address a sibling can reach. So
+   * populating it would have made the field mean the opposite of its own
+   * sentence, and nothing ever populated it, so there is no log in existence
+   * carrying the old shape.
+   *
+   * The shape matters more than the name. An adjacency list makes one fact —
+   * *these sessions are together* — into N records that can disagree: adding a
+   * fifth member means appending to four other logs, and a partial failure
+   * leaves A naming B as a peer while B does not name A. A group **id** is one
+   * fact per session, written to that session's own append-only log, and
+   * membership is recovered by asking which sessions carry it. That is
+   * `TreePosition.rootSessionId`'s trick — "self when this is a root, makes tree
+   * queries one index scan" — applied to a set instead of a tree.
+   */
+  group?: SessionGroup;
   /**
    * Splits proposed here and not yet answered (§4.3).
    *
@@ -517,6 +548,44 @@ export interface SplitProposal {
   /** What in this session's state made a split the right move. */
   why: string;
 }
+
+/**
+ * A named set of sessions that may message each other (§17 Q22).
+ *
+ * Deliberately thin: an id and a label, and no member list. The members are the
+ * sessions carrying this `groupId`, which is a query rather than a record — see
+ * `Session.group` for why the edge is not stored on both ends the way a
+ * parent/child edge is. A group is a *set*, and a set with a name is one fact
+ * per member; a parent/child edge is a pair, and a pair has two ends that must
+ * each be reconstructable alone.
+ *
+ * `name` is for people. Nothing routes on it, two groups may share one, and
+ * renaming is not modelled — a group is cheap to leave and cheap to remake.
+ */
+export interface SessionGroup {
+  groupId: string;
+  name: string;
+}
+
+/**
+ * The most a single cross-session message may carry, in characters (§17 Q22).
+ *
+ * §4.3 keeps a child's context narrow on purpose — briefs in, summaries out,
+ * both by reference — and free-form chat between sessions would reintroduce
+ * exactly the explosion that buys. Two sessions passing transcripts back and
+ * forth is the failure mode `ResultContract.summaryMaxTokens` exists to
+ * prevent, arriving sideways instead of upward.
+ *
+ * So the bound is deliberately small — roughly a question and its context, not
+ * a handoff. A message that needs more than this is a message that should name
+ * an artifact and let the recipient read it **under its own permissions**,
+ * which is the same "by reference" rule the result path already uses.
+ *
+ * **Refused, never truncated**, for §17 Q21's reason: an instruction that
+ * arrives cut off silently teaches half of what its author wrote, and the
+ * sender still has the context to shorten it at the moment it is told.
+ */
+export const PEER_MESSAGE_MAX_CHARS = 2_000;
 
 /** Limits that keep trees from exploding (§4.3). */
 export const TREE_LIMITS = {

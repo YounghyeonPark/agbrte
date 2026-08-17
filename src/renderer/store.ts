@@ -98,7 +98,15 @@ export interface AgbrteState {
   openSession(sessionId: string, instanceId?: string): Promise<void>;
   /** Deselect, so a narrow screen can show the list again. */
   closeSession(): void;
-  /** True when the seat was actually added — what makes it worth remembering. */
+  /**
+   * Seat this session's agent, replacing the one there if there is one (§4.2).
+   *
+   * A session holds one model, so this is "add" on an empty session and
+   * "change" on a seated one — the same call, because the host is what decides,
+   * and a renderer that guessed would be a second rule to keep in step with the
+   * first. True when the seat landed, which is what makes it worth remembering
+   * as this host's default.
+   */
   addAgent(runtimeId: string, modelId: string | null, endpointId?: string): Promise<boolean>;
   /** `to` addresses one agent in a roster; absent means the first (§4.2). */
   /**
@@ -117,6 +125,16 @@ export interface AgbrteState {
   respond(requestId: string, allow: boolean): Promise<void>;
   /** Answer a split an agent proposed on the open session (§4.3). */
   respondSplit(proposalId: string, approved: boolean): Promise<void>;
+  /**
+   * Put another session in a group with the open one (§17 Q22).
+   *
+   * `name` is used only when the open session has no group yet; when it has
+   * one, the other session joins *that* group by id. Deciding here rather than
+   * in the component keeps one place answering "which group is this".
+   */
+  groupWith(sessionId: string, name: string): Promise<void>;
+  /** Take the open session out of its group. */
+  leaveGroup(): Promise<void>;
   applyBatch(batch: EventBatch): void;
   applySession(session: Session): void;
   applyPermission(request: PermissionRequest): void;
@@ -331,6 +349,16 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
   async addAgent(runtimeId, modelId, endpointId) {
     const sessionId = get().activeId;
     if (sessionId === null) return false;
+    /*
+     * The seat being taken over, when there is one (§4.2).
+     *
+     * Sent as an id the host checks rather than as "just replace whatever is
+     * there": if somebody else changed the model since this window last read
+     * the session, the host refuses and says so, instead of this click quietly
+     * discarding their choice. Retired seats are skipped — they are in the
+     * roster to name old transcript rows, not to be replaced twice.
+     */
+    const incumbent = get().active?.agents.find((a) => a.status !== 'retired');
     // `guard` turns a failure into the error banner and `undefined`, so the
     // boolean is "did the seat land" — which is what decides whether the choice
     // becomes the remembered default (agentDefaults.ts).
@@ -339,6 +367,7 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
         sessionId,
         role: 'lead',
         runtimeId,
+        ...(incumbent !== undefined ? { replacing: incumbent.agentId } : {}),
         ...(modelId !== null && modelId !== ''
           ? {
               model: {
@@ -358,13 +387,15 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
   async send(text, to, blocks) {
     const { activeId, active } = get();
     /**
-     * Whoever the pane is focused on, else the first agent (§4.2).
+     * Whoever the pane is focused on, else the first *live* agent (§4.2).
      *
      * Always addressing `agents[0]` was fine while a session had one agent and
      * silently wrong the moment it had a roster: every turn went to the lead
-     * however carefully you had selected a worker to talk to.
+     * however carefully you had selected a worker to talk to. It became wrong
+     * again for a different reason once a model could be changed — seat zero is
+     * then a retired seat, and the host refuses a turn addressed to one.
      */
-    const agentId = to ?? active?.agents[0]?.agentId;
+    const agentId = to ?? active?.agents.find((a) => a.status !== 'retired')?.agentId;
     if (activeId === null || agentId === undefined) return;
 
     // Not wrapped in `busy`: a turn can run for minutes, and blocking the whole
@@ -424,6 +455,36 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
       // clears from the same place it appeared rather than being removed here
       // and possibly disagreeing with the host.
       await agbrte().sessions.respondSplit(session.sessionId, proposalId, { approved });
+    });
+  },
+
+  async groupWith(sessionId, name) {
+    const active = get().active;
+    if (active === null) return;
+    await guard(set, async () => {
+      const group = active.group;
+      await agbrte().sessions.group(
+        // Both when starting one, so the host writes the whole set in a single
+        // command — a client that grouped members one at a time could stop
+        // halfway and leave a group whose other half never joined.
+        group === undefined ? [active.sessionId, sessionId] : [sessionId],
+        group?.name ?? name,
+        group?.groupId,
+      );
+      // Re-listed rather than patched: the reply covers the sessions named, and
+      // the list is what both the panel's members and its picker read from.
+      set({ sessions: await agbrte().sessions.list() });
+      applySnapshot(set, get, await agbrte().sessions.snapshot(active.sessionId));
+    });
+  },
+
+  async leaveGroup() {
+    const sessionId = get().activeId;
+    if (sessionId === null) return;
+    await guard(set, async () => {
+      await agbrte().sessions.ungroup(sessionId);
+      set({ sessions: await agbrte().sessions.list() });
+      applySnapshot(set, get, await agbrte().sessions.snapshot(sessionId));
     });
   },
 

@@ -28,7 +28,17 @@ import { PRIVATE_DIR_MODE, checkpointName } from './layout.js';
 // from one would silently re-arm the gate against the log's own
 // `via: 'standing-grant'` lines, or drop a skill the transcript says was
 // attached. One bump for both, because both landed before any v3 shipped.
-export const CHECKPOINT_VERSION = 3;
+// 4: the projection carries `group` (§17 Q22). A v3 checkpoint cut after a
+// `session.joined_group` folded it into nothing, so resuming from one would
+// produce a session that had left a group its own log says it is in — and
+// would then refuse a reply to the sibling that had just messaged it.
+// 5: a projected agent carries `retiredAt` and the `capabilities` recorded at
+// its admission (§4.2). A v4 checkpoint has neither, and the second is what a
+// retired seat is rebuilt from — resuming from one would fall back to
+// re-admitting a seat that will never run, and drop it from the roster if its
+// runtime has since been uninstalled, taking the name off every transcript row
+// it wrote.
+export const CHECKPOINT_VERSION = 5;
 
 export interface Checkpoint {
   version: number;

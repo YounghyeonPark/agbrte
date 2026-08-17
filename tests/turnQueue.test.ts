@@ -15,6 +15,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionManager } from '@main/sessionManager.js';
+import { seatBeside } from './support/legacyRoster.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
@@ -127,7 +128,11 @@ describe('turn ordering', () => {
     const sm = manager(ECHOES);
     const session = await sm.createSession({ title: 's', goal: 'g' });
     const a = await sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
-    const b = await sm.addAgent(session.sessionId, { role: 'reviewer', runtimeId: 'echo' });
+    // The second seat is the pre-cap shape (§4.2). The per-agent queue still has
+    // to hold for the sessions that have one — with a single agent the per-agent
+    // and per-session queues are indistinguishable, which is exactly why this
+    // test needs two.
+    const b = await seatBeside(sm, session.sessionId, { role: 'reviewer', runtimeId: 'echo' });
 
     // §4.2 has agents in one session running in parallel, so a session-wide
     // queue would serialize work that is meant to be concurrent.

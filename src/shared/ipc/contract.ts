@@ -42,6 +42,7 @@ import type {
   PermissionResolved,
   Session,
   SessionProjection,
+  ShellProgram,
 } from '../types/index.js';
 
 // ------------------------------------------------------------------- payloads
@@ -82,6 +83,20 @@ export interface HostInfo {
    * a picker that only shows model names changes it quietly.
    */
   endpoints: Array<{ id: string; label: string; provider: string; authenticated: boolean }>;
+  /**
+   * Runtimes this host looked for and did not find, with why (§3.12).
+   *
+   * The other half of `available`, and the half that was missing. A runtime that
+   * is not installed on a machine is simply absent from `available` — correct,
+   * and indistinguishable from a client that failed to ask. So a picker showed
+   * nothing at all where a user had every reason to expect Claude Code, and the
+   * only way to learn why was to read the host's stderr on the machine it runs
+   * on. Now it can say *Claude Code: not detected on this host (…)*.
+   *
+   * Empty from a host older than protocol v16, which means *this host cannot
+   * say* rather than *everything was found* — so nothing is claimed either way.
+   */
+  runtimeNotes: Array<{ id: string; label: string; reason: string }>;
   /** Why nothing can run here. Sessions still load and read. */
   unavailableReason?: string;
   /**
@@ -144,6 +159,16 @@ export interface AddAgentRequest {
   systemPrompt?: string;
   model?: { providerId: string; modelId: string; endpointId?: string };
   maxTurns?: number;
+  /**
+   * The seat this one replaces, when the user is changing the model (§4.2).
+   *
+   * A session holds one agent, so a request that omits this on a session that
+   * already has one is refused by the owner — by name, with the incumbent in
+   * the message. Sent by id rather than as a flag so two clients changing the
+   * model at once cannot silently overwrite each other: the second request
+   * names a seat that is already retired and is told so.
+   */
+  replacing?: string;
 }
 
 export interface SendRequest {
@@ -265,6 +290,70 @@ export interface CaptureResultDto {
   /** Whether the OCR pre-pass ran, so an unscanned frame is not shown as clean. */
   scanned: boolean;
 }
+
+/**
+ * A terminal the user opened, as the renderer sees it.
+ *
+ * No pid, no file descriptor, no handle — an opaque id the owning host minted,
+ * plus the two facts a pane needs to label itself honestly (§7). `cwd` is
+ * reported rather than requested: the host decided it, and showing it is how a
+ * person knows which machine and which folder they are typing in.
+ */
+export interface ShellDto {
+  shellId: string;
+  /**
+   * The file that was started, as the host resolved it on its own machine —
+   * `C:\Users\me\.local\bin\claude.exe`, `/bin/zsh`.
+   *
+   * Reported rather than requested, like `cwd`: the renderer names a *kind* of
+   * program and the host decides which file that is, so this is the host telling
+   * the pane what it actually did.
+   */
+  program: string;
+  /**
+   * What to call it above the terminal — `Your shell`, `Claude Code (installed
+   * CLI)`.
+   *
+   * Carried rather than derived from `program`, because a label the renderer
+   * guessed from a path would be the one part of the pane's chrome that is not
+   * the host's answer, and this is the pane whose chrome carries a promise.
+   */
+  label: string;
+  /** The workspace. Chosen by the host, never by this client. */
+  cwd: string;
+  cols: number;
+  rows: number;
+}
+
+/**
+ * A chunk of terminal output.
+ *
+ * Deliberately **not** an `EventBatch`. It carries no `seq`, is never acked, is
+ * never persisted, and never passes through `ipc/eventBridge.ts` — that machine
+ * exists to keep a durable log and a slow renderer from harming each other, and
+ * none of its parts have a meaning here. There is nothing to refetch on a gap,
+ * because a terminal's history is the scrollback in front of you.
+ */
+export interface ShellChunk {
+  shellId: string;
+  data: string;
+}
+
+/** The program in a terminal ended. `exitCode: -1` means the host went away. */
+export interface ShellExitDto {
+  shellId: string;
+  exitCode: number;
+  signal?: number;
+}
+
+/**
+ * How many lines of scrollback a terminal pane keeps.
+ *
+ * §7's "windowed projection, never the whole log" applied to a stream that has
+ * no log: the bound is the emulator's own ring buffer, and it is stated here so
+ * the number is one number rather than a literal in a component.
+ */
+export const SHELL_SCROLLBACK = 2_000;
 
 /**
  * A batch of durable events, in `seq` order.
@@ -627,6 +716,20 @@ export interface AgbrteApi {
       proposalId: string,
       decision: { approved: boolean; reason?: string },
     ): Promise<Session | null>;
+    /**
+     * Put sessions in a group so they can message each other (§17 Q22).
+     *
+     * Every member in one call, because a group is one fact about a set and a
+     * client that added them one at a time could stop halfway. Rejects — by
+     * naming the machines — when the sessions are not all on one host: a group
+     * is same-host in this version, and a group whose members cannot reach each
+     * other would be a field that records something it does not enforce.
+     *
+     * `groupId` absent starts a new group; present adds to an existing one.
+     */
+    group(sessionIds: string[], name: string, groupId?: string): Promise<Session[]>;
+    /** Take a session out of its group. Leaving must be as easy as joining. */
+    ungroup(sessionId: string): Promise<Session>;
     /** Sessions on disk across every attached host, not yet loaded. */
     listOnDisk(): Promise<
       Array<{ instanceId: string; sessionId: string; title: string; goal: string }>
@@ -678,11 +781,75 @@ export interface AgbrteApi {
      *
      * Read-only observation, not a terminal: the structured transcript stays
      * the truth, and this is the "what is the CLI actually printing" window
-     * beside it. `null` means the seat has no raw stream to show — a harness
-     * or echo agent, or a host too old to serve it — and the UI hides the
-     * toggle rather than showing an empty pane.
+     * beside it. `null` means the seat has never printed a raw line — a harness
+     * or echo agent, a host too old to serve it, or a CLI seat that has not run
+     * yet — and the UI hides the toggle rather than showing an empty pane.
+     *
+     * It does **not** mean "between turns". The owner keeps the tail, not the
+     * handle, so a finished turn's output is still here; that distinction is
+     * the whole difference between a working toggle and a dark one.
      */
     rawLog(sessionId: string, agentId: string): Promise<RawTail | null>;
+  };
+  /**
+   * **Your own terminal in the workspace — not an agent, and not the transcript.**
+   *
+   * The read-only view on `sessions.rawLog` is the *other* thing: what a CLI
+   * seat printed while a model drove it, which for a headless harness is a
+   * stream of NDJSON and not a command line at all. This is a real PTY that a
+   * person types into, which is why `claude /login` — impossible in a headless
+   * seat, where it answers *"/login isn't available in this environment"* —
+   * works here.
+   *
+   * ## What this widens, and why it is the minimum
+   *
+   * It is a genuine new capability for a sandboxed renderer: running programs on
+   * the machine that owns the workspace. It is kept to the smallest shape that
+   * is still a terminal —
+   *
+   *  - **no command, no argv, and no program name.** `program` is a selector
+   *    over a closed set the *host* defines — its own login shell, or one of the
+   *    agent CLIs it detected for itself — and the host maps it to a file. A
+   *    `command` parameter instead would be a general "execute this" RPC with a
+   *    terminal's name on it, and the renderer would have widened its own reach
+   *    by asking politely. The renderer can name `claude-code`; it cannot name
+   *    `claude`, `C:\…\claude.exe`, or `claude --dangerously-skip-permissions`.
+   *  - **no `cwd`.** The host uses the workspace it owns. A path parameter would
+   *    make the workspace boundary advisory.
+   *  - **no handles out.** `shellId` is an opaque string the host minted; no pid,
+   *    no descriptor, no path to the pty device.
+   *  - **write access required**, enforced by the host: a read-only client — a
+   *    phone watching a run — gets no shell on the build box.
+   *  - **the host is the owner.** Output goes only to the client that opened it,
+   *    and the PTY dies when that client's connection does.
+   *
+   * None of it is gated by §13. That gate covers what a *model* asks for; asking
+   * a person to approve their own keystrokes would teach them to click through
+   * prompts, which is the one thing the gate cannot survive.
+   */
+  shell: {
+    /**
+     * Open one on the host that owns this session. Local hosts only in v1 —
+     * a remote host is refused **by name**, because the bundle deployed there
+     * has no PTY module beside it.
+     *
+     * `program` omitted means the shell. A `{kind:'cli'}` the host did not
+     * detect rejects with that host's own detection sentence — the same one the
+     * agent picker shows for the same CLI — rather than with a generic refusal
+     * or, worse, a silent fall back to a shell under a CLI's label.
+     */
+    open(r: {
+      instanceId: string;
+      sessionId: string;
+      program?: ShellProgram;
+      cols?: number;
+      rows?: number;
+    }): Promise<ShellDto>;
+    /** Keystrokes. `false` means the terminal has already gone. */
+    write(shellId: string, data: string): Promise<boolean>;
+    resize(shellId: string, cols: number, rows: number): Promise<boolean>;
+    /** The pane closed. The PTY goes with it. */
+    close(shellId: string): Promise<boolean>;
   };
   permissions: {
     pending(): Promise<PermissionRequest[]>;
@@ -734,6 +901,18 @@ export interface AgbrteApi {
     /** A host was attached, detached, or changed availability. */
     hosts(cb: (hosts: HostInfo[]) => void): () => void;
     update(cb: (state: UpdateState) => void): () => void;
+    /**
+     * Terminal output, on its own channel.
+     *
+     * Separate from `events` on purpose and not as an accident of typing. The
+     * event channel is batched, acked and pausable because it carries a durable
+     * log that must survive a slow renderer; this carries bytes a person is
+     * watching arrive, where a 50 ms batch is latency you can feel and a
+     * watermark pause would be a terminal that stops echoing. Routing keystrokes
+     * through that machinery would make both worse at once.
+     */
+    shell(cb: (chunk: ShellChunk) => void): () => void;
+    shellExit(cb: (exit: ShellExitDto) => void): () => void;
   };
   /** Ack the highest `seq` rendered, so main can resume a paused forwarder. */
   ack(sessionId: string, seq: number): void;
@@ -805,6 +984,8 @@ export const CH = {
   hostsConformance: 'agbrte:hosts.conformance',
   inboxList: 'agbrte:inbox.list',
   sessionsRespondSplit: 'agbrte:sessions.respondSplit',
+  sessionsGroup: 'agbrte:sessions.group',
+  sessionsUngroup: 'agbrte:sessions.ungroup',
   inboxMarkRead: 'agbrte:inbox.markRead',
   hostsSsh: 'agbrte:hosts.ssh',
   hostsAddRemote: 'agbrte:hosts.addRemote',
@@ -847,6 +1028,10 @@ export const CH = {
   sessionsExport: 'agbrte:sessions.export',
   sessionsSearch: 'agbrte:sessions.search',
   sessionsRawLog: 'agbrte:sessions.rawLog',
+  shellOpen: 'agbrte:shell.open',
+  shellWrite: 'agbrte:shell.write',
+  shellResize: 'agbrte:shell.resize',
+  shellClose: 'agbrte:shell.close',
   permissionsPending: 'agbrte:permissions.pending',
   permissionsRespond: 'agbrte:permissions.respond',
   ack: 'agbrte:ack',
@@ -860,6 +1045,15 @@ export const PUSH = {
   permissionResolved: 'agbrte:push.permissionResolved',
   hosts: 'agbrte:push.hosts',
   update: 'agbrte:push.update',
+  /**
+   * Terminal bytes, and the one push that never touches `EventBridge`.
+   *
+   * Named separately rather than multiplexed onto `events` so that the
+   * separation is visible in the channel list: anything arriving here is a
+   * person's own shell, is not in any log, and is not part of any transcript.
+   */
+  shell: 'agbrte:push.shell',
+  shellExit: 'agbrte:push.shellExit',
 } as const;
 
 /** §7's batch limits, shared so main and any test agree on one number. */

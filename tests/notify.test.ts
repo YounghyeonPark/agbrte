@@ -29,7 +29,6 @@ function session(state: SessionState, extra: Partial<Session> = {}): Session {
     needsAttention: null,
     tree: { rootSessionId: 's1', depth: 0, ancestry: [] },
     children: [],
-    peerSessionIds: [],
     ...extra,
   } as Session;
 }

@@ -24,6 +24,7 @@ import { mkdtemp, rename, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openWorkspace } from '@main/store/identity.js';
+import { seatBeside } from './support/legacyRoster.js';
 import { workspaceLayout } from '@main/store/layout.js';
 
 let dirs: string[] = [];
@@ -223,7 +224,12 @@ describe('resuming after a move', () => {
     const one = build(first);
     const session = await one.createSession({ title: 's', goal: 'g' });
     const a = await one.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
-    const b = await one.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+    // Two seats on purpose: the rule under test is *once per session, not once
+    // per agent*, and a one-seat session cannot tell the two apart. A session
+    // holds one agent now (§4.2), so the second is seated the way the sessions
+    // that predate the cap got theirs — those are exactly the sessions that
+    // could still be moved tomorrow.
+    const b = await seatBeside(one, session.sessionId, { role: 'worker', runtimeId: 'echo' });
     await one.send(session.sessionId, a.agentId, { content: [{ type: 'text', text: 'x' }] });
     await one.send(session.sessionId, b.agentId, { content: [{ type: 'text', text: 'y' }] });
 

@@ -38,6 +38,9 @@ import {
   type AboutInfo,
   type SendRequest,
   type SessionSnapshot,
+  type ShellChunk,
+  type ShellDto,
+  type ShellExitDto,
   type SshHostInfo,
   type UpdateState,
 } from '@shared/ipc/contract.js';
@@ -52,6 +55,7 @@ import type {
   Session,
   SessionId,
   Sha256,
+  ShellProgram,
 } from '@shared/types/index.js';
 import { basename } from 'node:path';
 import {
@@ -244,6 +248,7 @@ function toInfo(host: AttachedHost, shipping?: string): HostInfo {
     label: labelFor(host),
     available: host.available,
     endpoints: host.endpoints,
+    runtimeNotes: host.runtimeNotes,
     ...(host.movedFrom !== undefined ? { movedFrom: host.movedFrom } : {}),
     link: host.link,
     ...(host.unavailableReason !== undefined
@@ -302,12 +307,49 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   const onHosts = (): void =>
     broadcast(PUSH.hosts, fleet.hosts().map((h) => toInfo(h, deps.shippingVersion)));
 
+  /**
+   * Terminals opened through *this* API host, and nothing else.
+   *
+   * The fleet is shared by every client — the window, and one `createApi` per
+   * browser socket — so a shell push reaches all of them. That is right for a
+   * session event, which describes something shared, and wrong for a terminal,
+   * which describes one person's screen. So each API host keeps the ids it
+   * opened and drops the rest.
+   *
+   * It is the second of two filters and neither is redundant: the host already
+   * targets its `push.shell` at the one *connection* that opened the shell,
+   * which is what keeps a second device out. This one separates clients that
+   * share a connection — every browser tab and this window all speak through
+   * main's single `HostConnection` per host.
+   *
+   * It is also the lifetime: `dispose` closes what is still open, so closing a
+   * window or dropping a WebSocket takes its terminals with it rather than
+   * leaving a shell running for a reader that no longer exists.
+   */
+  const ownShells = new Set<string>();
+
+  const onShell = (shellId: string, data: string): void => {
+    if (!ownShells.has(shellId)) return;
+    const chunk: ShellChunk = { shellId, data };
+    // Straight to the client. No batching, no watermark, no ack — see
+    // `AgbrteApi.on.shell` for why routing this through `EventBridge` would
+    // make both channels worse.
+    broadcast(PUSH.shell, chunk);
+  };
+  const onShellExit = (shellId: string, exitCode: number, signal?: number): void => {
+    if (!ownShells.delete(shellId)) return;
+    const exit: ShellExitDto = { shellId, exitCode, ...(signal !== undefined ? { signal } : {}) };
+    broadcast(PUSH.shellExit, exit);
+  };
+
   fleet.on('event', onEvent);
   fleet.on('session', onSession);
   fleet.on('permission', onPermission);
   fleet.on('permission-resolved', onResolved);
   fleet.on('host', onHosts);
   fleet.on('detached', onHosts);
+  fleet.on('shell', onShell);
+  fleet.on('shell-exit', onShellExit);
 
   // ----------------------------------------------------------------- handlers
 
@@ -458,6 +500,12 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
       fleet.respondSplit(sessionId as SessionId, proposalId, decision),
   );
 
+  handle(CH.sessionsGroup, (sessionIds: string[], name: string, groupId?: string) =>
+    fleet.group(sessionIds as SessionId[], name, groupId),
+  );
+
+  handle(CH.sessionsUngroup, (sessionId: string) => fleet.ungroup(sessionId as SessionId));
+
   handle(CH.sessionsListOnDisk, () => fleet.listOnDisk());
 
   handle(CH.sessionsResume, (instanceId: string, sessionId: string) =>
@@ -495,6 +543,9 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
       ...(r.systemPrompt !== undefined ? { systemPrompt: r.systemPrompt } : {}),
       ...(r.model !== undefined ? { model: r.model } : {}),
       ...(r.maxTurns !== undefined ? { limits: { maxTurns: r.maxTurns } } : {}),
+      // Carried through unread: the owner of the log decides what replacing a
+      // seat means, and this layer is a wire (§4.2, §7).
+      ...(r.replacing !== undefined ? { replacing: r.replacing } : {}),
     }),
   );
 
@@ -894,6 +945,56 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     fleet.rawLog(sessionId as SessionId, agentId as AgentId),
   );
 
+  // ----------------------------------------------------------------- terminal
+
+  /*
+   * The user's own terminal in the workspace (§7, §8).
+   *
+   * Four narrow methods, no generic escape hatch: no command, no argv, no cwd,
+   * and nothing but an opaque id comes back. The one thing a client chooses is
+   * *which* of the host's own programs to start, and it says so with a selector
+   * the host resolves — so this handler forwards it without interpreting it.
+   * `Fleet.openShell` refuses a remote host by name, the owning host refuses a
+   * read-only client, and the owning host refuses a CLI it did not detect.
+   *
+   * These are handlers like any other, which is what makes the web client work
+   * unchanged — the same map `ipcMain` drives is the map the WebSocket drives.
+   * What differs per client is `ownShells` above, and that is the point.
+   */
+  handle(
+    CH.shellOpen,
+    async (r: {
+      instanceId: string;
+      sessionId: string;
+      program?: ShellProgram;
+      cols?: number;
+      rows?: number;
+    }): Promise<ShellDto> => {
+      const handle = await fleet.openShell(r.instanceId as InstanceId, r.sessionId as SessionId, {
+        ...(r.program !== undefined ? { program: r.program } : {}),
+        ...(r.cols !== undefined ? { cols: r.cols } : {}),
+        ...(r.rows !== undefined ? { rows: r.rows } : {}),
+      });
+      ownShells.add(handle.shellId);
+      return handle;
+    },
+  );
+
+  handle(CH.shellWrite, (shellId: string, data: string) =>
+    // Refused rather than routed for an id this client did not open. The host
+    // checks ownership too; this stops one client from even naming another's.
+    ownShells.has(shellId) ? fleet.writeShell(shellId, data) : Promise.resolve(false),
+  );
+
+  handle(CH.shellResize, (shellId: string, cols: number, rows: number) =>
+    ownShells.has(shellId) ? fleet.resizeShell(shellId, cols, rows) : Promise.resolve(false),
+  );
+
+  handle(CH.shellClose, async (shellId: string) => {
+    if (!ownShells.delete(shellId)) return false;
+    return fleet.closeShell(shellId);
+  });
+
   handle(CH.permissionsPending, async () =>
     (await fleet.pendingPermissions()).map((p) => p.request),
   );
@@ -914,6 +1015,20 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
       // A voice that outlives the window it was started from is the one
       // failure mode of this feature that a user cannot stop.
       deps.speaker?.stop();
+      /*
+       * Terminals this client opened go with it.
+       *
+       * A window closing or a WebSocket dropping leaves a PTY with no reader —
+       * a program blocked on a prompt nobody can answer. The owning host sweeps
+       * on *its* connection dropping, which is a different and coarser event:
+       * one browser tab closing does not close main's socket to the host.
+       */
+      for (const shellId of [...ownShells]) {
+        ownShells.delete(shellId);
+        void fleet.closeShell(shellId).catch(() => undefined);
+      }
+      fleet.off('shell', onShell);
+      fleet.off('shell-exit', onShellExit);
       fleet.off('event', onEvent);
       fleet.off('session', onSession);
       fleet.off('permission', onPermission);

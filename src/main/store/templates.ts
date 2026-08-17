@@ -57,7 +57,15 @@ import type {
 
 export const TEMPLATE_SCHEMA_VERSION = 1;
 
-/** One seat in a template's roster. */
+/**
+ * One seat in a template's roster.
+ *
+ * A list of one since §4.2 capped a session at a single agent — kept as a list
+ * because template files on disk are older than the rule and are read by
+ * `listTemplates` whatever they contain, and because a schema change that
+ * silently reinterprets committed files is how a colleague's template becomes
+ * unreadable. A file naming two roles is refused *by name* when applied.
+ */
 export interface TemplateRole {
   role: AgentRole;
   runtimeId: string;
@@ -164,7 +172,16 @@ export function fromSession(
   origin?: TemplateOrigin,
   now = new Date(),
 ): SessionTemplate {
-  const roles: TemplateRole[] = session.agents.map((agent) => ({
+  /*
+   * Live seats only (§4.2).
+   *
+   * A seat retired by a model change is history, not configuration: projecting
+   * it would make every template taken from a session whose model was changed
+   * unapplicable, since applying one seats agents and a session holds one. The
+   * transcript is where "we tried qwen first" belongs.
+   */
+  const seats = session.agents.filter((agent) => agent.status !== 'retired');
+  const roles: TemplateRole[] = seats.map((agent) => ({
     role: agent.role,
     runtimeId: agent.spec.runtimeId,
     ...(agent.spec.model !== undefined ? { model: agent.spec.model } : {}),
@@ -177,6 +194,25 @@ export function fromSession(
     // A roster is the substance of a template; without one this is a title and a
     // checklist, and saving it would teach the user the feature does nothing.
     throw new TemplateRefused('this session has no agents yet, so there is no roster to save');
+  }
+
+  /*
+   * Refused rather than truncated (§4.2).
+   *
+   * Sessions with two live seats predate the one-agent rule and still run, but a
+   * template is a recipe for a session that does *not* exist yet — and no
+   * session created from now on may hold two agents. Saving the first seat and
+   * dropping the second silently would hand back a template that reproduces
+   * half of what the person was looking at, discovered weeks later; naming both
+   * lets them decide which one the recipe is about.
+   */
+  if (roles.length > 1) {
+    throw new TemplateRefused(
+      `this session runs ${roles.length} agents (${roles
+        .map((r) => `${r.role} · ${r.model?.modelId ?? r.runtimeId}`)
+        .join(', ')}) and a session started from a template holds one. It was created before ` +
+        `that rule; save a template from a session with a single agent instead.`,
+    );
   }
 
   return {

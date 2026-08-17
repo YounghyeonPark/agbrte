@@ -169,6 +169,31 @@ export class RuntimeRegistry {
   }
 
   /**
+   * The refusal for a runtime this machine does not have, naming what it does.
+   *
+   * `runtime "cli:claude-code" is not registered` was true and read as a bug in
+   * whatever offered it — which, for one real user staring at a picker that was
+   * showing exactly that runtime, is what it looked like and very nearly was.
+   * The sentence has to carry the one fact that makes it actionable: **this is
+   * about the machine**, and here is what the machine has.
+   *
+   * The list is the registry's own, so it cannot drift from what `admit` will
+   * accept — that is the entire point of building the message here rather than
+   * at any of the four layers between here and the window.
+   *
+   * The empty case is its own sentence. "offers: " with nothing after it reads
+   * as a truncated string; a host whose agent host failed to start has *nothing*
+   * registered, and that is the loudest thing to say about it.
+   */
+  private notHere(id: string): string {
+    const offered = this.list().map((d) => d.id);
+    return offered.length === 0
+      ? `runtime "${id}" is not registered on this host, and neither is anything else — ` +
+          `its agent host did not start, so nothing can run here`
+      : `runtime "${id}" is not registered on this host, which offers ${offered.join(', ')}`;
+  }
+
+  /**
    * Decide whether an agent may be created. Collects *all* failures rather
    * than stopping at the first, so a misconfigured roster is fixed in one pass.
    */
@@ -178,10 +203,7 @@ export class RuntimeRegistry {
     requirements: RoleRequirements = {},
   ): Promise<Admission> {
     if (!this.has(spec.runtimeId)) {
-      return {
-        ok: false,
-        failures: [{ code: 'unknown_runtime', detail: `runtime "${spec.runtimeId}" is not registered` }],
-      };
+      return { ok: false, failures: [{ code: 'unknown_runtime', detail: this.notHere(spec.runtimeId) }] };
     }
 
     const descriptor = this.describe(spec.runtimeId);

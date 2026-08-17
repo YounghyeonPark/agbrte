@@ -200,13 +200,28 @@ test.describe('the shell', () => {
       );
       await expect(agbrte.window.locator('[data-testid=row-agent]')).toBeVisible();
 
-      // The mid-session menu folds the same form back in, and adding through it
-      // grows the roster rather than replacing the seat.
+      /*
+       * The mid-session menu folds the same form back in, and choosing through
+       * it *replaces* the seat rather than growing a roster (§4.2).
+       *
+       * The count is the assertion: a session holds one agent, so a second
+       * choice leaves one live chip. The retired seat is shown separately —
+       * greyed, unselectable, and named — because the turn above it is still in
+       * the transcript and has to stay attributable.
+       */
       await agbrte.window.click('[data-testid=change-agent]');
       await expect(agbrte.window.locator('[data-testid=picker]')).toBeVisible();
       await addAgent(agbrte.window, 'echo');
       await expect(agbrte.window.locator('[data-testid=picker]')).toHaveCount(0);
-      await expect(agbrte.window.locator('[data-testid=roster-agent]')).toHaveCount(2);
+      await expect(agbrte.window.locator('[data-testid=roster-agent]')).toHaveCount(1);
+      await expect(agbrte.window.locator('[data-testid=roster-retired]')).toHaveCount(1);
+      // A filter with one option is noise, so there is no `Everyone` to press.
+      await expect(agbrte.window.locator('[data-testid=roster-all]')).toHaveCount(0);
+      // And the session is still usable afterwards: the new seat takes turns.
+      await send(agbrte.window, 'after the change');
+      await expect(agbrte.window.locator('[data-testid=row-user]').last()).toContainText(
+        'after the change',
+      );
     } finally {
       await agbrte.close();
       await rm(repo, { recursive: true, force: true });

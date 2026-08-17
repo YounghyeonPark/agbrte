@@ -45,6 +45,19 @@ export type CliRecord =
   /** This run is over, and why. */
   | { kind: 'end'; stop: StopReason }
   /**
+   * Something seen mid-run that would explain a run ending *without* an `end`.
+   *
+   * A weaker claim than `end`, deliberately: these CLIs report a fatal
+   * condition several times before they act on it — Claude Code emits ten
+   * `system/api_retry` records carrying `error: "authentication_failed"` before
+   * it gives up — and any one of them may still be followed by a successful
+   * turn. So a hint never ends a run and never overrides an `end`; the adapter
+   * holds the last one and uses it only where it would otherwise have had to
+   * guess from an exit code, which is how a CLI that dies unauthenticated ends
+   * up reported as a retryable `transport` fault.
+   */
+  | { kind: 'stop_hint'; stop: StopReason }
+  /**
    * A tool call the CLI's own allowlist refused.
    *
    * The signal deny-ask-resume is built on: nothing executed, so asking the user

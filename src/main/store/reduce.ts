@@ -211,6 +211,25 @@ export function reduceEvents(
         p.parentSessionId = null;
         break;
 
+      case 'session.joined_group':
+        // Last one wins: a session moved from one group to another has two
+        // joins in its log, and the transcript is the record of the move.
+        p.group = { groupId: ev.groupId, name: ev.name };
+        break;
+
+      case 'session.left_group':
+        // Guarded by id, so a stale `left` for a group this session has since
+        // rejoined cannot silently empty the current membership.
+        if (p.group?.groupId === ev.groupId) p.group = null;
+        break;
+
+      case 'session.peer_message_sent':
+      case 'session.peer_message_received':
+        // Nothing folded. The exchange is read from the log itself — the
+        // recipient's `user.turn` already counts, and a projected copy of the
+        // text would be a second place for the same words to live (§17 Q22).
+        break;
+
       case 'agent.created':
         // Recorded so a reloaded log resolves an agentId to the runtime, model,
         // and gate strength that every permission decision references.
@@ -224,8 +243,18 @@ export function reduceEvents(
           ...(ev.systemPrompt !== undefined ? { systemPrompt: ev.systemPrompt } : {}),
           ...(ev.reasoning !== undefined ? { reasoning: ev.reasoning } : {}),
           ...(ev.limits !== undefined ? { limits: ev.limits } : {}),
+          ...(ev.capabilities !== undefined ? { capabilities: ev.capabilities } : {}),
         });
         break;
+
+      case 'agent.retired': {
+        // §4.2: a session holds one agent, so a resume has to know which seats
+        // were replaced. Without this fold the rule would hold until the next
+        // restart and then hand the session two active agents.
+        const seat = p.agents.find((a) => a.agentId === ev.agentId);
+        if (seat) seat.retiredAt = ev.at;
+        break;
+      }
 
       case 'agent.reasoning_changed': {
         // The projected seat is what a rebuilt spec is made from, so a change
@@ -288,6 +317,11 @@ function cloneProjection(p: SessionProjection): SessionProjection {
     // Copied rather than shared: nothing pushes into it today, and a future
     // edit that does must not reach back into the checkpoint it came from.
     lastSeqIds: [...p.lastSeqIds],
+    // Copied per seat, not shared: `agent.retired` and `agent.reasoning_changed`
+    // both edit a projected seat in place, and a checkpoint continued from is a
+    // *base* — reaching back into its objects would rewrite the thing this fold
+    // was supposed to leave alone (§5.4, invariant 8).
+    agents: p.agents.map((a) => ({ ...a })),
     checklist: p.checklist.map((i) => ({ ...i })),
     artifacts: p.artifacts.map((a) => ({ ...a })),
     children: p.children.map((c) => ({ ...c, lastKnown: { ...c.lastKnown } })),
@@ -296,5 +330,6 @@ function cloneProjection(p: SessionProjection): SessionProjection {
     needsAttention: p.needsAttention ? { ...p.needsAttention } : null,
     standingGrant: p.standingGrant ? { ...p.standingGrant } : null,
     skills: p.skills.map((s) => ({ ...s })),
+    group: p.group ? { ...p.group } : null,
   };
 }

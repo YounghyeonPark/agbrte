@@ -10,3 +10,4 @@ export * from './projection.js';
 export * from './provider.js';
 export * from './conformance.js';
 export * from './inbox.js';
+export * from './terminal.js';

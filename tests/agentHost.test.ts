@@ -237,7 +237,23 @@ describe('handshake and capabilities', () => {
     // Widened from a bare id list: one host can reach several endpoints, and a
     // client that cannot see them cannot offer a choice — nor name the provider
     // a turn was sent to, which §13 requires.
-    await expect(r.client.ready).resolves.toEqual({ runtimeIds: ['probe'], endpoints: [] });
+    //
+    // Widened again to carry a **descriptor** per runtime rather than an id.
+    // The owner forks this process and then builds its own `RuntimeRegistry`,
+    // because `admit()` runs beside the log and the gate — and with only ids to
+    // go on it built that registry from a constant in another file. So an
+    // installed CLI detected here was advertised to every client by the very
+    // process that would refuse it. `model` in particular cannot be inferred
+    // from an id: `optional` and `none` fail admission in opposite directions
+    // (§17 Q11).
+    await expect(r.client.ready).resolves.toEqual({
+      runtimeIds: ['probe'],
+      runtimes: [{ id: 'probe', label: 'probe', model: 'none' }],
+      // Nothing was looked for and missed here — the empty list is *this host
+      // has nothing to report*, which is what a client renders as silence.
+      runtimeNotes: [],
+      endpoints: [],
+    });
   });
 
   it('carries capabilities on the correlated reply', async () => {

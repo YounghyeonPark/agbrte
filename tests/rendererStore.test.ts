@@ -247,3 +247,150 @@ describe('two different events carrying the same seq', () => {
     ).toEqual(['a', 'b']);
   });
 });
+
+/**
+ * A hosts push is what corrects the picker (§3.12, §6.4).
+ *
+ * A host is a detached process that can be replaced by one with a different set
+ * of tools installed, and `Fleet` emits `host` on every reconnect — so the whole
+ * of the client-side fix is that `applyHosts` asks each host again rather than
+ * trusting what it learned on the first attach. That is what it already did, and
+ * it was useless while main sent the same answer every time.
+ *
+ * Asserted here because the property is easy to lose by optimisation: skipping
+ * the fetch for a host whose `instanceId` is unchanged looks like an obvious win
+ * and would restore exactly the bug — the id is per *workspace* (§5.2) and is
+ * the one thing that does **not** change when the process behind it does.
+ */
+describe('the runtime list a picker reads', () => {
+  const host = (instanceId: string, available: string[]) =>
+    ({
+      instanceId,
+      root: '/w',
+      lineageId: 'l1',
+      targetKind: 'local',
+      label: 'w',
+      available,
+      endpoints: [],
+      runtimeNotes: [],
+      link: 'connected',
+    }) as never;
+
+  it('is re-asked on every hosts push, not only the first', async () => {
+    const asked: string[] = [];
+    let offered = [{ id: 'echo', version: '1', model: 'none' }];
+
+    (globalThis as { window?: unknown }).window = {
+      agbrte: {
+        hosts: {
+          runtimes: (instanceId: string) => {
+            asked.push(instanceId);
+            return Promise.resolve(offered);
+          },
+          conformance: () => Promise.resolve([]),
+        },
+      },
+    };
+    useAgbrte.setState({ hosts: [], runtimesByHost: {} });
+
+    useAgbrte.getState().applyHosts([host('i1', ['echo'])]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(useAgbrte.getState().runtimesByHost['i1']?.map((r) => r.id)).toEqual(['echo']);
+
+    // The same host, a new process behind it, with a CLI the old one lacked.
+    offered = [
+      { id: 'echo', version: '1', model: 'none' },
+      { id: 'cli:claude-code', version: '1', model: 'optional' },
+    ];
+    useAgbrte.getState().applyHosts([host('i1', ['echo', 'cli:claude-code'])]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(asked, 'the second push did not re-ask').toEqual(['i1', 'i1']);
+    expect(useAgbrte.getState().runtimesByHost['i1']?.map((r) => r.id)).toEqual([
+      'echo',
+      'cli:claude-code',
+    ]);
+  });
+
+  it('carries what the host could not find, so the picker can explain a gap', () => {
+    useAgbrte.setState({ hosts: [] });
+    const withNote = host('i1', ['echo']) as { runtimeNotes: unknown[] };
+    withNote.runtimeNotes = [
+      { id: 'cli:claude-code', label: 'Claude Code', reason: '`claude` could not be started' },
+    ];
+    useAgbrte.setState({ hosts: [withNote as never] });
+
+    // The renderer reads this off the host record rather than fetching again,
+    // so it follows a replaced host by the same route the runtime list does.
+    expect(useAgbrte.getState().hosts[0]?.runtimeNotes?.[0]?.id).toBe('cli:claude-code');
+  });
+});
+
+describe('seating this session’s one model', () => {
+  /**
+   * A session holds one agent (§4.2), so choosing a model on a seated session
+   * is a *replacement* and the host has to be told which seat is being taken
+   * over — by id, so that two windows on one session cannot silently overwrite
+   * each other's choice.
+   */
+  const seat = (agentId: string, status: string) =>
+    ({
+      agentId,
+      role: 'lead',
+      status,
+      spec: { agentId, role: 'lead', runtimeId: 'echo', auth: { kind: 'none' } },
+      resolvedCapabilities: { permissionFidelity: 'callback' },
+      isolation: 'shared',
+      resumeToken: null,
+      lastEventSeq: 0,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 },
+    }) as never;
+
+  function stub(): { sent: Array<Record<string, unknown>> } {
+    const sent: Array<Record<string, unknown>> = [];
+    (globalThis as { window?: unknown }).window = {
+      agbrte: {
+        sessions: {
+          addAgent: (r: Record<string, unknown>) => {
+            sent.push(r);
+            return Promise.resolve({});
+          },
+          snapshot: () => Promise.resolve({ session: null, events: [], pending: [] }),
+        },
+      },
+    };
+    return { sent };
+  }
+
+  it('names the seat it is replacing', async () => {
+    const { sent } = stub();
+    useAgbrte.setState({
+      activeId: 's1' as never,
+      active: { sessionId: 's1', agents: [seat('a1', 'idle')] } as never,
+    });
+
+    await useAgbrte.getState().addAgent('echo', null);
+    expect(sent[0]?.['replacing']).toBe('a1');
+  });
+
+  it('sends nothing to replace on a session with no agent yet', async () => {
+    const { sent } = stub();
+    useAgbrte.setState({ activeId: 's1' as never, active: { sessionId: 's1', agents: [] } as never });
+
+    await useAgbrte.getState().addAgent('echo', null);
+    expect(sent[0]).not.toHaveProperty('replacing');
+  });
+
+  it('skips a retired seat when deciding what it is replacing', async () => {
+    // A seat already retired by an earlier model change is in the roster to
+    // name old transcript rows, not to be replaced a second time.
+    const { sent } = stub();
+    useAgbrte.setState({
+      activeId: 's1' as never,
+      active: { sessionId: 's1', agents: [seat('a1', 'retired'), seat('a2', 'idle')] } as never,
+    });
+
+    await useAgbrte.getState().addAgent('echo', null);
+    expect(sent[0]?.['replacing']).toBe('a2');
+  });
+});

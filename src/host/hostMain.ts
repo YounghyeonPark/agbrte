@@ -30,16 +30,27 @@ import { openWorkspace } from '@main/store/identity.js';
 import { listen, hostSocketPath } from '@shared/host/socketChannel.js';
 import { listenLoopback, newControlToken } from '@shared/host/loopback.js';
 import { PreviewServers } from '@main/preview/servers.js';
+import { Shells } from '@main/terminal/shell.js';
+import { TerminalPrograms } from '@main/terminal/programs.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { HostCommand, HostMessage, MainSideChannel } from '@shared/host/protocol.js';
-import { SessionHostServer } from './sessionServer.js';
+import { SessionHostServer, type ShellOwner } from './sessionServer.js';
 import { decideRole, loadAccessPolicy } from './accessPolicy.js';
 import { localIdentity } from './identity.js';
 import { clearHostRecord, writeHostRecord } from './discovery.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-/** Runtimes the forked agent host is expected to register. */
+/**
+ * Runtimes the forked agent host is expected to register, before it has said.
+ *
+ * A floor, not the list. Everything here can be named without asking the
+ * machine — the harness and echo ship in the bundle — and everything §3.12
+ * *detects* cannot be, which is precisely what this constant used to leave out:
+ * the registry below was built from these two ids alone, so `admit()` refused
+ * `cli:claude-code` on a host whose own handshake had just offered it. The
+ * advertised list is folded in as soon as the agent host answers.
+ */
 const RUNTIMES: Array<{ id: string; label: string; version: string; model: ModelNeed }> = [
   { id: 'agbrte-harness', label: 'Agbrte harness (local model)', version: '0.0.1', model: 'required' },
   { id: 'echo', label: 'Echo (no model)', version: '0.0.1', model: 'none' },
@@ -170,14 +181,36 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     instanceId: identity.instanceId,
   });
 
-  // Reconcile against what the agent host actually registered. Failing to start
-  // it must not stop the host: transcripts still load and read, which is the
-  // whole reason the log is the source of truth.
+  /*
+   * Reconcile against what the agent host actually registered.
+   *
+   * **Registering, not just listing.** This used to read `advertised()` into
+   * `available` and stop there, so the ids went out on every handshake while the
+   * registry three lines above stayed at the two constants — and `admit()`,
+   * which is the only thing that decides whether an agent may be created, reads
+   * the registry. A user with Claude Code installed was therefore offered
+   * `cli:claude-code` by a picker doing its job and refused by the host that had
+   * advertised it, with `runtime "cli:claude-code" is not registered`.
+   *
+   * `available` is then taken from the registry rather than from the wire, which
+   * makes the picker and the gate the same list by construction. An id this
+   * process could not build a façade for is not offered — and §17 Q16's rule
+   * applies: not offering it degrades to the screen that shipped before, while
+   * offering it degrades to a refusal nobody can act on.
+   *
+   * Failing to start the agent host must not stop this one: transcripts still
+   * load and read, which is the whole reason the log is the source of truth.
+   */
   let available: string[] = [];
   let endpoints: Awaited<ReturnType<typeof supervisor.endpoints>> = [];
+  let runtimeNotes: Array<{ id: string; label: string; reason: string }> = [];
   let unavailableReason: string | undefined;
   try {
-    available = await supervisor.advertised();
+    for (const entry of await supervisor.advertisedRuntimes()) {
+      registry.register(entry.runtime, { label: entry.label, model: entry.model });
+    }
+    available = (await supervisor.advertised()).filter((id) => registry.has(id));
+    runtimeNotes = await supervisor.detectionNotes();
     endpoints = await supervisor.endpoints();
   } catch (err) {
     unavailableReason = err instanceof Error ? err.message : String(err);
@@ -202,11 +235,51 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
   // whole point of §3.12's reaping being something to work around.
   const servers = new PreviewServers(workspaceRoot);
 
+  /**
+   * The user's own terminals, in this workspace, on this machine.
+   *
+   * Here rather than in main for the reason §6.8 gives for preview servers: the
+   * host is the process that owns the workspace, so `cwd` is the workspace by
+   * construction and a host on another machine gives you *that* machine's
+   * shell. It is also the process that can afford to drain a PTY — §8's rule is
+   * that main must never block, and a terminal is the loudest thing in the app.
+   *
+   * The output sink posts to exactly one client's channel. Every other push in
+   * this protocol is broadcast because it describes the session, which is
+   * shared; this one describes one person's screen, and a second device
+   * receiving it would be a leak rather than a feature.
+   */
+  const shells = new Shells<ShellOwner>(workspaceRoot, {
+    /*
+     * What a pane may open, built from what this host already decided.
+     *
+     * Not a second detection pass. `available` is the list `admit()` consults
+     * and the list the picker draws, and `runtimeNotes` is the sentence the
+     * picker shows beside a CLI it cannot offer — so a pane can open exactly the
+     * CLIs the picker offers, and refuses the rest with the wording already on
+     * screen, by construction. Detecting again here would have been two answers
+     * to one question about one machine, which is how the runtime list and the
+     * admission gate disagreed once already (see the note above `available`).
+     */
+    programs: new TerminalPrograms({ runtimeIds: available, notes: runtimeNotes }),
+    onData: (shellId, data, owner) => owner.post({ t: 'push.shell', shellId, data }),
+    onExit: (exit, owner) =>
+      owner.post({
+        t: 'push.shellExit',
+        shellId: exit.shellId,
+        exitCode: exit.exitCode,
+        ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
+      }),
+  });
+
   const stop = async (): Promise<void> => {
     // Before the listener closes: a preview server outliving the host that
     // started it is a port answering with nothing to explain it, and nothing
     // left that knows how to stop it.
     servers.stopAll();
+    // And every terminal, for the stronger reason: a shell survives its reader
+    // only as a process blocked on a prompt nobody can answer.
+    shells.closeAll();
     server.stop('host stopping');
     supervisor.dispose();
     listener.close();
@@ -220,6 +293,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       lineageId: identity.lineageId,
       workspaceRoot,
       runtimes: available,
+      ...(runtimeNotes.length > 0 ? { runtimeNotes } : {}),
       endpoints,
       ...(identity.origin === 'relocated' && identity.movedFrom !== undefined
         ? { movedFrom: identity.movedFrom }
@@ -242,6 +316,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     // so the port does not exist at this line. Offering to forward the channel a
     // request arrived on would be offering a loop.
     servers,
+    shells,
     controlPort: () => port,
     lingerMs: opts.lingerMs ?? DEFAULT_LINGER_MS,
     // Whatever the reason — the idle timer, or a client asking — the process

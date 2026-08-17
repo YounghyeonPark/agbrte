@@ -59,7 +59,6 @@ import type {
   AgentRuntime,
   AgentSpec,
   PermissionDecision,
-  RawTail,
   RuntimeCapabilities,
   RuntimeContext,
   RuntimeEvent,
@@ -75,48 +74,21 @@ const DEFAULT_MAX_GRANTS = 3;
 /** Enough stderr to explain a failure, not enough to hold a runaway log. */
 const STDERR_CAP = 8_192;
 
-/** How many raw lines the terminal view keeps per handle. */
-export const RAW_TAIL_LINES = 2_000;
-
-/**
- * The raw output of the subprocesses behind one handle.
- *
- * The event stream is what these lines *parse to*; this is what they *were* —
- * NDJSON, update banners, deprecation notices, stderr — so a long turn can be
- * watched the way a terminal would show it. One buffer per handle rather than
- * per run, because deny-ask-resume makes a turn span several processes and the
- * person watching is watching the turn.
- *
- * Bounded the way the preview server log is (§6.8): a chatty CLI on a long
- * turn will happily print megabytes, the interesting part is always the end,
- * and `dropped` keeps a truncated tail honest about being truncated.
- */
-export class RawTailBuffer {
-  private readonly lines: string[] = [];
-  private dropped = 0;
-
-  constructor(private readonly cap: number = RAW_TAIL_LINES) {}
-
-  push(line: string): void {
-    this.lines.push(line);
-    while (this.lines.length > this.cap) {
-      this.lines.shift();
-      this.dropped += 1;
-    }
-  }
-
-  /** A copy, so a caller cannot reach back into the ring. */
-  tail(): RawTail {
-    return { lines: [...this.lines], dropped: this.dropped };
-  }
-}
-
 // ------------------------------------------------------------------ spawning
 
 export interface CliExit {
   code: number | null;
   signal: string | null;
   stderr: string;
+  /**
+   * The OS's own word for why the process never started — `ENOENT`, `EACCES`.
+   *
+   * Kept apart from `stderr` because it is the difference between *this tool is
+   * not installed* and *this tool ran and complained*, which are different
+   * problems with different remedies. Both used to arrive here as prose in the
+   * same field, so detection could only report "it did not work".
+   */
+  errorCode?: string;
 }
 
 export interface CliRun {
@@ -163,7 +135,15 @@ export const nodeSpawn: SpawnCli = (argv, opts) => {
     // A missing binary raises `error` and may never produce `close`, so both
     // paths must settle — otherwise a typo'd manifest hangs the turn forever
     // instead of failing it.
-    child.on('error', (err) => done({ code: null, signal: null, stderr: stderr || String(err) }));
+    child.on('error', (err) => {
+      const code = (err as NodeJS.ErrnoException).code;
+      done({
+        code: null,
+        signal: null,
+        stderr: stderr || String(err),
+        ...(code === undefined ? {} : { errorCode: code }),
+      });
+    });
     child.on('close', (code, signal) => done({ code, signal, stderr }));
   });
 
@@ -181,30 +161,95 @@ export interface DetectedCli {
 }
 
 /**
+ * The outcome of looking for one CLI — found, or not found *and why*.
+ *
+ * `detectCli` used to return `DetectedCli | null`, and `null` is where a long
+ * afternoon went. A host that could not find `claude` said nothing to anybody:
+ * the runtime was absent from the handshake, absent from the picker, and absent
+ * from every log — indistinguishable from a client that had forgotten to ask.
+ * The information existed for a few microseconds inside a `catch` and was
+ * dropped on the floor.
+ *
+ * So the negative case carries a sentence. It costs one string per manifest,
+ * computed once when the agent host comes up, and it is the difference between
+ * "not installed on this machine" and "something is wrong with this app".
+ */
+export type CliDetection =
+  | { found: true; binary: string; version: string }
+  | { found: false; binary: string; reason: string };
+
+/**
  * Find the CLI and read its version.
  *
- * Returns `null` rather than throwing: a CLI the user has not installed is an
- * ordinary state of the world, and the caller's job is to not offer it — not to
- * fail starting up.
+ * Never throws: a CLI the user has not installed is an ordinary state of the
+ * world, and the caller's job is to not offer it — not to fail starting up.
+ *
+ * The three ways this fails are kept apart, because they send a person to three
+ * different places. A **spawn error** means the binary is not on this host's
+ * PATH — the usual case, and the one whose remedy is "install it, or start the
+ * host from a shell that can see it". A **non-zero exit** means it is installed
+ * and unhappy, so its own stderr is the useful thing to repeat. An **unmatched
+ * version pattern** is neither: the tool answered, so it is still offered with
+ * `version: 'unknown'` rather than being discarded over a changed banner — but
+ * it is worth saying, because a vendor who reformats `--version` is a vendor who
+ * may have changed the flags this manifest is built on.
  */
 export async function detectCli(
   manifest: CliAgentManifest,
   spawnFn: SpawnCli = nodeSpawn,
   cwd: string = process.cwd(),
-): Promise<DetectedCli | null> {
+): Promise<CliDetection> {
+  const binary = manifest.detect.binary;
   let out = '';
   try {
-    const run = spawnFn([manifest.detect.binary, ...manifest.detect.versionArgs], { cwd });
+    const run = spawnFn([binary, ...manifest.detect.versionArgs], { cwd });
     for await (const chunk of run.stdout) out += chunk;
     const exit = await run.exit;
-    if (exit.code !== 0) return null;
-  } catch {
-    return null;
+
+    // `code: null` with no signal is how `nodeSpawn` reports a process that
+    // never started. Checked before the exit code, because "exited with null"
+    // would be a confusing way to say "not installed".
+    if (exit.code === null && exit.signal === null) {
+      return {
+        found: false,
+        binary,
+        reason:
+          `\`${binary}\` could not be started on this host` +
+          `${exit.errorCode === undefined ? '' : ` (${exit.errorCode})`}` +
+          ` — it is probably not installed, or not on the PATH this host was started with`,
+      };
+    }
+    if (exit.code !== 0) {
+      return {
+        found: false,
+        binary,
+        reason:
+          `\`${binary} ${manifest.detect.versionArgs.join(' ')}\` exited ${exit.code ?? `on ${exit.signal ?? 'a signal'}`}` +
+          `${firstLine(exit.stderr) === '' ? '' : `: ${firstLine(exit.stderr)}`}`,
+      };
+    }
+  } catch (err) {
+    // A `spawnFn` that throws synchronously rather than settling `exit` — a
+    // test double, or an argv this platform will not take.
+    return {
+      found: false,
+      binary,
+      reason: `\`${binary}\` could not be started on this host: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    };
   }
+
   const match = manifest.detect.versionPattern.exec(out);
   // A binary that answers but not with a version is still a binary. Recorded as
   // unknown rather than discarded, so the transcript says which is which.
-  return { binary: manifest.detect.binary, version: match?.[1] ?? 'unknown' };
+  return { found: true, binary, version: match?.[1] ?? 'unknown' };
+}
+
+/** Enough of a tool's complaint to act on, on one line of a picker. */
+function firstLine(text: string): string {
+  const line = text.split('\n').find((l) => l.trim().length > 0) ?? '';
+  return line.trim().slice(0, 200);
 }
 
 // -------------------------------------------------------------------- runtime
@@ -286,8 +331,6 @@ class CliStdioHandle implements AgentHandle {
   private readonly granted: string[] = [];
   private current: CliRun | null = null;
   private interrupted = false;
-  /** Raw stdout/stderr across every spawn this handle makes — §7's terminal view. */
-  private readonly raw = new RawTailBuffer();
 
   /** The compiled policy, fixed before the first spawn — that is the fidelity. */
   private readonly baseAllow: string[];
@@ -373,12 +416,16 @@ class CliStdioHandle implements AgentHandle {
     const denials: Denial[] = [];
     // A holder rather than a `let`: the assignment happens inside `consume`, and
     // a captured `let` initialized to `null` narrows to `never` at the read.
-    const seen: { stop: StopReason | null } = { stop: null };
+    //
+    // `hint` is the weaker of the two (see `CliRecord`): something the run said
+    // about itself that only matters if it never reaches an `end`.
+    const seen: { stop: StopReason | null; hint: StopReason | null } = { stop: null, hint: null };
 
     const consume = (line: string): void => {
-      // Into the raw tail *before* parsing: the banner lines `parseLine`
-      // rightly skips are exactly what a person watching raw wants to see.
-      this.raw.push(line);
+      // Reported *before* parsing: the banner lines `parseLine` rightly skips
+      // are exactly what a person watching raw wants to see. The owner keeps
+      // them — a handle is one turn, and the tail has to outlive the turn.
+      this.ctx.reportRaw?.(line);
       const record = parseLine(line);
       // A CLI writes more than its protocol to stdout — update banners,
       // deprecation notices. Skipping them is not tolerance for sloppiness; it
@@ -396,7 +443,7 @@ class CliStdioHandle implements AgentHandle {
     } catch (err) {
       // Still worth a raw line: the terminal view's job is to answer "why is
       // nothing appearing", and a spawn that failed is the strongest answer.
-      this.raw.push(String(err));
+      this.ctx.reportRaw?.(String(err));
       return { stop: { kind: 'misconfigured', detail: String(err) }, denials };
     }
     this.current = run;
@@ -415,14 +462,31 @@ class CliStdioHandle implements AgentHandle {
     // only surfaces it there — a real cost, and a small one: these CLIs stream
     // their protocol on stdout, and stderr is the epitaph, not the narration.
     for (const line of exit.stderr.split('\n')) {
-      if (line.trim() !== '') this.raw.push(line);
+      if (line.trim() !== '') this.ctx.reportRaw?.(line);
     }
     if (seen.stop === null && exit.stderr.length > 0) this.report(exit.stderr.trim().slice(0, 400));
 
-    return { stop: seen.stop ?? stopFromExit(exit, this.manifest.detect.binary), denials };
+    /*
+     * Three tiers, weakest last.
+     *
+     * The hint sits between the protocol and the exit code because it is better
+     * than a guess and worse than a statement. A CLI killed while retrying a
+     * rejected credential prints no `result`, and `stopFromExit` can only see a
+     * non-zero exit — which is `transport`, which is retryable, which sends the
+     * session to `awaiting_input` with nothing to act on. The run already said
+     * what was wrong ten times; this is what stops us throwing that away.
+     */
+    return {
+      stop: seen.stop ?? seen.hint ?? stopFromExit(exit, this.manifest.detect.binary),
+      denials,
+    };
   }
 
-  private apply(record: CliRecord, denials: Denial[], seen: { stop: StopReason | null }): void {
+  private apply(
+    record: CliRecord,
+    denials: Denial[],
+    seen: { stop: StopReason | null; hint: StopReason | null },
+  ): void {
     switch (record.kind) {
       case 'event':
         this.emit(record.event);
@@ -433,6 +497,11 @@ class CliStdioHandle implements AgentHandle {
         return;
       case 'end':
         seen.stop = record.stop;
+        return;
+      case 'stop_hint':
+        // Last one wins, and it never ends the run. A tenth retry that succeeds
+        // is a successful turn, and the `end` record that follows overrides this.
+        seen.hint = record.stop;
         return;
       case 'denied':
         denials.push({
@@ -557,11 +626,6 @@ class CliStdioHandle implements AgentHandle {
   /** The CLI's own session id. A cache, never truth (§5.4). */
   resumeToken(): string | null {
     return this.sessionId;
-  }
-
-  /** What the processes behind this handle actually printed — §7's terminal view. */
-  rawTail(): RawTail {
-    return this.raw.tail();
   }
 
   get events(): AsyncIterable<RuntimeEvent> {

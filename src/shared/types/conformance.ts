@@ -168,6 +168,11 @@ export const CONFORMANCE_SCENARIOS: readonly ConformanceScenario[] = [
     title: 'an uninstalled tool is not retried',
     why: 'retrying cannot install anything; it just spends the attempt budget',
   },
+  {
+    id: 'unauthenticated-parks',
+    title: 'a runtime that is not logged in pauses with something to do about it',
+    why: 'read as ordinary output it is a dead end: the app cannot log in for you (§3.11)',
+  },
   // ---- §3.13's "not yet run" set. Present so the gaps are visible. ----
   {
     id: 'parallel-tool-calls',

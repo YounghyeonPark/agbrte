@@ -14,11 +14,13 @@
 
 import type { ListeningPort } from '../preview/ports.js';
 import type { PreviewServer, PreviewServerLog } from '../preview/servers.js';
+import type { ShellHandle } from '../terminal/shell.js';
 import type { SessionTemplate } from '../store/templates.js';
 import { EventEmitter } from 'node:events';
 import {
   COMMAND_SINCE,
   type PreparedChild,
+  SESSION_ADDAGENT_REPLACING_SINCE,
   SESSION_PROTOCOL_VERSION,
   type AppSideSessionChannel,
   type HostIdentity,
@@ -47,6 +49,7 @@ import type {
   SessionId,
   SessionProjection,
   Sha256,
+  ShellProgram,
   ExecutionTarget,
 } from '@shared/types/index.js';
 import { sha256Of } from '@main/store/blobs.js';
@@ -110,6 +113,8 @@ export interface HostConnectionOptions {
  *   'permission' (PermissionRequest)
  *   'permission-resolved' (PermissionResolved)
  *   'queue'      (sessionId, agentId, depth)
+ *   'shell'      (shellId, data)          — terminal output, never logged (§7)
+ *   'shell-exit' (shellId, exitCode, signal?)
  *   'closing'    (reason)   — the host is stopping on purpose; do not return
  *   'closed'     (reason)   — the link broke; the host may still be running
  */
@@ -232,6 +237,23 @@ export class HostConnection extends EventEmitter {
       case 'push.queue':
         this.emit('queue', message.sessionId, message.agentId, message.depth);
         return;
+
+      /*
+       * Re-emitted and nothing else — no `seen` map, no seq guard, no store.
+       *
+       * `push.event` above is deduplicated because catch-up and the live push
+       * overlap by construction, and the log is the truth to reconcile against.
+       * A terminal has neither: there is no log, no `seq`, and nothing to catch
+       * up *to*. Reconnecting gets you a new shell, not a replayed one, which is
+       * the honest thing for a stream whose whole content is "what is on the
+       * screen right now".
+       */
+      case 'push.shell':
+        this.emit('shell', message.shellId, message.data);
+        return;
+      case 'push.shellExit':
+        this.emit('shell-exit', message.shellId, message.exitCode, message.signal);
+        return;
       case 'push.closing':
         this.emit('closing', message.reason);
         return;
@@ -286,7 +308,27 @@ export class HostConnection extends EventEmitter {
     return this.call({ t: 'session.resume', sessionId });
   }
 
-  addAgent(sessionId: SessionId, input: unknown): Promise<AgentRecord> {
+  /**
+   * Seat this session's agent, or replace the one it has (§4.2).
+   *
+   * The version check is not decoration. `replacing` is a field an older host
+   * *drops*, and dropping it does not degrade to the old behaviour — it adds a
+   * second agent to a session somebody was changing the model of, which is the
+   * roster the cap exists to prevent and which cannot afterwards be saved as a
+   * template or rendered without ambiguity. So the refusal happens here, with
+   * the remedy in it, rather than at the far end where it would not happen at
+   * all. Seating a *first* agent carries no `replacing` and reaches every host.
+   */
+  async addAgent(sessionId: SessionId, input: unknown): Promise<AgentRecord> {
+    const replacing = (input as { replacing?: unknown } | null)?.replacing;
+    const protocol = this.identity?.protocol ?? 1;
+    if (replacing !== undefined && protocol < SESSION_ADDAGENT_REPLACING_SINCE) {
+      throw new Error(
+        `the host on this machine speaks v${protocol} and changing a session's model in place ` +
+          `needs v${SESSION_ADDAGENT_REPLACING_SINCE} — update that host, or it would add a ` +
+          `second agent instead of replacing the one you have`,
+      );
+    }
     return this.call({ t: 'session.addAgent', sessionId, input });
   }
 
@@ -556,6 +598,29 @@ export class HostConnection extends EventEmitter {
     return this.call({ t: 'session.recordChild', sessionId, child, parentBudget, contract });
   }
 
+  /**
+   * Put sessions in a group on this host (§17 Q22).
+   *
+   * `require`, not a silent skip: a host too old to group would accept nothing
+   * and the sessions would look grouped in a UI built from the reply it never
+   * sent. The caller names the missing feature at the point of use, which is
+   * what `COMMAND_SINCE` is for.
+   */
+  groupSessions(sessionIds: SessionId[], name: string, groupId?: string): Promise<Session[]> {
+    this.require('session.group');
+    return this.call({
+      t: 'session.group',
+      sessionIds,
+      name,
+      ...(groupId !== undefined ? { groupId } : {}),
+    });
+  }
+
+  ungroupSession(sessionId: SessionId): Promise<Session> {
+    this.require('session.ungroup');
+    return this.call({ t: 'session.ungroup', sessionId });
+  }
+
   search(query: string, limit?: number): Promise<SearchHit[]> {
     return this.call({
       t: 'session.search',
@@ -585,6 +650,59 @@ export class HostConnection extends EventEmitter {
   async rawLog(sessionId: SessionId, agentId: AgentId): Promise<RawTail | null> {
     this.require('agent.rawLog');
     return this.call<RawTail | null>({ t: 'agent.rawLog', sessionId, agentId });
+  }
+
+  /**
+   * Open a terminal on the machine this host runs on.
+   *
+   * `require` rather than a silent degradation: a host too old to know the
+   * command would leave a pane waiting on a reply that never comes, and the
+   * remedy — restart the host on the other machine — is a sentence somebody can
+   * act on. The same treatment `session.setReasoning` gets, for the same reason.
+   *
+   * The four methods below are the whole terminal surface, and none of them
+   * takes a command, a path, or a program name. `program` is the one thing a
+   * caller chooses and it is a *selector* — `{kind:'shell'}`, or a `cliId` the
+   * host matches against the CLIs it detected itself — so there is still no
+   * string on this surface that becomes a command line. A `command` parameter
+   * would turn "give me a terminal" into "run this for me", which is a different
+   * and much wider thing to expose (§7).
+   */
+  async openShell(
+    sessionId: SessionId,
+    opts?: { program?: ShellProgram; cols?: number; rows?: number },
+  ): Promise<ShellHandle> {
+    // `async` so the gate rejects rather than throwing synchronously — the trap
+    // `previewPorts` documents, and the same fix.
+    this.require('shell.open');
+    return this.call<ShellHandle>({
+      t: 'shell.open',
+      sessionId,
+      ...(opts?.program !== undefined ? { program: opts.program } : {}),
+      ...(opts?.cols !== undefined ? { cols: opts.cols } : {}),
+      ...(opts?.rows !== undefined ? { rows: opts.rows } : {}),
+    });
+  }
+
+  /**
+   * Keystrokes.
+   *
+   * Fire-and-forget rather than awaited by the caller — the reply exists so a
+   * lost shell is reportable, not so typing is serialized behind a round trip.
+   */
+  async writeShell(shellId: string, data: string): Promise<boolean> {
+    this.require('shell.input');
+    return this.call<boolean>({ t: 'shell.input', shellId, data });
+  }
+
+  async resizeShell(shellId: string, cols: number, rows: number): Promise<boolean> {
+    this.require('shell.resize');
+    return this.call<boolean>({ t: 'shell.resize', shellId, cols, rows });
+  }
+
+  async closeShell(shellId: string): Promise<boolean> {
+    this.require('shell.close');
+    return this.call<boolean>({ t: 'shell.close', shellId });
   }
 
   respondSplit(

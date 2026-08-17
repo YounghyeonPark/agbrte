@@ -59,6 +59,13 @@ const USAGE = `agbrte — an agent workbench, at a terminal
 Path defaults to the current directory. A host is started if none is running,
 and is left running when you leave — that is the point of it.
 
+Options for attach:
+  --session <id>              open this session rather than asking which. Never
+                              creates one — an id that is not here is an error.
+                              This is how the app's terminal pane runs \`agbrte\`
+                              against the session you are already looking at.
+  --yes                       allow every permission request
+
 Options for web:
   --port <n>                  default 7717
   --bind <addr>               default 127.0.0.1. Use your tailnet address to
@@ -393,7 +400,14 @@ async function main(): Promise<number> {
       }
 
       default:
-        return await attach(connection, { path, autoApprove: flags.has('--yes') });
+        return await attach(connection, {
+          path,
+          autoApprove: flags.has('--yes'),
+          // Absent means "ask which one", which is right at a real terminal and
+          // wrong inside the app's pane — that pane is already showing a
+          // session, so it names it. See `AttachOptions.sessionId`.
+          ...(value('--session') !== undefined ? { sessionId: value('--session') as string } : {}),
+        });
     }
   } finally {
     connection.disconnect();

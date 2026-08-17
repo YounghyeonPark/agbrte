@@ -18,6 +18,8 @@
  *   noise       protocol interleaved with non-JSON banner lines
  *   crash       exits non-zero having printed nothing resembling a result
  *   missing     exits imitating a binary that is not installed
+ *   no-login    the records a real `claude` prints when it has no credential
+ *   auth-dies   retries a rejected credential and dies before any result
  */
 
 const argv = process.argv.slice(2);
@@ -48,6 +50,19 @@ const result = (inputTokens, outputTokens) =>
     session_id: sessionId,
     usage: { input_tokens: inputTokens, output_tokens: outputTokens },
     total_cost_usd: 0.003,
+  });
+
+/** One failing API attempt, as Claude Code reports one before backing off. */
+const retry = (attempt) =>
+  write({
+    type: 'system',
+    subtype: 'api_retry',
+    session_id: sessionId,
+    attempt,
+    max_retries: 10,
+    retry_delay_ms: 500,
+    error_status: 401,
+    error: 'authentication_failed',
   });
 
 /** True when a term like `Read` or `Read(a.ts)` covers this tool. */
@@ -132,6 +147,69 @@ switch (mode) {
   case 'missing': {
     process.stderr.write("spawn claude ENOENT: 'claude' is not recognized\n");
     process.exit(127);
+    break;
+  }
+
+  /*
+   * Transcribed, not invented.
+   *
+   * These three records are what `claude 2.1.233` actually wrote on 2026-08-17
+   * when run with no credential (fields it also carries, and that nothing here
+   * reads, are left out). Two of them are the reason this mode exists: the
+   * failure category is a *structured* field, `error`, and not the sentence
+   * beside it — and the `result` says `subtype: "success"` while `is_error` is
+   * true, so a reader that trusts the subtype calls an unauthenticated run a
+   * finished turn.
+   */
+  case 'no-login': {
+    init();
+    write({
+      type: 'assistant',
+      session_id: sessionId,
+      message: {
+        role: 'assistant',
+        model: '<synthetic>',
+        content: [{ type: 'text', text: 'Not logged in · Please run /login' }],
+      },
+      error: 'authentication_failed',
+      is_api_error_message: true,
+    });
+    write({
+      type: 'result',
+      subtype: 'success',
+      session_id: sessionId,
+      is_error: true,
+      terminal_reason: 'api_error',
+      api_error_status: null,
+      result: 'Not logged in · Please run /login',
+      usage: { input_tokens: 0, output_tokens: 0 },
+      total_cost_usd: 0,
+    });
+    process.exit(1);
+    break;
+  }
+
+  /*
+   * The same credential problem, killed before it can report one.
+   *
+   * A real run retries a 401 ten times over about three minutes; anything that
+   * ends the process inside that window — a SIGTERM, an OOM kill, a host going
+   * down — leaves only a non-zero exit, which is `transport`, which is
+   * retryable. The run said what was wrong ten times before it died.
+   */
+  case 'auth-dies': {
+    init();
+    for (let attempt = 1; attempt <= 3; attempt += 1) retry(attempt);
+    process.exit(1);
+    break;
+  }
+
+  /* The other half of the same rule: a retry that recovers is a finished turn. */
+  case 'auth-recovers': {
+    init();
+    retry(1);
+    say('worked on retry');
+    result(12, 7);
     break;
   }
 

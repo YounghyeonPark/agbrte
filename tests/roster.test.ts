@@ -21,6 +21,8 @@ function agent(over: {
   agentId: string;
   role?: string;
   fidelity?: PermissionFidelity;
+  model?: string;
+  status?: AgentRecord['status'];
 }): AgentRecord {
   return {
     agentId: over.agentId,
@@ -32,9 +34,12 @@ function agent(over: {
       auth: { kind: 'none' },
       toolPolicy: { rules: [], defaultAction: 'ask' },
       limits: {},
+      ...(over.model !== undefined
+        ? { model: { providerId: 'openai-compatible', modelId: over.model } }
+        : {}),
     },
     resolvedCapabilities: { permissionFidelity: over.fidelity ?? 'callback' },
-    status: 'idle',
+    status: over.status ?? 'idle',
     isolation: 'shared',
     resumeToken: null,
     lastEventSeq: 0,
@@ -65,5 +70,30 @@ describe('labelling a row with the agent that produced it', () => {
   it('says nothing for an agent no longer in the roster', () => {
     // A log outlives the agents in it. Guessing would be worse than silence.
     expect(agentLabel([agent({ agentId: 'a' }), agent({ agentId: 'b' })], 'gone')).toBeNull();
+  });
+});
+
+describe('a session whose model was changed', () => {
+  /**
+   * One live seat and one retired one (§4.2). This is exactly the transcript
+   * that cannot be read without labels — the rows above the change came from a
+   * different model — so counting only *live* seats would silence the labels on
+   * the one case that needs them.
+   */
+  const changed = [
+    agent({ agentId: 'a', role: 'lead', model: 'qwen2.5:7b', status: 'retired' }),
+    agent({ agentId: 'b', role: 'lead', model: 'claude-sonnet' }),
+  ];
+
+  it('still labels rows, including the retired seat’s', () => {
+    expect(agentLabel(changed, 'a')).toBe('qwen2.5:7b');
+    expect(agentLabel(changed, 'b')).toBe('claude-sonnet');
+  });
+
+  it('labels by model where the roles are identical', () => {
+    // Both seats are `lead`, so a role would put the same word on both sides of
+    // the change and explain nothing.
+    expect(new Set(changed.map((a) => a.role)).size).toBe(1);
+    expect(agentLabel(changed, 'a')).not.toBe(agentLabel(changed, 'b'));
   });
 });

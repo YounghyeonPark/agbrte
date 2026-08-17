@@ -30,6 +30,8 @@ import {
   type HostInfo,
   type AgbrteApi,
   type SendRequest,
+  type ShellChunk,
+  type ShellExitDto,
   type UpdateState,
 } from '../shared/ipc/contract.js';
 import type { ReasoningMode } from '../shared/ipc/contract.js';
@@ -38,6 +40,7 @@ import type {
   PermissionRequest,
   PermissionResolved,
   Session,
+  ShellProgram,
 } from '../shared/types/index.js';
 
 /** Wire one push channel to a callback, returning its unsubscribe. */
@@ -130,6 +133,9 @@ const api: AgbrteApi = {
       proposalId: string,
       decision: { approved: boolean; reason?: string },
     ) => ipcRenderer.invoke(CH.sessionsRespondSplit, sessionId, proposalId, decision),
+    group: (sessionIds: string[], name: string, groupId?: string) =>
+      ipcRenderer.invoke(CH.sessionsGroup, sessionIds, name, groupId),
+    ungroup: (sessionId: string) => ipcRenderer.invoke(CH.sessionsUngroup, sessionId),
     listOnDisk: () => ipcRenderer.invoke(CH.sessionsListOnDisk),
     resume: (instanceId: string, sessionId: string) =>
       ipcRenderer.invoke(CH.sessionsResume, instanceId, sessionId),
@@ -151,6 +157,31 @@ const api: AgbrteApi = {
     since: (sessionId: string, fromSeq: number) =>
       ipcRenderer.invoke(CH.sessionsSince, sessionId, fromSeq),
   },
+  /*
+   * The user's own terminal (§7).
+   *
+   * Four methods, each purpose-specific, none of them generic: there is no
+   * `exec`, no path, and no argv here, because a method that took one would let
+   * the renderer widen its own reach through an API that only looks like a
+   * terminal. `program` is the single thing the renderer chooses and it is a
+   * selector over a set the *host* defines — a `cliId` it detected, or the shell
+   * — so the widest thing sayable through this method is "the CLI you already
+   * offer me as a runtime, started the way a person would start it". What
+   * crosses back is an opaque `shellId` and bytes.
+   */
+  shell: {
+    open: (r: {
+      instanceId: string;
+      sessionId: string;
+      program?: ShellProgram;
+      cols?: number;
+      rows?: number;
+    }) => ipcRenderer.invoke(CH.shellOpen, r),
+    write: (shellId: string, data: string) => ipcRenderer.invoke(CH.shellWrite, shellId, data),
+    resize: (shellId: string, cols: number, rows: number) =>
+      ipcRenderer.invoke(CH.shellResize, shellId, cols, rows),
+    close: (shellId: string) => ipcRenderer.invoke(CH.shellClose, shellId),
+  },
   permissions: {
     pending: () => ipcRenderer.invoke(CH.permissionsPending),
     respond: (requestId: string, decision: PermissionDecision) =>
@@ -164,6 +195,10 @@ const api: AgbrteApi = {
       subscribe(PUSH.permissionResolved, cb),
     hosts: (cb: (h: HostInfo[]) => void) => subscribe(PUSH.hosts, cb),
     update: (cb: (s: UpdateState) => void) => subscribe(PUSH.update, cb),
+    // Its own channel, never `events`. Terminal bytes are not durable, are
+    // never acked, and must not be delayed by a batch window a person can feel.
+    shell: (cb: (c: ShellChunk) => void) => subscribe(PUSH.shell, cb),
+    shellExit: (cb: (e: ShellExitDto) => void) => subscribe(PUSH.shellExit, cb),
   },
   ack: (sessionId: string, seq: number) => ipcRenderer.send(CH.ack, sessionId, seq),
 };

@@ -14,6 +14,7 @@
 
 import { EventEmitter } from 'node:events';
 import { readdir, readFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import {
   byAttentionThenRecency,
@@ -23,7 +24,11 @@ import {
   newAgentId,
   newSessionId,
   uuidv7,
+  PEER_MESSAGE_MAX_CHARS,
   type OutboundMessage,
+  type OutboundPeerMessage,
+  type PeerDelivery,
+  type PeerMessage,
   type PermissionAsk,
   type PolicyRule,
   type ResultContract,
@@ -54,6 +59,7 @@ import {
   type SessionState,
   type Sha256,
   type SplitProposal,
+  type StopReason,
   type ToolPolicy,
   type UserTurn,
   type AgentId,
@@ -71,6 +77,7 @@ import { ensureBlob } from './store/blobTransfer.js';
 import { compactionSizes, rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
+import { RawTailBuffer } from './rawTail.js';
 import { TurnSlots } from './concurrency.js';
 import { entriesFrom, merge, ReadMarker } from './inbox.js';
 import { fitContent } from './content/fit.js';
@@ -97,6 +104,19 @@ export interface NewAgentInput {
   isolation?: Isolation;
   limits?: AgentSpec['limits'];
   requirements?: RoleRequirements;
+  /**
+   * The seat this one takes over from — how a model is changed mid-session
+   * (§4.2).
+   *
+   * A session holds one agent, so admitting a second is only ever a
+   * *replacement*, and the caller has to say which seat it believes is there.
+   * By id rather than a `replace: true` flag because several clients may hold
+   * one session (§17 Q14): two people changing the model at once would
+   * otherwise each retire whatever they found, and the second would silently
+   * throw away the first's choice. Naming the seat makes the loser's attempt a
+   * refusal that says the seat is already retired.
+   */
+  replacing?: AgentId;
 }
 
 /** What a split needs beyond the brief itself (§4.3). */
@@ -128,6 +148,36 @@ export class AdmissionRefused extends Error {
     super(`agent refused: ${failures.map((f) => f.detail).join('; ')}`);
     this.name = 'AdmissionRefused';
   }
+}
+
+/**
+ * A session already has its agent (§4.2).
+ *
+ * Its own class rather than a bare `Error` for the reason `AdmissionRefused` is
+ * one: a caller — the renderer, a CLI, the host protocol — should be able to
+ * tell "this is a rule, here is what to do instead" from "something broke". The
+ * message names the seat that is already there, because "refused" without the
+ * incumbent's name is a dead end for the person reading it.
+ */
+export class SecondAgentRefused extends Error {
+  constructor(
+    readonly sessionId: SessionId,
+    readonly incumbent: AgentId,
+    reason: string,
+  ) {
+    super(reason);
+    this.name = 'SecondAgentRefused';
+  }
+}
+
+/** How a seat reads in a sentence: `lead · qwen2.5:7b` or `lead · echo`. */
+function describeSeat(record: AgentRecord): string {
+  return `${record.role} · ${record.spec.model?.modelId ?? record.spec.runtimeId}`;
+}
+
+/** Seats that still count: everything but the ones a replacement retired. */
+export function activeAgents(session: Session): AgentRecord[] {
+  return session.agents.filter((a) => a.status !== 'retired');
 }
 
 interface QueuedTurn {
@@ -178,6 +228,22 @@ interface LiveSession {
   specs: Map<AgentId, AgentSpec>;
   /** Real controllers, so `ctx.abortSignal` can actually fire. */
   aborts: Map<AgentId, AbortController>;
+  /**
+   * What each seat's process printed, unparsed (§3.12, §7).
+   *
+   * Held **here** rather than on the handle beside it, which is the difference
+   * between a terminal pane that works and one that is always empty. A handle
+   * is a turn — `runTurn` deletes it the moment the turn ends — so a tail owned
+   * by the handle was destroyed at exactly the moment a person went to read
+   * what had just been printed. The session outlives every handle it opens, so
+   * the tail does too, and `rawLog` can be answered between turns.
+   *
+   * Created lazily on the first reported line, which is also the availability
+   * signal: a seat with an entry has a raw side, one without has never shown
+   * that it has. Bounded three ways by `RawTailBuffer`, because unlike a
+   * handle's this one lives as long as the session does.
+   */
+  rawTails: Map<AgentId, RawTailBuffer>;
   /** Whether this session has already recorded the move. */
   notedRelocation?: boolean;
   /**
@@ -274,6 +340,21 @@ export interface SessionManagerDeps {
    * `instance.json` written before relocation was tracked reports.
    */
   relocatedFrom?: string;
+  /**
+   * What this machine is called, for instructions a person has to carry out here.
+   *
+   * A manager runs *where the loop runs* (§6.3), so for a remote session this
+   * object is inside the agent host on the other box — and a
+   * `vendor-cli-session` credential lives on whichever machine runs the CLI
+   * (§3.11), which is this one. "Run `claude auth login`" is therefore useless
+   * without saying where, and worse than useless if the reader assumes their
+   * own laptop. The host is the only party that can answer, so it answers with
+   * its own hostname.
+   *
+   * Injectable only so tests do not assert against whatever the runner is
+   * called; nothing in the app sets it.
+   */
+  machineName?: string;
   now?: () => Date;
 }
 
@@ -522,7 +603,16 @@ export class SessionManager extends EventEmitter {
       // owns the parent may not be this one.
       tree: input.child?.tree ?? { rootSessionId: sessionId, depth: 0, ancestry: [] },
       children: [],
-      peerSessionIds: [],
+      /*
+       * No group, and a child does not inherit its parent's (§17 Q22).
+       *
+       * The same rule as the standing grant and as skills: a child session is
+       * its own session and its *brief* is how a parent passes context down, so
+       * anything ambient it received instead would be context the person who
+       * approved the split never saw. A group is additionally an address other
+       * sessions can reach, and inheriting one would hand a fresh child a set
+       * of correspondents nobody chose for it.
+       */
       pendingSplits: [],
     };
 
@@ -662,6 +752,7 @@ export class SessionManager extends EventEmitter {
       handles: new Map(),
       specs: new Map(),
       aborts: new Map(),
+      rawTails: new Map(),
       lastEventAt: this.now().getTime(),
       waitingOnQuota: new Set<AgentId>(),
       hops: new Map<AgentId, number>(),
@@ -684,14 +775,115 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Add an agent, refusing configurations that cannot run safely.
+   * Admit this session's agent, refusing a second one and configurations that
+   * cannot run safely.
    *
    * Admission happens here rather than at the first tool call, so an
    * `all-or-nothing` runtime never reaches a shared workspace and a role's
    * capability floor is enforced before any work starts (§3.10, §4.2, §9).
+   *
+   * ## One session, one agent
+   *
+   * §4.2: a session is one model, and collaboration between models is the
+   * *group* feature (§17 Q22) — separate sessions, separate logs, separate
+   * bills, a bounded channel between them. The cap is enforced here, in the
+   * owner of the log, rather than by hiding a button: three clients reach this
+   * (the app, the CLI, an attached browser), plus template application, and a
+   * rule that lives in one renderer is a rule the other two do not have.
+   *
+   * Changing the model is therefore a *replacement*, not an addition:
+   * `input.replacing` names the seat being taken over, the incumbent is retired
+   * in the log, and the new seat is admitted. The order matters and is the
+   * reason the retirement is not done first: admission can refuse — an
+   * uninstalled CLI, a model below the role's floor — and a session left with
+   * no agent because the replacement was refused would be a working session
+   * destroyed by a rejected form.
+   *
+   * Sessions created before this rule may hold two seats. They keep working,
+   * keep attributing their rows, and are readable and resumable; what they
+   * cannot do is grow a third. That is the only asymmetry, and it is deliberate
+   * — §5.1 makes the log permanent, so a rule about what may be *created* can
+   * never be a rule about what already exists. Changing the model of one of
+   * their seats is allowed and leaves the count where it was: the rule is that
+   * a roster never *grows*, not that a session with two seats is frozen.
    */
   async addAgent(sessionId: SessionId, input: NewAgentInput, actor?: Actor): Promise<AgentRecord> {
     const live = this.live(sessionId);
+    const seated = activeAgents(live.session);
+    const replacing =
+      input.replacing !== undefined
+        ? live.session.agents.find((a) => a.agentId === input.replacing)
+        : undefined;
+
+    if (input.replacing !== undefined) {
+      // Named a seat that is not here at all: usually a stale client holding a
+      // session it has not re-read. Said by id, since that is what it sent.
+      if (replacing === undefined) {
+        throw new Error(
+          `no agent ${input.replacing} in this session, so there is nothing to replace — ` +
+            `reload the session and choose again`,
+        );
+      }
+      if (replacing.status === 'retired') {
+        throw new SecondAgentRefused(
+          sessionId,
+          seated[0]?.agentId ?? replacing.agentId,
+          `${replacing.agentId} was already retired${
+            seated[0] !== undefined ? ` and this session now runs ${describeSeat(seated[0])}` : ''
+          } — somebody else changed the model first, so re-read the session before changing it again`,
+        );
+      }
+      /*
+       * A seat mid-turn is not replaced out from under itself.
+       *
+       * Retiring it would leave a running loop writing into a transcript that
+       * says it is gone, and the turn's result would land on a seat nobody can
+       * send to. Refused rather than interrupted, because interrupting is a
+       * decision a person makes deliberately — there is a button for it — and
+       * doing it silently as a side effect of a dropdown would throw away a
+       * turn somebody is paying for.
+       */
+      if (replacing.status === 'running') {
+        throw new Error(
+          `${describeSeat(replacing)} is mid-turn; interrupt it first, then change the model — ` +
+            `replacing a running seat would abandon the turn it is being paid for`,
+        );
+      }
+    }
+
+    /*
+     * The refusal itself. Named seat, named alternative — a person reading this
+     * has to be able to act on it without knowing the architecture.
+     */
+    if (replacing === undefined && seated.length > 0) {
+      const incumbent = seated[0]!;
+      throw new SecondAgentRefused(
+        sessionId,
+        incumbent.agentId,
+        `this session already has an agent (${describeSeat(incumbent)}) and a session holds ` +
+          `exactly one. Use "Agent…" to change the model — the seat is retired and the new one ` +
+          `takes over, both recorded in the transcript — or start a second session and group ` +
+          `the two so the models can message each other.`,
+      );
+    }
+
+    return this.admitSeat(live, input, replacing ?? null, actor);
+  }
+
+  /**
+   * Everything an admission does once the roster rule has been answered.
+   *
+   * Split from `addAgent` so the cap is one guard in one place with nothing
+   * after it that could quietly grow a second entry point — and so the
+   * replacement path is *the same* admission as a first seat, rather than a
+   * near-copy that drifts.
+   */
+  private async admitSeat(
+    live: LiveSession,
+    input: NewAgentInput,
+    replacing: AgentRecord | null,
+    actor?: Actor,
+  ): Promise<AgentRecord> {
     const requested = input.isolation ?? 'shared';
 
     const spec: AgentSpec = {
@@ -769,6 +961,22 @@ export class SessionManager extends EventEmitter {
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 },
     };
 
+    /*
+     * The incumbent goes out here — after admission, before the newcomer is
+     * pushed (§4.2).
+     *
+     * After, so a refused replacement leaves the session exactly as it was:
+     * every throw above this line happens with the old seat still seated and
+     * still sendable. Before the push, so there is no instant at which
+     * `activeAgents` returns two — the window in which a second client could
+     * read a two-seat roster and act on it.
+     *
+     * Its worktree, if it had one, is deliberately left alone: a checkout can
+     * hold uncommitted work, and quietly deleting a branch because somebody
+     * changed model is not a decision this method gets to make.
+     */
+    if (replacing !== null) await this.retireSeat(live, replacing, spec.agentId, actor);
+
     live.session.agents.push(record);
     live.specs.set(spec.agentId, spec);
 
@@ -838,6 +1046,70 @@ export class SessionManager extends EventEmitter {
     return record;
   }
 
+  /**
+   * Take a seat out of service, permanently and in the log (§4.2, §5.1).
+   *
+   * The transcript is the point. A session whose answers change character
+   * halfway down because somebody swapped a 7B local model for a frontier one
+   * has to *say so*, at the position where it happened and with the person who
+   * did it attached — otherwise the record reads as one model behaving
+   * inexplicably. `agent.created` for the newcomer alone would not do it: two
+   * creations with no retirement between them is what a legacy two-seat roster
+   * looks like, and the two shapes have to stay distinguishable forever.
+   *
+   * The spec is dropped so nothing can send to the seat again; the record stays
+   * in `session.agents` so every row it wrote keeps its name.
+   */
+  private async retireSeat(
+    live: LiveSession,
+    seat: AgentRecord,
+    replacedBy: AgentId | undefined,
+    actor?: Actor,
+  ): Promise<void> {
+    seat.status = 'retired';
+    live.specs.delete(seat.agentId);
+    // Any turn still queued for it would never drain — nothing will run them —
+    // so they are rejected here rather than left as promises nobody settles.
+    const queued = this.queues.get(seat.agentId) ?? [];
+    this.queues.delete(seat.agentId);
+    for (const q of queued) {
+      q.reject(new Error(`${describeSeat(seat)} was retired before this turn ran`));
+    }
+
+    /*
+     * Belt and braces on the process behind it.
+     *
+     * A seat mid-turn is refused a replacement, and a finished turn releases its
+     * handle, so ordinarily there is nothing here. A turn that threw on its way
+     * out is the case that leaves one — and a wrapped CLI's subprocess with
+     * nothing left that could ever send to it is a process kept alive for the
+     * lifetime of the session. Failures are swallowed because this is cleanup
+     * after a decision that has already been made: a stubborn subprocess must
+     * not turn a model change into an error.
+     */
+    const handle = live.handles.get(seat.agentId);
+    if (handle !== undefined) {
+      live.handles.delete(seat.agentId);
+      live.aborts.delete(seat.agentId);
+      await handle.stop('the seat was retired when this session’s model changed').catch(
+        () => undefined,
+      );
+    }
+
+    await live.store.append(
+      {
+        type: 'agent.retired',
+        reason: replacedBy !== undefined ? 'replaced' : 'removed',
+        ...(replacedBy !== undefined ? { replacedBy } : {}),
+        was: describeSeat(seat),
+      },
+      {
+        agentId: seat.agentId,
+        ...(actor !== undefined ? { actor } : {}),
+      },
+    );
+  }
+
   /** Send a turn and run it to completion, applying the resulting state. */
   /**
    * Queue a turn for an agent and resolve when *this* turn completes.
@@ -887,22 +1159,44 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * The raw stdout/stderr tail of the subprocess behind one agent (§3.12, §7).
+   * The raw stdout/stderr tail of the process behind one agent (§3.12, §7).
    *
-   * `null` covers two ordinary states and no error states: a runtime whose
-   * handles have no subprocess to show, and an agent between turns — a
-   * finished turn releases its handle (see `runTurn`), and the tail lives and
-   * dies with it. Both read the same to a viewer, and honestly so: in both,
-   * nothing is printing right now. The durable record is the event log; this
-   * is a live window for watching a long turn, not a second transcript.
+   * `null` means exactly one thing now: **this seat has never printed a raw
+   * line**, either because its runtime has no process to show — the harness,
+   * `echo` — or because it has not run yet in this host. It no longer also
+   * means "between turns", which is what made the terminal pane useless: the
+   * tail is kept by the session rather than by the handle, so it survives a
+   * finished turn, a crashed worker, and however many processes a
+   * deny-ask-resume took.
+   *
+   * A live window, not a record. It is not rebuilt when a session is reopened
+   * from disk, because the log is the durable transcript and nothing printed
+   * this into a terminal on this run.
    */
   rawLog(sessionId: SessionId, agentId: AgentId): RawTail | null {
     const live = this.live(sessionId);
     // Validated so an unknown agent is an error rather than a quiet null —
-    // null already carries two meanings above, and "you asked about nobody"
-    // must not become a third.
+    // "no raw side" and "you asked about nobody" are different answers and only
+    // one of them should hide a control.
     this.agent(live, agentId);
-    return live.handles.get(agentId)?.rawTail?.() ?? null;
+    return live.rawTails.get(agentId)?.tail() ?? null;
+  }
+
+  /**
+   * One line an adapter reported, kept for the terminal view.
+   *
+   * The ring is created on the first line rather than at admission, which makes
+   * its existence the availability signal: only a seat that has actually
+   * printed something claims a raw side, so no UI offers a pane that can only
+   * ever be empty.
+   */
+  private keepRaw(live: LiveSession, agentId: AgentId, line: string): void {
+    let tail = live.rawTails.get(agentId);
+    if (tail === undefined) {
+      tail = new RawTailBuffer();
+      live.rawTails.set(agentId, tail);
+    }
+    tail.push(line);
   }
 
   /**
@@ -1068,6 +1362,9 @@ export class SessionManager extends EventEmitter {
 
     // A finished turn releases the handle so the next send resumes cleanly;
     // parked agents are what make many concurrent sessions affordable (§8).
+    // `live.rawTails` is deliberately *not* cleared here: what the process
+    // printed is the thing somebody opens the terminal pane to read after the
+    // turn, and releasing it with the handle is what made that pane empty.
     live.handles.delete(agentId);
     live.aborts.delete(agentId);
 
@@ -1083,7 +1380,7 @@ export class SessionManager extends EventEmitter {
 
     await this.surfaceMerge(live, agentId);
 
-    await this.setState(live, outcome.nextState, stopReasonSummary(outcome.stop));
+    await this.setState(live, outcome.nextState, this.stopReason(outcome.stop));
     await live.store.maybeCheckpoint();
   }
 
@@ -1351,6 +1648,15 @@ export class SessionManager extends EventEmitter {
     const live = this.live(sessionId);
     const record = live.session.agents.find((a) => a.agentId === agentId);
     if (record === undefined) throw new Error(`no agent ${agentId} in this session`);
+    // A retired seat takes no more turns, so an effort set on it is a setting
+    // nothing will ever read — and a log line saying the effort changed, at a
+    // point after the seat stopped existing, is worse than the refusal (§4.2).
+    if (record.status === 'retired') {
+      throw new Error(
+        `${describeSeat(record)} was retired when this session's model changed, so its ` +
+          `reasoning effort no longer applies to anything`,
+      );
+    }
 
     if (record.resolvedCapabilities.reasoningControl !== 'effort') {
       throw new Error(
@@ -1382,12 +1688,54 @@ export class SessionManager extends EventEmitter {
     return {
       abortSignal: controller.signal,
       reportProgress: (p) => this.emit('progress', live.session.sessionId, p),
+      // Into the session's ring, never into the log. The log is the transcript;
+      // this is what the process printed, and appending megabytes of a CLI's
+      // stdout to a durable record would be a second transcript nobody asked
+      // for. Bound to the agent rather than the handle so it outlives the turn.
+      reportRaw: (line) => this.keepRaw(live, spec.agentId, line),
       requestPermission: (ask) => this.decide(live, spec, ask),
       sendMessage: (message) => void this.deliver(live, spec.agentId, message),
-      peers: live.session.agents.map((a) => a.agentId),
+      /*
+       * Live seats only (§4.2).
+       *
+       * A retired seat stays in the roster so the transcript can name it, but
+       * offering it here would hand a model an address that cannot receive:
+       * `message` would report a send, nothing would arrive, and the sender
+       * would wait for an answer from a model this session no longer runs. The
+       * tool's existing refusal — "that agent is not in this session, these
+       * are" — is the right sentence, and it needs a truthful roster to say it.
+       *
+       * In a session created under the cap this is one id, the agent's own, and
+       * the tool refuses every address including that one. It is still carried
+       * rather than dropped because sessions with two live seats exist.
+       */
+      peers: activeAgents(live.session).map((a) => a.agentId),
       capture: (o) => this.captureUrl(live, o),
       proposeSplit: (proposal) => void this.proposeSplit(live.session.sessionId, proposal, spec.agentId),
       compact: (budgetTokens) => this.compact(live, spec, budgetTokens),
+      /*
+       * The cross-session channel, and only for a session that has one (§17 Q22).
+       *
+       * Both halves or neither, because a way to send with nobody to send to is
+       * a guessing game — the argument `peers` already makes for the roster. A
+       * session in no group gets neither, and `message_peer` says there is no
+       * group rather than reporting a message into an empty room.
+       *
+       * A snapshot at start, exactly like `peers`: an adapter holds a spec, not
+       * a fleet, and a session that joins the group mid-turn is addressable from
+       * the next one. The alternative is a list that changes under a model
+       * between deciding who to ask and asking.
+       */
+      ...(live.session.group !== undefined
+        ? {
+            groupPeers: this.groupPeers(live.session.sessionId).map((s) => ({
+              sessionId: s.sessionId as string,
+              title: s.title,
+            })),
+            sendPeerMessage: (message: OutboundPeerMessage) =>
+              this.deliverPeer(live, spec.agentId, message),
+          }
+        : {}),
       // Only when something is actually injected: an empty array would make
       // every runtime merge nothing on every turn for every session.
       ...(live.mcp.size > 0 || live.skills.length > 0
@@ -1529,6 +1877,324 @@ export class SessionManager extends EventEmitter {
     void this.send(live.session.sessionId, stamped.to, { content: stamped.content }).catch(
       () => undefined,
     );
+  }
+
+  // ------------------------------------------------------------------ groups
+
+  /**
+   * Put sessions in a group, so they can message each other (§17 Q22).
+   *
+   * **Same host, and refused by name otherwise.** A `SessionManager` knows one
+   * workspace, so a session it cannot find is one it cannot deliver to, and the
+   * only honest thing it can do is say which id it does not have. The fleet
+   * refuses earlier and more usefully — it can name the *machines* — but this
+   * check is not a duplicate of that one: the fleet is a dependency of the app,
+   * and a guard that lives only there is a guard the CLI and the next client do
+   * not have. §13's rule about a bypassable gate applies to a refusal too.
+   *
+   * Idempotent per session: joining a group a session is already in appends
+   * nothing. The log is a record of changes, and a second identical join would
+   * be a change that did not happen.
+   *
+   * A terminal session may be grouped. It cannot be messaged — delivery refuses
+   * it by name — but grouping a finished session is how its transcript sits
+   * beside the work that came from it, and refusing would be refusing the
+   * ordinary act of tidying up.
+   */
+  async groupSessions(
+    sessionIds: readonly SessionId[],
+    name: string,
+    groupId?: string,
+    actor?: Actor,
+  ): Promise<Session[]> {
+    if (sessionIds.length === 0) throw new Error('name at least one session to group');
+    if (name.trim() === '') {
+      // Named rather than defaulted: a group is a thing a person made on
+      // purpose, and "Group 4" is a label nobody chose and nobody can find.
+      throw new Error('a group needs a name — it is what a person finds it by');
+    }
+
+    // Every session resolved *before* anything is written, so a set that is
+    // half on this host leaves no session in a group with members it cannot
+    // reach. The same rule `spawnChild` follows: a refused split leaves nothing
+    // behind.
+    const live = sessionIds.map((sessionId) => {
+      const found = this.sessions.get(sessionId);
+      if (found === undefined) {
+        throw new Error(
+          `no session ${sessionId} on this host, so it cannot join a group here — ` +
+            'a group is same-host in v1, and messaging between machines is not built',
+        );
+      }
+      return found;
+    });
+
+    const group = { groupId: groupId ?? uuidv7(), name };
+    const changed: Session[] = [];
+    for (const session of live) {
+      if (session.session.group?.groupId === group.groupId) {
+        changed.push(session.session);
+        continue;
+      }
+      session.session.group = { ...group };
+      await session.store.append(
+        { type: 'session.joined_group', groupId: group.groupId, name: group.name },
+        { ...(actor !== undefined ? { actor } : {}) },
+      );
+      this.touch(session);
+      this.emit('session', session.session);
+      changed.push(session.session);
+    }
+    return changed;
+  }
+
+  /** Leave a group. A group nobody can leave is a trap, not a feature. */
+  async ungroupSession(sessionId: SessionId, actor?: Actor): Promise<Session> {
+    const live = this.live(sessionId);
+    const group = live.session.group;
+    // Not an error: leaving a group you are not in is already the outcome you
+    // asked for, and a second client racing the first should not see a failure.
+    if (group === undefined) return live.session;
+
+    delete live.session.group;
+    await live.store.append(
+      { type: 'session.left_group', groupId: group.groupId },
+      { ...(actor !== undefined ? { actor } : {}) },
+    );
+    this.touch(live);
+    this.emit('session', live.session);
+    return live.session;
+  }
+
+  /**
+   * The other sessions in this session's group, on this host.
+   *
+   * Derived by asking which sessions carry the id rather than read from a
+   * membership record, because there is no membership record — see
+   * `Session.group`. One scan of a map this manager already holds.
+   */
+  groupPeers(sessionId: SessionId): Session[] {
+    const group = this.sessions.get(sessionId)?.session.group;
+    if (group === undefined) return [];
+    return [...this.sessions.values()]
+      .map((l) => l.session)
+      .filter((s) => s.sessionId !== sessionId && s.group?.groupId === group.groupId);
+  }
+
+  /**
+   * Carry one session's question to another in its group (§17 Q22).
+   *
+   * ## Both logs, and each says a different thing
+   *
+   * The sender's records the **attempt** and the recipient's the **arrival**, so
+   * a refused message has an attempt and no arrival and the pair reads as what
+   * actually happened. Neither could be derived from the other: two sessions are
+   * two directories under `sessions/`, possibly two workspaces, and §5.1's whole
+   * bargain is that a log is readable alone. This is §4.3's parent/child rule —
+   * *the edge is stored on both ends so either can be reconstructed alone* — in
+   * its second application, and the duplication it costs is bounded by
+   * `PEER_MESSAGE_MAX_CHARS`, which is one more thing the cap is buying.
+   *
+   * One event per attempt rather than `deliver`'s two. That method records the
+   * message and then, on a refusal, a `session.state` line with the reason,
+   * because `agent.message` has nowhere to put one. A new event type could
+   * carry the reason, so it does.
+   *
+   * ## The hop ceiling travels with the message
+   *
+   * §4.2 bounds an exchange at eight hops without a person because "a lead asks
+   * a worker, the worker asks back, and with no ceiling that is a conversation
+   * with a bill attached and nobody watching". Two *sessions* doing that is the
+   * same conversation with two bills. The count is therefore carried across the
+   * boundary and seeded into the recipient's own map, rather than each session
+   * starting from zero — which would have made "put them in a group and let them
+   * ping-pong" the documented way around the ceiling. A person's turn still
+   * clears the count for the session they sent it to, because a human in the
+   * loop is exactly what the ceiling is waiting for, and it clears only that
+   * session's because that is where the person is.
+   *
+   * ## What crosses, and what does not
+   *
+   * Words. Not policy, not the standing grant, not a blob, not a resume token.
+   * The recipient runs the resulting turn under its own gate with its own rules
+   * (§13), which is what keeps a group from being a way to have work done under
+   * somebody else's grant. The sentence added to the framing below is for a
+   * person reading the transcript; nothing is enforced by it, because §13 does
+   * not delegate gating to a model.
+   */
+  private async deliverPeer(
+    from: LiveSession,
+    fromAgentId: AgentId,
+    message: OutboundPeerMessage,
+  ): Promise<PeerDelivery> {
+    const hops = (from.hops.get(fromAgentId) ?? 0) + 1;
+    const stamped: PeerMessage = {
+      fromSessionId: from.session.sessionId,
+      fromAgentId,
+      toSessionId: message.toSessionId,
+      kind: message.kind,
+      text: message.text,
+      hops,
+    };
+
+    const refuse = async (reason: string): Promise<PeerDelivery> => {
+      /*
+       * The *recorded* body is bounded even when the attempt is refused for
+       * being over the cap.
+       *
+       * Delivery is refused rather than truncated — that rule is about what the
+       * recipient reads, and it stands. But `stamped.text` is whatever the
+       * adapter passed, and `RuntimeContext.sendPeerMessage` is reachable
+       * without the tool: an adapter running its own loop calls it directly,
+       * which is the very reason the cap is checked here as well. Appending the
+       * unbounded body meant a model could write megabytes into an append-only
+       * log per refused attempt, and repeat — a durable, model-driven, unbounded
+       * write that no bound above it stopped, and the exact cost the cap exists
+       * to prevent arriving through the refusal path instead of the delivery
+       * one.
+       *
+       * So the evidence is kept and elided rather than dropped: the prefix a
+       * person needs to recognise what was attempted, and the true length, which
+       * is the part that says *why* it was refused. Nothing here shortens
+       * anything that was delivered — over the cap, nothing is.
+       */
+      const recorded: PeerMessage =
+        stamped.text.length <= PEER_MESSAGE_MAX_CHARS
+          ? stamped
+          : {
+              ...stamped,
+              text:
+                `${stamped.text.slice(0, PEER_MESSAGE_MAX_CHARS)}\n` +
+                `[…elided: this attempt was ${stamped.text.length} characters, over the ` +
+                `${PEER_MESSAGE_MAX_CHARS}-character cap, and was never delivered]`,
+            };
+      await from.store.append(
+        { type: 'session.peer_message_sent', message: recorded, delivered: false, refusedBecause: reason },
+        { agentId: fromAgentId },
+      );
+      from.lastEventAt = this.now().getTime();
+      return { accepted: false, reason };
+    };
+
+    // Checked here as well as in the tool, and deliberately: the tool is one
+    // caller and this is the owner of the log. A cap enforced only where the
+    // model is asked politely is not a cap (§13).
+    if (stamped.text.length > PEER_MESSAGE_MAX_CHARS) {
+      return refuse(
+        `a message to another session is capped at ${PEER_MESSAGE_MAX_CHARS} characters and ` +
+          `this one is ${stamped.text.length}; name an artifact instead of pasting it`,
+      );
+    }
+
+    const group = from.session.group;
+    if (group === undefined) return refuse('this session is not in a group');
+
+    if (hops > MAX_MESSAGE_HOPS) {
+      return refuse(
+        `not delivered: ${MAX_MESSAGE_HOPS} hops without a person. ` +
+          'Ask whoever is watching this run before continuing the exchange.',
+      );
+    }
+
+    if (stamped.toSessionId === from.session.sessionId) {
+      return refuse('a session cannot message itself');
+    }
+
+    const to = this.sessions.get(stamped.toSessionId as SessionId);
+    if (to === undefined) {
+      /*
+       * Refused by name rather than routed. This manager owns one workspace, so
+       * a session it does not hold is either not loaded or on another machine —
+       * and v1 does not cross machines. Saying so is the project's habit (§16's
+       * execution-target failure, `applyTemplate`'s refusal, `hostFor`'s): the
+       * alternative is silence, and silence here looks exactly like a message
+       * that was delivered and ignored.
+       */
+      return refuse(
+        `no session ${stamped.toSessionId} on this host — messaging between sessions on ` +
+          'different machines is not built, so both must be in the same workspace host',
+      );
+    }
+    if (to.session.group?.groupId !== group.groupId) {
+      return refuse(
+        `session ${stamped.toSessionId} is not in your group, and a message may only reach ` +
+          'a session that is',
+      );
+    }
+    /*
+     * A finished session is refused; a paused one is not.
+     *
+     * The distinction is the one this whole design is built on (§4.1): the
+     * `awaiting_*` states mean *paused, holding all state, will resume*, so a
+     * message to a session waiting on quota or on a person is queued and runs
+     * when it wakes — turning that into a refusal would treat a pause as a
+     * failure in the one place it is easiest to. `done`, `failed` and
+     * `cancelled` are genuinely over, and waking one would resurrect work
+     * somebody closed.
+     */
+    if (isTerminal(to.session.state)) {
+      return refuse(
+        `session ${stamped.toSessionId} is ${to.session.state} — it is finished, and a message ` +
+          'would not be worked on',
+      );
+    }
+    /*
+     * The recipient's live agent, which is its only agent (§4.2).
+     *
+     * `agents[0]` was right while a roster could only grow, and became wrong
+     * when a seat could be *replaced*: seat zero of a session whose model was
+     * changed is the retired one, and a peer message delivered to it would be
+     * accepted here and then refused by `send` — reported as delivered in one
+     * log with nothing arriving in the other, which is precisely the pair §17
+     * Q22 says must always agree.
+     */
+    const recipient = activeAgents(to.session)[0];
+    if (recipient === undefined) {
+      return refuse(
+        `session ${stamped.toSessionId} has no agent to work on this. ` +
+          'Nothing there would read it.',
+      );
+    }
+
+    await from.store.append(
+      { type: 'session.peer_message_sent', message: stamped, delivered: true },
+      { agentId: fromAgentId },
+    );
+    await to.store.append({ type: 'session.peer_message_received', message: stamped });
+    from.lastEventAt = this.now().getTime();
+    to.lastEventAt = this.now().getTime();
+
+    // Seeded before the turn starts, so the reply this may provoke counts as
+    // the next hop of the same exchange rather than the first of a new one.
+    to.hops.set(recipient.agentId, hops);
+
+    /*
+     * The recipient's lead, not an agent the sender named.
+     *
+     * Addressing an agent inside another session would mean reaching into a
+     * roster the sender cannot see and which changes without it — §4.2's "the
+     * roster is carried, not discovered" problem, made worse by a boundary. A
+     * session has a stable id, a title and a goal; who answers is its own
+     * business.
+     *
+     * No actor, for `deliver`'s reason: nobody pressed anything, and §5.1 reads
+     * an absent actor as "no person acted".
+     */
+    void this.send(to.session.sessionId, recipient.agentId, {
+      content: [
+        {
+          type: 'text',
+          text:
+            `[${stamped.kind} from the session "${from.session.title}" ` +
+            `(${from.session.sessionId}) in your group "${group.name}"]\n\n` +
+            `${stamped.text}\n\n` +
+            `Answer with message_peer to ${from.session.sessionId} if a reply is wanted. ` +
+            'You are working in your own session, under its own permissions and scope.',
+        },
+      ],
+    }).catch(() => undefined);
+
+    return { accepted: true };
   }
 
   /**
@@ -1878,6 +2544,31 @@ export class SessionManager extends EventEmitter {
 
   // ------------------------------------------------------------------ internals
 
+  /**
+   * Why a turn stopped, in words the person reading them can act on.
+   *
+   * `stopReasonSummary` is the shared, location-blind half; this adds the one
+   * fact only the owner of the workspace has. It matters for exactly one stop:
+   * `auth` parks the session in `awaiting_credentials` (§4.1) holding all its
+   * state, and the *whole* value of that pause is that somebody fixes the
+   * credential and sends again. A remedy is a command plus a machine, and a
+   * seat whose CLI lives on a build box telling you to log in — with your own
+   * laptop in front of you — is an instruction that quietly does not work.
+   *
+   * Everything else is left alone deliberately: a rate limit or a spent window
+   * is not fixed by going anywhere, so naming a machine there would be noise on
+   * every row to make one row right.
+   */
+  private stopReason(stop: StopReason): string {
+    const summary = stopReasonSummary(stop);
+    if (stop.kind !== 'auth') return summary;
+    const machine = this.deps.machineName ?? hostname();
+    return (
+      `${summary} (machine: ${machine}, workspace: ${this.deps.workspaceRoot}). ` +
+      `Nothing is lost — the session is holding its work and picks this turn up when you send again.`
+    );
+  }
+
   private async setState(live: LiveSession, to: SessionState, reason?: string): Promise<void> {
     if (live.session.state === to) return;
     const from = live.session.state;
@@ -2033,6 +2724,23 @@ export class SessionManager extends EventEmitter {
   private agent(live: LiveSession, agentId: AgentId): AgentRecord {
     const record = live.session.agents.find((a) => a.agentId === agentId);
     if (!record) throw new Error(`unknown agent ${agentId}`);
+    /*
+     * A retired seat is still in the roster and still not sendable (§4.2).
+     *
+     * It has to stay findable — the transcript names it on every row it wrote —
+     * but a turn addressed to it would be a turn on a model this session no
+     * longer runs, which is precisely what the cap exists to prevent. The
+     * likeliest sender is a client that had the old id in hand when the model
+     * changed, so the message says what happened and what to do.
+     */
+    if (record.status === 'retired') {
+      const now = activeAgents(live.session)[0];
+      throw new Error(
+        `${describeSeat(record)} was retired when this session's model changed` +
+          (now !== undefined ? `; it now runs ${describeSeat(now)}` : '') +
+          ` — reload the session and send again`,
+      );
+    }
     return record;
   }
 
@@ -2837,7 +3545,11 @@ export class SessionManager extends EventEmitter {
         : {}),
       tree: { rootSessionId: sessionId, depth: 0, ancestry: [] },
       children: projection.children,
-      peerSessionIds: [],
+      // Restored from the log, like the standing grant and the skills above: a
+      // restart is still the same session, and one that had forgotten its group
+      // would show peer messages in its own transcript with nobody to answer,
+      // then refuse a reply to the sibling that had just asked (§17 Q22).
+      ...(projection.group != null ? { group: { ...projection.group } } : {}),
       pendingSplits: [],
     };
 
@@ -2857,6 +3569,11 @@ export class SessionManager extends EventEmitter {
       handles: new Map(),
       specs: new Map(),
       aborts: new Map(),
+      // Empty on purpose, and it is not a loss: the raw tail is a live window on
+      // a running process (§3.12), never a second transcript. A resumed session
+      // has no process yet, and inventing one from the log would put bytes in a
+      // terminal pane that nothing ever printed there.
+      rawTails: new Map(),
       // Deliberately empty: an MCP server's env held credentials the log does
       // not carry (§17 Q20), so a restart cannot honestly reconnect. The
       // transcript's `mcp.attached` lines say what used to be here.
@@ -2891,6 +3608,42 @@ export class SessionManager extends EventEmitter {
         ...(projected.reasoning !== undefined ? { reasoning: projected.reasoning } : {}),
       };
 
+      /*
+       * A seat the log says was replaced comes back retired, and comes back
+       * *without being admitted* (§4.2).
+       *
+       * Not admitted, because admission asks whether something can run and this
+       * never will: a retired seat whose runtime has since been uninstalled
+       * would otherwise be skipped as unavailable, and skipping it takes the
+       * name off every transcript row it wrote. The capabilities in the record
+       * are the ones the log recorded at its creation, which is the honest
+       * answer to "what was it gated as" anyway (§5.1).
+       *
+       * No spec and no `live.specs` entry, so nothing can send to it — the same
+       * position `retireSeat` leaves it in on the run where it happened, which
+       * is the point: a restart must not resurrect a seat as a second agent.
+       */
+      if (projected.retiredAt !== undefined && projected.capabilities !== undefined) {
+        session.agents.push({
+          agentId: projected.agentId,
+          role: spec.role,
+          spec: stripWorkspacePath(spec),
+          resolvedCapabilities: projected.capabilities,
+          status: 'retired',
+          isolation: projected.isolation,
+          resumeToken: null,
+          lastEventSeq: projection.lastSeq,
+          usage: {
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            cost: 0,
+          },
+        });
+        continue;
+      }
+
       const admission = await this.deps.registry.admit(spec, projected.isolation, {});
       if (!admission.ok) {
         // Refusing the whole session would make one uninstalled runtime hide an
@@ -2900,7 +3653,10 @@ export class SessionManager extends EventEmitter {
         continue;
       }
 
-      live.specs.set(spec.agentId, spec);
+      // Not for a retired seat, which reaches this line only from a log with no
+      // recorded capabilities: it is rebuilt so its rows keep a name, never so
+      // it can take a turn.
+      if (projected.retiredAt === undefined) live.specs.set(spec.agentId, spec);
       const projectedUsage = projection.usage;
       session.agents.push({
         agentId: spec.agentId,
@@ -2908,8 +3664,10 @@ export class SessionManager extends EventEmitter {
         spec: stripWorkspacePath(spec),
         resolvedCapabilities: admission.capabilities,
         // Not `running`: nothing is running yet. A record restored as running
-        // would show a spinner for a turn that no longer exists.
-        status: 'idle',
+        // would show a spinner for a turn that no longer exists. And not
+        // `retired` either — that is the branch above, taken from the log
+        // rather than from memory.
+        status: projected.retiredAt !== undefined ? 'retired' : 'idle',
         isolation: projected.isolation,
         // The native token is not persisted, so resume takes the durable path
         // (§5.4) — which is the path that must work anyway.

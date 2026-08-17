@@ -34,7 +34,6 @@ const session = (over: Partial<Session> = {}): Session =>
     needsAttention: null,
     tree: { rootSessionId: 'sess-1', depth: 0, ancestry: [] },
     children: [],
-    peerSessionIds: [],
     pendingSplits: [],
     ...over,
   }) as Session;

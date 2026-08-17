@@ -33,6 +33,7 @@ import { Inbox } from './Inbox.js';
 import { Search } from './Search.js';
 import { Artifacts } from './Artifacts.js';
 import { Roster } from './Roster.js';
+import { Group } from './Group.js';
 import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
 import { Welcome } from './Welcome.js';
@@ -44,6 +45,7 @@ import { useAgbrte } from './store.js';
 import { Composer, EventRow, PermissionPrompt, SplitPrompt, Transcript, WorkingDots, summarize } from './Transcript.js';
 import { Preview } from './Preview.js';
 import { TerminalView } from './TerminalView.js';
+import { Shell, type ShellChoice } from './Shell.js';
 import type { EndpointModelsDto, ModelInstallDto, SessionTemplateDto } from '@shared/ipc/contract.js';
 import CATALOGUE from '../shared/models/catalogue.json' with { type: 'json' };
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
@@ -52,6 +54,7 @@ import type {
   ModelCapabilityHint,
   Session,
   SessionState,
+  ShellProgram,
 } from '../shared/types/index.js';
 import type { UpdateState } from '../shared/ipc/contract.js';
 
@@ -145,22 +148,62 @@ export function App(): JSX.Element {
    */
   const [focusedAgent, setFocusedAgent] = useState<string | null>(null);
   /**
-   * Whether the mid-session agent form is open (§4.2's roster growing).
+   * Whether the mid-session model form is open (§4.2).
    *
    * View state, like `focusedAgent`: which forms are unfolded is a way of
    * looking at a session, not a fact about it.
    */
   const [changingAgent, setChangingAgent] = useState(false);
   /*
-   * Chat or raw terminal, and whether the seat has a raw side at all (§3.12).
+   * Which of three panes the session column is showing.
+   *
+   * ## Three-way rather than a second toggle, and rather than a split
+   *
+   * `raw` and `shell` are easy to confuse and must never be confused, so they
+   * are mutually exclusive choices in one control that names all three. A second
+   * independent toggle beside the first would produce four states, two of which
+   * are the same screen, and would leave "Terminal" meaning two different things
+   * one button apart.
+   *
+   * Side by side was the other candidate and was rejected on layout: both panes
+   * replace the transcript in a single column that already carries a roster, a
+   * group strip, permission prompts and a composer, and the transcript is the
+   * one child allowed to give up height (see `Group`). Two half-height monospace
+   * panes would make both unusable rather than one useful.
+   *
+   *  - `chat`  — the transcript. The durable record, and the default.
+   *  - `raw`   — what the CLI *printed* while a model drove it (§3.12).
+   *              Read-only, and only where a seat has a raw side at all.
+   *  - `shell` — a PTY **you** type into. Not an agent, not in the log, not
+   *              gated by §13. Offered wherever the host can run one.
+   *
+   * View state like `focusedAgent`: which pane is showing is a way of looking,
+   * not a fact about the session, and two devices must not fight over it.
+   */
+  const [sessionPane, setSessionPane] = useState<'chat' | 'raw' | 'shell'>('chat');
+  /**
+   * What the terminal pane runs, once somebody has said — `null` until then.
+   *
+   * `null` rather than eagerly resolving the default, because the default is
+   * derived from things that arrive after the first render: the host handshake
+   * says which CLIs exist, and the session says whether it has a CLI seat. A
+   * `useState(derive())` would freeze whichever of those had landed first, and
+   * the visible symptom would be a pane that opens a shell on exactly the
+   * machines where the CLI took longest to detect.
+   *
+   * View state like `focusedAgent`: which program a person is driving on their
+   * own screen is not a fact about the session, and two devices must not fight
+   * over it.
+   */
+  const [shellProgram, setShellProgram] = useState<ShellProgram | null>(null);
+  /*
+   * Whether the seat has a raw side at all (§3.12).
    *
    * Availability is probed rather than inferred from the runtime id — the
    * owner answers `null` for a seat with no raw stream (harness, echo, an old
    * host), and branching on runtime identity here is exactly the leakage the
-   * probe exists to avoid. View state like the rest: which pane is showing is
-   * a way of looking, not a fact about the session.
+   * probe exists to avoid.
    */
-  const [terminal, setTerminal] = useState(false);
   const [rawAvailable, setRawAvailable] = useState(false);
   /**
    * The session an automatic first-agent add is in flight for, or `null`.
@@ -192,38 +235,88 @@ export function App(): JSX.Element {
   const { hosts, runtimesByHost, conformanceByHost, inbox, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
     store;
 
-  // Probed per session and per first seat, after the store is in hand (see the
-  // state's comment above for why a probe rather than a runtime-id branch).
-  const rawAgentId = active?.agents[0]?.agentId ?? null;
-  const rawAgentStatus = active?.agents[0]?.status ?? null;
+  /**
+   * The seats this session actually runs (§4.2).
+   *
+   * One, in every session created since the roster was capped; two in the ones
+   * that predate it. A seat retired by a model change stays in `agents` so the
+   * transcript can name the rows it wrote, and it is excluded from every
+   * question about *now*: who to send to, whose terminal to show, whether there
+   * is anything to filter between.
+   */
+  const liveAgents = active?.agents.filter((a) => a.status !== 'retired') ?? [];
+
+  /**
+   * The seat the transcript is filtered to, or `null` for the whole log.
+   *
+   * `focusedAgent` is a wish; this is whether it can be granted. With one live
+   * seat there is nothing to filter between — and a stale focus left over from a
+   * seat that has since been replaced would filter the pane down to a dead
+   * agent's rows with no `Everyone` button on screen to escape it, because
+   * `Roster` does not draw one for a single seat.
+   */
+  const paneAgent = liveAgents.length > 1 ? focusedAgent : null;
+
+  /*
+   * Whose raw side the pane shows: the seat being read, not seat zero.
+   *
+   * `agents[0]` was wrong the moment a session had two seats — a CLI worker
+   * added beside a harness lead had a terminal nobody could reach, because the
+   * probe and the pane both asked about the lead. `paneAgent` is the seat the
+   * transcript is already filtered to, so the raw view follows the reading, and
+   * falls back to the live seat rather than to a retired one.
+   */
+  const rawAgentId = paneAgent ?? liveAgents[0]?.agentId ?? null;
+  const rawAgentStatus =
+    active?.agents.find((a) => a.agentId === rawAgentId)?.status ?? null;
+
+  /*
+   * A pane filter belongs to the session it was chosen in.
+   *
+   * Carried across a session switch it filters the new transcript to an agentId
+   * that is not in it — an empty pane that looks like a session with no history
+   * — and after a model change it points at a retired seat, whose raw side the
+   * host now refuses to answer for. Cleared on the session, not on `rawAgentId`,
+   * which is derived from this.
+   */
+  useEffect(() => {
+    setFocusedAgent(null);
+  }, [active?.sessionId]);
 
   // A different seat is a different question, so the answer is thrown away and
   // the pane returns to chat. The only place availability goes back to false.
+  //
+  // It also ends the shell, by unmounting `Shell` — deliberate: a terminal is a
+  // view of one workspace, and carrying one across a session switch would leave
+  // a PTY open on a machine the user has navigated away from.
   useEffect(() => {
-    setTerminal(false);
+    setSessionPane('chat');
     setRawAvailable(false);
+    // And the terminal's program goes back to being derived. A choice is about
+    // *this* session's tools — a session with a Claude Code seat and one with a
+    // Gemini seat should not inherit each other's pane — and carrying it across
+    // would be a stale answer to a question nobody asked again.
+    setShellProgram(null);
   }, [active?.sessionId, rawAgentId]);
 
   /*
-   * Asked while a turn is in flight, not once when the seat appeared.
+   * Asked whenever the seat could have printed something, not only mid-turn.
    *
-   * `SessionManager.rawLog` answers `null` both for a seat with no raw side and
-   * for one *between turns* — a finished turn releases its handle and the tail
-   * lives and dies with it. Asking once, at the moment the seat first appeared,
-   * therefore always landed before any handle had ever existed: the answer was
-   * `null` for every runtime, and the toggle never appeared at all.
+   * `SessionManager.rawLog` used to answer `null` both for a seat with no raw
+   * side and for one *between turns*, because the tail lived on the handle and
+   * `runTurn` releases the handle when the turn ends. That forced this probe to
+   * chase a live turn — and it still lost, because in the shipped topology the
+   * handle is a proxy to the agent host and never had a tail at all. The tail is
+   * now kept by the session, so a seat that has ever printed answers at any
+   * time, and the ordinary case is that the very first ask succeeds.
    *
-   * A turn in flight is both the one window in which a handle exists and the
-   * only time somebody wants to watch one, so that is when this asks. `working`
-   * is the trigger rather than the seat's own `running` because of the order
-   * `runTurn` does things in: the handle is opened first, then the session is
-   * pushed as `working`, and only then is the seat marked `running` — so the
-   * session state is the first push that is guaranteed to have a handle behind
-   * it. Both are watched, and it keeps asking while either holds, because one
+   * Still polled while a turn runs, for the one case that remains: a seat whose
+   * first line has not been printed yet. `working` is watched as well as the
+   * seat's own `running` because of the order `runTurn` does things in, and one
    * poll landing in a gap should not cost the toggle for the whole turn.
    *
    * Latched: a seat that has shown a raw stream once has a raw side, and taking
-   * the toggle away between turns would close the pane out from under a reader.
+   * the toggle away would close the pane out from under a reader.
    */
   useEffect(() => {
     const sessionId = active?.sessionId;
@@ -256,6 +349,24 @@ export function App(): JSX.Element {
    * with the first.
    */
   const lastAgentText = [...events].reverse().find((e) => e.type === 'agent.text')?.text;
+
+  /**
+   * What to do about a session parked on a credential (§3.11, §4.1).
+   *
+   * Read back out of the log rather than carried on `Session`, because the
+   * sentence belongs to the transition that produced it: the owner composed it
+   * knowing which machine it runs on and which CLI refused, and neither of those
+   * is knowable here — a browser tab watching a session on a build box must not
+   * tell anyone to log in on the laptop it happens to be running on.
+   *
+   * Only while the session is actually parked. An old auth pause that somebody
+   * already fixed is history, and history belongs in the transcript.
+   */
+  const lastStateRow = [...events].reverse().find((e) => e.type === 'session.state');
+  const credentialsAdvice =
+    active?.state === 'awaiting_credentials' && lastStateRow?.to === 'awaiting_credentials'
+      ? lastStateRow.reason
+      : undefined;
 
   useEffect(() => {
     void store.boot();
@@ -332,10 +443,14 @@ export function App(): JSX.Element {
   }, [active, hosts, runtimesByHost]);
 
   /**
-   * Add a seat and, if it landed, make the choice the new default for this host.
+   * Seat this session's model and, if it landed, remember the choice.
    *
-   * Success is the filter: a runtime that failed to start or a model the host
-   * refused must not become what every future session silently reaches for.
+   * One function for both the empty session and the change, because it is one
+   * call to the host (§4.2): the seat that is there, if any, is retired and this
+   * one takes over. Success is the filter — a runtime that failed to start, a
+   * model the host refused, or a seat the host would not replace because
+   * somebody else changed it first must not become what every future session
+   * silently reaches for.
    */
   const addAgentRemembering = async (
     runtimeId: string,
@@ -412,6 +527,118 @@ export function App(): JSX.Element {
 
   const runtimesHere = active === null ? [] : (runtimesByHost[active.instanceId] ?? []);
   const conformanceHere = active === null ? [] : (conformanceByHost[active.instanceId] ?? []);
+  /*
+   * From the host record rather than a second fetch.
+   *
+   * `hosts` is already pushed on every attach, every link change and every
+   * reconnect, so the explanation follows a host being replaced by one with a
+   * different set of tools installed — for free, and by the same route the
+   * runtime list itself takes.
+   */
+  const notesHere =
+    active === null
+      ? []
+      : (hosts.find((h) => h.instanceId === active.instanceId)?.runtimeNotes ?? []);
+
+  const activeHost = active === null ? undefined : hosts.find((h) => h.instanceId === active.instanceId);
+  /**
+   * Whether this host can give you a terminal.
+   *
+   * Read off the host record rather than probed, because the answer is a fact
+   * about *where the workspace is* and the record already carries it. v1 runs a
+   * PTY on local hosts only: a remote host is a pair of bundled `.js` files
+   * copied to `~/.agbrte` with no `node_modules` beside them, so the module
+   * that opens a pty is genuinely not on that machine. The protocol is not the
+   * limitation and the refusal says so — the button stays, disabled, naming the
+   * host, rather than vanishing and looking like a feature that does not exist.
+   */
+  const shellHere = activeHost?.targetKind === 'local';
+
+  /*
+   * What the terminal pane can run on this host, and what it opens by default.
+   *
+   * ## The list is the host's, not a list kept beside the host's
+   *
+   * `available` is what the owning host said it will admit — the same array the
+   * agent picker draws from and the same one `admit()` consults. Filtering it to
+   * the `cli:` ids is the whole derivation: a CLI the picker offers is a CLI the
+   * pane can open, and one it does not is refused by the host with the sentence
+   * `runtimeNotes` already shows. Maintaining a second list here would be one
+   * more thing to keep in step with a machine three time zones away, which is
+   * how the picker and the admission gate disagreed once already.
+   *
+   * ## Why the seat decides the default
+   *
+   * A session with a Claude Code seat is a session where somebody has already
+   * said which tool this work uses, so opening the pane on a shell prompt asks
+   * the question again and answers it wrongly. Where there is no seat the first
+   * detected CLI is still a better opening than a prompt — the pane exists to
+   * *be* the CLI's interface — and the shell stays one click away, last in the
+   * list, because it is what somebody needs when the CLI is the broken thing:
+   * a PATH to fix, a `git status` to read, a `claude` that will not start.
+   *
+   * ## And why a seat with no vendor CLI gets ours
+   *
+   * A harness seat on a local model has no interface of its own to open: there
+   * is no binary, so `{kind:'cli'}` has nothing to name and the pane could only
+   * ever offer a prompt. `{kind:'agbrte'}` is the answer — our own CLI, attached
+   * to *this* session, which is a real client of the same host rather than a
+   * program beside it. So it is the default exactly when the seat is not a
+   * vendor CLI, and it is offered **always**, including on a Claude Code seat,
+   * because "drive this session from a keyboard" is a thing somebody may want
+   * whatever the seat happens to be.
+   *
+   * It is listed above the shell and below the vendor CLIs, which is the order
+   * of how much of *this session* each one is: the seat's own tool, then the
+   * session itself, then the machine.
+   */
+  const clisHere = (activeHost?.available ?? []).filter((id) => id.startsWith('cli:'));
+  const seatCli =
+    active?.agents
+      .map((a) => a.spec.runtimeId)
+      .find((id) => id.startsWith('cli:') && clisHere.includes(id)) ?? null;
+  /** A seat exists and it is not one of the vendor CLIs this host detected. */
+  const seatWithoutCli = seatCli === null && (active?.agents.length ?? 0) > 0;
+  const defaultShellProgram: ShellProgram = ((): ShellProgram => {
+    if (seatCli !== null) return { kind: 'cli', cliId: seatCli.slice(4) };
+    // The seat is a harness, an echo, a local model — something with no
+    // interactive binary anywhere on the machine. Ours is the only thing that
+    // can open on it, so it opens on it.
+    if (seatWithoutCli) return { kind: 'agbrte' };
+    const preferred = clisHere[0];
+    return preferred === undefined ? { kind: 'shell' } : { kind: 'cli', cliId: preferred.slice(4) };
+  })();
+  const shellChoices: ShellChoice[] = [
+    ...clisHere.map((id) => ({
+      key: id,
+      label: runtimeLabel(id),
+      program: { kind: 'cli' as const, cliId: id.slice(4) },
+      hint:
+        id === seatCli
+          ? `${runtimeLabel(id)}, the tool this session's seat uses — run it yourself, ` +
+            'interactively. Nothing here enters the session log'
+          : `${runtimeLabel(id)}, installed on ${activeHost?.label ?? 'this host'} — run it ` +
+            'yourself, interactively. Nothing here enters the session log',
+    })),
+    {
+      key: 'agbrte',
+      label: 'Agbrte CLI',
+      program: { kind: 'agbrte' as const },
+      // The one hint that promises the opposite of the other two, because this
+      // is the one program in the pane that is a client of this session rather
+      // than a program running beside it.
+      hint:
+        'Agbrte’s own interface, attached to this session — send turns, answer permission ' +
+        'prompts, watch the transcript. Unlike the others it is a real client: what you send ' +
+        'here appears in the chat pane and in the session log',
+    },
+    {
+      key: 'shell',
+      label: 'Shell',
+      program: { kind: 'shell' as const },
+      hint: `The login shell on ${activeHost?.label ?? 'this host'} — for fixing a PATH, reading a git status, or starting a CLI by hand`,
+    },
+  ];
 
   return (
     /*
@@ -724,6 +951,10 @@ export function App(): JSX.Element {
                 : {})}
             />
 
+            {active.state === 'awaiting_credentials' && (
+              <CredentialsNotice advice={credentialsAdvice} />
+            )}
+
             {/* §6.8. Remote only: a local dev server is already on localhost, and
                 a button that does nothing visible teaches people the feature
                 does nothing. */}
@@ -752,6 +983,7 @@ export function App(): JSX.Element {
                      while an agent is added on another. */
                   key={active.instanceId}
                   runtimes={runtimesHere}
+                  notes={notesHere}
                   conformance={conformanceHere}
                   endpoints={hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []}
                   // Bound to the open session's host: "which models" is a question
@@ -783,21 +1015,35 @@ export function App(): JSX.Element {
                 />
                 <Roster
                   agents={active.agents}
-                  selected={focusedAgent}
+                  selected={paneAgent}
                   onSelect={setFocusedAgent}
                   onEffort={(agentId, mode) => store.setReasoning(agentId, mode)}
                 />
+                {/* §17 Q22. Folded by default: a group is a handful of lines in
+                    a session that may run for days, and the transcript is the
+                    only child of this column allowed to give up height. */}
+                <Group
+                  session={active}
+                  sessions={sessions}
+                  events={events}
+                  onGroup={(sessionId, name) => void store.groupWith(sessionId, name)}
+                  onLeave={() => void store.leaveGroup()}
+                  onOpen={(sessionId) => void store.openSession(sessionId)}
+                />
                 {changingAgent && (
                   /* The same picker the empty session shows, folded in under
-                     the roster it grows — Roster already renders any number of
-                     seats, so "change the agent" is "add another seat" (§4.2).
-                     Bounded and scrollable so an unfolded model browser cannot
-                     crush the transcript below it (see SessionHeader on why
-                     fixed rows around the transcript must hold their height). */
+                     the seat it replaces. A session holds one agent (§4.2), so
+                     choosing here retires the current seat and admits the new
+                     one — one call, decided by the host, both halves in the
+                     transcript. Bounded and scrollable so an unfolded model
+                     browser cannot crush the transcript below it (see
+                     SessionHeader on why fixed rows around the transcript must
+                     hold their height). */
                   <div className="border-line max-h-[45%] shrink-0 overflow-y-auto border-b">
                     <AgentPicker
                       key={active.instanceId}
                       runtimes={runtimesHere}
+                      notes={notesHere}
                       conformance={conformanceHere}
                       endpoints={
                         hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []
@@ -817,36 +1063,83 @@ export function App(): JSX.Element {
                       // Success saves the choice as the new default and closes
                       // the form; failure leaves it open with the error banner.
                       onAdd={addAgentRemembering}
+                      submitLabel="Change model"
                       busy={busy}
                     />
                   </div>
                 )}
-                {rawAvailable && (
-                  /* Only where a raw stream exists — a toggle to an empty pane
-                     teaches people the feature does nothing. */
-                  <div className="flex shrink-0 justify-end px-6 pt-2">
+                {/* Three named choices rather than one button whose label
+                    changes: `raw` and `shell` are easy to confuse and must not
+                    be, so both are visible at once with the difference spelled
+                    out in their titles. `Raw output` appears only where a seat
+                    has one — a toggle to an empty pane teaches people the
+                    feature does nothing — while `Terminal` is offered wherever
+                    the host can run one, and says why when it cannot. */}
+                <div className="flex shrink-0 justify-end gap-2 px-6 pt-2">
+                  <button
+                    className="btn text-[11px]"
+                    data-testid="show-chat"
+                    title="The transcript — the durable record of this session"
+                    aria-pressed={sessionPane === 'chat'}
+                    onClick={() => setSessionPane('chat')}
+                  >
+                    Chat
+                  </button>
+                  {rawAvailable && (
                     <button
                       className="btn text-[11px]"
                       data-testid="show-terminal"
-                      title="Raw CLI output"
-                      aria-pressed={terminal}
-                      onClick={() => setTerminal((open) => !open)}
+                      title="What the CLI printed while the agent drove it — read-only"
+                      aria-pressed={sessionPane === 'raw'}
+                      onClick={() => setSessionPane('raw')}
                     >
-                      {terminal ? 'Chat' : 'Terminal'}
+                      Raw output
                     </button>
-                  </div>
-                )}
-                {terminal && rawAvailable && rawAgentId !== null ? (
+                  )}
+                  <button
+                    className="btn text-[11px]"
+                    data-testid="show-shell"
+                    title={
+                      shellHere
+                        ? 'An interactive terminal in this workspace — your shell, a CLI you ' +
+                          'drive yourself, or Agbrte attached to this session. The pane says ' +
+                          'which of them is in the transcript and which is not'
+                        : `A terminal on ${activeHost?.label ?? 'this host'} is not available yet — ` +
+                          'terminals run on the machine that owns the workspace, and only a ' +
+                          'local host ships the module for it'
+                    }
+                    aria-pressed={sessionPane === 'shell'}
+                    disabled={!shellHere}
+                    onClick={() => setSessionPane('shell')}
+                  >
+                    Terminal
+                  </button>
+                </div>
+                {sessionPane === 'raw' && rawAvailable && rawAgentId !== null ? (
                   <TerminalView sessionId={active.sessionId} agentId={rawAgentId} />
+                ) : sessionPane === 'shell' && shellHere ? (
+                  /* Keyed by session so switching sessions is a new terminal in
+                     the new workspace rather than a stale one pointed at the
+                     old — the PTY's `cwd` belongs to a workspace, not to a
+                     window. */
+                  <Shell
+                    key={active.sessionId}
+                    sessionId={active.sessionId}
+                    instanceId={active.instanceId}
+                    program={shellProgram ?? defaultShellProgram}
+                    choices={shellChoices}
+                    onChoose={setShellProgram}
+                    hostLabel={activeHost?.label ?? active.instanceId}
+                  />
                 ) : (
                 <Transcript
                   events={
-                    focusedAgent === null
+                    paneAgent === null
                       ? events
                       : /* Filtered rather than re-fetched: the unified timeline is
                            the truth and a pane is a view of it, so switching back
                            cannot show something different from what was there. */
-                        events.filter((e) => e.agentId === focusedAgent)
+                        events.filter((e) => e.agentId === paneAgent)
                   }
                   renderRow={(e) => (
                     <EventRow key={e.seq} event={e} by={agentLabel(active.agents, e.agentId)} />
@@ -880,7 +1173,7 @@ export function App(): JSX.Element {
                     of the transcript already in hand, and a second copy of
                     "what was said last" is a second thing to keep in step. */}
                 <Composer
-                  onSend={(t, blocks) => void store.send(t, focusedAgent ?? undefined, blocks)}
+                  onSend={(t, blocks) => void store.send(t, paneAgent ?? undefined, blocks)}
                   disabled={active.state === 'working'}
                   queued={queued}
                   sessionId={active.sessionId}
@@ -1146,6 +1439,43 @@ function HostGroup({
   );
 }
 
+/**
+ * A session holding still because a credential will not work (§3.11, §4.1).
+ *
+ * It exists because "awaiting credentials" in the header is a *diagnosis* and
+ * what this pause needs is an *instruction*. A Claude Code seat that has not
+ * been logged in ends its turn with the CLI saying so in what looks like
+ * ordinary assistant text; the only visible route out was the Terminal view,
+ * which by design observes and cannot type (§3.11 keeps Agbrte out of the
+ * vendor's auth path), so the one control on screen was the one that cannot
+ * help. The advice comes from the owner, which is the only party that knows
+ * which machine the credential has to be fixed on.
+ *
+ * No button, and that is the design rather than an omission. There is nothing
+ * for Agbrte to *do* here: it must not proxy, store, or replay a vendor session
+ * token, so the remedy is a command in the user's own terminal. What it can
+ * promise is the part that makes waiting safe — the work is held, and sending
+ * again picks the turn up.
+ */
+function CredentialsNotice({ advice }: { advice: string | undefined }): JSX.Element {
+  return (
+    <div
+      role="status"
+      data-testid="credentials-notice"
+      className="border-state-paused mx-4 mt-3 grid shrink-0 gap-1 rounded-[2px] border bg-panel px-4 py-3"
+    >
+      <strong className={`${LABEL} text-state-paused`}>Waiting on a login</strong>
+      <p className="text-xs">
+        {/* The fallback is for a runtime that reported `auth` with nothing to
+            say (§3.9 allows it): vague and true beats a confident sentence
+            about a machine and a command nobody established. */}
+        {advice ??
+          'This agent’s credential cannot be used right now. Fix it where that agent runs, then send again — the session is holding its work.'}
+      </p>
+    </div>
+  );
+}
+
 function SessionHeader({
   session,
   host,
@@ -1212,13 +1542,18 @@ function SessionHeader({
             Interrupt
           </button>
         )}
-        {/* Quiet, like Export: adding a seat is occasional, and the defaults it
-            changes are this client's, not the session's. */}
+        {/* Quiet, like Export: changing the model is occasional, and the
+            defaults it changes are this client's, not the session's. */}
         {onToggleAgent !== undefined && (
           <button
             className="btn-quiet text-xs"
             data-testid="change-agent"
-            title="Add another agent, or a different runtime and model"
+            title={
+              'Change this session’s model. A session runs one agent (§4.2): the seat you have ' +
+              'now is retired and the new one takes over, and the transcript records both — ' +
+              'earlier turns stay, labelled with the model that produced them. To have two ' +
+              'models work together, start a second session and group them.'
+            }
             aria-pressed={agentMenuOpen === true}
             onClick={onToggleAgent}
           >
@@ -1450,6 +1785,7 @@ function ModelCapabilities({
 
 function AgentPicker({
   runtimes,
+  notes,
   conformance,
   endpoints,
   listModels,
@@ -1457,9 +1793,19 @@ function AgentPicker({
   installModel,
   installProgress,
   onAdd,
+  submitLabel,
   busy,
 }: {
   runtimes: RuntimeInfo[];
+  /**
+   * What this host looked for and did not find (§3.12).
+   *
+   * Rendered rather than dropped, because an *absent* row is the one thing a
+   * picker cannot explain: somebody with Claude Code installed sees a list
+   * without it and reasonably concludes the app is broken. Naming the machine
+   * moves the question to where the answer is.
+   */
+  notes: HostInfo['runtimeNotes'];
   /** The support matrix for this host, so the choice is informed (§3.13). */
   conformance: MatrixCell[];
   endpoints: HostInfo['endpoints'];
@@ -1476,6 +1822,15 @@ function AgentPicker({
   installModel: (endpointId: string, tag: string) => Promise<void>;
   installProgress: () => Promise<ModelInstallDto[]>;
   onAdd: (runtimeId: string, modelId: string | null, endpointId?: string) => Promise<void>;
+  /**
+   * What the submit button says.
+   *
+   * The same form seats the first agent and changes the model of a session that
+   * already has one (§4.2), and those are different sentences: "Add agent"
+   * above a session that is about to *retire* one would describe the opposite
+   * of what the click does.
+   */
+  submitLabel?: string;
   busy: boolean;
 }): JSX.Element {
   /**
@@ -1766,6 +2121,26 @@ function AgentPicker({
         </p>
       ) : (
         <>
+          {/*
+            Above the select, not below it.
+
+            The question this answers — "where is Claude Code?" — is asked while
+            reading the list and finding it absent, and an explanation underneath
+            two other panels is one somebody has already given up before reaching.
+            Not selectable, and deliberately not a disabled row inside the list:
+            an entry that cannot be chosen still reads as an offer, and offering
+            something that cannot run is the failure this whole change is about.
+          */}
+          {notes.length > 0 && (
+            <ul className="text-muted grid gap-0.5 text-[11px]" data-testid="runtime-notes">
+              {notes.map((note) => (
+                <li key={note.id} data-runtime={note.id}>
+                  {note.label}: not detected on this host ({note.reason})
+                </li>
+              ))}
+            </ul>
+          )}
+
           <label className="text-muted grid gap-1 text-xs">
             What will run
             <RuntimeSelect
@@ -2028,7 +2403,7 @@ function AgentPicker({
               );
             }}
           >
-            Add agent
+            {submitLabel ?? 'Add agent'}
           </button>
         </>
       )}

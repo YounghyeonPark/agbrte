@@ -216,7 +216,18 @@ export type StopReason =
    * Retrying cannot help, which is why it is not folded into `invalid_tool_args`.
    */
   | { kind: 'misconfigured'; detail: string }
-  | { kind: 'auth' }
+  /**
+   * The credential cannot currently be used — no login, an expired session, a
+   * key the endpoint rejected, an org that is not allowed.
+   *
+   * Pauses, never fails (§4.1): the work is intact and a person can fix the
+   * credential and send again. `detail` is optional and is *what to do about
+   * it* — for a `vendor-cli-session` seat that is the login command, which only
+   * the adapter driving that CLI knows. Optional because a provider that says
+   * only "401" has nothing honest to put here, and a sentence invented to fill
+   * the field would be advice nobody checked.
+   */
+  | { kind: 'auth'; detail?: string }
   | { kind: 'unavailable' }
   | { kind: 'transport' };
 
@@ -312,6 +323,30 @@ export interface RuntimeContext {
   requestPermission(ask: PermissionAsk): Promise<PermissionDecision>;
   reportProgress(p: ProgressSignal): void;
   /**
+   * One line the underlying process actually printed — stdout or stderr,
+   * unparsed (§3.12, §7).
+   *
+   * **Reported, not held.** This was `AgentHandle.rawTail()`, and a handle is a
+   * turn: `runTurn` releases it when the turn ends, so the tail was destroyed
+   * at precisely the moment somebody opened the terminal pane to read it. Worse,
+   * a handle reached through the agent-host boundary is a proxy with no
+   * subprocess behind it, so in the shipped topology no handle ever had a tail
+   * to offer. Pushing each line to the owner fixes both: the owner keeps the
+   * ring, the ring outlives every handle, and this notification crosses the
+   * process boundary the same way `reportProgress` already does.
+   *
+   * Optional, and honestly so, like `sendMessage`: only an adapter that *has* a
+   * process can report anything, and the harness prints nothing a terminal would
+   * show. A seat that never reports has no raw view rather than a permanently
+   * empty one.
+   *
+   * Fire-and-forget, and lossy by contract — the owner keeps a bounded tail and
+   * says how much it dropped. Read-only by construction: this is §3.12's "prefer
+   * documented JSON output over a pty" holding its ground, and a tail can be
+   * watched, never typed into.
+   */
+  reportRaw?(line: string): void;
+  /**
    * Address another agent in this session (§4.2).
    *
    * Optional, and honestly so: an adapter that runs its **own** tools — the SDK
@@ -380,6 +415,28 @@ export interface RuntimeContext {
    * model between deciding who to ask and asking.
    */
   peers?: AgentId[];
+  /**
+   * Which other sessions this one may address (§17 Q22).
+   *
+   * A snapshot at start, exactly like `peers` and for the same reason — an
+   * adapter holds a spec, not a fleet — and titles travel with the ids because
+   * a model choosing who to ask needs something to choose by. A session that
+   * joined the group mid-turn is addressable from the next one.
+   *
+   * Absent when this session is in no group, which is the ordinary case; the
+   * tool then says there is nobody to ask rather than pretending to send.
+   */
+  groupPeers?: Array<{ sessionId: string; title: string }>;
+  /**
+   * Ask a session in this group for help (§4.2, §17 Q22).
+   *
+   * Optional for the reason `sendMessage` is: an adapter running its own tools
+   * has no way to call it. Unlike `sendMessage` it answers, and the answer is
+   * the *postmark* rather than the reply — see `PeerDelivery`. Everything the
+   * owner refuses here it also records, on the sender's log, because what a
+   * group tried to say is the interesting part when it misbehaves.
+   */
+  sendPeerMessage?(message: OutboundPeerMessage): Promise<PeerDelivery>;
   /** Single egress endpoint; the gateway routes by provider. Absent unless auth is api-key. */
   modelEgress?: { baseUrl: string; token: string };
   /**
@@ -446,6 +503,62 @@ export interface SessionTool {
  */
 export type OutboundMessage = Omit<AgentMessage, 'from' | 'hops'>;
 
+/**
+ * One session addressing another in its group (DESIGN.md §4.2, §17 Q22).
+ *
+ * Text, and only text. `AgentMessage` carries `ContentBlock`s because a roster
+ * shares one workspace, one log and one blob store, so an image in a message is
+ * a hash both ends can already resolve. Across sessions none of that holds: the
+ * blob lives in the sender's `attachments/`, and delivering it would mean
+ * copying bytes into a store on the strength of a message rather than of a
+ * person. A pointer in the text costs the recipient one gated `read` under its
+ * *own* policy, which is the whole point (§13).
+ *
+ * `hops` is the same counter `AgentMessage` carries and not a second one. It
+ * travels **with the message across the session boundary**, because a ceiling
+ * that reset at that boundary would make "start a group and ping-pong between
+ * two sessions" the documented way to defeat it.
+ */
+export interface PeerMessage {
+  fromSessionId: string;
+  /** The agent that sent it. Stamped by the owner of the sender's log. */
+  fromAgentId: AgentId;
+  toSessionId: string;
+  kind: AgentMessage['kind'];
+  /** Capped at `PEER_MESSAGE_MAX_CHARS` and refused above it, never truncated. */
+  text: string;
+  hops: number;
+}
+
+/**
+ * What an adapter is allowed to say to another session.
+ *
+ * The same omissions as `OutboundMessage`, for the same reasons: an adapter
+ * that could name its own sender could forge attribution in a log whose whole
+ * value is that it says who did what, and one that could set `hops` could reset
+ * the bound that stops two agents talking in circles — now across two bills.
+ */
+export type OutboundPeerMessage = Omit<PeerMessage, 'fromSessionId' | 'fromAgentId' | 'hops'>;
+
+/**
+ * Whether a peer message was accepted for delivery — never whether it was
+ * answered (§17 Q22).
+ *
+ * §4.2's "sending never waits" is about the *reply*: a lead that blocked until
+ * its worker replied would hold a model connection open for the length of
+ * somebody else's work. It is not about the postmark. A message refused because
+ * the target is not in this group, is on another machine, or is finished, has
+ * to be refused *to the model that sent it* — "refused rather than dropped",
+ * §4.2's rule for a bad agent address, applied one level out. So this resolves
+ * when the message has been recorded and either handed on or turned away, and
+ * nothing here ever waits for the recipient's turn.
+ */
+export interface PeerDelivery {
+  accepted: boolean;
+  /** Why not, in a sentence a model can act on. Absent when accepted. */
+  reason?: string;
+}
+
 export interface AgentMessage {
   from: AgentId;
   to: AgentId | 'session';
@@ -472,6 +585,12 @@ export interface UserTurn {
  * The same shape as the preview server log, for the same reason: the
  * interesting part of a long-running process's output is always the end, and
  * `dropped` is what keeps a truncated tail honest about being truncated.
+ *
+ * Kept by the session that owns the log, never by the handle that produced it —
+ * `runTurn` releases handles and a tail released with them is one that vanishes
+ * the moment anybody looks. `dropped` doubles as an absolute cursor: it is the
+ * index of `lines[0]` in the whole stream, so `dropped + lines.length` tells a
+ * poller whether anything is new without re-comparing the text.
  */
 export interface RawTail {
   lines: string[];
@@ -499,21 +618,6 @@ export interface AgentHandle {
   events: AsyncIterable<RuntimeEvent>;
   /** Opaque, runtime-owned, optional. A cache — never truth (§5.4). */
   resumeToken(): string | null;
-  /**
-   * What the subprocess behind this handle actually printed — stdout and
-   * stderr, unparsed (§3.12).
-   *
-   * Optional, and honestly so, like `sendMessage` on `RuntimeContext`: only an
-   * adapter that *has* a subprocess can answer, and the SDK library or the
-   * harness prints nothing a terminal would show. Absent means the UI offers
-   * no raw view rather than one that is permanently empty.
-   *
-   * A live window, not a record: the tail lives and dies with the handle, and
-   * the durable transcript is the event log. Read-only by construction — this
-   * is §3.12's "prefer documented JSON output over a pty" holding its ground;
-   * a tail can be watched, never typed into.
-   */
-  rawTail?(): RawTail;
 }
 
 /** What an adapter emits; the host translates these into durable log events. */

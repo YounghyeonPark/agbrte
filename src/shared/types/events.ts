@@ -21,6 +21,7 @@ import type { EncodedPath } from './paths.js';
 import type { PermissionDecision, PolicyRule, ToolPolicy } from './policy.js';
 import type {
   AgentMessage,
+  PeerMessage,
   ModelRef,
   ReasoningRequest,
   RuntimeCapabilities,
@@ -278,6 +279,46 @@ export type EventBody =
   | { type: 'session.split_proposed'; proposal: SplitProposal }
   | { type: 'session.split_decided'; proposalId: string; approved: boolean; reason?: string }
   | { type: 'session.orphaned'; formerParentSessionId: SessionId }
+  // groups (§17 Q22)
+  /**
+   * This session was put in a group, and may now message its members.
+   *
+   * One fact, on this session's own log, carrying the whole group rather than a
+   * reference to one — there is no membership record anywhere else to resolve a
+   * reference against, and a group is a set whose members each hold its name.
+   */
+  | { type: 'session.joined_group'; groupId: string; name: string }
+  | { type: 'session.left_group'; groupId: string }
+  /**
+   * What this session tried to say to another (§17 Q22).
+   *
+   * Written **whatever happens next**, including when the message is refused —
+   * for depth, for length, for a target on another machine or one that has
+   * finished. That is `agent.message`'s rule, and the reason is the same: a log
+   * of only the successful coordination answers the wrong question.
+   *
+   * The sender's log records the *attempt*; the recipient's records the
+   * *arrival*. A refused message therefore has an attempt and no arrival, and
+   * the two logs read together say exactly what happened — which is the shape
+   * §4.3 already chose for the parent/child edge, where each end is written so
+   * either can be read alone.
+   */
+  | {
+      type: 'session.peer_message_sent';
+      message: PeerMessage;
+      delivered: boolean;
+      /** Why it was not, in the words the sending model was given. */
+      refusedBecause?: string;
+    }
+  /**
+   * What another session said to this one (§17 Q22).
+   *
+   * On the recipient's log because the turn it wakes is otherwise a turn
+   * arriving from nowhere — the failure `session.unparked` exists to prevent,
+   * where a transcript shows work nobody asked for. It carries no policy, no
+   * grant and no blob: a message conveys words, never authority (§13).
+   */
+  | { type: 'session.peer_message_received'; message: PeerMessage }
   // adapter/agent lifecycle
   /**
    * Recorded when an agent joins a session, so a reloaded log can resolve an
@@ -308,6 +349,37 @@ export type EventBody =
        * behaviour change this event exists to prevent (§3.4).
        */
       reasoning?: ReasoningRequest;
+    }
+  /**
+   * A seat stopped being this session's agent (§4.2).
+   *
+   * A session holds one agent, so changing the model is *this event and then an
+   * `agent.created`* — the old seat retired, the new one admitted, in that
+   * order and in one place. Written rather than inferred, for three reasons:
+   *
+   * - `AgentRecord.status` is live state. A resume rebuilds every seat as
+   *   `idle` (see `resumeSession`), so a retirement held only in memory would
+   *   last until the next restart and then quietly hand the session two active
+   *   agents — the thing admission refuses.
+   * - `stopped` already means something else: a turn that ended badly. Reusing
+   *   it would make "this seat crashed an hour ago" and "this seat was replaced
+   *   on purpose" the same word, and admission has to tell them apart.
+   * - *When* is the interesting part. A transcript whose answers change
+   *   character halfway down should say that the model changed and at what
+   *   point, and §5.1's rule is that the log says who did what — the envelope's
+   *   `actor` carries the person who chose.
+   *
+   * `replacedBy` is set when a new seat took over in the same breath, which is
+   * every case the UI can produce today; it is optional because a seat retired
+   * with nothing behind it is a session waiting for its next agent, not a
+   * malformed record.
+   */
+  | {
+      type: 'agent.retired';
+      reason: 'replaced' | 'removed';
+      replacedBy?: AgentId;
+      /** What the seat was, in words, so the line reads without a lookup. */
+      was?: string;
     }
   | {
       /**
@@ -406,7 +478,12 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'session.split_proposed',
   'session.split_decided',
   'session.orphaned',
+  'session.joined_group',
+  'session.left_group',
+  'session.peer_message_sent',
+  'session.peer_message_received',
   'agent.created',
+  'agent.retired',
   'agent.started',
   'agent.compacted',
   'agent.interrupted',

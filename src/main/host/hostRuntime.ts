@@ -30,6 +30,7 @@ import type {
   MainSideChannel,
   RequestId,
 } from '@shared/host/protocol.js';
+import type { ModelNeed } from '../runtime/registry.js';
 
 interface Pending {
   resolve: (value: unknown) => void;
@@ -127,6 +128,16 @@ class HostBackedHandle implements AgentHandle {
 /** Everything the agent host says about itself when it comes up. */
 export interface HostAdvertisement {
   runtimeIds: string[];
+  /**
+   * The same runtimes with their descriptors, for the owner to register.
+   *
+   * Empty from an agent host older than this field, which is not the same as
+   * "no runtimes": `runtimeIds` still lists them. The owner falls back to the
+   * ids it was configured with, which is exactly what it did before.
+   */
+  runtimes: Array<{ id: string; label: string; model: ModelNeed }>;
+  /** Runtimes it looked for and did not find (§3.12), with a reason each. */
+  runtimeNotes: Array<{ id: string; label: string; reason: string }>;
   endpoints: Array<{
     id: string;
     label: string;
@@ -197,7 +208,12 @@ export class HostClient {
   private receive(message: HostMessage): void {
     switch (message.t) {
       case 'ready':
-        this.announceReady({ runtimeIds: message.runtimeIds, endpoints: message.endpoints ?? [] });
+        this.announceReady({
+          runtimeIds: message.runtimeIds,
+          runtimes: message.runtimes ?? [],
+          runtimeNotes: message.runtimeNotes ?? [],
+          endpoints: message.endpoints ?? [],
+        });
         return;
 
       case 'ok': {
@@ -234,6 +250,13 @@ export class HostClient {
 
       case 'progress':
         this.contexts.get(message.handleId)?.reportProgress(message.progress);
+        return;
+
+      case 'raw':
+        // Dropped when the handle is gone, like `message`: the ring belongs to
+        // the session and survives the handle, so a line arriving after `closed`
+        // has nowhere to be attributed and nothing is lost by letting it go.
+        this.contexts.get(message.handleId)?.reportRaw?.(message.line);
         return;
 
       case 'message':

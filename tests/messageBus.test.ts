@@ -13,6 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { until } from './support/until.js';
+import { seatBeside } from './support/legacyRoster.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -135,10 +136,20 @@ describe('delivery through the session', () => {
       }
     ).deliver((m as unknown as { sessions: Map<string, unknown> }).sessions.get(sessionId), from, message);
 
+  /**
+   * A two-seat session — which is now only ever a session created before §4.2
+   * capped a roster at one.
+   *
+   * The bus is what those sessions coordinate through and it stays load-bearing
+   * for them, so the second seat comes from `seatBeside` rather than from a
+   * second `addAgent`: admission refuses that by name now, and a fixture that
+   * routed around the refusal by some other door would be testing a shape the
+   * product cannot produce *and* hiding the fact that it cannot.
+   */
   async function pair(m: SessionManager): Promise<{ sessionId: string; lead: AgentId; worker: AgentId }> {
     const session = await m.createSession({ title: 's', goal: 'g' });
     const lead = await m.addAgent(session.sessionId, { role: 'lead', runtimeId: 'echo' });
-    const worker = await m.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+    const worker = await seatBeside(m, session.sessionId, { role: 'worker', runtimeId: 'echo' });
     return { sessionId: session.sessionId, lead: lead.agentId, worker: worker.agentId };
   }
 
@@ -264,7 +275,8 @@ describe('two agents talking in circles', () => {
     const m = manager();
     const session = await m.createSession({ title: 's', goal: 'g' });
     const a = (await m.addAgent(session.sessionId, { role: 'lead', runtimeId: 'echo' })).agentId;
-    const b = (await m.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' })).agentId;
+    // The pre-cap shape again — see `pair` above on why this door and not `addAgent`.
+    const b = (await seatBeside(m, session.sessionId, { role: 'worker', runtimeId: 'echo' })).agentId;
 
     // Ping-pong, with nobody watching. Without a ceiling this is a conversation
     // with a bill attached.
@@ -305,7 +317,8 @@ describe('two agents talking in circles', () => {
     const m = manager();
     const session = await m.createSession({ title: 's', goal: 'g' });
     const a = (await m.addAgent(session.sessionId, { role: 'lead', runtimeId: 'echo' })).agentId;
-    const b = (await m.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' })).agentId;
+    // The pre-cap shape again — see `pair` above on why this door and not `addAgent`.
+    const b = (await seatBeside(m, session.sessionId, { role: 'worker', runtimeId: 'echo' })).agentId;
 
     for (let i = 0; i < 6; i += 1) {
       await deliver(m, session.sessionId, i % 2 === 0 ? a : b, i % 2 === 0 ? b : a);

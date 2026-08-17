@@ -72,7 +72,10 @@ export async function once(connection: HostConnection, opts: OnceOptions): Promi
         });
 
   const agentId: AgentId =
-    session.agents[0]?.agentId ??
+    // The live seat, not seat zero: a session holds one agent (§4.2), and a
+    // session whose model was changed keeps the replaced seat in the roster to
+    // name the rows it wrote. Sending to that one is refused by the owner.
+    session.agents.find((a) => a.status !== 'retired')?.agentId ??
     (
       await connection.addAgent(session.sessionId, {
         role: 'worker',

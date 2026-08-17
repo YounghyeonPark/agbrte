@@ -212,8 +212,18 @@ describe('a host that predates the command', () => {
           workspaceRoot: '/w',
           runtimes: [],
           pid: 1,
-          // The version shipped one change ago: it has `models.list` and not this.
-          protocol: SESSION_PROTOCOL_VERSION - 1,
+          /*
+           * The newest host that predates *this command*, not "one less than
+           * whatever we are on now".
+           *
+           * It was `SESSION_PROTOCOL_VERSION - 1`, which meant the fixture aged
+           * into a lie the first time anything else bumped the protocol: at v15
+           * that expression is 14, and a v14 host *has* `models.capabilities`,
+           * so the test asserting an older host cannot serve it was handing
+           * itself a host that can. Derived from `COMMAND_SINCE` instead, which
+           * is the table the claim is actually about.
+           */
+          protocol: COMMAND_SINCE['models.capabilities']! - 1,
           minProtocol: 1,
         },
       } as SessionMessage);

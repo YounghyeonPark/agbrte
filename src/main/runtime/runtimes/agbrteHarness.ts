@@ -448,6 +448,13 @@ class AgbrteHarnessHandle implements AgentHandle {
           ? { sendMessage: this.ctx.sendMessage.bind(this.ctx) }
           : {}),
         ...(this.ctx.peers !== undefined ? { roster: this.ctx.peers } : {}),
+        // The cross-session pair, supplied together for the reason the roster
+        // and `sendMessage` are: a way to send with no list to send to is a
+        // guessing game, and a list with no way to send is a tease (§17 Q22).
+        ...(this.ctx.sendPeerMessage !== undefined
+          ? { sendPeerMessage: this.ctx.sendPeerMessage.bind(this.ctx) }
+          : {}),
+        ...(this.ctx.groupPeers !== undefined ? { groupPeers: this.ctx.groupPeers } : {}),
         ...(this.ctx.capture !== undefined ? { capture: this.ctx.capture.bind(this.ctx) } : {}),
         ...(this.ctx.proposeSplit !== undefined
           ? { proposeSplit: this.ctx.proposeSplit.bind(this.ctx) }

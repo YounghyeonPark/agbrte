@@ -29,12 +29,14 @@ import { basename } from 'node:path';
 
 import { byAttentionThenRecency, describeTarget, sameTarget } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
+import type { HostIdentity } from '@shared/host/sessionProtocol.js';
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import { requireTransport } from './host/transports.js';
 import { SplitRefused } from './sessionManager.js';
 import type { SearchHit } from './store/searchSessions.js';
 import type { ListeningPort } from './preview/ports.js';
 import type { PreviewServer, PreviewServerLog } from './preview/servers.js';
+import type { ShellHandle } from './terminal/shell.js';
 import type { SessionTemplate } from './store/templates.js';
 import type { ModelNeed } from './runtime/registry.js';
 import type {
@@ -59,6 +61,7 @@ import type {
   SessionId,
   SessionProjection,
   Sha256,
+  ShellProgram,
 } from '@shared/types/index.js';
 
 /** A hit, with the machine it came from attached. */
@@ -170,6 +173,18 @@ export interface AttachedHost {
   /** Models it can reach, credentials already stripped. */
   endpoints: Array<{ id: string; label: string; provider: string; authenticated: boolean }>;
   /**
+   * Runtimes this host looked for and did not find, with why (§3.12).
+   *
+   * Carried so a picker can say *Claude Code: not detected on this host (…)*
+   * rather than silently omitting the row. Omission is indistinguishable from a
+   * bug in the picker, which is what it cost the person who spent a session
+   * looking for a runtime the host had quietly declined to offer.
+   *
+   * Empty from a host older than protocol v16 — which reads as *nothing to
+   * say*, exactly today's screen, rather than as *everything was found*.
+   */
+  runtimeNotes: Array<{ id: string; label: string; reason: string }>;
+  /**
    * Where this workspace was, when the host found it somewhere else (§5.3).
    *
    * Naturally transient: the host records the new location once, so the next
@@ -228,11 +243,23 @@ export class AttachRefused extends Error {
  *   'host'       (AttachedHost)   — attached, or its state changed
  *   'detached'   (instanceId, reason)
  *   'link'       (instanceId, 'connected' | 'reconnecting', reason)
+ *   'shell'      (shellId, data)  — a person's terminal, never an agent's (§7)
+ *   'shell-exit' (shellId, exitCode, signal?)
  */
 export class Fleet extends EventEmitter {
   private readonly entries = new Map<InstanceId, Entry>();
   /** sessionId → owning host, so a call routes without a search. */
   private readonly owners = new Map<SessionId, InstanceId>();
+  /**
+   * shellId → the host running it, so typing routes without a search.
+   *
+   * Separate from `owners` rather than folded into it, because the two answer
+   * different questions with different lifetimes: a session outlives every
+   * connection to it and is re-resolvable from disk, while a terminal exists
+   * only as long as the process holding it. Merging them would put something
+   * unrecoverable in the map that everything else treats as a cache.
+   */
+  private readonly shellHosts = new Map<string, InstanceId>();
 
   constructor(private readonly deps: FleetDeps) {
     super();
@@ -297,34 +324,90 @@ export class Fleet extends EventEmitter {
       instanceId: identity.instanceId,
       lineageId: identity.lineageId,
       workspaceRoot: identity.workspaceRoot,
-      ...(identity.bundleVersion === undefined ? {} : { bundleVersion: identity.bundleVersion }),
       target,
-      available: this.deps.runtimes
-        .filter((r) => identity.runtimes.includes(r.id))
-        .map((r) => r.id),
-      ...(identity.movedFrom !== undefined ? { movedFrom: identity.movedFrom } : {}),
-      endpoints: (identity.endpoints ?? []).map((e) => ({
-        id: e.id,
-        label: e.label,
-        provider: e.provider,
-        authenticated: e.authenticated,
-      })),
+      available: [],
+      endpoints: [],
+      runtimeNotes: [],
       role: connection.role,
       pid: identity.pid,
-      ...(identity.unavailableReason !== undefined
-        ? { unavailableReason: identity.unavailableReason }
-        : {}),
       link: 'connected',
       location,
       seen: new Map(),
       connection,
       unlisten: () => undefined,
     };
+    // The same call the reconnect path makes, so there is one place that turns a
+    // handshake into a host record rather than two that can drift.
+    this.adopt(entry, identity, connection);
     this.wire(entry, connection);
     this.entries.set(identity.instanceId, entry);
 
     this.emit('host', snapshot(entry));
     return snapshot(entry);
+  }
+
+  /**
+   * Write a handshake into the host record — every handshake, not just the first.
+   *
+   * ## Why this is a method rather than an object literal in `attach`
+   *
+   * A host is a **detached process that outlives the app and can be replaced**
+   * (§6.4, §8). The `instanceId` belongs to the *workspace*, not to the process,
+   * so a host that exits and is respawned answers on the same identity — and
+   * `reconnect` is built to keep the entry precisely because that is the normal
+   * case. What it did not do was re-read the handshake, so everything derived
+   * from the *first* one was frozen for the life of the app:
+   *
+   *   - `available` — the runtimes offered. A host that had Claude Code on PATH
+   *     when the app attached went on being offered it after being replaced by
+   *     one that did not, and `addAgent` then failed with `runtime
+   *     "cli:claude-code" is not registered` against a picker that looked right.
+   *   - `endpoints` — the models reachable, which change with an edited
+   *     endpoints file and a restart.
+   *   - `bundleVersion` — the very thing `updateHost` restarts a host to change,
+   *     so "outdated" survived the update that fixed it.
+   *   - `movedFrom` — news exactly once (§5.3), and a stale copy re-announces a
+   *     move that already happened.
+   *   - `unavailableReason` — a host whose agent host failed and was restarted
+   *     into a working one kept the old apology.
+   *
+   * Every one of those is a *claim about the process*, and the process is the
+   * thing that changed. The workspace identity is what stays, and `reconnect`
+   * checks that separately before calling this.
+   *
+   * The optional fields are **deleted** when the new handshake omits them rather
+   * than left alone. Absent means *cannot be determined* for `bundleVersion` and
+   * *nothing happened* for the other two, and a value that outlives its evidence
+   * is worse than no value: it is a claim nothing supports.
+   */
+  private adopt(entry: Entry, identity: HostIdentity, connection: HostConnection): void {
+    entry.lineageId = identity.lineageId;
+    entry.workspaceRoot = identity.workspaceRoot;
+    entry.pid = identity.pid;
+    entry.role = connection.role;
+
+    // Reconciled against what this app knows how to label. A host may register
+    // more than this app lists — that is a newer host, and offering an id with
+    // no metadata would put a blank row in the picker.
+    entry.available = this.deps.runtimes
+      .filter((r) => identity.runtimes.includes(r.id))
+      .map((r) => r.id);
+    entry.endpoints = (identity.endpoints ?? []).map((e) => ({
+      id: e.id,
+      label: e.label,
+      provider: e.provider,
+      authenticated: e.authenticated,
+    }));
+    entry.runtimeNotes = (identity.runtimeNotes ?? []).map((n) => ({ ...n }));
+
+    if (identity.bundleVersion === undefined) delete entry.bundleVersion;
+    else entry.bundleVersion = identity.bundleVersion;
+
+    if (identity.movedFrom === undefined) delete entry.movedFrom;
+    else entry.movedFrom = identity.movedFrom;
+
+    if (identity.unavailableReason === undefined) delete entry.unavailableReason;
+    else entry.unavailableReason = identity.unavailableReason;
   }
 
   /**
@@ -372,11 +455,30 @@ export class Fleet extends EventEmitter {
       void this.reconnect(entry, reason);
     };
 
+    /*
+     * Terminal traffic, re-emitted untouched and out of the event path.
+     *
+     * No `owners` update, no `seen` guard, no `seq`: none of those apply to a
+     * stream that is not in a log and cannot be caught up on. It is here rather
+     * than on a side channel because the host socket is already the one
+     * connection to that machine, and opening a second one per terminal would
+     * mean a second thing to authenticate, reconnect, and get wrong.
+     */
+    const onShell = (shellId: string, data: string): void => {
+      this.emit('shell', shellId, data);
+    };
+    const onShellExit = (shellId: string, exitCode: number, signal?: number): void => {
+      this.shellHosts.delete(shellId);
+      this.emit('shell-exit', shellId, exitCode, signal);
+    };
+
     connection.on('event', onEvent);
     connection.on('session', onSession);
     connection.on('permission', onPermission);
     connection.on('permission-resolved', onResolved);
     connection.on('queue', onQueue);
+    connection.on('shell', onShell);
+    connection.on('shell-exit', onShellExit);
     connection.on('closing', onClosing);
     connection.on('closed', onClosed);
 
@@ -387,6 +489,8 @@ export class Fleet extends EventEmitter {
       connection.off('permission', onPermission);
       connection.off('permission-resolved', onResolved);
       connection.off('queue', onQueue);
+      connection.off('shell', onShell);
+      connection.off('shell-exit', onShellExit);
       connection.off('closing', onClosing);
       connection.off('closed', onClosed);
     };
@@ -431,10 +535,16 @@ export class Fleet extends EventEmitter {
           this.forget(entry.instanceId, 'the workspace at that location is not the same one');
           return;
         }
-        // The pid may differ — the host can have been restarted while we were
-        // away. That is fine, and worth showing: same sessions, new process.
-        entry.pid = identity.pid;
-        entry.role = connection.role;
+        /*
+         * The whole handshake, not just the pid.
+         *
+         * The pid may differ — the host can have been restarted while we were
+         * away, which is fine and worth showing: same sessions, new process. But
+         * a *new process* is a new answer to every other question the handshake
+         * asks, and taking only the pid recorded that the process had changed
+         * while continuing to describe the old one. See `adopt`.
+         */
+        this.adopt(entry, identity, connection);
       } catch {
         continue; // still down; wait longer and try again
       }
@@ -577,6 +687,14 @@ export class Fleet extends EventEmitter {
     for (const [sessionId, owner] of [...this.owners]) {
       if (owner === instanceId) this.owners.delete(sessionId);
     }
+    // Terminals on that host are gone with the process — announced rather than
+    // dropped quietly, because a pane that simply stops receiving looks like a
+    // hung shell, and "the host stopped" is something a person can act on.
+    for (const [shellId, owner] of [...this.shellHosts]) {
+      if (owner !== instanceId) continue;
+      this.shellHosts.delete(shellId);
+      this.emit('shell-exit', shellId, -1, undefined);
+    }
     this.entries.delete(instanceId);
     this.emit('detached', instanceId, reason);
   }
@@ -664,6 +782,99 @@ export class Fleet extends EventEmitter {
 
   async stopPreviewServer(instanceId: InstanceId, serverId: string): Promise<boolean> {
     return this.host(instanceId).connection.stopPreviewServer(serverId);
+  }
+
+  // ---------------------------------------------------------------- terminals
+
+  /**
+   * Open the **user's own** terminal on a host's machine.
+   *
+   * Not an agent seat: it emits no events, is not queued behind a turn, and the
+   * session's durable record is unchanged by anything typed into it. It is here
+   * on `Fleet` rather than beside `send` because the only thing the fleet does
+   * for it is route — which is the same job it does for a preview server.
+   *
+   * ## Refused by name on a remote host, and why that is a deployment fact
+   *
+   * A remote host is *two bundled `.js` files* copied to `~/.agbrte` by
+   * `uploadHostBundle`, with no `node_modules` beside them — so the PTY binary
+   * simply is not on that machine, and the honest failure is a sentence rather
+   * than a `MODULE_NOT_FOUND` from four processes away. The **protocol** is
+   * already locality-blind (`shell.*` carries a `shellId`, bytes and a size, and
+   * nothing else), so lifting this means shipping the module with the bundle,
+   * not redesigning anything.
+   *
+   * Refused here rather than left to the host for the same reason `attach`
+   * refuses an unimplemented locality before dialling: a refusal that names the
+   * machine is one somebody can act on, and this is the layer that knows which
+   * machine it is.
+   */
+  async openShell(
+    instanceId: InstanceId,
+    sessionId: SessionId,
+    opts?: { program?: ShellProgram; cols?: number; rows?: number },
+  ): Promise<ShellHandle> {
+    const entry = this.host(instanceId);
+    if (entry.target.kind !== 'local') {
+      throw new Error(
+        `a terminal on ${describeTarget(entry.target)} is not available yet — the host bundle deployed ` +
+          'to a remote machine has no PTY module beside it. Open a terminal on this machine, ' +
+          `or reach ${describeTarget(entry.target)} with your own ssh.`,
+      );
+    }
+    if (!entry.connection.supports('shell.open')) {
+      throw new Error(
+        `the host for ${entry.workspaceRoot} is older than this app and cannot open a terminal — ` +
+          'restart it to pick up the current bundle',
+      );
+    }
+
+    /*
+     * The program selector is passed straight through, and this layer does not
+     * check it.
+     *
+     * Deliberate: the fleet knows which *machine* a session is on and nothing at
+     * all about which CLIs are installed there. A check here would need a
+     * cached copy of the host's detection, and a cached copy is exactly how the
+     * picker and the admission gate came to disagree once already. The host owns
+     * the answer because the host is where the binaries are.
+     */
+    const handle = await entry.connection.openShell(sessionId, opts);
+    this.shellHosts.set(handle.shellId, instanceId);
+    return handle;
+  }
+
+  /** Keystrokes, routed by `shellId` alone. */
+  async writeShell(shellId: string, data: string): Promise<boolean> {
+    const entry = this.shellHost(shellId);
+    if (entry === null) return false;
+    return entry.connection.writeShell(shellId, data);
+  }
+
+  async resizeShell(shellId: string, cols: number, rows: number): Promise<boolean> {
+    const entry = this.shellHost(shellId);
+    if (entry === null) return false;
+    return entry.connection.resizeShell(shellId, cols, rows);
+  }
+
+  async closeShell(shellId: string): Promise<boolean> {
+    const entry = this.shellHost(shellId);
+    this.shellHosts.delete(shellId);
+    if (entry === null) return false;
+    return entry.connection.closeShell(shellId);
+  }
+
+  /**
+   * The host running one terminal, or `null` if it has gone.
+   *
+   * `null` rather than a throw: every caller is reacting to something a person
+   * did in a pane — a keystroke, a window resize, a close — and a terminal that
+   * ended a moment earlier is an ordinary race, not an error worth a banner.
+   */
+  private shellHost(shellId: string): Entry | null {
+    const instanceId = this.shellHosts.get(shellId);
+    if (instanceId === undefined) return null;
+    return this.entries.get(instanceId) ?? null;
   }
 
   async previewServerLog(
@@ -942,6 +1153,68 @@ export class Fleet extends EventEmitter {
     return child;
   }
 
+  /**
+   * Put sessions in a group, refusing to pretend one can span two machines
+   * (§17 Q22).
+   *
+   * This is the layer that can tell, and the only one. A `SessionManager` knows
+   * one workspace, so all it can say is "I do not have that session" — true, and
+   * useless to somebody looking at two hosts in a sidebar. The fleet knows both
+   * machines by the names the user gave them, so it names them.
+   *
+   * **Refused rather than split into two groups**, or quietly grouped on the
+   * first host, or grouped everywhere and silently undeliverable. That is
+   * `applyTemplate`'s reasoning verbatim — the alias may not be the machine they
+   * meant, so naming it is the useful act and choosing for them is not — and
+   * §16's oldest recorded failure is a target that was recorded and not
+   * enforced. A group whose members cannot reach each other is exactly that
+   * failure with a new field.
+   *
+   * Cross-host groups are the named open question in §17 Q22: the delivery would
+   * have to cross a host boundary, and unlike `bubbleAcrossHosts` — which
+   * derives a *view* the fleet can recompute — it would write into another
+   * machine's durable log, which cannot be taken back if the far host is
+   * unreachable halfway through.
+   */
+  async group(sessionIds: SessionId[], name: string, groupId?: string): Promise<Session[]> {
+    if (sessionIds.length === 0) throw new AttachRefused('name at least one session to group');
+
+    const owners = new Map<InstanceId, Entry>();
+    for (const sessionId of sessionIds) {
+      const owner = this.ownerOf(sessionId);
+      owners.set(owner.instanceId, owner);
+    }
+
+    if (owners.size > 1) {
+      const where = [...owners.values()].map(labelOf).sort();
+      throw new AttachRefused(
+        `those sessions are on ${owners.size} machines (${where.join(', ')}), and a group is ` +
+          'one host in this version — sessions in a group message each other, and that does ' +
+          'not cross machines yet. Group the ones on each machine separately.',
+      );
+    }
+
+    const [entry] = [...owners.values()];
+    if (entry === undefined) throw new AttachRefused('no attached host owns those sessions');
+    if (!entry.connection.supports('session.group')) {
+      throw new AttachRefused(
+        `the host for ${labelOf(entry)} is too old to group sessions. Update it and try again.`,
+      );
+    }
+    return entry.connection.groupSessions(sessionIds, name, groupId);
+  }
+
+  /** Take one session out of its group. Routed to whoever owns it. */
+  async ungroup(sessionId: SessionId): Promise<Session> {
+    const entry = this.ownerOf(sessionId);
+    if (!entry.connection.supports('session.ungroup')) {
+      throw new AttachRefused(
+        `the host for ${labelOf(entry)} is too old to change a session's group.`,
+      );
+    }
+    return entry.connection.ungroupSession(sessionId);
+  }
+
   async listOnDisk(): Promise<
     Array<{ instanceId: InstanceId; sessionId: string; title: string; goal: string }>
   > {
@@ -1159,6 +1432,25 @@ function snapshot(entry: Entry): AttachedHost {
     target: entry.target,
     available: [...entry.available],
     endpoints: entry.endpoints.map((e) => ({ ...e })),
+    runtimeNotes: entry.runtimeNotes.map((n) => ({ ...n })),
+    /*
+     * Copied, which it was not.
+     *
+     * `attach` read `bundleVersion` off the handshake and wrote it onto the
+     * entry, and this function — the only way an entry ever leaves the fleet —
+     * silently dropped it. So `AttachedHost.bundleVersion` was `undefined` at
+     * every reader, `isOutdated()` in the IPC layer took that as *cannot be
+     * determined* exactly as its comment says it should, and §6.3's "this host
+     * is running older code than the app ships" badge could never appear.
+     *
+     * Nothing failed. The three-valued design degraded correctly all the way to
+     * the window, on evidence that had been thrown away one line earlier —
+     * which is why a field that was carried across two processes, documented in
+     * three places and never once delivered raised no alarm. Found by a test
+     * asserting a *replaced* host's version follows, i.e. by asking the
+     * question this field exists to answer.
+     */
+    ...(entry.bundleVersion !== undefined ? { bundleVersion: entry.bundleVersion } : {}),
     ...(entry.movedFrom !== undefined ? { movedFrom: entry.movedFrom } : {}),
     role: entry.role,
     pid: entry.pid,

@@ -2,16 +2,46 @@
 #
 # ## Why this is unusually simple, and worth saying
 #
-# **There are no native runtime dependencies.** The whole dependency list is
-# React, `react-dom`, zustand and one Radix component — all pure JavaScript — and
-# §14's storage choice was `node:sqlite`, which is inside Node, precisely so that
-# nothing has to be compiled per platform. So cross-architecture packaging is
-# downloading the right Electron and zipping: no `node-gyp`, no rebuild step, no
-# emulated build container.
+# **Nothing here is compiled at install or package time.** §14's storage choice
+# was `node:sqlite`, which is inside Node, precisely so that nothing has to be
+# built per platform; React, `react-dom`, zustand and the Radix component are
+# pure JavaScript and are bundled into the renderer besides. So cross-
+# architecture packaging is downloading the right Electron and zipping: no
+# `node-gyp`, no `electron-rebuild`, no emulated build container.
 #
 # That is a decision paying off rather than luck. `better-sqlite3` was considered
 # and rejected in §14, and this file is where the alternative would have cost
 # five build matrices and a toolchain per row.
+#
+# ## The one native module, and why it did not cost that
+#
+# `@lydell/node-pty` gives the session host a real pseudoterminal (§7's
+# `shell`). It is the only compiled thing in the tree, and it keeps the
+# paragraph above true for two specific reasons rather than by luck:
+#
+#  - **It is Node-API, so there is no rebuild step.** `node-pty` proper is built
+#    against V8 and needs `electron-rebuild`; this fork's prebuilt binary exports
+#    `node_api_module_get_api_version_v1` and contains no `NODE_MODULE_VERSION`,
+#    `v8::` or `Nan` symbols, which is what makes one file work under both plain
+#    Node and Electron. Verified by loading the same `conpty.node` under `node`
+#    v24.18 and under `electron.exe` v43.2.0 with `ELECTRON_RUN_AS_NODE=1` —
+#    which is exactly how the session host is started — and asserted in
+#    `tests/shell.test.ts` so a future bump to a NAN build fails loudly here
+#    rather than quietly on somebody's machine.
+#  - **It ships as prebuilds only, never node-gyp**, so `npm install` is a
+#    download and `npm run build` never sees it at all: the host bundle loads it
+#    through `createRequire` at first use, so esbuild has nothing to resolve.
+#
+# **The honest cost, stated because it is real.** The binary arrives as a
+# platform-specific optional dependency (`@lydell/node-pty-win32-x64` and
+# friends), filtered by npm on `os`/`cpu`. So a *cross-architecture* package —
+# the arm64 rows below, built on an x64 runner — is assembled on a machine that
+# never installed the arm64 binary, and that artifact will ship without it. The
+# app still runs: the host reports `ShellUnavailable`, the Shell button explains
+# itself, and every other feature is untouched. Fixing it properly means either
+# building each arch on its own runner or installing the six platform packages
+# with `--force` before packaging; neither is done here, and pretending the
+# problem does not exist would be the worse option.
 #
 # ## What still needs a machine of its own
 #
@@ -38,14 +68,25 @@ files:
   - package.json
   - LICENSE
   - NOTICE
+  # Named explicitly rather than left to the production-dependency sweep,
+  # because the rest of `files` is an allow-list and this is the one runtime
+  # dependency that is genuinely loaded from disk instead of bundled.
+  - node_modules/@lydell/**
 
 # The session host and the agent host are **forked as processes**, not imported.
 # A path inside an asar is not a path a process can be given, so these two are
 # left on disk — the one place the archive would turn a working spawn into
 # "cannot find module" at runtime and nowhere else.
+#
+# The pty module joins them for a related but distinct reason: a `.node` binary
+# cannot be `dlopen`ed from inside an archive. It has to sit under
+# `app.asar.unpacked/node_modules` specifically — the host bundle resolves it by
+# walking up from `app.asar.unpacked/dist/main`, and a copy inside `app.asar`
+# is on a path that walk never visits.
 asarUnpack:
   - dist/main/agbrteHost.js
   - dist/main/agentHost.js
+  - node_modules/@lydell/**
 
 # -------------------------------------------------------------------- Windows
 win:

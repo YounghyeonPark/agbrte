@@ -8,7 +8,7 @@
  */
 
 import type { AgentId, SessionId } from './ids.js';
-import type { ModelRef, ReasoningRequest } from './runtime.js';
+import type { ModelRef, ReasoningRequest, RuntimeCapabilities } from './runtime.js';
 import type { PermissionFidelity, ToolPolicy } from './policy.js';
 import type {
   ArtifactRef,
@@ -63,6 +63,26 @@ export interface ProjectedAgent {
   model?: ModelRef;
   isolation: 'shared' | 'worktree';
   permissionFidelity: PermissionFidelity;
+  /**
+   * When this seat stopped being the session's agent, folded from
+   * `agent.retired` (§4.2).
+   *
+   * The whole reason the event exists: a resume that could not tell a replaced
+   * seat from a live one would rebuild both as active, and a session that had
+   * its model changed once would come back holding two agents — which is what
+   * admission refuses to create. Absent means the seat is still the one.
+   */
+  retiredAt?: string;
+  /**
+   * The capability snapshot recorded at admission, verbatim from
+   * `agent.created`.
+   *
+   * Carried so a retired seat can be rebuilt without being re-admitted: it will
+   * never run again, and asking a registry to admit a runtime that may since
+   * have been uninstalled would drop the seat — taking the name off every
+   * transcript row it wrote.
+   */
+  capabilities?: RuntimeCapabilities;
   /** Carried so a reattached session rebuilds the spec it actually ran under. */
   systemPrompt?: string;
   /** Carried so a restart rebuilds the effort it was admitted with (§3.4). */
@@ -131,6 +151,16 @@ export interface SessionProjection {
    * holds the truth entire.
    */
   skills: SkillConfig[];
+  /**
+   * The group this session is in (§17 Q22), folded from `session.joined_group`
+   * and `session.left_group`.
+   *
+   * In the projection because membership has to survive a restart the way the
+   * transcript it explains does: a resumed session that had quietly forgotten
+   * its group would show peer messages in its own log with nobody to answer
+   * them, and would refuse a reply to the session that had just asked.
+   */
+  group: { groupId: string; name: string } | null;
   /** Non-zero means the log had unparseable lines — real corruption (§5.1). */
   skippedLines: number;
   /** Set on a child session; durable, so a late resume still knows why it exists. */
@@ -164,6 +194,7 @@ export function emptyProjection(sessionId: SessionId): SessionProjection {
     },
     standingGrant: null,
     skills: [],
+    group: null,
     skippedLines: 0,
     brief: null,
     parentSessionId: null,

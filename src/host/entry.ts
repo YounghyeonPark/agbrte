@@ -30,7 +30,7 @@ import {
   RETIRED_HARNESS_RUNTIME_ID,
 } from '@main/runtime/runtimes/agbrteHarness.js';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
-import { CliStdioRuntime, detectCli } from '@main/runtime/runtimes/cliStdio.js';
+import { CliStdioRuntime, detectCli, runtimeIdFor } from '@main/runtime/runtimes/cliStdio.js';
 import { CLI_MANIFESTS } from '@main/runtime/cli/manifests.js';
 import { WorkspaceLeases } from '@main/tools/leases.js';
 import {
@@ -117,7 +117,23 @@ class ForkChannel implements HostSideChannel {
 }
 
 /**
- * The runtimes this host offers.
+ * What this host looked for and did not find, in the order it looked.
+ *
+ * Carried out of `buildHostRegistry` rather than logged, because the machine
+ * that knows is not the machine somebody is looking at: a host three time zones
+ * away writing "claude not found" to its own stderr has told nobody. §3.12's
+ * whole premise is that detection is per machine, and the corollary nobody
+ * built until it cost a session is that the *result* has to travel.
+ */
+export interface RuntimeNote {
+  /** The id it would have had, so a client can match it against a known list. */
+  id: string;
+  label: string;
+  reason: string;
+}
+
+/**
+ * The runtimes this host offers, and the ones it could not.
  *
  * Must stay in agreement with what main advertises to the renderer: main lists
  * runtime ids from the host's `ready` handshake, so anything missing here simply
@@ -135,6 +151,16 @@ export async function buildHostRegistry(
    * two answers that can disagree.
    */
   provider: ModelProvider = new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) }),
+  /**
+   * Filled with one line per CLI that was looked for and not found.
+   *
+   * An out-parameter rather than a changed return type, because this function is
+   * the seam three other things already build against and widening it to a pair
+   * would touch each of them to deliver a diagnostic. The notes are additive:
+   * every existing caller ignores the argument and gets exactly the registry it
+   * got before.
+   */
+  notes: RuntimeNote[] = [],
 ): Promise<RuntimeRegistry> {
   const registry = new RuntimeRegistry();
 
@@ -178,12 +204,23 @@ export async function buildHostRegistry(
    *
    * Detection is a subprocess each, run in parallel: a missing binary resolves
    * fast, but a slow one should not delay the rest of the host coming up.
+   *
+   * **A miss is recorded rather than skipped.** Not offering a CLI that is not
+   * installed is right and stays; saying nothing about it was the mistake. The
+   * two are separable, and the second one costs a string.
    */
   const detected = await Promise.all(
     CLI_MANIFESTS.map(async (manifest) => ({ manifest, found: await detectCli(manifest) })),
   );
   for (const { manifest, found } of detected) {
-    if (found === null) continue;
+    if (!found.found) {
+      notes.push({
+        id: runtimeIdFor(manifest),
+        label: manifest.label,
+        reason: found.reason,
+      });
+      continue;
+    }
     registry.register(new CliStdioRuntime({ manifest, toolVersion: found.version }), {
       // The version is in the label because these protocols are the vendor's to
       // change, and "which build produced this transcript" is the first question
@@ -347,13 +384,22 @@ const modelInstaller = {
   progress: () => installer.progress(),
 };
 
+/**
+ * Filled by `buildHostRegistry` and handed straight to the handshake.
+ *
+ * Declared before the registry it describes because the registry is `await`ed
+ * into the constructor call, and the notes have to exist for it to fill.
+ */
+const runtimeNotes: RuntimeNote[] = [];
+
 new AgentHostServer(
   channel,
   // The same provider instance the lister and the probe use: one cache, so a
   // capability shown in the picker is the capability the run was started with.
-  await buildHostRegistry(endpoints, provider),
+  await buildHostRegistry(endpoints, provider, runtimeNotes),
   endpoints.list(),
   modelLister,
   modelInstaller,
   modelCapabilities,
+  runtimeNotes,
 );

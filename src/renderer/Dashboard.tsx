@@ -248,7 +248,14 @@ function Card({
 
       {session.agents.length > 0 && (
         <span className="text-muted truncate-line text-[11px]">
-          {session.agents.map((a) => a.spec.runtimeId).join(', ')}
+          {/* Live seats only. A card is a one-line answer to "what is this and
+              what is it costing"; listing a model the session stopped using
+              would say it runs two (§4.2). The change itself is in the
+              transcript, which is where a history belongs. */}
+          {session.agents
+            .filter((a) => a.status !== 'retired')
+            .map((a) => a.spec.runtimeId)
+            .join(', ')}
           {tokens(session) > 0 ? ` · ${format(tokens(session))} tokens` : ''}
           {/* §10's three fidelities, and the third is why this is a function
               rather than a `toFixed`: an unobservable cost has to say so. */}

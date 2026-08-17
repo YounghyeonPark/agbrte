@@ -78,12 +78,31 @@ export class AgentHostServer {
       endpointId: string,
       modelId: string,
     ) => Promise<ModelCapabilityHint>,
+    /**
+     * What was looked for and not found (§3.12), for the owner to pass on.
+     *
+     * Reported rather than logged: this process's stderr goes to a file on
+     * whichever machine it runs on, which is the one place the person choosing a
+     * runtime is not looking.
+     */
+    runtimeNotes: Array<{ id: string; label: string; reason: string }> = [],
   ) {
     channel.onMessage((command) => void this.dispatch(command));
     channel.onClose(() => this.shutdown());
     channel.post({
       t: 'ready',
       runtimeIds: registry.list().map((d) => d.id),
+      /*
+       * The descriptors, not only the ids.
+       *
+       * The owner forks this process and then has to build its *own* registry,
+       * because `admit()` runs there — beside the log and the permission gate.
+       * Sending ids alone left it guessing, and what it guessed was a constant
+       * in another file, which is how a detected CLI came to be advertised by
+       * the same process that would refuse it.
+       */
+      runtimes: registry.list().map((d) => ({ id: d.id, label: d.label, model: d.model })),
+      ...(runtimeNotes.length > 0 ? { runtimeNotes } : {}),
       endpoints,
     });
   }
@@ -254,6 +273,10 @@ export class AgentHostServer {
       ...(ctx.peers !== undefined ? { peers: ctx.peers } : {}),
       abortSignal: abort.signal,
       reportProgress: (progress) => this.channel.post({ t: 'progress', handleId, progress }),
+      // The pipes are in this process and the tail is kept in the owner's, for
+      // the same reason the log is: a handle is a turn, and what the CLI printed
+      // has to still be readable after the turn that printed it.
+      reportRaw: (line) => this.channel.post({ t: 'raw', handleId, line }),
       // Forwarded verbatim. The sender and the hop count are stamped by the
       // owner of the log, which is the only party that cannot be wrong about
       // either — nothing between here and there can forge attribution (§13).

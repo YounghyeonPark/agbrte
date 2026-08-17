@@ -207,6 +207,8 @@ const api: AgbrteApi = {
     list: call(CH.sessionsList),
     create: call(CH.sessionsCreate),
     respondSplit: call(CH.sessionsRespondSplit),
+    group: call(CH.sessionsGroup),
+    ungroup: call(CH.sessionsUngroup),
     setReasoning: call(CH.sessionsSetReasoning),
     blob: call(CH.sessionsBlob),
     listOnDisk: call(CH.sessionsListOnDisk),
@@ -219,6 +221,31 @@ const api: AgbrteApi = {
     exportMarkdown: call(CH.sessionsExport),
     search: call(CH.sessionsSearch),
     rawLog: call(CH.sessionsRawLog),
+  },
+  /**
+   * The user's own terminal, routed like everything else (§7).
+   *
+   * Which means a phone gets a real shell on the machine `agbrte web` is
+   * serving from, and that is worth stating rather than sliding past. §8.1 is
+   * explicit that there is **no login** in front of this server; what makes it
+   * defensible is that a `read-write` web client can already start an agent with
+   * a shell tool on that same machine and answer its own permission prompt from
+   * the same screen. This is a shorter path to reach a person already has, not a
+   * new one — and it is refused in exactly the places the desktop client is
+   * refused: the host declines a `read-only` client (which is what
+   * `.devagents/access.json` exists to pin a phone to), and the fleet declines a
+   * remote host by name. Putting either refusal here instead would be a second
+   * copy that can disagree with the authoritative one.
+   *
+   * Unlike `preview.open`, this is *not* excluded by type. That exclusion exists
+   * because a forward hands back a `127.0.0.1` URL naming the wrong computer; a
+   * terminal on the host is the machine the browser actually wants.
+   */
+  shell: {
+    open: call(CH.shellOpen),
+    write: call(CH.shellWrite),
+    resize: call(CH.shellResize),
+    close: call(CH.shellClose),
   },
   permissions: {
     pending: call(CH.permissionsPending),
@@ -233,6 +260,8 @@ const api: AgbrteApi = {
     permission: (cb) => link.on(PUSH.permission, cb as (p: unknown) => void),
     permissionResolved: (cb) => link.on(PUSH.permissionResolved, cb as (p: unknown) => void),
     hosts: (cb) => link.on(PUSH.hosts, cb as (p: unknown) => void),
+    shell: (cb) => link.on(PUSH.shell, cb as (p: unknown) => void),
+    shellExit: (cb) => link.on(PUSH.shellExit, cb as (p: unknown) => void),
     // Never pushed to a browser: there is no updater on this side. A no-op
     // unsubscribe rather than an absent method, so the renderer's cleanup is
     // the same shape everywhere.

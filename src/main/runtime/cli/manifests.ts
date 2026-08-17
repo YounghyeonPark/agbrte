@@ -8,6 +8,16 @@
  * real subprocess; what a conformance run against a real `claude` or `gemini`
  * adds is confirmation that these particular strings are still the right ones.
  *
+ * **Partial exception, recorded rather than promoted.** The unauthenticated
+ * path below *was* read off a real `claude` 2.1.233 on 2026-08-17: the composed
+ * argv was run with no credential and with a deliberately invalid
+ * `ANTHROPIC_API_KEY`, and `--help`, `--version` and `--resume` were checked on
+ * the same build. `verified` stays `false` anyway, because a turn that reaches
+ * the model was never run — doing so spends somebody's allowance — so the
+ * assistant/tool_use/tool_result shapes and the denial wording remain
+ * documentation. Half a manifest checked is not a verified manifest, and the
+ * picker must not say otherwise.
+ *
  * The two are deliberately unequal, and that is the point of having two. Claude
  * Code can resume, can be handed an allowlist, and reports cost — so it earns
  * `precomputed-allowlist` and the full deny-ask-resume flow. Gemini CLI's
@@ -74,6 +84,70 @@ const CLAUDE_CAPS: Caps = {
 };
 
 /**
+ * Claude Code's own name for why a request failed → our taxonomy (§3.9).
+ *
+ * **This is a structured field, not a sentence.** Both places Claude Code
+ * reports a failing request — the `system/api_retry` record and the synthetic
+ * `assistant` record that ends the turn — carry the category in `error`, and
+ * its values are documented as a closed list (headless docs, "Handle API
+ * retries": `authentication_failed`, `oauth_org_not_allowed`, `billing_error`,
+ * `rate_limit`, `overloaded`, `invalid_request`, `model_not_found`,
+ * `server_error`, `max_output_tokens`, `unknown`). Nothing here matches on the
+ * prose beside it, which for the unauthenticated case reads "Not logged in ·
+ * Please run /login" and is the vendor's to reword whenever they like.
+ *
+ * The three that mean *this credential cannot be used right now* all map to
+ * `auth`, which pauses rather than fails (§3.9, §4.1) — but they need different
+ * things done about them, so each carries its own `detail`. Sending someone to
+ * `claude auth login` over a billing problem would be confidently wrong advice.
+ *
+ * An unknown category is deliberately absent rather than mapped: the list is
+ * the vendor's and may grow, and inventing a stop for a word we have never seen
+ * is how a new failure kind arrives disguised as an old one.
+ */
+const CLAUDE_ERRORS: Readonly<Record<string, StopReason>> = {
+  authentication_failed: {
+    kind: 'auth',
+    detail:
+      'Claude Code is not logged in, or its saved login was rejected — run `claude auth login` ' +
+      'in a terminal on the machine this agent runs on',
+  },
+  oauth_org_not_allowed: {
+    kind: 'auth',
+    detail:
+      'this Claude account’s organization does not permit this use — run `claude auth login` on ' +
+      'the machine this agent runs on to sign in as an account that does, or ask an admin',
+  },
+  billing_error: {
+    kind: 'auth',
+    detail:
+      'Claude Code is logged in but the account cannot be billed — logging in again will not fix ' +
+      'it; check the plan or billing details for that account',
+  },
+  rate_limit: { kind: 'rate_limited' },
+  overloaded: { kind: 'unavailable' },
+  server_error: { kind: 'unavailable' },
+  invalid_request: { kind: 'misconfigured', detail: 'claude rejected the request as invalid' },
+  model_not_found: { kind: 'misconfigured', detail: 'claude does not know that model id' },
+  max_output_tokens: { kind: 'max_output_tokens' },
+};
+
+/**
+ * The error category on any record that carries one, or `null`.
+ *
+ * `hasOwn` rather than a bare lookup, because `error` is not always a category:
+ * `system/plugin_install` puts a free-text failure *message* in the same field
+ * name, and an arbitrary string indexing an object literal reaches
+ * `Object.prototype` — `error: "constructor"` would otherwise answer with a
+ * truthy value that is not a `StopReason` at all.
+ */
+function claudeError(record: Record<string, unknown>): StopReason | null {
+  const category = record['error'];
+  if (typeof category !== 'string' || !Object.hasOwn(CLAUDE_ERRORS, category)) return null;
+  return CLAUDE_ERRORS[category] ?? null;
+}
+
+/**
  * Claude Code's `--output-format stream-json`.
  *
  * The reader is stateful because a denial only becomes recognizable when a tool
@@ -82,6 +156,17 @@ const CLAUDE_CAPS: Caps = {
  */
 function claudeReader(): CliReader {
   const pending = new Map<string, { tool: string; args: unknown }>();
+  /**
+   * The last failure category this run reported, for the `result` record.
+   *
+   * Needed because the `result` record does **not** repeat it: an unauthenticated
+   * run ends with `is_error: true`, `terminal_reason: "api_error"` and — the trap
+   * this whole path exists for — `subtype: "success"`. Read on its own it is a
+   * clean finish, which is how "Not logged in · Please run /login" reached the
+   * transcript as ordinary agent text with the session sitting in
+   * `awaiting_input`. Verified against claude 2.1.233 (2026-08-17).
+   */
+  let lastError: StopReason | null = null;
 
   return (raw: unknown): CliRecord[] => {
     const record = raw as Record<string, unknown>;
@@ -90,6 +175,16 @@ function claudeReader(): CliReader {
     const sessionId = record['session_id'];
     if (typeof sessionId === 'string' && sessionId.length > 0) {
       out.push({ kind: 'session', sessionId });
+    }
+
+    // On `system/api_retry` and on the synthetic `assistant` record that carries
+    // `is_api_error_message: true` — the same field name on both, so one read
+    // covers both. A hint rather than an end: nine of these are routinely
+    // followed by a tenth attempt that works.
+    const failure = claudeError(record);
+    if (failure !== null) {
+      lastError = failure;
+      out.push({ kind: 'stop_hint', stop: failure });
     }
 
     switch (record['type']) {
@@ -142,7 +237,7 @@ function claudeReader(): CliReader {
             },
           });
         }
-        out.push({ kind: 'end', stop: claudeStop(record) });
+        out.push({ kind: 'end', stop: claudeStop(record, lastError) });
         return out;
       }
 
@@ -164,23 +259,54 @@ function claudeReader(): CliReader {
  * user is never asked and the agent simply appears to have given up. Broad
  * enough to survive rephrasing, narrow enough not to catch a tool that failed
  * on its own merits.
+ *
+ * **A structured replacement exists and has not been taken.** A real `claude`
+ * 2.1.233 `result` record carries `permission_denials: []`, which on a run with
+ * refusals is presumably the list this function is guessing at. It is left
+ * alone because nothing here has seen it non-empty — writing the reader for a
+ * shape nobody has observed is the mistake this file's header is about — and
+ * because it arrives with the *result*, at the end of the run, so adopting it
+ * changes when a denial is noticed rather than only how. Worth doing against a
+ * real denial; not worth doing from a guess.
  */
 function looksDenied(summary: string): boolean {
   return /permission|not allowed|requested permissions|denied|blocked by/i.test(summary);
 }
 
-function claudeStop(record: Record<string, unknown>): StopReason {
-  if (record['subtype'] === 'success') return { kind: 'end_turn' };
+/**
+ * What the `result` record means, given what the run reported along the way.
+ *
+ * **`subtype` is checked after `is_error`, and that order is the fix.** A run
+ * that never reached the model still ends `subtype: "success"` with
+ * `is_error: true` and `terminal_reason: "api_error"` (observed twice against
+ * claude 2.1.233: no credential at all, and a rejected API key). Reading
+ * `subtype` first — which this did — reported an unauthenticated run as
+ * `end_turn`, so §3.13's standing rule was broken in its own file: a turn that
+ * did nothing was reported as a finished one.
+ *
+ * `lastError` is what turns that into something actionable. The category is not
+ * on this record, so without it the best available answer is `transport` —
+ * retryable, and retrying an unauthenticated CLI ten more times helps nobody.
+ */
+function claudeStop(record: Record<string, unknown>, lastError: StopReason | null): StopReason {
   switch (record['subtype']) {
     case 'error_max_turns':
       return { kind: 'limit_reached', limit: 'turns', detail: 'error_max_turns' };
     case 'error_max_budget_usd':
       return { kind: 'limit_reached', limit: 'cost', detail: 'error_max_budget_usd' };
-    case 'error_during_execution':
-      return { kind: 'transport' };
-    default:
-      return { kind: 'transport' };
+    case 'error_max_structured_output_retries':
+      return { kind: 'invalid_tool_args', detail: 'error_max_structured_output_retries' };
   }
+
+  if (record['is_error'] === true || record['terminal_reason'] === 'api_error') {
+    // Retryable rather than finished when nothing said why: an errored result we
+    // cannot classify is still an errored result, and `end_turn` would move the
+    // session on as though the work were done.
+    return lastError ?? { kind: 'transport' };
+  }
+
+  if (record['subtype'] === 'success') return { kind: 'end_turn' };
+  return { kind: 'transport' };
 }
 
 export const CLAUDE_CODE_MANIFEST: CliAgentManifest = {

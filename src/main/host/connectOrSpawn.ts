@@ -169,16 +169,33 @@ function spawnDetached(workspaceRoot: string, opts: ConnectOptions): void {
   }
   env['AGBRTE_WORKSPACE_ROOT'] = workspaceRoot;
 
-  // `process.execPath` inside Electron is the Electron binary, which runs a
-  // plain script only with this set. Outside Electron — a test, a CLI — the
-  // exec path is Node and the variable would be meaningless, so it is removed.
-  if (opts.execPath === undefined) {
+  /*
+   * The switch belongs to the *binary being run*, not to whether one was named.
+   *
+   * `process.execPath` inside Electron is the Electron binary, which runs a
+   * plain script only with this set; a real `node` ignores it. This used to key
+   * off `opts.execPath === undefined` — "unset means we are Electron" — which
+   * was true for the two callers that existed and became false the moment a
+   * third appeared: the CLI passes its own `execPath` explicitly, and the app's
+   * terminal pane now runs that CLI *under* `electron.exe` with
+   * `ELECTRON_RUN_AS_NODE` already set. Under the old rule that CLI, on the rare
+   * path where it has to start a host, would have spawned Electron with the
+   * switch stripped — which does not run a script, it opens a second copy of the
+   * app, with a window, from inside a terminal pane.
+   *
+   * Asking `process.versions.electron` instead is the same question the comment
+   * was always trying to ask, and it is answerable rather than inferred (it is
+   * defined under `ELECTRON_RUN_AS_NODE` too, which is exactly the case that
+   * broke).
+   */
+  const exec = opts.execPath ?? process.execPath;
+  if (process.versions.electron !== undefined && exec === process.execPath) {
     env['ELECTRON_RUN_AS_NODE'] = '1';
   } else {
     delete env['ELECTRON_RUN_AS_NODE'];
   }
 
-  const child = spawn(opts.execPath ?? process.execPath, [entry, workspaceRoot], {
+  const child = spawn(exec, [entry, workspaceRoot], {
     detached: true,
     stdio: 'ignore',
     env,

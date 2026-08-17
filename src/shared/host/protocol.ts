@@ -193,6 +193,19 @@ export type HostMessage =
   | { t: 'compactAsk'; askId: RequestId; handleId: HandleId; budgetTokens: number }
   | { t: 'progress'; handleId: HandleId; progress: ProgressSignal }
   /**
+   * One line the runtime's subprocess printed (§3.12, §7).
+   *
+   * One-way, like `progress`, and it has to cross for the same reason `token`
+   * does: the process with the pipes is *this* one, and `sessions.rawLog` is
+   * answered over there. Without it the terminal pane was dark on every real
+   * session while the adapter's own unit tests passed — the handle the owner
+   * holds is a proxy, and a proxy has no stdout.
+   *
+   * Lossy by contract: the owner keeps a bounded tail and reports what it
+   * dropped, so nothing here needs delivery guarantees or backpressure.
+   */
+  | { t: 'raw'; handleId: HandleId; line: string }
+  /**
    * An agent addressing another (§4.2).
    *
    * One-way, like `progress` and unlike `ask`: nothing is awaited, so there is
@@ -216,6 +229,37 @@ export type HostMessage =
   | {
       t: 'ready';
       runtimeIds: string[];
+      /**
+       * The same runtimes, with what the *owner* needs to register them.
+       *
+       * `runtimeIds` alone was not enough and the gap was invisible for months.
+       * The session host forks this process, receives the ids, advertises them
+       * to every client — and built its own `RuntimeRegistry` from a hardcoded
+       * list beside the fork. So an installed CLI detected here appeared in the
+       * picker and was refused by `admit()` on the very process that had
+       * advertised it, with `runtime "cli:claude-code" is not registered`.
+       *
+       * A descriptor is what closes it: the owner registers a façade for what
+       * this process actually has, rather than for what someone typed into a
+       * constant. `model` in particular cannot be guessed — an installed CLI is
+       * `optional` and `echo` is `none`, and admission refuses a spec carrying a
+       * model for the second (§17 Q11).
+       *
+       * Optional so an agent host built before this field still handshakes.
+       * Both bundles are deployed together (`uploadHostBundle` takes the pair),
+       * so a skew is close to impossible in practice — and the degradation is
+       * still the honest one: no descriptor means the owner cannot register it,
+       * so it is not advertised either, and nothing is offered that would fail.
+       */
+      runtimes?: Array<{ id: string; label: string; model: 'required' | 'optional' | 'none' }>;
+      /**
+       * Runtimes this process looked for and did not find, with a reason each.
+       *
+       * Detection is per machine (§3.2, §3.12), and a *failed* detection used to
+       * be the one result that reached nobody. One line per manifest, computed
+       * once at startup.
+       */
+      runtimeNotes?: Array<{ id: string; label: string; reason: string }>;
       /**
        * Models this host can reach, without their credentials.
        *

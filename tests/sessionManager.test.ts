@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AdmissionRefused, SessionManager } from '@main/sessionManager.js';
+import { seatBeside } from './support/legacyRoster.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
 import { AgbrteHarnessRuntime } from '@main/runtime/runtimes/agbrteHarness.js';
@@ -359,7 +360,10 @@ describe('SessionManager — the permission gate', () => {
     const sm = manager(bashTool);
     const session = await sm.createSession({ title: 's', goal: 'g' });
     const a = await sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
-    const b = await sm.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });
+    // A sibling, seated the pre-cap way (§4.2): the rule is about what a grant
+    // must not spread to, and the sessions that still have siblings are the
+    // ones this protects.
+    const b = await seatBeside(sm, session.sessionId, { role: 'worker', runtimeId: 'echo' });
 
     const asked = new Promise<PermissionRequest>((resolve) => sm.once('permission', resolve));
     const turn = sm.send(session.sessionId, a.agentId, TEXT('go'));
