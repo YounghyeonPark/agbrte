@@ -4,9 +4,9 @@
 /ˈæɡbərt/ *(AG-burt)*. Both are correct: it is a contraction rather than a word,
 so there is nothing here to get wrong.
 
-An agent-based development workbench. Multiple sessions, multiple agents per
-session, any model behind a pluggable adapter, running on your machine or on a
-server — and agent memory that survives the workspace folder being moved.
+An agent-based development workbench. Many sessions, one model each, any model
+behind a pluggable adapter, running on your machine or on a server — and agent
+memory that survives the workspace folder being moved.
 
 **Status: phases 1, 2, 4, 5 and 6 done; 3 and 7 partly.** A text session edits a
 real repository and its transcript survives an app restart. Remote workspaces,
@@ -17,11 +17,15 @@ resumes on its own, an inbox, notifications, a CLI for headless machines, and a
 one-file installer. One conformance suite runs against five deliberately
 different runtimes, including the agent CLI you already have installed.
 
-Several agents can work one session under file leases, message each other on the
-record, or take a git worktree each. A session too large to hold can propose
-splitting into a child with its own log and a slice of its budget — a person
-approves it — and a permission prompt raised three levels down surfaces at the
-top of the dashboard.
+A session is one agent, and you can change its model mid-session — the seat you
+had is retired and the new one takes over, both written into the transcript so
+it says what answered and when. Models collaborate as *grouped sessions* rather
+than as a roster in one: each keeps its own log, budget and permissions, and
+they say one thing to each other at a time. Sessions built before that rule
+still run several agents under file leases, messaging each other on the record,
+a git worktree each. A session too large to hold can propose splitting into a
+child with its own log and a slice of its budget — a person approves it — and a
+permission prompt raised three levels down surfaces at the top of the dashboard.
 
 You can point at things. Drag a region of your own screen, black out the parts
 that should not leave the machine, circle what is wrong, and send it — the
