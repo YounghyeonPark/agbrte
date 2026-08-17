@@ -301,6 +301,43 @@ export class HostClient {
         return;
       }
 
+      case 'toolCall': {
+        /*
+         * Run one of the session's injected tools here, where its connection is
+         * (§17 Q20).
+         *
+         * A reply always goes back, like `compacted` and unlike `ask`: a turn in
+         * the other process is blocked on this one, so a missing handle or a
+         * thrown tool must become `ok: false` with a sentence the model can read
+         * rather than a silence that hangs the turn. A tool that failed and a
+         * tool that was never run look identical to a model; both are failures,
+         * and neither is a reason to stop the loop.
+         */
+        const ctx = this.contexts.get(message.handleId);
+        const reply = (result: { ok: boolean; summary: string; content: string }): void =>
+          this.opts.channel.post({ t: 'toolResult', callId: message.callId, result });
+        const tool = ctx?.sessionTools?.find((t) => t.name === message.name);
+        if (ctx === undefined || tool === undefined) {
+          reply({
+            ok: false,
+            summary: `${message.name} unavailable`,
+            content: `the session tool ${message.name} is no longer available`,
+          });
+          return;
+        }
+        void tool
+          .run(message.args, ctx.abortSignal)
+          .then(reply)
+          .catch((err: unknown) =>
+            reply({
+              ok: false,
+              summary: `${message.name} failed`,
+              content: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        return;
+      }
+
       case 'compactAsk': {
         const ctx = this.contexts.get(message.handleId);
         /*
@@ -441,6 +478,17 @@ export class HostBackedRuntime implements AgentRuntime {
       ...(ctx.seedHistory !== undefined ? { seedHistory: ctx.seedHistory } : {}),
       ...(ctx.peers !== undefined ? { peers: ctx.peers } : {}),
       ...(ctx.modelEgress !== undefined ? { modelEgress: ctx.modelEgress } : {}),
+      // Declarations only — `run` stays on this side, where the connection is
+      // (§17 Q20). The host calls back with `toolCall`; see `handle` below.
+      ...(ctx.sessionTools !== undefined
+        ? {
+            sessionTools: ctx.sessionTools.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              schema: tool.schema,
+            })),
+          }
+        : {}),
     };
 
     await this.client.request(

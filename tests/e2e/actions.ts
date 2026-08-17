@@ -22,12 +22,55 @@ import { expect, type Page } from '@playwright/test';
  * test is always the picker — a *second* one on the same host is not, and has
  * to be driven by hand (see "remembers the agent choice" in app.spec.ts).
  */
-export async function createSession(page: Page, title: string, host?: string): Promise<void> {
+export async function createSession(
+  page: Page,
+  title: string,
+  host?: string,
+  mcp?: McpFormEntry[],
+): Promise<void> {
   const group = hostGroup(page, host);
   await group.locator('[data-testid=new-session]').click();
   await group.locator('[data-testid=new-title]').fill(title);
+  if (mcp !== undefined) await fillMcpServers(group, mcp);
   await group.locator('[data-testid=new-submit]').click();
   await expect(page.locator('[data-testid=picker]')).toBeVisible();
+}
+
+/** One MCP server as the creation form takes it (§17 Q20). */
+export interface McpFormEntry {
+  id: string;
+  command: string;
+  /** As typed on one line; the form splits it, honouring double quotes. */
+  args?: string;
+  env?: Array<[string, string]>;
+}
+
+/**
+ * Fill the folded MCP section of an open new-session form.
+ *
+ * The fold has to be opened first: fields inside a closed `<details>` are not
+ * visible, and Playwright will not type into what a person could not see —
+ * which is the right behaviour, and the reason this is a helper rather than
+ * four inline `fill`s.
+ */
+export async function fillMcpServers(
+  group: ReturnType<typeof hostGroup>,
+  servers: McpFormEntry[],
+): Promise<void> {
+  await group.locator('[data-testid=mcp-fields] summary').click();
+  for (const [index, server] of servers.entries()) {
+    await group.locator('[data-testid=mcp-add]').click();
+    const row = group.locator(`[data-testid=mcp-row][data-index="${index}"]`);
+    await row.locator('[data-testid=mcp-id]').fill(server.id);
+    await row.locator('[data-testid=mcp-command]').fill(server.command);
+    if (server.args !== undefined) await row.locator('[data-testid=mcp-args]').fill(server.args);
+    for (const [envIndex, [key, value]] of (server.env ?? []).entries()) {
+      await row.locator('[data-testid=mcp-env-add]').click();
+      const envRow = row.locator('[data-testid=mcp-env-row]').nth(envIndex);
+      await envRow.locator('[data-testid=mcp-env-key]').fill(key);
+      await envRow.locator('[data-testid=mcp-env-value]').fill(value);
+    }
+  }
 }
 
 /** A host's sidebar group. Defaults to the only one when there is just one. */

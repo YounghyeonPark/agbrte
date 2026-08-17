@@ -377,6 +377,126 @@ describe('permission asks cross the boundary', () => {
   });
 });
 
+/**
+ * §17 Q20's tools have to survive the same crossing, and did not.
+ *
+ * `RuntimeContext.sessionTools` is how MCP reaches a model, and the runtime is
+ * what tells a model which tools exist — so a context that arrives in the host
+ * process without them produces a session that logs `mcp.attached`, shows the
+ * tool in the UI, and never mentions it to the model. Every unit test passed:
+ * they hand a runtime a context directly and never cross this boundary. A live
+ * run through the real app is what found it, exactly as the note on `compactAsk`
+ * says happened for compaction.
+ *
+ * So the property is tested here, at the boundary, where a rename or a dropped
+ * spread can be caught in milliseconds instead of by a model that quietly stops
+ * having a tool.
+ */
+describe('session tools cross the boundary', () => {
+  it('declares them to the runtime and runs them back on the owner', async () => {
+    let hostCtx: RuntimeContext | null = null;
+    const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
+
+    const ran: Array<Record<string, unknown>> = [];
+    await r.hosted.start(
+      spec(),
+      context({
+        sessionTools: [
+          {
+            name: 'mcp__search__web-search',
+            description: 'Search the web',
+            schema: { type: 'object', properties: { query: { type: 'string' } } },
+            run: async (args) => {
+              ran.push(args);
+              return { ok: true, summary: 'search ok', content: 'a result' };
+            },
+          },
+        ],
+      }),
+    );
+
+    // Declared: name, description and schema, which is everything a runtime
+    // needs to put the tool in front of a model.
+    expect(hostCtx!.sessionTools?.map((t) => t.name)).toEqual(['mcp__search__web-search']);
+    expect(hostCtx!.sessionTools?.[0]?.description).toBe('Search the web');
+    expect(hostCtx!.sessionTools?.[0]?.schema).toMatchObject({ type: 'object' });
+
+    // Executed on the owner's side, where the MCP connection is — the closure
+    // itself never crossed.
+    const result = await hostCtx!.sessionTools![0]!.run(
+      { query: 'mcp' },
+      new AbortController().signal,
+    );
+    expect(result).toEqual({ ok: true, summary: 'search ok', content: 'a result' });
+    expect(ran).toEqual([{ query: 'mcp' }]);
+  });
+
+  it('answers a call the owner cannot run, rather than hanging the turn', async () => {
+    let hostCtx: RuntimeContext | null = null;
+    const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
+
+    await r.hosted.start(
+      spec(),
+      context({
+        sessionTools: [
+          {
+            name: 'mcp__dead__lookup',
+            description: 'x',
+            schema: {},
+            run: async () => {
+              throw new Error('the MCP server exited');
+            },
+          },
+        ],
+      }),
+    );
+
+    // A tool failure, not a dropped reply: a turn in the other process is
+    // blocked on this promise, and the model has to be told the tool did not
+    // work rather than left waiting for an answer that is not coming.
+    const result = await hostCtx!.sessionTools![0]!.run({}, new AbortController().signal);
+    expect(result.ok).toBe(false);
+    expect(result.content).toContain('exited');
+  });
+
+  it('settles a call left outstanding when the handle ends', async () => {
+    let hostCtx: RuntimeContext | null = null;
+    const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
+
+    await r.hosted.start(
+      spec(),
+      context({
+        sessionTools: [
+          {
+            name: 'mcp__slow__lookup',
+            description: 'x',
+            schema: {},
+            run: () => new Promise(() => {}),
+          },
+        ],
+      }),
+    );
+
+    const call = hostCtx!.sessionTools![0]!.run({}, new AbortController().signal);
+    r.runtime.handles[0]?.end();
+
+    // The same argument as the outstanding ask above, with a different verdict:
+    // this is not a decision anybody declined to make, it is a call that will
+    // not come back.
+    await expect(call).resolves.toMatchObject({ ok: false });
+  });
+
+  it('says nothing about session tools when a session has none', async () => {
+    // An empty array on every context would make every runtime merge nothing on
+    // every turn, and would make "this session has injected tools" unanswerable
+    // from the wire.
+    let hostCtx: RuntimeContext | null = null;
+    const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
+    await r.hosted.start(spec(), context());
+    expect(hostCtx!.sessionTools).toBeUndefined();
+  });
+});
+
 describe('events and progress', () => {
   it('streams events across the channel in order', async () => {
     const r = rig();

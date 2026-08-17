@@ -46,7 +46,23 @@ export function registerIpc(deps: Omit<IpcDeps, 'broadcast' | 'pickFolder'>): {
     clips: new ClipStore(join(app.getPath('userData'), 'voice')),
     speaker: new Speaker(findVoice()),
     broadcast: (channel, payload) => {
-      for (const win of windows()) win.webContents.send(channel, payload);
+      for (const win of windows()) {
+        try {
+          win.webContents.send(channel, payload);
+        } catch {
+          /*
+           * A window that went away between the filter above and this line.
+           *
+           * Narrow on purpose: `send` on destroyed `webContents` throws, and the
+           * one push that arrives at full rate — a terminal's output — is exactly
+           * the one most likely to land mid-teardown, which is the moment a
+           * window is closing while a PTY is still loud. Losing a frame of
+           * output addressed to a window that no longer exists is not a failure;
+           * taking the whole app down for it is. There is nothing to report:
+           * the intended reader is gone, and every other window still got it.
+           */
+        }
+      }
     },
     pickFolder: async () => {
       const win = windows()[0];

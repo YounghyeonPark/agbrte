@@ -80,6 +80,8 @@ export class SocketChannel<Out, In> implements HostChannel<Out, In> {
   private readonly framer = new LineFramer();
   private closed = false;
   private closeReason: string | undefined;
+  /** Held so `die` can take it off, rather than leaving a dead channel reading. */
+  private readonly onData: (chunk: string) => void;
 
   constructor(
     private readonly socket: Socket,
@@ -90,7 +92,8 @@ export class SocketChannel<Out, In> implements HostChannel<Out, In> {
     // drops the connection and neither side learns until it writes.
     socket.setKeepAlive(true, 30_000);
 
-    socket.on('data', (chunk: string) => this.ingest(chunk));
+    this.onData = (chunk: string) => this.ingest(chunk);
+    socket.on('data', this.onData);
 
     // Anything the caller already read goes through the same framer and the same
     // backlog, so a pipelined message is indistinguishable from one that arrived
@@ -147,13 +150,33 @@ export class SocketChannel<Out, In> implements HostChannel<Out, In> {
 
   close(): void {
     this.die('closed locally');
-    this.socket.destroy();
   }
 
+  /**
+   * This conversation is over, whichever end decided it.
+   *
+   * **The socket goes with it, on every path — not only on `close()`.** That
+   * used to be the local-close path's job alone, which left two states nobody
+   * wanted: a channel that had already told its owner it was gone while its
+   * `data` handler kept framing bytes into a `HostConnection` whose calls were
+   * all rejected, and — where the reason was an `end` or an `error` rather than
+   * our own `close()` — a socket still subscribed by a listener that could no
+   * longer do anything with what arrived. Reading a stream after deciding it is
+   * closed is the shape of bug this whole file exists to avoid one process
+   * further out, and it had it.
+   *
+   * Idempotent, and safe to call from inside the socket's own `close` event:
+   * `destroy()` on an already-destroyed socket is a no-op, and `closed` guards
+   * the announcement.
+   */
   private die(reason: string): void {
     if (this.closed) return;
     this.closed = true;
     this.closeReason = reason;
+    // Off before destroy: a chunk delivered between the two would be framed
+    // into a channel that has already announced its own death.
+    this.socket.off('data', this.onData);
+    this.socket.destroy();
     this.closeHandler?.(reason);
   }
 }

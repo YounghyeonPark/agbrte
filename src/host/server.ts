@@ -44,6 +44,17 @@ export class AgentHostServer {
   /** Permission asks awaiting an answer from the other side. */
   private readonly asks = new Map<RequestId, (d: PermissionDecision) => void>();
   private readonly compactions = new Map<RequestId, (h: CompactedHistory | null) => void>();
+  /**
+   * Session-tool calls awaiting the owner's answer (§17 Q20).
+   *
+   * Same shape as `compactions` and for the same reason: a turn in this process
+   * is blocked on the promise, so the owner always replies — including with a
+   * failure — and nothing here needs a timeout of its own.
+   */
+  private readonly toolCalls = new Map<
+    RequestId,
+    (r: { ok: boolean; summary: string; content: string }) => void
+  >();
   /** Handles aborted before their `start` arrived. */
   private readonly preAborted = new Set<HandleId>();
   private nextAskId = 0;
@@ -234,6 +245,15 @@ export class AgentHostServer {
         return;
       }
 
+      case 'toolResult': {
+        const resolve = this.toolCalls.get(command.callId);
+        this.toolCalls.delete(command.callId);
+        // Same as `compacted`: a turn is waiting, so the owner always answers —
+        // an unknown id here means the handle went away and the loop with it.
+        resolve?.(command.result);
+        return;
+      }
+
       case 'shutdown':
         this.shutdown();
         return;
@@ -264,6 +284,7 @@ export class AgentHostServer {
       seedHistory?: RuntimeContext['seedHistory'];
       modelEgress?: RuntimeContext['modelEgress'];
       peers?: RuntimeContext['peers'];
+      sessionTools?: Array<{ name: string; description: string; schema: object }>;
     },
     abort: AbortController,
   ): RuntimeContext {
@@ -271,6 +292,37 @@ export class AgentHostServer {
       ...(ctx.seedHistory !== undefined ? { seedHistory: ctx.seedHistory } : {}),
       ...(ctx.modelEgress !== undefined ? { modelEgress: ctx.modelEgress } : {}),
       ...(ctx.peers !== undefined ? { peers: ctx.peers } : {}),
+      /*
+       * The session's injected tools, rebuilt around the channel (§17 Q20).
+       *
+       * Declaration on this side, execution on the owner's: the runtime needs
+       * the name, description and schema to put the tool in front of the model,
+       * and `run` posts a `toolCall` because the MCP connection belongs to
+       * whoever owns the log. Exactly the split `compact` uses — and, like
+       * `compact`, its absence here was invisible to every unit test, because a
+       * test hands the runtime a context directly and never crosses this
+       * boundary at all.
+       */
+      ...(ctx.sessionTools !== undefined
+        ? {
+            sessionTools: ctx.sessionTools.map((tool) => ({
+              name: tool.name,
+              description: tool.description,
+              schema: tool.schema,
+              // The signal is deliberately not forwarded: the owner runs the
+              // tool under *its* abort signal for this agent, and an interrupt
+              // reaches that side through the `abort` command either way. A
+              // second signal on the wire would be a second thing to keep in
+              // step with the first.
+              run: (args: Record<string, unknown>) =>
+                new Promise<{ ok: boolean; summary: string; content: string }>((resolve) => {
+                  const callId = `${handleId}:${(this.nextAskId += 1)}`;
+                  this.toolCalls.set(callId, resolve);
+                  this.channel.post({ t: 'toolCall', callId, handleId, name: tool.name, args });
+                }),
+            })),
+          }
+        : {}),
       abortSignal: abort.signal,
       reportProgress: (progress) => this.channel.post({ t: 'progress', handleId, progress }),
       // The pipes are in this process and the tail is kept in the owner's, for
@@ -349,6 +401,18 @@ export class AgentHostServer {
       if (!askId.startsWith(`${handleId}:`)) continue;
       this.asks.delete(askId);
       resolve({ result: 'deny', reason: 'agent stopped before the request was answered' });
+    }
+    // A session-tool call outstanding for a dead handle hangs the same loop for
+    // the same reason (§17 Q20). Settled as a tool failure rather than denied:
+    // it is not a decision, it is a call that will not come back.
+    for (const [callId, resolve] of [...this.toolCalls]) {
+      if (!callId.startsWith(`${handleId}:`)) continue;
+      this.toolCalls.delete(callId);
+      resolve({
+        ok: false,
+        summary: 'session tool interrupted',
+        content: 'the agent stopped before the tool returned',
+      });
     }
   }
 

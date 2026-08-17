@@ -104,6 +104,24 @@ export interface HostContext {
   modelEgress?: { baseUrl: string; token: string };
   /** The session's roster at start, so an adapter's tools can address it (§4.2). */
   peers?: AgentId[];
+  /**
+   * The session's injected tools, **declared but not carried** (§17 Q20).
+   *
+   * `SessionTool.run` is a closure over a connection the *owner* holds — an MCP
+   * server process it spawned — and a closure cannot cross a process boundary,
+   * which is the same problem `requestPermission` and `compact` have and it gets
+   * the same answer: the declaration is shipped so the runtime can put the tool
+   * in front of the model, and a call becomes a `toolCall`/`toolResult` pair.
+   *
+   * Omitting it was not a small gap. The runtime is what tells the model which
+   * tools exist, so a session with an attached MCP server logged `mcp.attached`,
+   * showed the tool in the UI, and then never mentioned it to the model at all —
+   * a feature that unit-tests green (they hand the runtime a context directly,
+   * in-process) and does nothing whatsoever in the shipping app. That is the
+   * same failure `compactAsk` records below, twice over: a hook that exists
+   * everywhere except across the one boundary that always exists in production.
+   */
+  sessionTools?: Array<{ name: string; description: string; schema: object }>;
 }
 
 // -------------------------------------------------------------- main → host
@@ -160,6 +178,20 @@ export type HostCommand =
    * nothing worth carrying, which the runtime treats as "keep what you have".
    */
   | { t: 'compacted'; askId: RequestId; history: CompactedHistory | null }
+  /**
+   * The answer to `toolCall` (§17 Q20).
+   *
+   * Always sent, including for a handle the owner no longer knows: a tool call
+   * is awaited inside a turn in the other process, so silence hangs the turn
+   * rather than degrading it — the same argument as `compacted`. A failure is
+   * an ordinary tool failure (`ok: false`) and never a dropped reply, because
+   * the model has to be told the tool did not work.
+   */
+  | {
+      t: 'toolResult';
+      callId: RequestId;
+      result: { ok: boolean; summary: string; content: string };
+    }
   | { t: 'shutdown' };
 
 // -------------------------------------------------------------- host → main
@@ -191,6 +223,22 @@ export type HostMessage =
    * after the unit tests had passed by handing the runtime a context directly.
    */
   | { t: 'compactAsk'; askId: RequestId; handleId: HandleId; budgetTokens: number }
+  /**
+   * The runtime running one of the session's injected tools (§17 Q20).
+   *
+   * A request, like `ask` and `compactAsk`, and for the identical reason: the
+   * loop is here and the MCP connection is over there, owned by whoever owns
+   * the log. The gate has already run by the time this is sent — a session tool
+   * is a tool, so `requestPermission` settled it in the runtime's own suite —
+   * and this is the execution, not a second decision.
+   */
+  | {
+      t: 'toolCall';
+      callId: RequestId;
+      handleId: HandleId;
+      name: string;
+      args: Record<string, unknown>;
+    }
   | { t: 'progress'; handleId: HandleId; progress: ProgressSignal }
   /**
    * One line the runtime's subprocess printed (§3.12, §7).

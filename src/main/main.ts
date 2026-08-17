@@ -15,9 +15,10 @@
  */
 
 import { loadReport } from './conformance.js';
-import { app, BrowserWindow, Menu, shell } from 'electron';
+import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { delimiter, dirname, join } from 'node:path';
+import { installStrayPipeGuard } from './strayPipeRead.js';
 import { registerIpc } from './ipc/register.js';
 import { PUSH } from '@shared/ipc/contract.js';
 import { Notifier } from './notify.js';
@@ -39,6 +40,36 @@ const DEV_URL = process.env['AGBRTE_DEV_SERVER'];
  * taskbar slot.
  */
 if (process.platform === 'win32') app.setAppUserModelId('dev.agbrte.app');
+
+/*
+ * A late read on a pipe main has already let go of must not take the window.
+ *
+ * Installed before anything opens a socket, because the read it answers for
+ * arrives from a handle rather than from a call and there is no later moment
+ * that is early enough. `strayPipeRead.ts` carries the whole argument — what was
+ * measured, why no `catch` can be on that stack, and why the repair matters more
+ * than the swallow.
+ *
+ * `onFatal` is not decoration. Electron's own handler is
+ * `process.listenerCount('uncaughtException') > 1 || …`, so the moment this file
+ * adds a listener, Electron stops showing its error box for *every* uncaught
+ * exception in main. Reproducing it here — same title, same `Uncaught
+ * Exception:` prefix — is what keeps this a guard on one stream rather than a
+ * silencer on all of them.
+ */
+installStrayPipeGuard({
+  onStray: (err, retired) => {
+    process.stderr.write(
+      `stray pipe read absorbed (${retired} socket${retired === 1 ? '' : 's'} retired): ${err.message}\n`,
+    );
+  },
+  onFatal: (err) => {
+    dialog.showErrorBox(
+      'A JavaScript error occurred in the main process',
+      `Uncaught Exception:\n${err.stack ?? `${err.name}: ${err.message}`}`,
+    );
+  },
+});
 
 /*
  * No menu bar on Windows and Linux.

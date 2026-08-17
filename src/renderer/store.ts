@@ -26,6 +26,7 @@ import type {
   ContentBlock,
   InboxEntry,
   MatrixCell,
+  McpServerConfig,
   PermissionRequest,
   PermissionResolved,
   Session,
@@ -93,8 +94,19 @@ export interface AgbrteState {
    * The open is part of this rather than a second call every caller makes,
    * which is what lets the one-shot path in App.tsx be a sequence of two.
    * A refusal is the error banner and no session; nothing to return either way.
+   *
+   * `mcpServers` is creation-only because the owner is (§17 Q20):
+   * `SessionManager` attaches them in `createSession` and has no command to
+   * attach one afterwards, so this is the single call that can carry them —
+   * which is also why the values in `env` are handed straight to the IPC and
+   * never kept in this store.
    */
-  createSession(instanceId: string, title: string, goal: string): Promise<void>;
+  createSession(
+    instanceId: string,
+    title: string,
+    goal: string,
+    mcpServers?: McpServerConfig[],
+  ): Promise<void>;
   openSession(sessionId: string, instanceId?: string): Promise<void>;
   /** Deselect, so a narrow screen can show the list again. */
   closeSession(): void;
@@ -312,9 +324,17 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     });
   },
 
-  async createSession(instanceId, title, goal) {
+  async createSession(instanceId, title, goal, mcpServers) {
     const session = await guard(set, () =>
-      agbrte().sessions.create({ instanceId, title, goal }),
+      agbrte().sessions.create({
+        instanceId,
+        title,
+        goal,
+        // Omitted rather than sent empty: the host reads absent as "none were
+        // named", and an empty array would put a `mcp: []` on a session that
+        // never asked for one.
+        ...(mcpServers !== undefined && mcpServers.length > 0 ? { mcpServers } : {}),
+      }),
     );
     if (!session) return;
     set({ sessions: [...get().sessions, session] });

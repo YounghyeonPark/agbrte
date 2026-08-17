@@ -33,6 +33,8 @@ import { Inbox } from './Inbox.js';
 import { Search } from './Search.js';
 import { Artifacts } from './Artifacts.js';
 import { Roster } from './Roster.js';
+import { McpAttached, McpServerFields } from './McpServers.js';
+import { firstProblem, toConfigs, type McpDraft } from './mcpConfig.js';
 import { Group } from './Group.js';
 import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
@@ -967,6 +969,20 @@ export function App(): JSX.Element {
               }
             />
 
+            {/*
+              Above the seat, not beside it (§17 Q20, §3.5).
+
+              It answers the same question the roster does — what this session
+              is and what it can reach — but it has to answer it *earlier*: the
+              servers attached when the session was created, which is before a
+              model has been chosen. Rendered inside the seated branch it would
+              have been invisible on exactly the screen somebody lands on after
+              filling the form, so a server that failed to start would go
+              unmentioned until a model was picked. Renders nothing at all where
+              no server was named.
+            */}
+            <McpAttached {...(active.mcp !== undefined ? { servers: active.mcp } : {})} />
+
             {active.agents.length === 0 ? (
               autoAdding === active.sessionId ? (
                 /* The remembered default is being added; the form it replaces
@@ -1222,6 +1238,15 @@ function HostGroup({
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState('');
   const [templates, setTemplates] = useState<SessionTemplateDto[]>([]);
+  /*
+   * The MCP servers this session is being given (§17 Q20).
+   *
+   * Held here rather than in the store, and for one keystroke longer than
+   * strictly needed, because `env` values are credentials: they live in this
+   * component's state, go into the create call, and are dropped in `submit`.
+   * Nothing puts them in the store, in a template, or in a log.
+   */
+  const [mcpDrafts, setMcpDrafts] = useState<McpDraft[]>([]);
 
   // Fetched when the form opens rather than on mount: a host that has none is
   // the common case, and asking every host on every render to populate a list
@@ -1231,10 +1256,26 @@ function HostGroup({
     void window.agbrte.templates.list(host.instanceId).then(setTemplates, () => setTemplates([]));
   }, [adding, host.instanceId]);
 
+  /** The first unsendable MCP row, shown under the fields rather than swallowed. */
+  const mcpProblem = firstProblem(mcpDrafts);
+
   const submit = (): void => {
     if (title.trim() === '') return;
-    void store.createSession(host.instanceId, title.trim(), title.trim());
+    // Refused here as well as by the host: the host's refusal is the boundary,
+    // and this one keeps a typo from costing a round trip and a session that
+    // was never made.
+    if (mcpProblem !== null) return;
+    void store.createSession(host.instanceId, title.trim(), title.trim(), toConfigs(mcpDrafts));
     setTitle('');
+    /*
+     * Cleared before the create resolves, deliberately.
+     *
+     * These drafts hold env values, which §13 calls credentials, and holding
+     * them "in case it failed" would keep a secret in renderer state for as long
+     * as the window is open. A failed create says so in the error banner and the
+     * fields are retyped — the cheaper of the two mistakes.
+     */
+    setMcpDrafts([]);
     setAdding(false);
   };
 
@@ -1266,7 +1307,16 @@ function HostGroup({
             className="btn px-2 py-1 text-xs"
             data-testid="new-session"
             title="Another session on this host"
-            onClick={() => setAdding((v) => !v)}
+            onClick={() =>
+              setAdding((open) => {
+                // Closing the form forgets what was typed into it, because some
+                // of what was typed into it is a credential (§13, §17 Q20).
+                // Keeping a token in renderer state for as long as the window is
+                // open, on the chance the form is reopened, is the wrong trade.
+                if (open) setMcpDrafts([]);
+                return !open;
+              })
+            }
           >
             +
           </button>
@@ -1362,7 +1412,17 @@ function HostGroup({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
-          <button className="btn" data-testid="new-submit" type="submit" disabled={title.trim() === ''}>
+          {/* §17 Q20: what this session may reach, decided by the person making
+              it, going straight into its own log. Above the button because it is
+              part of the same decision, and folded because most sessions attach
+              nothing. */}
+          <McpServerFields drafts={mcpDrafts} onChange={setMcpDrafts} />
+          <button
+            className="btn"
+            data-testid="new-submit"
+            type="submit"
+            disabled={title.trim() === '' || mcpProblem !== null}
+          >
             Create
           </button>
 

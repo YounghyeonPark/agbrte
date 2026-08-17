@@ -298,6 +298,41 @@ export function EventRow({
         </div>
       );
 
+    /*
+     * What this session was given, at the point it was given it (§17 Q20).
+     *
+     * In the conversation rather than filed under bookkeeping because the row
+     * above it is the provenance of every `mcp__…` call below it: which command,
+     * offering which tools. The env *names* are shown and the values are not
+     * present in the event to show — §13's rule, which is also why a restart
+     * leaves these lines as the only record that the tools were ever here.
+     */
+    case 'mcp.attached':
+      return (
+        <div data-testid="row-mcp-attached" className={META_ROW}>
+          <code className={CODE}>mcp · {event.serverId}</code>
+          <span className="truncate-line min-w-0">
+            {event.toolNames.length === 0
+              ? 'attached, but offered no tools'
+              : event.toolNames.join(', ')}
+            {event.envKeys !== undefined && event.envKeys.length > 0
+              ? ` · env ${event.envKeys.join(', ')}`
+              : ''}
+          </span>
+        </div>
+      );
+
+    case 'mcp.failed':
+      // §3.5, in the log's own order: the failure sits where the tool names
+      // would have been, so a later "the model never used my tool" has an
+      // answer in the transcript rather than in a support thread.
+      return (
+        <div data-testid="row-mcp-failed" className={`${META_ROW} text-state-fail`}>
+          <code className={CODE}>mcp · {event.serverId}</code>
+          <span className="truncate-line min-w-0">did not start — {event.reason}</span>
+        </div>
+      );
+
     // Everything else is bookkeeping — usage, checkpoints, agent lifecycle. It is
     // in the log and reachable, just not worth a line in the conversation.
     default:
