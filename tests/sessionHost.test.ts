@@ -495,6 +495,31 @@ describe('protocol version is a range, not an equality', () => {
     expect(replies[0]).toMatchObject({ t: 'err', name: 'ClientTooOld' });
   });
 
+  it('reports that refusal to the client instead of just hanging up on it', async () => {
+    /*
+     * The other end of the test above, from the client's side.
+     *
+     * `hello` is posted directly rather than through `call`, so the `err`
+     * answering it matched no pending call and was dropped — leaving `ready` to
+     * be rejected by the socket closing a moment later, with `peer ended the
+     * connection`. The one failure with a clear remedy reported by the one
+     * message that names nothing.
+     */
+    const pair = memoryChannelPair<SessionCommand, SessionMessage>();
+    const c = new HostConnection({ channel: pair.main });
+    pair.host.onMessage(() =>
+      pair.host.post({
+        t: 'err',
+        id: 'c1',
+        name: 'ClientTooOld',
+        message: 'this host serves session protocol v9 and above; that client speaks v1',
+      }),
+    );
+
+    await expect(c.ready).rejects.toThrow(/v9 and above/);
+    await expect(c.ready).rejects.toMatchObject({ name: 'ClientTooOld' });
+  });
+
   it('advertises the oldest client it serves, so a client need not guess', async () => {
     const identity = await rig().connect().ready;
     expect(identity.minProtocol).toBe(MIN_CLIENT_PROTOCOL);

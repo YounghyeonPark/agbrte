@@ -851,6 +851,35 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     },
   );
 
+  /*
+   * The workspace on the machine that owns it (§6.6, §7).
+   *
+   * Not client-only, unlike `preview.open`: a listing is a fact about the host
+   * and means the same thing wherever it is rendered, so a browser at
+   * `agbrte web` gets the same sidebar the desktop app does. The tunnel next
+   * door is the thing that names a *local* port and is therefore excluded by
+   * type — this returns nothing that points at the machine asking.
+   *
+   * Forwarded without interpretation. `path` is checked where the root is, which
+   * is the host: a check here would be a second opinion built from a workspace
+   * root this process only has a copy of, and second opinions about a security
+   * boundary are only ever wrong in the permissive direction. `Fleet` refuses a
+   * host too old by name; the host refuses a path that escapes, a file over the
+   * cap, and anything that is not text.
+   *
+   * Deliberately **no cancellation**: each call is one capped directory or one
+   * capped file, so the longest is a single round trip, and a renderer that has
+   * moved on just ignores the reply. A cancel token would be ceremony over a
+   * request that cannot outlive a click.
+   */
+  handle(CH.filesList, (r: { instanceId: string; path: string; limit?: number }) =>
+    fleet.listFiles(r.instanceId as InstanceId, r.path, r.limit),
+  );
+
+  handle(CH.filesRead, (r: { instanceId: string; path: string }) =>
+    fleet.readFile(r.instanceId as InstanceId, r.path),
+  );
+
   handle(CH.previewList, (sessionId: string): ForwardDto[] =>
     deps.previews === undefined ? [] : deps.previews.list(sessionId as SessionId),
   );

@@ -31,6 +31,8 @@ import {
 
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import type {
+  DirListing,
+  FilePreview,
   ReasoningRequest,
   ResultContract,
   SessionBudget,
@@ -217,7 +219,27 @@ export class HostConnection extends EventEmitter {
         this.pendingCalls.delete(message.id);
         const error = new Error(message.message);
         if (message.name !== undefined) error.name = message.name;
-        pending?.reject(error);
+        if (pending !== undefined) {
+          pending.reject(error);
+          return;
+        }
+        /*
+         * An error matching no call, before the handshake: that is the answer to
+         * `hello`.
+         *
+         * `hello` is posted directly rather than through `call`, so it has no
+         * pending entry — which meant a host refusing a client as too old
+         * (`ClientTooOld`, §17.16) posted a sentence explaining exactly that, saw
+         * it dropped on the floor here, and closed the socket. What the user got
+         * was `peer ended the connection`: the one message that says nothing,
+         * for the one failure that has a clear remedy. Unreachable today because
+         * `MIN_CLIENT_PROTOCOL` is 1, and reachable by the next bump, which is
+         * precisely the moment nobody will be looking at this file.
+         */
+        if (this.identity === null) {
+          this.failReady(error);
+          this.opts.channel.close();
+        }
         return;
       }
 
@@ -703,6 +725,41 @@ export class HostConnection extends EventEmitter {
   async closeShell(shellId: string): Promise<boolean> {
     this.require('shell.close');
     return this.call<boolean>({ t: 'shell.close', shellId });
+  }
+
+  /**
+   * One directory of the workspace this host owns (§6.6).
+   *
+   * `require` rather than a silent empty listing, on `models`' reasoning: a host
+   * too old to answer must read as *cannot tell you*, because an empty tree
+   * shown in a sidebar is indistinguishable from "this workspace is empty" and
+   * is a lie about a repo with a thousand files in it.
+   *
+   * `async` so that gate *rejects* rather than throwing synchronously — the trap
+   * `previewPorts` documents, and the same fix.
+   *
+   * One directory per call. There is no method here that walks, and adding one
+   * would undo the property the two-command shape exists for.
+   */
+  async listFiles(path: string, limit?: number): Promise<DirListing> {
+    this.require('files.list');
+    return this.call<DirListing>({
+      t: 'files.list',
+      path,
+      ...(limit !== undefined ? { limit } : {}),
+    });
+  }
+
+  /**
+   * One file's text, or the host's refusal.
+   *
+   * The refusal is the interesting return value: `FileTooLarge` and
+   * `FileNotText` arrive as errors with those names on them, so a pane can say
+   * which cap bit rather than showing an empty box.
+   */
+  async readFile(path: string): Promise<FilePreview> {
+    this.require('files.read');
+    return this.call<FilePreview>({ t: 'files.read', path });
   }
 
   respondSplit(

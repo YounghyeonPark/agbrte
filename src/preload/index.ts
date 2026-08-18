@@ -125,6 +125,22 @@ const api: AgbrteApi = {
     close: (r: { sessionId: string; port: number }) => ipcRenderer.invoke(CH.previewClose, r),
     recheck: (r: { sessionId: string; port: number }) => ipcRenderer.invoke(CH.previewRecheck, r),
   },
+  /*
+   * The workspace, seen from the machine that owns it (§7).
+   *
+   * Two methods, both reads, neither generic. There is no `readAbsolute`, no
+   * `write`, no `delete` and no path that means anything outside a workspace the
+   * renderer already has attached — so the widest request expressible through
+   * this surface is "list or show me something under a root you already opened",
+   * and the host refuses anything that resolves outside it. A general
+   * `fs.read(path)` would have been fewer lines and would have handed a
+   * sandboxed renderer the filesystem of a build box.
+   */
+  files: {
+    list: (r: { instanceId: string; path: string; limit?: number }) =>
+      ipcRenderer.invoke(CH.filesList, r),
+    read: (r: { instanceId: string; path: string }) => ipcRenderer.invoke(CH.filesRead, r),
+  },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),
     create: (r: CreateSessionRequest) => ipcRenderer.invoke(CH.sessionsCreate, r),

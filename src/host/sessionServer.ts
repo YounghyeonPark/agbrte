@@ -49,6 +49,7 @@ import {
   type Sha256,
 } from '@shared/types/index.js';
 import { BlobIntake } from '@main/store/blobTransfer.js';
+import { listDirectory, readTextFile } from '@main/workspace/files.js';
 import { searchWorkspace } from '@main/store/searchSessions.js';
 import {
   MIN_CLIENT_PROTOCOL,
@@ -206,6 +207,31 @@ export class SessionHostServer {
 
   /** Attach a client. Called once per accepted connection. */
   accept(channel: HostSideSessionChannel): void {
+    /*
+     * A host that has stopped serves nobody, including whoever arrives next.
+     *
+     * `stop()` drops every client and hands the process to its owner to exit,
+     * and this class does not own the listener — it takes channels, never
+     * sockets, so it cannot know whether the thing feeding it connections has
+     * been closed yet. A welcome sent from here after `stop()` is a promise the
+     * process cannot keep: the client adopts a host whose next answer is the
+     * socket dying, which is the ambiguous half-alive peer `hosts.update` kept
+     * meeting. Closed at once instead, so the client sees "nothing is there" —
+     * the one state every discovery path already knows how to handle.
+     *
+     * Measured rather than assumed on the bundled host, where it turns out to be
+     * belt and braces: `hostMain` closes its listener in the same tick, so a
+     * connect at +1ms is accepted by the kernel and never dispatched here at
+     * all. It stays because that ordering is `hostMain`'s and not this class's —
+     * an embedder that keeps its listener open a moment longer (`agbrte serve`,
+     * a loopback control port) would otherwise hand out welcomes from a stopped
+     * server, and nothing in this file would notice.
+     */
+    if (this.closed) {
+      channel.close();
+      return;
+    }
+
     // `read-only` until the handshake says otherwise, and an actor that claims
     // nothing. A connection that never says hello must not be able to write, and
     // must not be able to put a name on anything either.
@@ -753,6 +779,40 @@ export class SessionHostServer {
         case 'shell.close':
           this.requireWrite(client, 'close a terminal');
           return this.shells().close(client.shellOwner, command.shellId);
+
+        case 'files.list':
+          /*
+           * A read, so no `requireWrite` — the treatment `session.events`,
+           * `blob.get` and `agent.rawLog` get, and for the same reason: a
+           * read-only client can already read a transcript that names these
+           * files and quotes their contents, so withholding the list would keep
+           * the caption and hide the picture.
+           *
+           * **Not §13-gated, and somebody would reasonably wonder.** §13's gate
+           * covers what a *model* asks the app for; an agent reading a file goes
+           * through `tools/index.ts`, which checks this same root and then the
+           * session's `ToolPolicy`. There is no agent on this path. This is a
+           * person with a window open on their own workspace, and prompting them
+           * to approve their own click is the theatre §13 warns about — it
+           * trains people to dismiss the prompts that matter.
+           *
+           * What does the actual containment is `listDirectory` itself: every
+           * path is resolved against this host's workspace root and refused by
+           * name if it escapes, lexically or through a symlink.
+           *
+           * Nothing here is a session event. No log write, no queue, no
+           * projection change — a client browsing leaves the transcript exactly
+           * as it found it.
+           */
+          return listDirectory(this.opts.identity.workspaceRoot, command.path, {
+            ...(command.limit !== undefined ? { limit: command.limit } : {}),
+          });
+
+        case 'files.read':
+          // The same read, the same reasoning. Bounded on this side rather than
+          // trusted from the client: oversized and non-text are refused by name,
+          // never truncated (see `readTextFile`).
+          return readTextFile(this.opts.identity.workspaceRoot, command.path);
 
         case 'permission.pending':
           return manager.pendingPermissions();

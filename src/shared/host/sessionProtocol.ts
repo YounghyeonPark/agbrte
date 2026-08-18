@@ -272,6 +272,28 @@ export interface PreparedChild {
 }
 
 /**
+ * ## v19 adds two commands, which is the case this table handles cleanly
+ *
+ * `files.list` and `files.read` let a person look at the workspace a session is
+ * working on. A v18 host does not have them, `supports()` says so, and the
+ * sidebar reports that browsing needs a newer host *on that machine* — one
+ * feature, named, rather than a broken connection.
+ *
+ * Two commands rather than one `files.tree`, and that is the design rather than
+ * a decomposition. A recursive listing of a `node_modules` tree over ssh is a
+ * request that never comes back with nothing on screen to explain it, so the
+ * shape that would allow one is absent: `files.list` answers about **one
+ * directory**, and there is no `depth`, no `recursive` and no glob to ask it for
+ * more. Expanding a folder is another round trip, which is exactly the cost a
+ * person is choosing to pay by clicking it.
+ *
+ * Both are **reads**, so a `read-only` client may use them — the same call
+ * `session.events` and `blob.get` make. What a read-only phone must not get is
+ * the terminal beside it, and that distinction is the whole reason the role
+ * check is per command rather than per feature area.
+ *
+ * No field was added to anything, so no per-field argument is needed here.
+ *
  * ## v18 adds a field whose absence changes a result, so the client checks
  *
  * `session.addAgent` gained `replacing` — the seat a new one takes over from
@@ -325,7 +347,7 @@ export interface PreparedChild {
  * `TerminalPrograms.resolve`'s exhaustive `switch`, which is the honest answer
  * and reaches the client as a sentence rather than as a broken pane.
  */
-export const SESSION_PROTOCOL_VERSION = 18;
+export const SESSION_PROTOCOL_VERSION = 19;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -380,6 +402,8 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'shell.input': 17,
   'shell.resize': 17,
   'shell.close': 17,
+  'files.list': 19,
+  'files.read': 19,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -735,6 +759,49 @@ export type SessionCommand =
   | { t: 'shell.resize'; id: RequestId; shellId: string; cols: number; rows: number }
   /** The pane closed. The PTY goes with it — it is a view, not durable work. */
   | { t: 'shell.close'; id: RequestId; shellId: string }
+  /**
+   * One directory of the workspace, on the machine that owns it (§6.6).
+   *
+   * A **read**, so any role may ask: a `read-only` client can already read the
+   * transcript, which quotes the files by name, and withholding the file list
+   * while showing the diff would keep the caption and hide the picture — the
+   * argument `blob.get` records.
+   *
+   * Asked of the host for the reason `preview.ports` is: over ssh, that machine
+   * is the only place the files are. It is what makes a local folder and a build
+   * box the same feature rather than two.
+   *
+   * **One directory.** `path` is workspace-relative with POSIX separators, `''`
+   * is the root, and there is no `depth`, `recursive` or glob anywhere in this
+   * shape. That is the whole design decision: a recursive walk of a
+   * `node_modules` tree over a link with 200 ms of latency is a hang with
+   * nothing on screen to explain it, and the only reliable way not to ship one
+   * is not to have a parameter that asks for it. Expanding a folder is another
+   * round trip, which is the cost the person clicking it is choosing to pay.
+   *
+   * `limit` may lower the host's cap and never raise it. The host caps
+   * regardless and reports how many entries it left out, because a listing that
+   * silently stops at 500 is a directory that appears to have 500 things in it.
+   *
+   * Nothing about this reaches the event log, the turn queue, or §13's gate.
+   * §13 covers what a *model* asks the app for — an agent reading a file goes
+   * through the `read` tool and its policy. This is a person looking.
+   */
+  | { t: 'files.list'; id: RequestId; path: string; limit?: number }
+  /**
+   * One file's text, for a preview pane (§6.6).
+   *
+   * A read, gated as one, and bounded on the host: over a cap it is **refused by
+   * name** rather than truncated, and so is anything that is not valid UTF-8
+   * text. Truncating instead would put a half-file on screen with no marker, and
+   * streaming megabytes into a renderer is the unbounded buffer §7 forbids
+   * wearing a file's name.
+   *
+   * No `offset`, deliberately — see §17 Q7, where the `read` tool's lack of one
+   * is load-bearing. A paging parameter here would let a client loop around the
+   * cap, which would make the cap a formality.
+   */
+  | { t: 'files.read'; id: RequestId; path: string }
   | { t: 'permission.pending'; id: RequestId }
   | { t: 'permission.respond'; id: RequestId; requestId: string; decision: PermissionDecision }
   /**

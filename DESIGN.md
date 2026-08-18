@@ -1148,6 +1148,12 @@ async function mirror(conn: Connection, m: MirrorState) {
 
 **Offline authoring — the one intentional exception.** Composed turns go to a local **outbox**, delivered via `sendTurn` on reconnect, in order. This doesn't violate single-writer: the outbox queues *requests*; the host remains the only log writer. Queued turns are shown as pending delivery.
 
+**Looking at the files — `files.list` / `files.read`, session protocol v19.** The mirror carries the *log*, which is the durable half of a remote workspace; the working tree is on the other machine and was, until this, unreachable from the app — a path in a header, with a transcript full of filenames nobody could open. So the listing runs on the host, exactly like `preview.ports` and `shell.open`, and the local case falls out rather than being the case it was built for. Two commands and not one `files.tree`, because **the shape is the bound**: `files.list` answers about one directory, there is no `depth`, `recursive` or glob to ask it for more, and a recursive walk of a `node_modules` tree at 200 ms of latency is a hang with nothing on screen to explain it. Expanding a folder is another round trip, which is the cost the click is buying.
+
+Both are **reads** — a `read-only` client may use them, on `blob.get`'s reasoning: that client can already read a transcript naming these files, and withholding the list would keep the caption and hide the picture. They are **not §13-gated**, and the comment saying so lives at the dispatch: §13 covers what a *model* asks the app for, and an agent reading a file goes through the `read` tool and the session's policy. This is a person looking. Nothing here writes an event, touches the turn queue, or changes a projection.
+
+The bounds are all on the host, because the host owns the root: every path is workspace-relative and refused by name if it escapes, checked **twice** — lexically, so a traversal never touches the disk, then against `realpath`, because `resolve()` cannot see through a symlink and the check that stops `../../etc` passes happily on a link pointing there. `isInsideWorkspace` rather than `PathCodec`: the codec exists to make a path *durable* and records an escape as `{abs, external: true}` rather than refusing it, so a gate built on it would admit everything and merely label it — and this is a view, with nothing to make durable. A directory stops at 500 entries and reports **how many it left out**; a file over 256 KiB, or one that is not valid UTF-8 text, is **refused by name rather than truncated**, because a half-file with no marker is worse than a sentence naming the cap. Unlike `shell.open`, this needs no native module, so it is available on a remote host the day the bundle lands there.
+
 ### 6.7 Blob transfer
 
 `hasBlob(sha256)` then `putBlob` only on miss. The same annotated screenshot attached to three sessions on one host transfers once. Chunked, resumable, rate-limited so a 4K screenshot never starves the event tail. This exists because §12.1's client capture cannot: a screen capture happens on the machine with the screen, and for a remote session the blob store is at the far end of an ssh connection, so an `ImageBlock` naming a sha the host has never seen is a dangling reference that fails when the model request is *built* — well after the point where the bytes were actually missing.
@@ -1226,6 +1232,12 @@ export interface AgbrteApi {
     usage(range); quotas(): Promise<QuotaStatus[]>;                      // per quotaGroup
   };
   workspaces: { list(); open(t, path); relocate(instanceId, t, path) };   // §5.3
+  files: {                                                               // §6.6
+    /** One directory, workspace-relative POSIX; `''` is the root. Never recursive. */
+    list(r: { instanceId: string; path: string; limit?: number }): Promise<DirListing>;
+    /** Whole or refused: over 256 KiB or not UTF-8 text rejects by name. */
+    read(r: { instanceId: string; path: string }): Promise<FilePreview>;
+  };
   sessions: {
     list(f?: SessionFilter); create(i: CreateSessionInput); get(id): Promise<Session>;
     send(id, agentId, t: UserTurn): Promise<{ queued: boolean }>;        // queued per agent, §17.15

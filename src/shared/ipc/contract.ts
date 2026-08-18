@@ -26,7 +26,13 @@
  * the previous single-workspace shape was the limitation.
  */
 
-import type { InboxEntry, MatrixCell, ModelCapabilityHint } from '../types/index.js';
+import type {
+  DirListing,
+  FilePreview,
+  InboxEntry,
+  MatrixCell,
+  ModelCapabilityHint,
+} from '../types/index.js';
 import type {
   AgentRecord,
   AgentRole,
@@ -701,6 +707,60 @@ export interface AgbrteApi {
     /** Ask again whether anything is answering, keeping the same local port. */
     recheck(r: { sessionId: string; port: number }): Promise<ForwardDto | null>;
   };
+  /**
+   * Looking at the files a session is working on (§6.6, §7).
+   *
+   * Answered by the **host**, which is the whole point: over ssh the workspace
+   * is on another machine, and before this there was no way to see it at all.
+   * The same two methods serve a local folder, so the UI cannot tell them apart
+   * — the property `preview.detect` and `shell.open` are built for.
+   *
+   * ## Why these two and not one `tree()`
+   *
+   * `list` answers about **one directory**. There is no `depth`, no `recursive`
+   * and no glob, because a recursive walk of a `node_modules` tree over a
+   * high-latency link is a request that never returns with nothing on screen to
+   * explain it — and the only dependable way not to ship one is to have no
+   * parameter that asks for it. Expanding a folder is another call.
+   *
+   * ## Why this is narrow enough to expose to a sandboxed renderer (§7)
+   *
+   * It is two reads with **no absolute path on the surface**. `path` is
+   * workspace-relative and only ever means something relative to a root the
+   * renderer cannot name — `instanceId` selects an already-attached host, so the
+   * widest thing sayable here is "something under a workspace I already have
+   * open". Nothing returns a handle, a descriptor or a URL; `read` returns a
+   * string the host decided was text and small enough. There is no write, no
+   * rename and no delete: a renderer that could reach this cannot change a byte
+   * on the far machine, which is the difference between a viewer and an escape
+   * hatch.
+   *
+   * Neither is cancellable, and that is a consequence of the shape rather than
+   * an omission: each call is one capped directory or one capped file, so the
+   * longest one is a single round trip over the link, and a caller that changes
+   * its mind simply stops asking.
+   */
+  files: {
+    /**
+     * One directory, workspace-relative. `path: ''` is the root.
+     *
+     * `truncated` on the reply is the count that did **not** fit, so a client
+     * says "412 more entries" rather than silently showing a directory that
+     * looks like it has 500 things in it.
+     *
+     * Rejects rather than answering empty: a folder that could not be listed and
+     * a folder with nothing in it are different facts, and only one of them
+     * should send somebody looking for a bug.
+     */
+    list(r: { instanceId: string; path: string; limit?: number }): Promise<DirListing>;
+    /**
+     * One file's text, or a rejection naming the cap that bit.
+     *
+     * Whole or refused — never truncated. Oversized and non-text come back as
+     * errors so a pane can say which, instead of rendering an empty box.
+     */
+    read(r: { instanceId: string; path: string }): Promise<FilePreview>;
+  };
   sessions: {
     list(): Promise<Session[]>;
     create(r: CreateSessionRequest): Promise<Session>;
@@ -1028,6 +1088,8 @@ export const CH = {
   sessionsExport: 'agbrte:sessions.export',
   sessionsSearch: 'agbrte:sessions.search',
   sessionsRawLog: 'agbrte:sessions.rawLog',
+  filesList: 'agbrte:files.list',
+  filesRead: 'agbrte:files.read',
   shellOpen: 'agbrte:shell.open',
   shellWrite: 'agbrte:shell.write',
   shellResize: 'agbrte:shell.resize',

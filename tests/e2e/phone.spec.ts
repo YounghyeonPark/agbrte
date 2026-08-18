@@ -11,7 +11,8 @@
 
 import { devices, expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { serveWebFixture } from './harness.js';
 
 test.use({ ...devices['iPhone 14 Pro Max'] });
@@ -74,6 +75,75 @@ test('opens a session full-screen, and comes back to the dashboard', async ({ pa
     // session they open.
     await page.locator('[data-testid=back-to-list]').click();
     await expect(page.locator('[data-testid=dashboard]')).toBeVisible();
+  } finally {
+    await web.stop();
+  }
+});
+
+/**
+ * The two workspace rails, on a screen with no room for three columns.
+ *
+ * The desktop arrangement is transcript | tree | file, and it needs about
+ * 1024px to exist: the host sidebar is a fixed 300px and the viewer's floor is
+ * 320. Below that the rails are **overlays and take the pane one at a time**,
+ * which is the same "one pane at a time" rule the two tests above assert for the
+ * session list — applied one level in.
+ *
+ * Asserted on painted width rather than on visibility, because a 224px column
+ * squeezed against a 430pt transcript is *visible* too, and it is precisely the
+ * failure this rule exists to prevent. And the overlay covers the whole session
+ * column, mode toggle included: that row's job is to say what is in the main
+ * pane, and a row left on screen saying `Chat` over a file would be the one
+ * piece of chrome whose only job is to be right about this, wrong.
+ */
+test('gives the pane to one rail at a time, with no room for three columns', async ({ page }) => {
+  const web = await serveWebFixture();
+
+  try {
+    // Something to open. `makeRepo` is a bare `git init`, so without this the
+    // root listing is two directories and there is no file to click.
+    await writeFile(join(web.repo, 'phone.txt'), 'read on a phone\n');
+    execFileSync(
+      process.execPath,
+      [resolve('dist/cli/agbrte.js'), 'run', web.repo, '--runtime', 'echo', '--title', 'narrow', 'go'],
+      { stdio: 'ignore' },
+    );
+
+    await page.goto(web.url);
+    await expect(page.locator('[data-testid=session-card]')).toBeVisible({ timeout: 25_000 });
+    await page.locator('[data-testid=session-card]').click();
+    await expect(page.locator('[data-testid=composer-input]')).toBeVisible({ timeout: 20_000 });
+
+    const width = page.viewportSize()?.width ?? 0;
+
+    // The tree takes the screen, rather than a 224px slice of it.
+    await page.locator('[data-testid=toggle-files]').click();
+    const tree = page.locator('[data-testid=file-browser]');
+    await expect(tree).toBeVisible();
+    expect(Math.abs(((await tree.boundingBox())?.width ?? 0) - width)).toBeLessThanOrEqual(1);
+
+    // One at a time, and the one that wins is the one just asked for by name.
+    await tree.locator('[data-testid=file-tree-file][data-path="phone.txt"]').click();
+    const viewer = page.locator('[data-testid=file-viewer]');
+    await expect(viewer).toBeVisible();
+    await expect(viewer.locator('[data-testid=file-viewer-text]')).toContainText('read on a phone');
+    await expect(tree).toBeHidden();
+    expect(Math.abs(((await viewer.boundingBox())?.width ?? 0) - width)).toBeLessThanOrEqual(1);
+
+    // There is nothing to drag when a rail is the whole screen, so the handle
+    // is not offered — an affordance that cannot do anything is worse than none.
+    await expect(page.locator('[data-testid=file-viewer-resize]')).toBeHidden();
+
+    // Closing the file comes back to the tree rather than to the transcript:
+    // the toggle was never turned off, so nothing has to be pressed twice.
+    await page.locator('[data-testid=file-viewer-close]').click();
+    await expect(viewer).toHaveCount(0);
+    await expect(tree).toBeVisible();
+
+    // And hiding the tree gives the screen back to the session.
+    await page.locator('[data-testid=file-browser-close]').click();
+    await expect(tree).toHaveCount(0);
+    await expect(page.locator('[data-testid=composer-input]')).toBeVisible();
   } finally {
     await web.stop();
   }

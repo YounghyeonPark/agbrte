@@ -48,6 +48,7 @@ import { Composer, EventRow, PermissionPrompt, SplitPrompt, Transcript, WorkingD
 import { Preview } from './Preview.js';
 import { TerminalView } from './TerminalView.js';
 import { Shell, type ShellChoice } from './Shell.js';
+import { FileBrowser, FileViewer, VIEWER_DEFAULT } from './FileBrowser.js';
 import type { EndpointModelsDto, ModelInstallDto, SessionTemplateDto } from '@shared/ipc/contract.js';
 import CATALOGUE from '../shared/models/catalogue.json' with { type: 'json' };
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
@@ -184,6 +185,43 @@ export function App(): JSX.Element {
    */
   const [sessionPane, setSessionPane] = useState<'chat' | 'raw' | 'shell'>('chat');
   /**
+   * The two right-hand rails: whether the tree is showing, and which file the
+   * viewer is holding.
+   *
+   * Two pieces of state rather than one, because they answer different
+   * questions and either rail can be collapsed on its own: a person can browse
+   * with the transcript still on screen, and can read a file with the tree put
+   * away to give its width back. Collapsing them into one would make hiding the
+   * tree close the file, which is the opposite of what somebody comparing a file
+   * against a transcript wants.
+   *
+   * `openFile` *is* the viewer rail's open/closed state rather than a third
+   * boolean beside it — a rail with no file in it has nothing to show, so a
+   * second flag could only ever disagree with this one.
+   *
+   * View state like `focusedAgent` and `sessionPane`: where somebody is looking
+   * is not a fact about the session, so it is never sent anywhere and two
+   * devices cannot fight over it.
+   */
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [openFile, setOpenFile] = useState<string | null>(null);
+  /**
+   * How wide the viewer rail is, in pixels.
+   *
+   * Held here rather than in `FileViewer` because it has to outlive the file:
+   * the component unmounts every time a file is closed, and a rail that snapped
+   * back to its default on each close would be a control that forgets what it
+   * was told, which is worse than not having it. It is a fact about this window,
+   * not about the session or the file, so it survives both a session switch and
+   * a host switch — and, being view state, it is never sent anywhere.
+   *
+   * Not persisted: `agentDefaults` earns its `localStorage` entry by saving a
+   * *decision* somebody made in a form, and a column width nudged with an arrow
+   * key is not that. If it turns out people re-drag it at every launch, that is
+   * the evidence for storing it, and there is no evidence yet.
+   */
+  const [viewerWidth, setViewerWidth] = useState(VIEWER_DEFAULT);
+  /**
    * What the terminal pane runs, once somebody has said — `null` until then.
    *
    * `null` rather than eagerly resolving the default, because the default is
@@ -294,6 +332,14 @@ export function App(): JSX.Element {
   useEffect(() => {
     setSessionPane('chat');
     setRawAvailable(false);
+    // The open file goes too, which closes the viewer rail with it. A path is
+    // relative to *a* workspace, and the next session may be on another machine
+    // entirely — carrying it over would ask one host for a file that only exists
+    // on another, and the refusal would arrive with no explanation a person
+    // could act on. The tree rail's own open/closed state is a habit rather than
+    // a fact about a workspace, and its width is a fact about the window, so
+    // both stay.
+    setOpenFile(null);
     // And the terminal's program goes back to being derived. A choice is about
     // *this* session's tools — a session with a Claude Code seat and one with a
     // Gemini seat should not inherit each other's pane — and carrying it across
@@ -1084,14 +1130,27 @@ export function App(): JSX.Element {
                     />
                   </div>
                 )}
-                {/* Three named choices rather than one button whose label
-                    changes: `raw` and `shell` are easy to confuse and must not
-                    be, so both are visible at once with the difference spelled
-                    out in their titles. `Raw output` appears only where a seat
-                    has one — a toggle to an empty pane teaches people the
-                    feature does nothing — while `Terminal` is offered wherever
-                    the host can run one, and says why when it cannot. */}
-                <div className="flex shrink-0 justify-end gap-2 px-6 pt-2">
+                {/* Named choices rather than one button whose label changes:
+                    `raw` and `shell` are easy to confuse and must not be, so
+                    both are visible at once with the difference spelled out in
+                    their titles. `Raw output` appears only where a seat has one
+                    — a toggle to an empty pane teaches people the feature does
+                    nothing. `Terminal` is offered wherever the host can run one,
+                    and says why when it cannot.
+
+                    **Three, and it names only what is in the main pane.** There
+                    was a fourth, `File`, back when opening a file replaced the
+                    transcript; the file now has a rail of its own to the right,
+                    so the mode it needed is gone rather than left as an entry
+                    that switches to a pane nobody moved. This row's whole job is
+                    to answer "what am I looking at" about one box, and it is
+                    only trustworthy while that stays one box.
+
+                    `Files` is not a mode and is set apart with `ml-auto`,
+                    at the *right* end of the row because that is the side its
+                    column opens on — the control and the thing it opens should
+                    not be at opposite ends of the same screen. */}
+                <div className="flex shrink-0 items-center gap-2 px-6 pt-2">
                   <button
                     className="btn text-[11px]"
                     data-testid="show-chat"
@@ -1130,41 +1189,116 @@ export function App(): JSX.Element {
                   >
                     Terminal
                   </button>
+                  {/* At the far end, and not grouped with the three above:
+                      grouping it there would say it is a fourth mode, and it
+                      chooses nothing about the main pane at all. */}
+                  <button
+                    className="btn ml-auto text-[11px]"
+                    data-testid="toggle-files"
+                    title="The files in this workspace, listed by the machine that owns it"
+                    aria-pressed={filesOpen}
+                    onClick={() => setFilesOpen((open) => !open)}
+                  >
+                    Files
+                  </button>
                 </div>
-                {sessionPane === 'raw' && rawAvailable && rawAgentId !== null ? (
-                  <TerminalView sessionId={active.sessionId} agentId={rawAgentId} />
-                ) : sessionPane === 'shell' && shellHere ? (
-                  /* Keyed by session so switching sessions is a new terminal in
-                     the new workspace rather than a stale one pointed at the
-                     old — the PTY's `cwd` belongs to a workspace, not to a
-                     window. */
-                  <Shell
-                    key={active.sessionId}
-                    sessionId={active.sessionId}
-                    instanceId={active.instanceId}
-                    program={shellProgram ?? defaultShellProgram}
-                    choices={shellChoices}
-                    onChoose={setShellProgram}
-                    hostLabel={activeHost?.label ?? active.instanceId}
-                  />
-                ) : (
-                <Transcript
-                  events={
-                    paneAgent === null
-                      ? events
-                      : /* Filtered rather than re-fetched: the unified timeline is
-                           the truth and a pane is a view of it, so switching back
-                           cannot show something different from what was there. */
-                        events.filter((e) => e.agentId === paneAgent)
-                  }
-                  renderRow={(e) => (
-                    <EventRow key={e.seq} event={e} by={agentLabel(active.agents, e.agentId)} />
+                {/*
+                  The pane, with the workspace sidebar beside it.
+
+                  A **row**, and that is the load-bearing bit of this layout. The
+                  session column stacks fixed rows around one transcript that is
+                  the only child allowed to give up height (see `SessionHeader`),
+                  so a rail added to that stack would cost the transcript height
+                  on every session whether or not anybody was browsing. Here the
+                  rails cost width and no height at all, and `min-h-0` +
+                  `overflow-hidden` keep a 500-entry directory scrolling inside
+                  itself rather than stretching the row.
+
+                  Left to right: the pane, the tree, the file. The pane is the
+                  only `flex-1` child, so it is the one that gives up width when
+                  a rail opens and the one that gets it back when a rail closes.
+
+                  `lg:min-w-44` is the floor under it, and it is what the viewer
+                  rail's drag runs into rather than a percentage cap on the rail
+                  itself: past 176px the transcript stops being a column of text,
+                  and *that* is the limit worth stating — a cap on the file would
+                  also have applied when the tree was closed and nobody was
+                  reading the transcript at all. The tree is `shrink-0` at a fixed
+                  224 and the viewer shrinks, so when the three minima meet on a
+                  narrow window it is the file that gives way, never the layout.
+
+                  Below `lg` the two rails become overlays and take the column
+                  one at a time; the breakpoint lives entirely in their own class
+                  lists (see `RAIL_OVERLAY`), so nothing here has to know it.
+                */}
+                <div className="flex min-h-0 flex-1 overflow-hidden">
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:min-w-44">
+                    {sessionPane === 'raw' && rawAvailable && rawAgentId !== null ? (
+                      <TerminalView sessionId={active.sessionId} agentId={rawAgentId} />
+                    ) : sessionPane === 'shell' && shellHere ? (
+                      /* Keyed by session so switching sessions is a new terminal in
+                         the new workspace rather than a stale one pointed at the
+                         old — the PTY's `cwd` belongs to a workspace, not to a
+                         window. */
+                      <Shell
+                        key={active.sessionId}
+                        sessionId={active.sessionId}
+                        instanceId={active.instanceId}
+                        program={shellProgram ?? defaultShellProgram}
+                        choices={shellChoices}
+                        onChoose={setShellProgram}
+                        hostLabel={activeHost?.label ?? active.instanceId}
+                      />
+                    ) : (
+                    <Transcript
+                      events={
+                        paneAgent === null
+                          ? events
+                          : /* Filtered rather than re-fetched: the unified timeline is
+                               the truth and a pane is a view of it, so switching back
+                               cannot show something different from what was there. */
+                            events.filter((e) => e.agentId === paneAgent)
+                      }
+                      renderRow={(e) => (
+                        <EventRow key={e.seq} event={e} by={agentLabel(active.agents, e.agentId)} />
+                      )}
+                      /* Motion at the tail while the turn runs, so a long silence
+                         reads as "busy" rather than "hung" (see WorkingDots). */
+                      working={active.state === 'working'}
+                    />
+                    )}
+                  </div>
+                  {filesOpen && (
+                    <FileBrowser
+                      /* Keyed by host: a tree of paths belongs to one workspace,
+                         and reusing the component across a switch would render
+                         one machine's folders under another machine's root. */
+                      key={active.instanceId}
+                      instanceId={active.instanceId}
+                      selected={openFile}
+                      onOpenFile={setOpenFile}
+                      onClose={() => setFilesOpen(false)}
+                    />
                   )}
-                  /* Motion at the tail while the turn runs, so a long silence
-                     reads as "busy" rather than "hung" (see WorkingDots). */
-                  working={active.state === 'working'}
-                />
-                )}
+                  {openFile !== null && (
+                    /* Keyed by path as well as by host, so opening a second file
+                       is a fresh read rather than the previous file's text left
+                       on screen under the new name while the request is in
+                       flight. */
+                    <FileViewer
+                      key={`${active.instanceId}:${openFile}`}
+                      instanceId={active.instanceId}
+                      path={openFile}
+                      width={viewerWidth}
+                      onWidth={setViewerWidth}
+                      /* Closing gives the width back to the transcript and
+                         leaves the tree exactly as it was — the two rails
+                         collapse independently, which is the whole reason they
+                         are two pieces of state. */
+                      onClose={() => setOpenFile(null)}
+                    />
+                  )}
+                </div>
                 {pending.map((p) => (
                   <PermissionPrompt
                     key={p.requestId}

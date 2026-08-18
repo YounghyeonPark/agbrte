@@ -203,6 +203,15 @@ const api: AgbrteApi = {
     close: call(CH.previewClose),
     recheck: call(CH.previewRecheck),
   },
+  /*
+   * Routed to the server like everything else, which is what makes a browser
+   * see the same workspace the desktop app does — the host answers, and the
+   * host is where the files are either way (§8.1).
+   */
+  files: {
+    list: call(CH.filesList),
+    read: call(CH.filesRead),
+  },
   sessions: {
     list: call(CH.sessionsList),
     create: call(CH.sessionsCreate),

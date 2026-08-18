@@ -41,6 +41,8 @@ import type { SessionTemplate } from './store/templates.js';
 import type { ModelNeed } from './runtime/registry.js';
 import type {
   CreateSessionInput,
+  DirListing,
+  FilePreview,
   ReasoningRequest,
   AccessRole,
   AgentId,
@@ -100,6 +102,13 @@ export interface FleetDeps {
   runtimes: FleetRuntime[];
   /** Ceiling on reconnect backoff. Lowered by tests so they do not wait. */
   maxBackoffMs?: number;
+  /**
+   * How long `updateHost` waits for the replacement before answering.
+   *
+   * Lowered by tests for the same reason `maxBackoffMs` is: the failure path
+   * spends this entire window dialling on purpose, and a suite should not.
+   */
+  updateWindowMs?: number;
 }
 
 /**
@@ -223,7 +232,38 @@ interface Entry extends AttachedHost {
   seen: Map<string, number>;
   /** Cancels an in-flight reconnect when the host is detached mid-attempt. */
   stopReconnect?: () => void;
+  /**
+   * This host is being restarted on purpose (§6.3, `updateHost`).
+   *
+   * A host stopping normally means the workspace has no owner and the entry
+   * should go. During an update it means the opposite — a replacement is being
+   * started for the same workspace — and the two arrive as the identical
+   * `push.closing`. Without this flag the update's own shutdown erased the host
+   * from the UI a beat before its replacement appeared, and any failure in
+   * between left the user with an empty sidebar.
+   */
+  updating?: true;
+  /**
+   * Live events parked while a catch-up reads history.
+   *
+   * Present only for the length of a reconnect. Its absence is the normal state
+   * and means "deliver as they arrive"; see `onEvent` for what it is for.
+   */
+  holding?: Array<[string, AgbrteEvent]>;
 }
+
+/**
+ * How long `updateHost` waits for the replacement before answering the person.
+ *
+ * A bound rather than the reconnect loop's patience, because this is a button
+ * that was just pressed: an answer is owed. It is generous because the connector
+ * behind it has its own waits — the departing host has to release the socket
+ * before a new one can take it, and a remote one may redeploy a bundle first —
+ * and a window shorter than the work it is waiting on would report a failure
+ * that was only slowness. Giving up does not stop the dialling; it stops the
+ * silence.
+ */
+const UPDATE_WINDOW_MS = 90_000;
 
 export class AttachRefused extends Error {
   constructor(reason: string) {
@@ -422,15 +462,27 @@ export class Fleet extends EventEmitter {
 
     const onEvent = (sessionId: string, event: AgbrteEvent): void => {
       this.owners.set(sessionId as SessionId, instanceId);
-      // Dropped rather than re-emitted if we already have it. Catch-up and the
-      // live push overlap by construction: the host starts pushing the moment we
-      // reconnect, while we are still reading history, so the same event can
-      // arrive twice. `seq` is monotonic per session, which makes the check
-      // exact rather than a guess.
-      const last = entry.seen.get(sessionId) ?? -1;
-      if (event.seq <= last) return;
-      entry.seen.set(sessionId, event.seq);
-      this.emit('event', instanceId, sessionId, event);
+      /*
+       * Held, not delivered, while a catch-up is reading history.
+       *
+       * The host starts pushing the instant we reconnect, and what it pushes is
+       * whatever is happening *now* — which on a turn that ran through the
+       * outage is seq 8 while seqs 3..7 are still sitting in the log unread.
+       * Delivered straight through, that push advanced the high-water mark to 8
+       * before `catchUp` had asked for anything, so the request went out as
+       * "everything after 8" and **seqs 3 to 7 were lost for the life of the
+       * app** — the exact failure §15's criterion names, and it survived because
+       * an in-memory cut has no interval in which a host writes unobserved.
+       * Measured against a real host: `[2, 8, 9]` delivered out of `[2..9]`.
+       *
+       * Holding also keeps them in order. Emitting 8 and 9 and then 3 to 7 would
+       * trade a gap for a transcript that goes backwards, which is not better.
+       */
+      if (entry.holding !== undefined) {
+        entry.holding.push([sessionId, event]);
+        return;
+      }
+      this.deliver(entry, sessionId, event);
     };
     const onSession = (session: Session): void => {
       this.owners.set(session.sessionId, instanceId);
@@ -449,8 +501,17 @@ export class Fleet extends EventEmitter {
     // purpose, so there is nothing to come back to. `closed` is the link
     // breaking, which says nothing about the host — and on a remote workspace it
     // usually means the work is still running perfectly well on the other side.
-    const onClosing = (reason: string): void => this.forget(instanceId, reason);
+    //
+    // Three, during an update: a host stopping *because this fleet asked it to
+    // restart* has a replacement on the way, and `updateHost` owns the whole
+    // transition. Both handlers stand down for it rather than racing it — one
+    // would erase the host, the other would start a second dialling loop.
+    const onClosing = (reason: string): void => {
+      if (entry.updating === true) return;
+      this.forget(instanceId, reason);
+    };
     const onClosed = (reason: string): void => {
+      if (entry.updating === true) return;
       if (!this.entries.has(instanceId)) return; // already detached on purpose
       void this.reconnect(entry, reason);
     };
@@ -514,15 +575,40 @@ export class Fleet extends EventEmitter {
     entry.link = 'reconnecting';
     this.emit('host', snapshot(entry));
     this.emit('link', entry.instanceId, 'reconnecting', reason);
+    await this.redial(entry, { reason: 'reconnected' });
+  }
 
+  /**
+   * Dial until it answers, or until the caller's patience runs out.
+   *
+   * Split out of `reconnect` because `updateHost` needs the same loop with a
+   * *deadline* on it: a dropped link has no reason to give up — the laptop lid
+   * is the case it exists for — while a person waiting on a button pressed a
+   * moment ago is owed an answer. One loop rather than two, because the half
+   * that is easy to get wrong is what happens on success (adopt the whole
+   * handshake, rewire, replay), and two copies of that would drift.
+   *
+   * `null` means connected. A string is the last reason it did not, which is the
+   * only half of a failure a user can act on.
+   *
+   * The entry is **kept** throughout. Removing it would be the easy thing and the
+   * wrong one: the sessions are still there, the agent is very likely still
+   * working, and a UI that erases the host at the first lost packet tells the
+   * user the opposite of what is true at the worst possible moment.
+   */
+  private async redial(
+    entry: Entry,
+    opts: { reason: string; deadline?: number },
+  ): Promise<string | null> {
     let cancelled = false;
     entry.stopReconnect = () => {
       cancelled = true;
     };
 
+    let last = 'nothing answered';
     for (let attempt = 0; !cancelled; attempt += 1) {
       await this.pause(this.backoff(attempt));
-      if (cancelled || !this.entries.has(entry.instanceId)) return;
+      if (cancelled || !this.entries.has(entry.instanceId)) return 'no longer attached';
 
       let connection: HostConnection;
       try {
@@ -532,8 +618,9 @@ export class Fleet extends EventEmitter {
           // A different workspace answered on the path we remembered. Adopting
           // it would silently point every open session at the wrong machine.
           connection.disconnect();
-          this.forget(entry.instanceId, 'the workspace at that location is not the same one');
-          return;
+          const wrong = 'the workspace at that location is not the same one';
+          this.forget(entry.instanceId, wrong);
+          return wrong;
         }
         /*
          * The whole handshake, not just the pid.
@@ -545,19 +632,73 @@ export class Fleet extends EventEmitter {
          * while continuing to describe the old one. See `adopt`.
          */
         this.adopt(entry, identity, connection);
-      } catch {
+      } catch (err) {
+        last = err instanceof Error ? err.message : String(err);
+        // Checked after the attempt rather than before it, so a deadline always
+        // buys at least one try and the reason reported is a real one.
+        if (opts.deadline !== undefined && Date.now() >= opts.deadline) return last;
         continue; // still down; wait longer and try again
       }
+
+      /*
+       * Cleared here rather than where it was set, because `wire` is next.
+       *
+       * `updating` tells the close handlers to stand down while there is no
+       * connection to lose. The moment there is one again that suppression is
+       * wrong, and the gap it would leave is not theoretical: `catchUp` below is
+       * a round trip, and a replacement that died inside it would have its
+       * `closed` swallowed by handlers this line is about to install — leaving
+       * an entry marked connected to a host that is gone, with nothing dialling.
+       */
+      delete entry.updating;
+
+      /*
+       * Live pushes go into a queue until the history has been read.
+       *
+       * Set before `wire` and released after `catchUp`, because the window
+       * between them is precisely where a push and a replay disagree about
+       * where history ends. See `onEvent`.
+       */
+      const held: Array<[string, AgbrteEvent]> = [];
+      entry.holding = held;
 
       this.wire(entry, connection);
       entry.link = 'connected';
       delete entry.stopReconnect;
 
-      await this.catchUp(entry, connection);
+      try {
+        await this.catchUp(entry, connection);
+      } finally {
+        // By identity, not by presence: if this connection died inside the
+        // catch-up, a *new* redial is already holding its own queue, and
+        // clearing that one would put the bug back for it.
+        if (entry.holding === held) delete entry.holding;
+        for (const [sessionId, event] of held) this.deliver(entry, sessionId, event);
+      }
       this.emit('host', snapshot(entry));
-      this.emit('link', entry.instanceId, 'connected', 'reconnected');
-      return;
+      this.emit('link', entry.instanceId, 'connected', opts.reason);
+      return null;
     }
+    return 'cancelled';
+  }
+
+  /**
+   * Emit one event, once.
+   *
+   * The high-water mark moves *here*, at delivery, and nowhere else — so
+   * "delivered" and "counted as delivered" cannot come apart. They did: a live
+   * push advanced the mark on arrival while its delivery was still pending
+   * behind a catch-up, and the catch-up then skipped everything below it.
+   */
+  private deliver(entry: Entry, sessionId: string, event: AgbrteEvent): void {
+    // Dropped rather than re-emitted if we already have it. Catch-up and the
+    // live push overlap by construction, so the same event can arrive twice.
+    // `seq` is monotonic per session, which makes the check exact rather than a
+    // guess.
+    const last = entry.seen.get(sessionId) ?? -1;
+    if (event.seq <= last) return;
+    entry.seen.set(sessionId, event.seq);
+    this.emit('event', entry.instanceId, sessionId, event);
   }
 
   /**
@@ -567,14 +708,16 @@ export class Fleet extends EventEmitter {
    * ask from: nothing is lost and nothing repeats. That is why the high-water
    * mark is per session rather than per host — sessions advance independently,
    * and one number for the fleet would over- or under-read every session but one.
+   *
+   * Called with live pushes held (see `onEvent`), which is what makes the mark it
+   * reads the one from *before* the reconnect rather than one the first push
+   * already moved.
    */
   private async catchUp(entry: Entry, connection: HostConnection): Promise<void> {
     for (const [sessionId, lastSeq] of [...entry.seen]) {
       try {
         for (const event of await connection.events(sessionId as SessionId, lastSeq)) {
-          if (event.seq <= (entry.seen.get(sessionId) ?? -1)) continue;
-          entry.seen.set(sessionId, event.seq);
-          this.emit('event', entry.instanceId, sessionId, event);
+          this.deliver(entry, sessionId, event);
         }
         // The session record itself, since its state may have moved while we
         // were away and no `push.session` reached us.
@@ -650,28 +793,108 @@ export class Fleet extends EventEmitter {
    * the new code take effect, and it should not: that decision belongs to a
    * person, on a machine that may be running somebody's overnight work.
    *
-   * Stop, then attach the same location again. The upload is `attach`'s job and
-   * stays there rather than being repeated here; this method is the *when*.
-   *
    * Sessions survive it. They are durable in the event log (§5.4) and resume
    * from it, which is the same guarantee that lets a host outlive the app — so
    * this costs the running turn, not the work.
    *
-   * The location is captured before stopping, because `shutdownHost` forgets the
-   * entry and with it the only record of where the host was.
+   * ## Why this is not `shutdownHost` followed by `attach`
+   *
+   * That is what it was, and it never once worked. `shutdownHost` **forgets the
+   * host the moment it agrees to stop** — right, for a stop, because there is
+   * nothing coming back — so the sidebar emptied and the reattach began from
+   * nothing. Then `attach` dialled the same socket while the old host was still
+   * on it: a host answers `{stopped:true}` *before* it stops, and closing preview
+   * servers, terminals, the agent host and the listener takes long enough that
+   * the connect always won the race. `HostConnection.ready` then rejected with
+   * `peer ended the connection`, `attach` turned that into `AttachRefused`, and
+   * the user was left with **nothing attached and no further attempt made** —
+   * having pressed a button whose entire promise was that the host comes back.
+   *
+   * So the host is not forgotten and not reattached. It is a *restart* of a
+   * process serving a workspace this fleet is already watching, which is the
+   * same fact a dropped link reports, and it gets the same treatment: the entry
+   * stays, the link goes to `reconnecting`, and `redial` brings the replacement
+   * in under the identity that was already there. The `seen` high-water marks
+   * survive with it, so `catchUp` replays across the restart with no loss and no
+   * duplicates — which reattaching could not do, since a fresh `attach` starts
+   * with an empty map.
+   *
+   * The two ways it can still fail are both answers rather than silences:
+   *   - **The host refuses to stop** — work is in flight, which it is entitled
+   *     to say. Nothing was touched, so the previous host is still attached and
+   *     still connected, and the reason is reported verbatim.
+   *   - **The replacement will not come up** — reported with what the last dial
+   *     said, and the entry is *kept* with a redial running behind it, so the
+   *     machine stays on screen and returns by itself when whatever was wrong
+   *     stops being wrong.
    */
   async updateHost(instanceId: InstanceId): Promise<AttachedHost> {
-    const { location } = this.require(instanceId);
+    const entry = this.require(instanceId);
 
-    const result = await this.shutdownHost(instanceId);
+    /*
+     * Set before the request, not after the reply.
+     *
+     * The reply and the host's `push.closing` can arrive in the same read — the
+     * host posts `{stopped:true}` and stops on the next tick — so by the time
+     * this method resumes, `onClosing` may already have run `forget` and emitted
+     * `detached`. Marking the entry first is what makes that handler able to
+     * tell "the host is going away" from "the host is going away *because we are
+     * restarting it*", which are the same event with opposite meanings.
+     */
+    entry.updating = true;
+
+    let result: { stopped: boolean; reason?: string };
+    try {
+      result = await entry.connection.requestShutdown();
+    } catch (err) {
+      // The link died while asking, so we do not know whether it heard us. That
+      // is a dropped link and gets a dropped link's answer: keep the host, keep
+      // dialling. Saying "stopped" here would be a guess.
+      delete entry.updating;
+      void this.reconnect(entry, 'the link dropped while asking the host to restart');
+      throw new AttachRefused(
+        `could not ask the host for ${entry.workspaceRoot} to restart: ` +
+          `${err instanceof Error ? err.message : String(err)}. It is still listed and ` +
+          `reconnecting; nothing was stopped.`,
+      );
+    }
+
     if (!result.stopped) {
+      delete entry.updating;
       throw new AttachRefused(
         `the host would not stop${result.reason === undefined ? '' : `: ${result.reason}`}. ` +
           `It keeps running the version it started with until it does.`,
       );
     }
 
-    return this.attach(location);
+    // It agreed, so it is going. From here the entry describes a process that
+    // will not answer again — but the workspace, its identity and its sessions
+    // are unchanged, which is why the entry stays.
+    entry.unlisten();
+    entry.connection.disconnect();
+    entry.link = 'reconnecting';
+    this.emit('host', snapshot(entry));
+    this.emit('link', instanceId, 'reconnecting', 'restarting onto the shipped bundle');
+
+    const failure = await this.redial(entry, {
+      reason: 'restarted onto the shipped bundle',
+      deadline: Date.now() + (this.deps.updateWindowMs ?? UPDATE_WINDOW_MS),
+    });
+    delete entry.updating;
+
+    if (failure === null) return snapshot(entry);
+
+    // Still listed, still being dialled — but the person who pressed the button
+    // is told plainly that the machine is between hosts and why, rather than
+    // watching a spinner that means nothing to them.
+    if (this.entries.has(instanceId)) {
+      void this.redial(entry, { reason: 'restarted onto the shipped bundle' });
+    }
+    throw new AttachRefused(
+      `stopped this host to update it, and the replacement did not come up: ${failure}. ` +
+        `The sessions are safe in their log on ${entry.workspaceRoot}; the host stays listed ` +
+        `and will attach itself as soon as one answers there.`,
+    );
   }
 
   async detachAll(): Promise<void> {
@@ -842,6 +1065,56 @@ export class Fleet extends EventEmitter {
     const handle = await entry.connection.openShell(sessionId, opts);
     this.shellHosts.set(handle.shellId, instanceId);
     return handle;
+  }
+
+  // ------------------------------------------------------------ workspace files
+
+  /**
+   * One directory of a host's workspace (§6.6, §7).
+   *
+   * Routing and a version check, and nothing else — the same job this class does
+   * for a preview server. **No caching of the tree here**, deliberately: a
+   * workspace is being edited by an agent while somebody looks at it, so a
+   * cached listing is a listing that is wrong exactly when the session is
+   * working. Each expand is a round trip, which is the cost the click is buying.
+   *
+   * Unlike `previewServers`, a failure is **not** swallowed into an empty list.
+   * A person clicked a folder; an empty answer would read as "this folder is
+   * empty" and send them looking for a bug in the wrong place. The refusal — a
+   * path that escaped, a host too old, a link that died — carries a sentence and
+   * the sidebar shows it.
+   *
+   * Refused by name for a host too old, rather than by `CommandUnavailable`'s
+   * generic wording, because the machine is the actionable part: `openShell`
+   * makes the same trade one method up, and for the same reason.
+   */
+  async listFiles(instanceId: InstanceId, path: string, limit?: number): Promise<DirListing> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('files.list')) {
+      throw new Error(
+        `the host for ${entry.workspaceRoot} is older than this app and cannot list files — ` +
+          'restart it to pick up the current bundle',
+      );
+    }
+    return entry.connection.listFiles(path, limit);
+  }
+
+  /**
+   * One file's text from a host's workspace.
+   *
+   * Bounded on the *host* rather than here: this layer knows which machine, not
+   * how big the file is, and a cap enforced on the near side would be a cap a
+   * different client could skip. See `workspace/files.ts`.
+   */
+  async readFile(instanceId: InstanceId, path: string): Promise<FilePreview> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('files.read')) {
+      throw new Error(
+        `the host for ${entry.workspaceRoot} is older than this app and cannot read files — ` +
+          'restart it to pick up the current bundle',
+      );
+    }
+    return entry.connection.readFile(path);
   }
 
   /** Keystrokes, routed by `shellId` alone. */
