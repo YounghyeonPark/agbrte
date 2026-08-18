@@ -111,6 +111,7 @@ const api: AgbrteApi = {
     list: call(CH.hostsList),
     add: call(CH.hostsAdd),
     sshHosts: call(CH.hostsSsh),
+    discoverWorkspaces: call(CH.hostsDiscover),
     addRemote: call(CH.hostsAddRemote),
     remove: call(CH.hostsRemove),
     shutdown: call(CH.hostsShutdown),

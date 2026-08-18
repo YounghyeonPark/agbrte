@@ -78,6 +78,7 @@ import { buildMatrix } from '@main/conformance.js';
 import { exportSessionMarkdown } from '@main/store/exportSession.js';
 import type { ConformanceReport, MatrixCell } from '@shared/types/index.js';
 import { readSshHosts } from '../host/sshConfig.js';
+import { assertSafeAlias, discoverRemoteWorkspaces } from '../host/discoverWorkspaces.js';
 import type { AttachedHost, Fleet, FleetRuntime } from '../fleet.js';
 import { EventBridge } from './eventBridge.js';
 
@@ -442,8 +443,34 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     })),
   );
 
-  handle(CH.hostsAddRemote, async (alias: string, workspaceRoot: string) =>
-    toInfo(
+  /**
+   * Ask a machine what is on it, before anything of ours is on it (§6.2).
+   *
+   * Follows `hostsSsh` exactly — a main-process capability the renderer calls,
+   * not a session command — because at this point there is no host to ask: no
+   * bundle, no private Node, no control socket. It is one `ssh` running one
+   * bounded `find`.
+   *
+   * Available to the web client for the same reason `sshHosts` and `addRemote`
+   * are: it names machines the *serving* user can already reach and already
+   * attach, and lists directories they could list by attaching. It adds no
+   * reach; it only removes the need to remember a path.
+   */
+  handle(CH.hostsDiscover, (alias: string) => discoverRemoteWorkspaces(alias));
+
+  handle(CH.hostsAddRemote, async (alias: string, workspaceRoot: string) => {
+    /*
+     * The same guard discovery applies, applied here for the same reason.
+     *
+     * "Handed to `ssh` unchanged" is right about the *config* and wrong about
+     * one shape: `ssh` reads its destination as a positional argument, so a
+     * name beginning with `-` is an option, and `-oProxyCommand=…` in that
+     * position runs a command **on this machine**. Nothing types that alias by
+     * accident, which is exactly why it is worth refusing rather than passing
+     * on.
+     */
+    assertSafeAlias(alias);
+    return toInfo(
       await fleet.attach({
         // `useSystemConfig` is the point: the alias is handed to `ssh` unchanged,
         // so the user's own config decides everything about the connection.
@@ -451,8 +478,8 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
         workspaceRoot,
       }),
       deps.shippingVersion,
-    ),
-  );
+    );
+  });
 
   handle(CH.hostsRuntimes, (instanceId: string): RuntimeInfo[] =>
     fleet.runtimesOn(instanceId as InstanceId).map((r) => ({

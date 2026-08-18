@@ -61,6 +61,7 @@ const api: AgbrteApi = {
     runtimes: (instanceId: string) => ipcRenderer.invoke(CH.hostsRuntimes, instanceId),
     conformance: (instanceId: string) => ipcRenderer.invoke(CH.hostsConformance, instanceId),
     sshHosts: () => ipcRenderer.invoke(CH.hostsSsh),
+    discoverWorkspaces: (alias: string) => ipcRenderer.invoke(CH.hostsDiscover, alias),
     addRemote: (alias: string, workspaceRoot: string) =>
       ipcRenderer.invoke(CH.hostsAddRemote, alias, workspaceRoot),
     update: (instanceId: string) => ipcRenderer.invoke(CH.hostsUpdate, instanceId),

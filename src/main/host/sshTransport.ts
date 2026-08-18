@@ -98,8 +98,24 @@ export function remoteNodeBin(home: string): string {
 export const REMOTE_NODE_VERSION = 'v22.11.0';
 
 export interface SshRunner {
-  /** Run a command on the remote, returning its output. */
-  exec(alias: string, command: string): Promise<{ code: number; stdout: string; stderr: string }>;
+  /**
+   * Run a command on the remote, returning its output.
+   *
+   * `timeoutMs` kills the `ssh` and resolves with **whatever had already
+   * arrived**, under code `124` — `timeout(1)`'s number, chosen so one value
+   * means "cut short" whichever side did the cutting. It exists for
+   * `discoverWorkspaces`, where a slow machine must produce a short list marked
+   * as short rather than a hang: every other caller here runs a command with its
+   * own bound and passes nothing.
+   *
+   * Optional on the interface rather than required, so the fake runners the
+   * tests inject stay two lines long.
+   */
+  exec(
+    alias: string,
+    command: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<{ code: number; stdout: string; stderr: string }>;
   /** Copy local bytes to a remote path. */
   upload(alias: string, remotePath: string, contents: Buffer): Promise<void>;
   /**
@@ -555,17 +571,40 @@ export async function freeLoopbackPort(): Promise<number> {
 export function systemSshRunner(sshPath = 'ssh'): SshRunner {
   const base = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20'];
 
-  const exec: SshRunner['exec'] = (alias, command) =>
+  const exec: SshRunner['exec'] = (alias, command, opts) =>
     new Promise((resolve) => {
       const child = spawn(sshPath, [...base, alias, command], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       let stdout = '';
       let stderr = '';
+      let cutShort = false;
       child.stdout.on('data', (d) => (stdout += d));
       child.stderr.on('data', (d) => (stderr += d));
-      child.on('error', (err) => resolve({ code: 127, stdout, stderr: err.message }));
-      child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }));
+      /*
+       * Kill, but keep what arrived.
+       *
+       * The output of a long command streams as it is produced, so a command cut
+       * short at ten seconds has already delivered ten seconds of answer — and
+       * for discovery that partial answer is the whole point: a list marked as
+       * incomplete beats a spinner that never resolves. Killing the local `ssh`
+       * closes the channel, and sshd ends the remote command with it.
+       */
+      const timer =
+        opts?.timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              cutShort = true;
+              child.kill();
+            }, opts.timeoutMs);
+      const done = (result: { code: number; stdout: string; stderr: string }): void => {
+        if (timer !== undefined) clearTimeout(timer);
+        resolve(result);
+      };
+      child.on('error', (err) => done({ code: 127, stdout, stderr: err.message }));
+      child.on('close', (code) =>
+        done(cutShort ? { code: 124, stdout, stderr } : { code: code ?? 1, stdout, stderr }),
+      );
     });
 
   const upload: SshRunner['upload'] = (alias, remotePath, contents) =>

@@ -131,6 +131,45 @@ export interface SshHostInfo {
   port?: number;
 }
 
+/**
+ * One place a remote session could live, as discovery found it (§6.2).
+ *
+ * `kind` is not decoration and is the reason these are not one flat list. A
+ * directory holding `.devagents/` is a workspace this app has already run in and
+ * probably has sessions in it; a git repository is a good guess; a plain folder
+ * is mostly noise. Flattening the three would hide the only distinction the user
+ * is actually choosing on.
+ */
+export interface WorkspaceCandidateDto {
+  path: string;
+  kind: 'devagents' | 'git' | 'folder';
+}
+
+/**
+ * What one machine answered when asked what is on it (§6.2).
+ *
+ * `roots` is part of the answer rather than diagnostics: an empty `candidates`
+ * has to read as "nothing under these five directories" and not as "this feature
+ * is broken", and only the roots can carry that difference. Likewise `truncated`
+ * and `partial` — a list that was cut short must say so, because a silently
+ * clipped list is one nobody can trust.
+ *
+ * `unavailable` is a machine that answered and cannot be asked this question — a
+ * Windows remote, or a shell that is not POSIX. A machine that could not be
+ * *reached* rejects instead, so it lands in the same diagnosis as every other ssh
+ * failure.
+ */
+export interface WorkspaceDiscoveryDto {
+  alias: string;
+  roots: string[];
+  /** How far below each root the search went. */
+  depth: number;
+  candidates: WorkspaceCandidateDto[];
+  truncated: boolean;
+  partial: boolean;
+  unavailable?: string;
+}
+
 /** The effort scale, mirrored from `ReasoningRequest` for the client surface. */
 export type ReasoningMode = 'off' | 'auto' | 'low' | 'medium' | 'high' | 'max';
 
@@ -487,6 +526,22 @@ export interface AgbrteApi {
      * answered better than a form could.
      */
     sshHosts(): Promise<SshHostInfo[]>;
+    /**
+     * Ask one machine what workspaces are on it (§6.2).
+     *
+     * The remote half of the local folder picker, and it belongs here rather
+     * than on the session protocol for a reason that is not organisational:
+     * this runs **before any host exists** — before a bundle is deployed and
+     * before the private Node is installed — so there is nothing on the far side
+     * to ask. It is main's own ssh, exactly like `sshHosts` reads main's own
+     * config.
+     *
+     * Rejects when the machine could not be reached, so a bad alias or an
+     * unaccepted host key produces the same sentence attaching would. A machine
+     * that answered but cannot be listed comes back with `unavailable` set and
+     * the manual field still there.
+     */
+    discoverWorkspaces(alias: string): Promise<WorkspaceDiscoveryDto>;
     /** Attach a workspace on a configured machine. */
     addRemote(alias: string, workspaceRoot: string): Promise<HostInfo>;
     /** Stop watching a host. The workspace on disk is untouched. */
@@ -1048,6 +1103,7 @@ export const CH = {
   sessionsUngroup: 'agbrte:sessions.ungroup',
   inboxMarkRead: 'agbrte:inbox.markRead',
   hostsSsh: 'agbrte:hosts.ssh',
+  hostsDiscover: 'agbrte:hosts.discover',
   hostsAddRemote: 'agbrte:hosts.addRemote',
   sessionsList: 'agbrte:sessions.list',
   sessionsCreate: 'agbrte:sessions.create',
