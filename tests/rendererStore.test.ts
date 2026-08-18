@@ -394,3 +394,97 @@ describe('seating this session’s one model', () => {
     expect(sent[0]?.['replacing']).toBe('a2');
   });
 });
+
+/**
+ * The Needs-you rail after the host it was describing was replaced (§6.4, §10).
+ *
+ * `sessions` in this store is a cache of one host generation's *memory*, and
+ * `applySession` can only update a record already in it — never add one, never
+ * remove one. So the array survived a host swap intact while the replacement
+ * host had loaded nothing, and the dashboard went on summoning the user to a
+ * card belonging to a process that had exited. §10's rule is that the rail is
+ * the reason to look at that screen at all; a card on it that cannot be opened
+ * is worse than an empty one.
+ *
+ * Driven through `applyHosts`, because that is the only signal a client gets:
+ * a link going `reconnecting → connected` is what a replacement looks like from
+ * here, whether this window asked for it or a phone did.
+ */
+describe('a host generation change', () => {
+  const waiting = {
+    sessionId: 's-old',
+    title: 'test',
+    state: 'blocked',
+    needsAttention: { reason: 'question', since: '2026-08-18T00:00:00.000Z' },
+    agents: [],
+    updatedAt: '2026-08-18T00:00:00.000Z',
+  } as never;
+
+  function stubLists(loaded: unknown[], disk: unknown[]): { calls: string[] } {
+    const calls: string[] = [];
+    (globalThis as { window?: unknown }).window = {
+      agbrte: {
+        sessions: {
+          list: () => {
+            calls.push('list');
+            return Promise.resolve(loaded);
+          },
+          listOnDisk: () => Promise.resolve(disk),
+        },
+        permissions: { pending: () => Promise.resolve([]) },
+        hosts: {
+          runtimes: () => Promise.resolve([]),
+          conformance: () => Promise.resolve([]),
+        },
+      },
+    };
+    return { calls };
+  }
+
+  const host = (link: 'connected' | 'reconnecting'): never =>
+    ({ instanceId: 'i1', root: '/w', link, available: [], endpoints: [], runtimeNotes: [] }) as never;
+
+  beforeEach(() => {
+    useAgbrte.setState({ hosts: [], sessions: [], onDisk: [], pending: [] });
+  });
+
+  it('drops a card the new host has never loaded, and offers it as resumable', async () => {
+    const { calls } = stubLists([], [{ instanceId: 'i1', sessionId: 's-old', title: 'test', goal: 'g' }]);
+    // What the window was looking at a moment before the update.
+    useAgbrte.setState({ hosts: [host('reconnecting')], sessions: [waiting] });
+
+    useAgbrte.getState().applyHosts([host('connected')]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls).toContain('list');
+    // The rail is fed from `sessions`, so this *is* the card being gone.
+    expect(useAgbrte.getState().sessions).toEqual([]);
+    // And the session itself has not been lost — it is on disk, where it lives.
+    expect(useAgbrte.getState().onDisk.map((s) => s.sessionId)).toEqual(['s-old']);
+  });
+
+  it('leaves a steady host alone rather than re-listing on every push', async () => {
+    const { calls } = stubLists([], []);
+    useAgbrte.setState({ hosts: [host('connected')], sessions: [waiting] });
+
+    // The same host, still connected: nothing about which sessions are loaded
+    // can have changed, and a re-list on every push would be a request per
+    // link event for a question nobody asked.
+    useAgbrte.getState().applyHosts([host('connected')]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls).toEqual([]);
+    expect(useAgbrte.getState().sessions).toEqual([waiting]);
+  });
+
+  it('re-lists when a host arrives or leaves, which is the same question', async () => {
+    const { calls } = stubLists([], []);
+    useAgbrte.setState({ hosts: [host('connected')], sessions: [waiting] });
+
+    useAgbrte.getState().applyHosts([]);
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls).toContain('list');
+    expect(useAgbrte.getState().sessions).toEqual([]);
+  });
+});

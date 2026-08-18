@@ -13,6 +13,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import electron from 'electron';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -20,11 +21,27 @@ import { dirname, resolve } from 'node:path';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
+ * The version this checkout ships, handed to the app explicitly.
+ *
+ * Electron is started as `electron dist/main/main.js`, which makes the app path
+ * `dist/main` — and there is no `package.json` there, so `app.getVersion()`
+ * answers with *Electron's* version rather than this project's. Everything that
+ * compares the two then disagrees forever: §6.3's outdated-host badge is
+ * `hostBundleVersion !== shippingVersion`, so in development it was true on
+ * every host, the Update button never went away, and pressing it could not
+ * help. A packaged build has a `package.json` beside its entry and never had
+ * the problem, which is why the tests did not either.
+ */
+const version = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version;
+
+/**
  * @param {Record<string, string | undefined>} extra
  * @returns {import('node:child_process').ChildProcess}
  */
 export function launchElectron(extra = {}) {
-  const env = { ...process.env, ...extra };
+  // `extra` wins: a caller deliberately naming a version is answering the same
+  // question, and the fallback exists because the app path cannot.
+  const env = { AGBRTE_VERSION: version, ...process.env, ...extra };
   delete env['ELECTRON_RUN_AS_NODE'];
 
   const child = spawn(String(electron), [resolve(root, 'dist/main/main.js')], {

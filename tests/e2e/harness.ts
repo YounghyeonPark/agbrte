@@ -7,6 +7,7 @@
  */
 
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer as netCreateServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -62,6 +63,17 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
   // — the production default is minutes, which is right for a person and wrong
   // for a test that makes a dozen throwaway workspaces.
   env['AGBRTE_HOST_LINGER_MS'] = '3000';
+  /*
+   * The version this checkout ships, for the same reason `scripts/launch.mjs`
+   * sets it: the app path here is `dist/main`, which has no `package.json`, so
+   * `app.getVersion()` answers with Electron's version instead of this
+   * project's — and §6.3's outdated-host badge compares that against the host
+   * bundle's stamp. A packaged build has the file; these tests drive the same
+   * arrangement a developer does, so they need the same answer.
+   */
+  env['AGBRTE_VERSION'] = JSON.parse(
+    readFileSync(join(ROOT, 'package.json'), 'utf8'),
+  ).version as string;
 
   const app = await electron.launch({
     executablePath: ELECTRON,

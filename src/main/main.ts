@@ -41,6 +41,23 @@ const DEV_URL = process.env['AGBRTE_DEV_SERVER'];
  */
 if (process.platform === 'win32') app.setAppUserModelId('dev.agbrte.app');
 
+/**
+ * What this build calls itself.
+ *
+ * `app.getVersion()` reads the `package.json` beside the app path, and in
+ * development there is none: `electron dist/main/main.js` makes `dist/main` the
+ * app path, so it answers with *Electron's* version. Everything that compares a
+ * version against it then disagrees permanently — §6.3's outdated-host badge is
+ * `hostBundleVersion !== shippingVersion`, so every host looked stale, the
+ * Update button never cleared, and pressing it could not clear it. A packaged
+ * build has the file and is unaffected, which is exactly why no test caught it.
+ *
+ * `scripts/launch.mjs` sets `AGBRTE_VERSION` from this checkout's own
+ * `package.json`; the environment is trusted here because only the launcher
+ * that started this process can set it.
+ */
+const APP_VERSION = process.env['AGBRTE_VERSION'] ?? app.getVersion();
+
 /*
  * A late read on a pipe main has already let go of must not take the window.
  *
@@ -146,7 +163,7 @@ function buildFleet(): Fleet {
           },
           // The app's own version, so a rebuilt app redeploys and an unchanged
           // one does not pay for an upload it does not need.
-          bundleVersion: app.getVersion(),
+          bundleVersion: APP_VERSION,
           onProgress: (step) => process.stderr.write(`[${alias}] ${step}
 `),
         });
@@ -295,13 +312,13 @@ app.whenReady().then(async () => {
     updates: () => updates,
     // The same number `connectRemoteHost` stamps onto a bundle it deploys, so
     // a host reporting a different one is reporting older code.
-    shippingVersion: app.getVersion(),
+    shippingVersion: APP_VERSION,
     // What the About page shows. License and homepage restate package.json,
     // which the renderer cannot read; the version is asked of Electron, which
     // reads the same file — one source with two readers, not two sources.
     about: {
       name: 'Agbrte',
-      version: app.getVersion(),
+      version: APP_VERSION,
       description:
         'Agent Bridge Terminal — durable, bridge-owned agent sessions you attach to from any device.',
       license: 'Apache-2.0',

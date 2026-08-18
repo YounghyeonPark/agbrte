@@ -37,7 +37,7 @@ import { createApi } from '@main/ipc/api.js';
 import { CH } from '@shared/ipc/contract.js';
 import type { HostInfo } from '@shared/ipc/contract.js';
 import type { HostIdentity, SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
-import type { AgentId, InstanceId, SessionId } from '@shared/types/index.js';
+import type { AgentId, InstanceId, Session, SessionId } from '@shared/types/index.js';
 
 const HOST_BUNDLE = resolve(import.meta.dirname, '../dist/main/agbrteHost.js');
 const RUNTIMES = [{ id: 'echo', label: 'Echo', version: '1', model: 'none' as const }];
@@ -466,4 +466,85 @@ describe('the Update button', () => {
     );
     api.dispose();
   });
+});
+
+/**
+ * What the window is looking at, after the process it was looking at is gone.
+ *
+ * The update now keeps the host attached — and that is what exposed this. A
+ * replacement host starts with **nothing loaded**: sessions live in their logs
+ * (§5.4) and are read on demand, so `session.list` on a host two hundred
+ * milliseconds old is empty and correct. Every client-side cache of the previous
+ * generation's list is then a description of a process that no longer exists,
+ * and the reported symptom is both halves of that at once — a Needs-you card for
+ * a session the sidebar did not list, and
+ * `sessions.snapshot: unknown session <uuid>` on opening it.
+ *
+ * Driven through the real IPC handlers, because `sessions.snapshot` is the call
+ * that failed and it is four routed reads in one; asking `Fleet` directly would
+ * test a different function than the one in the error message.
+ */
+describe('the view after a host is replaced', () => {
+  it('offers nothing it cannot open, and opens everything it offers', async () => {
+    if (!(await built())) throw new Error(`run \`npm run build\` first`);
+
+    const root = await makeRoot();
+    const fleet = realFleet();
+    const api = createApi({
+      fleet,
+      runtimes: [],
+      loadConformance: async () => null,
+      broadcast: () => undefined,
+    });
+    const attached = await fleet.attach({ target: { kind: 'local' }, workspaceRoot: root });
+
+    const made: string[] = [];
+    for (const title of ['test', 'test2', 'test3']) {
+      const session = await fleet.createSession(attached.instanceId, { title, goal: 'g' });
+      made.push(session.sessionId);
+    }
+    // Seated, so the record the app caches is a substantial one rather than a
+    // stub — this is the card that survived the swap in the report.
+    await fleet.addAgent(made[0] as SessionId, { role: 'worker', runtimeId: 'echo' });
+
+    const loaded = async (): Promise<Session[]> =>
+      (await api.handlers.get(CH.sessionsList)!()) as Session[];
+    const onDisk = async (): Promise<Array<{ sessionId: string }>> =>
+      (await api.handlers.get(CH.sessionsListOnDisk)!()) as Array<{ sessionId: string }>;
+
+    expect((await loaded()).map((s) => s.sessionId).sort()).toEqual([...made].sort());
+
+    await api.handlers.get(CH.hostsUpdate)!(attached.instanceId);
+
+    /*
+     * The two lists agree, and they agree on "nothing is loaded".
+     *
+     * This is what the dashboard's rail is fed from, so an empty list here is
+     * the rail being empty — which is the honest answer, because a summons
+     * belongs to the process that raised it and that process has exited. §10's
+     * rule is that the rail must never be wrong, and a card inherited from a
+     * dead generation is the one kind of wrong it cannot recover from.
+     */
+    expect(await loaded()).toEqual([]);
+    expect((await onDisk()).map((s) => s.sessionId).sort()).toEqual([...made].sort());
+    expect(await api.handlers.get(CH.permissionsPending)!()).toEqual([]);
+
+    // And every session the UI offers opens. This is the reported failure
+    // exactly: one `sessions.snapshot` per card, on a host that has never heard
+    // of any of them.
+    for (const { sessionId } of await onDisk()) {
+      const snapshot = (await api.handlers.get(CH.sessionsSnapshot)!(sessionId)) as {
+        session: Session;
+      };
+      expect(snapshot.session.sessionId).toBe(sessionId);
+    }
+
+    // Opening them loaded them, which is what opening a session means — so the
+    // lists now agree the other way round, with no second mechanism involved.
+    expect((await loaded()).map((s) => s.sessionId).sort()).toEqual([...made].sort());
+    // The seat survived the restart, because it was never in memory to lose.
+    const reopened = (await loaded()).find((s) => s.sessionId === made[0]);
+    expect(reopened?.agents).toHaveLength(1);
+    api.dispose();
+  }, 180_000);
 });

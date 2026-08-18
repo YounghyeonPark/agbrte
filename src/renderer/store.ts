@@ -20,6 +20,7 @@ import type {
   RuntimeInfo,
   SessionSnapshot,
   SshHostInfo,
+  WorkspaceDiscoveryDto,
 } from '../shared/ipc/contract.js';
 import type {
   AgbrteEvent,
@@ -34,6 +35,21 @@ import type {
 
 /** Events retained in memory. Chosen to comfortably exceed a screenful. */
 const WINDOW = 400;
+
+/**
+ * What the attach panel knows about looking around one machine (§6.2).
+ *
+ * Three phases and one alias. `result` is the machine's own answer — which may
+ * itself say `unavailable`, meaning it answered and cannot be asked — while
+ * `error` is this client failing to reach it at all. Both are shown in the
+ * panel; neither is an app-level failure.
+ */
+export interface DiscoveryState {
+  alias: string;
+  phase: 'looking' | 'done' | 'failed';
+  result: WorkspaceDiscoveryDto | null;
+  error: string | null;
+}
 
 export interface AgbrteState {
   /** Every attached host. Several at once is the normal case (§8). */
@@ -63,6 +79,15 @@ export interface AgbrteState {
 
   /** Machines from the user's ssh config, loaded when the attach panel opens. */
   sshHosts: SshHostInfo[];
+  /**
+   * The look-around for **one machine at a time**, in whatever state it is in.
+   *
+   * One field rather than three, because the panel has to render a search that
+   * is running, one that answered, and one that could not — and the alias is
+   * part of every one of them. A list of folders on `build-01` beside a field
+   * that now says `laptop` is worse than no list: it looks current.
+   */
+  discovery: DiscoveryState | null;
 
   boot(): Promise<void>;
   addHost(): Promise<void>;
@@ -82,6 +107,27 @@ export interface AgbrteState {
    */
   attachLocalHost(): Promise<HostInfo | null>;
   loadSshHosts(): Promise<void>;
+  /**
+   * Ask a machine what is on it (§6.2).
+   *
+   * Called by the panel on its own once a machine is chosen, so two properties
+   * are not optional. **It never raises the error banner** — see below — and
+   * **the last call wins**: an answer for a machine the user has since moved on
+   * from is dropped rather than rendered under the new name.
+   *
+   * *When* to call it is `attachTrigger.ts`, which is pure and testable; this is
+   * only what happens once that is decided.
+   */
+  discoverWorkspaces(alias: string): Promise<void>;
+  /**
+   * Forget the look-around, and abandon one that is in flight.
+   *
+   * Called when the machine changes and when the panel closes. The `ssh` on the
+   * far side is not reachable from here — there is no cancel on that IPC, and it
+   * is one bounded read-only command with its own kill — so this cancels the
+   * *result*: nothing lands, and nothing is shown.
+   */
+  clearDiscovery(): void;
   addRemoteHost(alias: string, workspaceRoot: string): Promise<boolean>;
   removeHost(instanceId: string): Promise<void>;
   /** Ask a host to exit. Returns false when it refused because work is running. */
@@ -153,11 +199,28 @@ export interface AgbrteState {
   /** A prompt settled elsewhere, or withdrawn. Removes it and says why. */
   applyPermissionResolved(resolved: PermissionResolved): void;
   applyHosts(hosts: HostInfo[]): void;
+  /**
+   * Re-read which sessions exist, and where, from the hosts themselves.
+   *
+   * Narrower than `boot`, and deliberately not it: `boot` also re-lists hosts
+   * and calls `applyHosts`, which is where this is called *from*.
+   */
+  reconcileSessions(): Promise<void>;
   dismissError(): void;
   dismissNotice(): void;
 }
 
 const agbrte = () => window.agbrte;
+
+/**
+ * Which look-around is the current one.
+ *
+ * Module scope rather than store state because nothing renders it: it exists so
+ * that a superseded answer can recognise itself as superseded, and putting it in
+ * the store would invite a component to depend on a number that means nothing to
+ * a person.
+ */
+let discoveryTicket = 0;
 
 /** Anything thrown by an IPC call becomes visible rather than swallowed. */
 async function guard<T>(set: SetState, fn: () => Promise<T>): Promise<T | undefined> {
@@ -211,6 +274,7 @@ function applySnapshot(set: SetState, get: () => AgbrteState, snapshot: SessionS
 export const useAgbrte = create<AgbrteState>((set, get) => ({
   hosts: [],
   sshHosts: [],
+  discovery: null,
   runtimesByHost: {},
   conformanceByHost: {},
   inbox: [],
@@ -268,6 +332,47 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     }
   },
 
+  async discoverWorkspaces(alias) {
+    /*
+     * Deliberately **not** `guard`.
+     *
+     * `guard` is what puts a failure in the app's error banner, and the banner
+     * is for things a person just tried to do. This search starts on its own the
+     * moment a machine is named, so a sleeping build box or an expired key would
+     * throw a red banner across the window at somebody who only clicked
+     * "Remote" — an alarm about an action they did not take, over a field that
+     * still works perfectly well by hand. The failure is carried on this state
+     * instead and rendered as one line inside the panel.
+     */
+    const ticket = (discoveryTicket += 1);
+    set({ discovery: { alias, phase: 'looking', result: null, error: null } });
+    try {
+      const result = await agbrte().hosts.discoverWorkspaces(alias);
+      // The last call wins. Without this, a slow machine named first can land
+      // its answer under a second machine's name — the one failure mode an
+      // automatic search adds that a button never had.
+      if (ticket !== discoveryTicket) return;
+      set({ discovery: { alias, phase: 'done', result, error: null } });
+    } catch (err) {
+      if (ticket !== discoveryTicket) return;
+      set({
+        discovery: {
+          alias,
+          phase: 'failed',
+          result: null,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      });
+    }
+  },
+
+  clearDiscovery() {
+    // Bumping the ticket is the cancel: whatever is in flight will find itself
+    // superseded and drop its answer.
+    discoveryTicket += 1;
+    set({ discovery: null });
+  },
+
   async addRemoteHost(alias, workspaceRoot) {
     const host = await guard(set, () => agbrte().hosts.addRemote(alias, workspaceRoot));
     if (host === undefined) return false;
@@ -308,6 +413,16 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     await guard(set, async () => {
       await agbrte().hosts.update(instanceId);
       set({ active: null, activeId: null, events: [] });
+      /*
+       * And re-read everything, because the host is a different process now.
+       *
+       * `applyHosts` reconciles off the push as well, which is what covers a
+       * client that did not press this button — but the person who *did* press
+       * it is owed a settled screen when the call returns, not one that catches
+       * up a moment later. Both paths land on the same lists, so the second one
+       * to arrive is a no-op.
+       */
+      await get().boot();
     });
   },
 
@@ -599,8 +714,72 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     set({ pending: [...get().pending, request] });
   },
 
+  /**
+   * What is loaded, what is on disk, and what is waiting — asked again.
+   *
+   * This store's `sessions` is a **cache of one host generation's memory**, and
+   * a host is a process that gets replaced (§6.4). `applySession` only ever
+   * updates a record that is already in the array — it cannot add one and
+   * cannot remove one — so the array is refreshed by exactly one thing, and
+   * until now that thing was `boot`, which ran when the window opened.
+   *
+   * The consequence was on screen after the first working `hosts.update`: the
+   * replacement host starts with **nothing loaded**, so the sidebar (fed from
+   * `onDisk`) said three sessions were resumable while the dashboard's Needs-you
+   * rail (fed from `sessions`) still showed a fourth as waiting for the user,
+   * with a token count and a state belonging to a process that no longer
+   * existed. Opening it asked a host that had never heard of it. §10 says the
+   * summons must be right; a summons from the previous generation is the one
+   * kind that cannot be.
+   *
+   * `pending` comes too, and for the same reason rather than for tidiness: a
+   * permission request belongs to the process that raised it, so every one of
+   * them is gone when that process is, and a prompt left on screen would be
+   * answerable into nothing.
+   *
+   * Failure is left alone rather than surfaced. This runs off a push, not off
+   * anything the user did, and a banner nobody can connect to an action is
+   * worse than one stale list that the next reconcile fixes.
+   */
+  async reconcileSessions() {
+    try {
+      const [sessions, onDisk, pending] = await Promise.all([
+        agbrte().sessions.list(),
+        agbrte().sessions.listOnDisk(),
+        agbrte().permissions.pending(),
+      ]);
+      set({ sessions, onDisk, pending });
+    } catch {
+      // Keep what we have; the next push asks again.
+    }
+  },
+
   applyHosts(hosts) {
+    const before = get().hosts;
     set({ hosts });
+
+    /*
+     * A link that has just come back may be a different process (§6.4).
+     *
+     * `reconnecting → connected` is the only signal a client has that the host
+     * serving a workspace was replaced — by `hosts.update`, by `agbrte update`
+     * at a terminal, or by a crash and a respawn — and after that everything
+     * this store believes about *which* sessions are loaded describes the
+     * process that went away. Asked here rather than in `updateHost` because
+     * the client that pressed the button is not the only one that has to be
+     * right: a phone watching the same fleet gets this push and nothing else.
+     *
+     * A host arriving or leaving is the same question with a different cause,
+     * so it takes the same answer.
+     */
+    const byId = new Map(before.map((h) => [h.instanceId, h]));
+    const reattached = hosts.some(
+      (h) => h.link === 'connected' && byId.get(h.instanceId)?.link === 'reconnecting',
+    );
+    const membershipChanged =
+      hosts.length !== before.length || hosts.some((h) => !byId.has(h.instanceId));
+    if (reattached || membershipChanged) void get().reconcileSessions();
+
     // Runtimes are per host and fetched lazily: a host that has not finished
     // handshaking reports none, and asking again after it does is cheap.
     void Promise.all(

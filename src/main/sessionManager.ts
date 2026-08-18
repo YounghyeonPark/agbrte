@@ -136,6 +136,31 @@ export interface SpawnChildInput {
   target?: ExecutionTarget;
 }
 
+/**
+ * This host has no such session **loaded** — which is not the same as no such
+ * session (§5.4, §6.4).
+ *
+ * A session lives in its log and is loaded on demand, so "not in the map" is a
+ * statement about this process's memory and nothing else. A **replacement host
+ * starts with an empty map**, so every id a client was holding a moment earlier
+ * lands here — which is how `hosts.update` turned a perfectly good session into
+ * `Error invoking remote method 'agbrte:sessions.snapshot': unknown session …`
+ * in front of somebody who had done nothing but press a button.
+ *
+ * Its own class so a caller can tell that apart from a broken id: the client
+ * answers it by resuming the session and asking again, which is the same thing
+ * a person clicking "Resume" in the sidebar does. The name crosses the wire in
+ * the protocol's `err.name`, so a client can recognise it without matching on a
+ * sentence — and hosts predating this class say the same thing in the same
+ * words, which is why the client checks both.
+ */
+export class UnknownSession extends Error {
+  constructor(readonly sessionId: SessionId) {
+    super(`unknown session ${sessionId}`);
+    this.name = 'UnknownSession';
+  }
+}
+
 export class SplitRefused extends Error {
   constructor(reason: string) {
     super(reason);
@@ -2717,7 +2742,7 @@ export class SessionManager extends EventEmitter {
 
   private live(sessionId: SessionId): LiveSession {
     const live = this.sessions.get(sessionId);
-    if (!live) throw new Error(`unknown session ${sessionId}`);
+    if (!live) throw new UnknownSession(sessionId);
     return live;
   }
 

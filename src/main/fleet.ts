@@ -1533,17 +1533,66 @@ export class Fleet extends EventEmitter {
     return entry;
   }
 
+  /**
+   * Do something to a session on its host, loading it there first if need be.
+   *
+   * **A host's memory is not the truth about which sessions exist** — the log
+   * is (§5.4). A host loads a session on demand and a *replacement* host starts
+   * with none loaded at all, so every id a client is holding across a restart
+   * points at something real that the process now serving it has never read.
+   * The old code sent those straight through, and what came back was
+   * `unknown session <uuid>` — raised, correctly, by a host that had been alive
+   * for two hundred milliseconds, and shown to a person who had pressed
+   * *Update* and nothing else.
+   *
+   * So an unloaded session is not an error here, it is a load. `session.resume`
+   * is a **read** on the host — it opens no handle and contacts no runtime until
+   * a turn is sent — which is what makes doing it inside a `get` defensible
+   * rather than a side effect smuggled into a query. It is also exactly what the
+   * person clicking *Resume* in the sidebar asks for, so the two paths cannot
+   * disagree about what opening a session means.
+   *
+   * Deliberately **not** used by `catchUp`. That runs on every reconnect, over
+   * every session this app has ever seen an event for, and resuming them all
+   * because a laptop woke up would load a hundred logs to answer a question
+   * nobody asked. Catch-up talks to the connection directly and lets an
+   * unloaded session keep its high-water mark for the next time.
+   *
+   * One retry, not a loop: if a resume did not make the session findable, the
+   * second failure is a different problem and repeating would only delay it.
+   */
+  private async onSession<T>(
+    sessionId: SessionId,
+    call: (connection: HostConnection) => Promise<T>,
+  ): Promise<T> {
+    const entry = this.ownerOf(sessionId);
+    try {
+      return await call(entry.connection);
+    } catch (err) {
+      if (!isUnknownSession(err, sessionId)) throw err;
+      try {
+        await entry.connection.resumeSession(sessionId);
+      } catch {
+        // Nothing on disk under that id, an unreadable store, or a host that
+        // will not serve it. The original error is the true one; this one would
+        // describe the recovery rather than the problem.
+        throw err;
+      }
+      return await call(entry.connection);
+    }
+  }
+
   // Every one of these is `async` on purpose. `ownerOf` throws for an unknown
   // session, and a synchronous throw out of a promise-returning method means
   // `fleet.get(id).catch(...)` never runs — the caller gets an exception where
   // it was handling a rejection. Same wart as the old role guard, same fix.
 
   async get(sessionId: SessionId): Promise<Session> {
-    return this.ownerOf(sessionId).connection.get(sessionId);
+    return this.onSession(sessionId, (c) => c.get(sessionId));
   }
 
   async addAgent(sessionId: SessionId, input: unknown): Promise<AgentRecord> {
-    return this.ownerOf(sessionId).connection.addAgent(sessionId, input);
+    return this.onSession(sessionId, (c) => c.addAgent(sessionId, input));
   }
 
   async send(
@@ -1552,7 +1601,7 @@ export class Fleet extends EventEmitter {
     text: string,
     blocks?: ContentBlock[],
   ): Promise<void> {
-    return this.ownerOf(sessionId).connection.send(sessionId, agentId, text, blocks);
+    return this.onSession(sessionId, (c) => c.send(sessionId, agentId, text, blocks));
   }
 
   /**
@@ -1564,11 +1613,11 @@ export class Fleet extends EventEmitter {
    * `send` does.
    */
   async putBlob(sessionId: SessionId, data: Buffer, mime: string): Promise<Sha256> {
-    return this.ownerOf(sessionId).connection.putBlob(sessionId, data, mime);
+    return this.onSession(sessionId, (c) => c.putBlob(sessionId, data, mime));
   }
 
   async interrupt(sessionId: SessionId, agentId?: AgentId): Promise<void> {
-    return this.ownerOf(sessionId).connection.interrupt(sessionId, agentId);
+    return this.onSession(sessionId, (c) => c.interrupt(sessionId, agentId));
   }
 
   async setReasoning(
@@ -1576,11 +1625,11 @@ export class Fleet extends EventEmitter {
     agentId: AgentId,
     reasoning: ReasoningRequest,
   ): Promise<void> {
-    return this.ownerOf(sessionId).connection.setReasoning(sessionId, agentId, reasoning);
+    return this.onSession(sessionId, (c) => c.setReasoning(sessionId, agentId, reasoning));
   }
 
   async blob(sessionId: SessionId, sha256: Sha256, mime?: string): Promise<Buffer | null> {
-    return this.ownerOf(sessionId).connection.getBlob(sessionId, sha256, mime);
+    return this.onSession(sessionId, (c) => c.getBlob(sessionId, sha256, mime));
   }
 
   /**
@@ -1608,15 +1657,15 @@ export class Fleet extends EventEmitter {
   }
 
   async events(sessionId: SessionId, fromSeq = 0): Promise<AgbrteEvent[]> {
-    return this.ownerOf(sessionId).connection.events(sessionId, fromSeq);
+    return this.onSession(sessionId, (c) => c.events(sessionId, fromSeq));
   }
 
   async projection(sessionId: SessionId): Promise<SessionProjection> {
-    return this.ownerOf(sessionId).connection.projection(sessionId);
+    return this.onSession(sessionId, (c) => c.projection(sessionId));
   }
 
   async queueDepth(sessionId: SessionId): Promise<number> {
-    return this.ownerOf(sessionId).connection.queueDepth(sessionId);
+    return this.onSession(sessionId, (c) => c.queueDepth(sessionId));
   }
 
   /**
@@ -1628,9 +1677,8 @@ export class Fleet extends EventEmitter {
    * as an error banner arriving once a second.
    */
   async rawLog(sessionId: SessionId, agentId: AgentId): Promise<RawTail | null> {
-    const entry = this.ownerOf(sessionId);
-    if (!entry.connection.supports('agent.rawLog')) return null;
-    return entry.connection.rawLog(sessionId, agentId);
+    if (!this.ownerOf(sessionId).connection.supports('agent.rawLog')) return null;
+    return this.onSession(sessionId, (c) => c.rawLog(sessionId, agentId));
   }
 
   // ------------------------------------------------------------ permissions
@@ -1674,6 +1722,23 @@ export class Fleet extends EventEmitter {
     if (!entry) throw new Error(`no attached host ${instanceId}`);
     return entry;
   }
+}
+
+/**
+ * Is this the host saying "I have not loaded that one"?
+ *
+ * By name first, which is what `UnknownSession` exists for, and by the sentence
+ * as well — because the host on the other end may predate that class, and a
+ * client meeting an older host is not an edge case here: it is what an update
+ * *is*, and what a fleet holding one updated machine and three that are not
+ * looks like every day.
+ *
+ * Compared against this session's own id rather than a prefix, so a message
+ * about some other session can never be read as an answer about this one.
+ */
+function isUnknownSession(err: unknown, sessionId: SessionId): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.name === 'UnknownSession' || err.message === `unknown session ${sessionId}`;
 }
 
 /**

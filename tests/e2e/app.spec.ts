@@ -777,7 +777,18 @@ test.describe('the first screen, the guide, and about', () => {
 
       // The version comes over IPC from `app.getVersion()` — the same
       // package.json the build was made from, not a copy in the bundle.
-      await expect(about.locator('[data-testid=about-version]')).toHaveText(/^\d+\.\d+\.\d+/);
+      /*
+       * The version this checkout ships, not whatever the app path happened to
+       * answer. `app.getVersion()` reads the `package.json` beside the entry,
+       * and in development there is none — so it returned *Electron's* version,
+       * which a `\d+\.\d+\.\d+` pattern accepts happily. §6.3's outdated-host
+       * badge compares that number against the host bundle's stamp, so the
+       * mismatch made every host look stale and the Update button permanent.
+       */
+      const shipping = JSON.parse(
+        await readFile(join(process.cwd(), 'package.json'), 'utf8'),
+      ).version as string;
+      await expect(about.locator('[data-testid=about-version]')).toHaveText(shipping);
       await expect(about.locator('[data-testid=about-license]')).toHaveText('Apache-2.0');
 
       // A toggle, not a one-way door.
