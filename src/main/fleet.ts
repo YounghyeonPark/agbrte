@@ -32,6 +32,13 @@ import type { HostConnection } from './host/hostConnection.js';
 import type { HostIdentity } from '@shared/host/sessionProtocol.js';
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import { requireTransport } from './host/transports.js';
+import {
+  authFollowUp,
+  CLI_PACKAGES,
+  OLLAMA_BASE_URL,
+  RouteRefused,
+  type SetupPlan,
+} from './host/provision.js';
 import { SplitRefused } from './sessionManager.js';
 import type { SearchHit } from './store/searchSessions.js';
 import type { ListeningPort } from './preview/ports.js';
@@ -109,6 +116,52 @@ export interface FleetDeps {
    * spends this entire window dialling on purpose, and a suite should not.
    */
   updateWindowMs?: number;
+  /**
+   * Puts software on the machine a host runs on (§6.4's bootstrap, reused).
+   *
+   * Injected for exactly the reason `connect` is: it is the one part of setting
+   * a machine up that is transport-specific — `ssh` for a remote, `/bin/sh` for
+   * a local one — and a `Fleet` that imported either would be a `Fleet` the
+   * CLI and the tests cannot construct. What stays here is the part that is the
+   * same everywhere: the capability check, the ordering, and the restart.
+   *
+   * Absent means this client will not install anything, which `setUpHost`
+   * refuses by name rather than by failing to find a method.
+   */
+  provision?: (
+    location: HostLocation,
+    plan: SetupPlan,
+    onProgress: (step: string) => void,
+  ) => Promise<void>;
+}
+
+/**
+ * What setting a machine up actually achieved, in two independent halves.
+ *
+ * Two booleans and not one enum, because they fail for unrelated reasons and a
+ * person needs both answers: the install is about a network and a disk, the
+ * re-detect is about whether anybody was mid-turn on that host. "It worked but
+ * the host has not noticed" is a real, common, recoverable state, and rounding
+ * it to either success or failure loses the only sentence worth reading.
+ */
+export interface SetupOutcome {
+  installed: boolean;
+  redetected: boolean;
+  /** What landed, in the user's terms. Never contains a credential. */
+  summary: string;
+  /** The steps that ran, in order, as they were reported. */
+  steps: string[];
+  /**
+   * What the person still has to do themselves.
+   *
+   * The honest half of installing a vendor CLI: `claude` needs an interactive
+   * `claude auth login` on that machine, and this app cannot supply one — its
+   * terminal pane is local-only. Saying so is the difference between an install
+   * that works and one that appears to.
+   */
+  followUp?: string;
+  /** Why the second half did not happen. Absent when it did. */
+  detail?: string;
 }
 
 /**
@@ -179,8 +232,24 @@ export interface AttachedHost {
   bundleVersion?: string;
   /** Runtime ids this host actually offers. Empty when its agent host failed. */
   available: string[];
-  /** Models it can reach, credentials already stripped. */
-  endpoints: Array<{ id: string; label: string; provider: string; authenticated: boolean }>;
+  /**
+   * Models it can reach, credentials already stripped.
+   *
+   * `baseUrl` travels because a decision depends on it: "install Ollama" must
+   * not add a second endpoint to a host that already has one pointed at
+   * `127.0.0.1:11434` — including the *implicit* one a host with no endpoints
+   * file falls back to. The handshake has always carried it and this dropped
+   * it, so the question could only be answered by a round trip that guessed.
+   * It is not a secret: `PublicEndpoint` is defined as everything except the
+   * key, and the URL is half of what §13 requires be legible before a turn.
+   */
+  endpoints: Array<{
+    id: string;
+    label: string;
+    provider: string;
+    baseUrl: string;
+    authenticated: boolean;
+  }>;
   /**
    * Runtimes this host looked for and did not find, with why (§3.12).
    *
@@ -436,6 +505,7 @@ export class Fleet extends EventEmitter {
       id: e.id,
       label: e.label,
       provider: e.provider,
+      baseUrl: e.baseUrl,
       authenticated: e.authenticated,
     }));
     entry.runtimeNotes = (identity.runtimeNotes ?? []).map((n) => ({ ...n }));
@@ -895,6 +965,178 @@ export class Fleet extends EventEmitter {
         `The sessions are safe in their log on ${entry.workspaceRoot}; the host stays listed ` +
         `and will attach itself as soon as one answers there.`,
     );
+  }
+
+  /**
+   * Make a machine able to run an agent, then make the host notice (§6.4, §3.8).
+   *
+   * ## Every route ends the same way, and that is the design
+   *
+   * A host builds its runtime list, its endpoint list and its `runtimeNotes`
+   * **once, at startup** — `buildHostRegistry` runs `detectCli` in the forked
+   * agent host and `loadEndpoints` reads the file exactly once. So installing a
+   * CLI, starting an Ollama or writing an endpoint changes the machine and
+   * changes nothing the app can see. Re-detecting means restarting the host,
+   * which is `updateHost` and which already works: the entry stays, the link
+   * goes to `reconnecting`, `redial` brings the replacement in under the same
+   * identity, and the `seen` high-water marks survive so the transcript replays
+   * across the restart with no loss and no duplicates.
+   *
+   * Making the host re-read those lists live was the alternative and is worse in
+   * a specific way: `loadEndpoints` lives in the *agent host*, and re-reading it
+   * mid-turn would let a request change where it is being sent between the
+   * decision and the call. A restart is a bounded, visible cost that §5.4 has
+   * already made safe.
+   *
+   * ## Half-success is an outcome, never an exception
+   *
+   * The two halves fail independently and for unrelated reasons — an install
+   * fails because of a network or a disk, a restart fails because somebody is
+   * mid-turn on that host and it is entitled to refuse. Collapsing them into one
+   * thrown error would produce the worst sentence available: "installing Claude
+   * Code failed" about a machine that now has Claude Code on it. So the return
+   * value says which half happened, and only a *refused route* or a *failed
+   * install* throws.
+   */
+  async setUpHost(
+    instanceId: InstanceId,
+    plan: SetupPlan,
+    onProgress?: (step: string) => void,
+  ): Promise<SetupOutcome> {
+    const entry = this.require(instanceId);
+    const steps: string[] = [];
+    const report = (step: string): void => {
+      steps.push(step);
+      onProgress?.(step);
+    };
+
+    /*
+     * A read-only client may not change the machine, and this is the *only*
+     * place two of these three routes can be stopped.
+     *
+     * `endpoints.add` is gated by the host, which is where §7 says enforcement
+     * belongs — a client cannot be trusted to police itself. But installing a
+     * CLI or an Ollama never reaches the host at all: it goes over the
+     * transport, from this process, so the host's gate is not on that path and
+     * an unchecked route would let a browser pinned to `read-only` by a
+     * workspace's access policy put a gigabyte of software on somebody's build
+     * box. The role granted at handshake is the honest thing to check, because
+     * it is the host's own answer about this client rather than this client's
+     * opinion of itself.
+     */
+    if (entry.role === 'read-only') {
+      throw new RouteRefused(
+        `this client has read-only access to ${entry.workspaceRoot}, so it cannot change that ` +
+          `machine. Whoever owns that workspace can do it from a client with write access.`,
+      );
+    }
+
+    /*
+     * The transport is asked, not assumed (§6.2).
+     *
+     * An Ollama is a daemon that has to outlive the connection that started it,
+     * which is exactly what `persistentProcesses` describes — and the refusal
+     * names the capability rather than the kind, so a future transport that
+     * lacks it gets a true sentence without anybody editing this.
+     */
+    const transport = requireTransport(entry.target);
+    if (plan.kind === 'ollama' && !transport.capabilities.persistentProcesses) {
+      throw new RouteRefused(
+        `${transport.label} cannot hold a process open after the connection closes, and an ` +
+          `Ollama server has to keep running. Add an API endpoint instead, or install Ollama ` +
+          `on a machine that can.`,
+      );
+    }
+
+    const where = entry.target.kind === 'ssh' ? (entry.target.alias ?? entry.target.host) : 'this machine';
+    let summary: string;
+    let followUp: string | undefined;
+
+    if (plan.kind === 'endpoint') {
+      /*
+       * The one route that never touches the transport.
+       *
+       * It goes over the session channel because that is the only path a
+       * credential may take: an `ssh` command line is readable in `ps` by every
+       * account on that machine. See `SESSION_PROTOCOL_VERSION`'s v20 note.
+       *
+       * Nothing here logs, copies or reports `plan.endpoint` — `describePlan`
+       * is the only thing allowed to describe it, and it omits the key by
+       * construction rather than by remembering to.
+       */
+      report(`writing the endpoint on ${where}`);
+      const written = await entry.connection.addEndpoint(plan.endpoint);
+      summary =
+        `Added "${written.endpointId}" to ${written.path} on ${where}` +
+        `${written.authenticated ? ', with the key kept on that machine' : ''}.`;
+      if (written.authenticated) {
+        // §6.5's table, said at the moment the choice is made rather than in a
+        // document: this is the *remote-resident credential* row, and its whole
+        // point — and its whole cost — is that the run continues with the lid
+        // shut because the key is over there.
+        followUp =
+          `That key now lives on ${where} and not on this computer, which is what lets a ` +
+          `detached run keep going while this app is closed — and means anyone with an ` +
+          `account on ${where} that can read your home directory can use it.`;
+      }
+    } else {
+      const provision = this.deps.provision;
+      if (provision === undefined) {
+        throw new RouteRefused(
+          'this client cannot install software on a machine — it was built without a ' +
+            'provisioner. Attach the workspace from the desktop app to do it.',
+        );
+      }
+      await provision(entry.location, plan, report);
+
+      if (plan.kind === 'cli') {
+        summary = `${CLI_PACKAGES[plan.cli].label} is installed on ${where}.`;
+        followUp = authFollowUp(plan.cli, where);
+      } else {
+        summary = `Ollama is serving on ${where}.`;
+        /*
+         * The daemon is not the job — an endpoint pointed at it is.
+         *
+         * A host with no `endpoints.json` already falls back to
+         * `http://127.0.0.1:11434/v1`, so on most machines this is correctly a
+         * no-op and writing one anyway would be a change to somebody's machine
+         * for nothing. A host *with* a file and no local entry is the case that
+         * needs it, and is the case where stopping at "the daemon is up" would
+         * leave a server nobody is pointed at — which is the failure this
+         * branch exists to prevent.
+         */
+        if (!entry.endpoints.some((e) => sameOrigin(e.baseUrl, OLLAMA_BASE_URL))) {
+          report(`pointing ${where} at it`);
+          const written = await entry.connection.addEndpoint({
+            id: 'ollama',
+            label: 'Ollama (that machine)',
+            provider: 'local',
+            baseUrl: OLLAMA_BASE_URL,
+          });
+          summary += ` Added "${written.endpointId}" so this host can reach it.`;
+        }
+      }
+    }
+
+    report('restarting the host so it picks up what changed');
+    try {
+      await this.updateHost(instanceId);
+      return { installed: true, redetected: true, summary, steps, ...(followUp !== undefined ? { followUp } : {}) };
+    } catch (err) {
+      // Named as the half it is. `updateHost` keeps the host listed and keeps
+      // dialling, so this is "not yet" rather than "gone" — and the thing that
+      // was installed is still installed.
+      return {
+        installed: true,
+        redetected: false,
+        summary,
+        steps,
+        ...(followUp !== undefined ? { followUp } : {}),
+        detail: `${summary} The host did not restart, so it has not noticed yet: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
   }
 
   async detachAll(): Promise<void> {
@@ -1760,6 +2002,29 @@ function labelOf(entry: Entry): string {
     // path. The smoke check printed it, which is the only reason it was noticed.
     basename(entry.workspaceRoot)
   );
+}
+
+/**
+ * Whether two endpoint URLs reach the same server.
+ *
+ * Compared by origin rather than by string, because `http://127.0.0.1:11434/v1`
+ * and `http://127.0.0.1:11434/v1/` and `http://localhost:11434/v1` are one
+ * server and three strings — and the consequence of getting it wrong is a second
+ * endpoint added beside a working one, which shows up in the picker as two
+ * identical rows nobody can choose between. An unparseable URL is *not* the same
+ * as anything, which is the safe direction: the worst case is one redundant
+ * entry, and the other error would leave a daemon with nothing pointed at it.
+ */
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    // `localhost` and `127.0.0.1` are the same machine and different hostnames.
+    const host = (u: URL): string => (u.hostname === 'localhost' ? '127.0.0.1' : u.hostname);
+    return left.protocol === right.protocol && host(left) === host(right) && left.port === right.port;
+  } catch {
+    return false;
+  }
 }
 
 function snapshot(entry: Entry): AttachedHost {

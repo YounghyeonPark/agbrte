@@ -38,6 +38,8 @@ import { SessionHostServer, type ShellOwner } from './sessionServer.js';
 import { decideRole, loadAccessPolicy } from './accessPolicy.js';
 import { localIdentity } from './identity.js';
 import { clearHostRecord, writeHostRecord } from './discovery.js';
+import { addEndpoint } from './endpoints.js';
+import { addManagedToolsToPath } from './managedTools.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -142,6 +144,26 @@ export interface RunningHost {
 }
 
 export async function startSessionHost(opts: StartHostOptions): Promise<RunningHost> {
+  /*
+   * Before anything is forked, because the fork copies this.
+   *
+   * A CLI installed by "Set up this machine" lands in `~/.agbrte/npm/bin`, which
+   * nothing puts on a PATH: a host is started by `ssh <alias> '<command>'`, a
+   * non-interactive non-login shell that sources no profile. So `detectCli`
+   * would spawn `claude`, get `ENOENT`, and report "not installed" about a
+   * binary this program had just installed — the failure the whole feature
+   * exists to remove, reappearing one layer down.
+   *
+   * **Appended, never prepended**, which is §6.8's rule for preview commands and
+   * right for the same reason: if the machine has its own `claude`, that is the
+   * one the user means, and shadowing it would be exactly the "we changed your
+   * machine" the private prefix exists to avoid. The Node directory goes on too,
+   * because Gemini CLI's shim is a `#!/usr/bin/env node` script — installing it
+   * beside a machine's only Node and then not being able to find that Node is a
+   * failure that shows up as a runtime detected and unrunnable.
+   */
+  addManagedToolsToPath(process.env);
+
   const workspaceRoot = resolve(opts.workspaceRoot);
   // The host owns the workspace, so the host is what records where it is.
   const identity = await openWorkspace(workspaceRoot, { record: true });
@@ -308,6 +330,21 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       supervisor.modelCapabilities(endpointId, modelId),
     installModel: (endpointId, tag) => supervisor.installModel(endpointId, tag),
     installProgress: () => supervisor.installProgress(),
+    /*
+     * The credential boundary, one function wide (§6.5, §13).
+     *
+     * This process is where a key stops. It arrives on the control channel,
+     * goes into `addEndpoint`, and lands in a `0600` file under `~/.agbrte`;
+     * `SessionHostServer` holds no reference to it, the reply carries none, and
+     * the agent host — which is what actually makes requests — reads it from
+     * that file at its next start rather than being handed it.
+     *
+     * Which is also why adding one does not take effect until the host
+     * restarts: `loadEndpoints` runs once, in the forked agent host, and
+     * re-reading it live would mean a turn mid-flight changing where it is
+     * being sent. `Fleet.setUpHost` restarts the host afterwards and says so.
+     */
+    addEndpoint: (input) => addEndpoint(input),
     grantRole: (requested, client) => ({
       role: decideRole(accessPolicy, requested, client, identityOf.ceiling),
       actor: identityOf.actor,

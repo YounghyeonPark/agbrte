@@ -41,6 +41,8 @@ import {
   type ShellChunk,
   type ShellDto,
   type ShellExitDto,
+  type SetupPlanDto,
+  type SetupProgressDto,
   type SshHostInfo,
   type UpdateState,
 } from '@shared/ipc/contract.js';
@@ -404,6 +406,27 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   );
   handle(CH.hostsInstallProgress, (instanceId: string) =>
     fleet.installProgress(instanceId as InstanceId),
+  );
+
+  /**
+   * Set a machine up, streaming each step (§6.4).
+   *
+   * The one handler in this file that broadcasts *while* it runs. It is a
+   * minutes-long call — an Ollama install is about a gigabyte — and the
+   * alternative shapes are both worse: returning a job id would make the
+   * renderer poll something with no natural end, and returning nothing until it
+   * finishes is a panel that looks hung for four minutes.
+   *
+   * **`plan` is never logged and never echoed.** Its `endpoint.apiKey` is the
+   * only secret in this contract; it goes straight through to `Fleet`, and the
+   * `SetupOutcomeDto` that comes back is structurally incapable of carrying it.
+   * `describe(err)` below turns a failure into its message, which is why nothing
+   * downstream interpolates a key into an error.
+   */
+  handle(CH.hostsSetUp, (instanceId: string, plan: SetupPlanDto) =>
+    fleet.setUpHost(instanceId as InstanceId, plan, (step) =>
+      deps.broadcast(PUSH.setup, { instanceId, step } satisfies SetupProgressDto),
+    ),
   );
 
   handle(CH.appAbout, (): AboutInfo =>

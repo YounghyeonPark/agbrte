@@ -25,9 +25,16 @@ import { Notifier } from './notify.js';
 import { Fleet, type FleetRuntime } from './fleet.js';
 import { connectOrSpawnHost } from './host/connectOrSpawn.js';
 import { connectRemoteHost } from './host/connectRemote.js';
+import { RouteRefused, runSetup } from './host/provision.js';
+import { localRunner, probeLocal } from './host/localRunner.js';
 import { transportFor, TransportUnsupported } from './host/transports.js';
 import { PreviewForwards } from './preview/forwards.js';
-import { freeLoopbackPort, systemSshRunner } from './host/sshTransport.js';
+import {
+  describeSshFailure,
+  freeLoopbackPort,
+  probeRemote,
+  systemSshRunner,
+} from './host/sshTransport.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -181,6 +188,48 @@ function buildFleet(): Fleet {
       throw new TransportUnsupported(
         target.kind,
         `${transportFor(target).label} is listed as supported but this connector cannot dial it`,
+      );
+    },
+
+    /**
+     * Putting software on the machine a host runs on (§6.4's bootstrap, reused).
+     *
+     * The mirror image of `connect` above and injected for the same reason: it
+     * is the one transport-specific half of setting a machine up, so `Fleet`
+     * takes it rather than importing `ssh`. Everything the two localities share
+     * — the Windows refusal, the disk check, the `@@step` markers, the failure
+     * classification — lives in `provision.ts` and is *the same code* for both,
+     * which is what stops "install Claude Code" quietly meaning two different
+     * things on two machines.
+     *
+     * The probe is the attach path's probe. A machine we can set up is a machine
+     * we have already attached, so `uname`, `$HOME` and the private Node have
+     * all been answered for once already; asking again costs one round trip and
+     * removes any chance of the installer's idea of the machine differing from
+     * the bootstrap's.
+     */
+    provision: async ({ target }, plan, onProgress) => {
+      if (target.kind === 'ssh') {
+        const alias = target.alias ?? target.host;
+        const runner = systemSshRunner();
+        onProgress(`checking ${alias}`);
+        const probe = await probeRemote(runner, alias);
+        if (!probe.reachable) {
+          throw new RouteRefused(describeSshFailure(alias, probe.detail));
+        }
+        // An empty `platform` is how a non-POSIX remote answers a POSIX probe —
+        // `cmd.exe` prints the script back and exits 0 (§6.2). `runSetup`
+        // refuses it by name; passing it through unchanged is what lets it.
+        await runSetup(runner, alias, probe, plan, onProgress);
+        return;
+      }
+      if (target.kind === 'local') {
+        await runSetup(localRunner(), 'this machine', probeLocal(), plan, onProgress);
+        return;
+      }
+      throw new RouteRefused(
+        `${transportFor(target).label} cannot be set up from here yet — attach it and install ` +
+          `what you need on it directly.`,
       );
     },
   });

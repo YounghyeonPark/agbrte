@@ -23,6 +23,7 @@ import {
   SESSION_ADDAGENT_REPLACING_SINCE,
   SESSION_PROTOCOL_VERSION,
   type AppSideSessionChannel,
+  type EndpointAdded,
   type HostIdentity,
   type OnDiskSession,
   type SessionCommand,
@@ -463,6 +464,32 @@ export class HostConnection extends EventEmitter {
   async installProgress(): Promise<ModelInstallProgress[]> {
     this.require('models.progress');
     return this.call<ModelInstallProgress[]>({ t: 'models.progress' });
+  }
+
+  /**
+   * Write a model endpoint on the host's machine (§6.5, §13).
+   *
+   * **The only call in this class that carries a secret**, and the only one
+   * where it matters that nothing here keeps a copy: the argument is passed to
+   * `call` and never stored on `this`, never put in an error message, never
+   * retried from a saved value. The reply is `EndpointAdded`, which says whether
+   * a credential is attached and never what it is.
+   *
+   * `async` rather than returning the promise directly, for the reason
+   * `previewPorts` and `hasBlob` record: `require` throws, and a synchronous
+   * throw out of a `Promise`-typed method escapes the caller's `.catch`. On a
+   * path whose failure mode is "the key went nowhere and nobody was told", that
+   * is not a stylistic point.
+   */
+  async addEndpoint(endpoint: {
+    id: string;
+    label?: string;
+    provider: string;
+    baseUrl: string;
+    apiKey?: string;
+  }): Promise<EndpointAdded> {
+    this.require('endpoints.add');
+    return this.call<EndpointAdded>({ t: 'endpoints.add', endpoint });
   }
 
   async saveTemplate(

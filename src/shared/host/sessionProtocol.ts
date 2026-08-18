@@ -51,6 +51,20 @@ import type { HostChannel } from './protocol.js';
 
 export type RequestId = string;
 
+/**
+ * What came back from `endpoints.add` — deliberately not the endpoint.
+ *
+ * Shaped like `PublicEndpoint`: it says that a credential is attached and never
+ * what it is. `path` is here because the next question a person asks after
+ * "did it work" is "where did it go", and the answer is a file they can edit by
+ * hand on a machine they own.
+ */
+export interface EndpointAdded {
+  endpointId: string;
+  path: string;
+  authenticated: boolean;
+}
+
 /** What a host reports about itself once a client connects. */
 export interface HostIdentity {
   instanceId: InstanceId;
@@ -346,8 +360,36 @@ export interface PreparedChild {
  * a host that does not know the kind refuses it by name through
  * `TerminalPrograms.resolve`'s exhaustive `switch`, which is the honest answer
  * and reaches the client as a sentence rather than as a broken pane.
+ *
+ * ## v20 adds `endpoints.add`, which is the first command that carries a secret
+ *
+ * Every other command in this protocol either asks a question or hands the host
+ * a piece of work; this one hands it an API key. That makes it the one place the
+ * §6.5 boundary is crossed deliberately rather than avoided, and the argument is
+ * about *which* channel rather than about whether to send it at all:
+ *
+ *  - The alternative is `ssh <host> 'cat > endpoints.json'`, which puts the key
+ *    in a command line — readable in `ps` by every account on that machine for
+ *    the length of the write. That is strictly worse than this.
+ *  - The channel is already the one carrying every turn, every permission
+ *    decision and every transcript, and reaching it already required either a
+ *    `0700` unix socket or a bearer token from a `0600` file (§6.2). A key is
+ *    not the most sensitive thing that has ever crossed it.
+ *  - For a remote host that channel is `ssh -L` — loopback on both machines with
+ *    an encrypted tunnel between, so the key is never on a network in the clear
+ *    and never on the remote's disk except in the `0600` file it is destined
+ *    for.
+ *
+ * What that buys, and the reason it is not simply "sending a key is bad": the
+ * key becomes a thing the *host* has and the app does not. The app never stores
+ * it, never reads it back — the reply is `{endpointId, path, authenticated}` and
+ * `models.list` has always stripped credentials — and a second client attached
+ * to the same host inherits the endpoint without anyone re-typing anything. The
+ * mode this enables is §6.5's **remote-resident credential** row: highest
+ * exposure, and the only one in that table where a detached overnight run keeps
+ * going with the laptop shut. It is offered as that, in those words.
  */
-export const SESSION_PROTOCOL_VERSION = 19;
+export const SESSION_PROTOCOL_VERSION = 20;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -404,6 +446,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'shell.close': 17,
   'files.list': 19,
   'files.read': 19,
+  'endpoints.add': 20,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -496,6 +539,35 @@ export type SessionCommand =
    */
   | { t: 'models.install'; id: RequestId; endpointId: string; tag: string }
   | { t: 'models.progress'; id: RequestId }
+  /**
+   * Write a model endpoint into this host's `endpoints.json` (§3.8, §6.5, §13).
+   *
+   * **The one command that carries a credential**, and the only one whose field
+   * must never appear in a log line, an event, an error message or a reply. See
+   * the note on `SESSION_PROTOCOL_VERSION` for why this channel and not `ssh`.
+   *
+   * A write, and gated as one: it changes where this host's turns can be sent
+   * and spends somebody's money when they are. A `read-only` client — §7's phone
+   * pinned by an access policy — must not be able to point a build box at an
+   * endpoint it pays for.
+   *
+   * The reply is `EndpointAdded`, which is `PublicEndpoint`-shaped: it says
+   * *that* a credential is attached and never what it is. Echoing the key back
+   * would put it in the app's memory a second time for no purpose, and in
+   * whatever the renderer does with a promise result.
+   */
+  | {
+      t: 'endpoints.add';
+      id: RequestId;
+      endpoint: {
+        id: string;
+        label?: string;
+        provider: string;
+        baseUrl: string;
+        /** Absent for a server needing none. Never logged, never echoed. */
+        apiKey?: string;
+      };
+    }
   | { t: 'template.delete'; id: RequestId; templateId: string }
   | { t: 'preview.ports'; id: RequestId }
   /**

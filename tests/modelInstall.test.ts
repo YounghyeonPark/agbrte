@@ -56,13 +56,34 @@ describe('which runner is behind an endpoint', () => {
     expect(runner.reason).toMatch(/vLLM|launch/i);
   });
 
-  it('says the same when the endpoint is simply unreachable', async () => {
+  /**
+   * An endpoint with nothing behind it is **not** the same answer, and saying it
+   * was produced a confidently wrong sentence on the one screen that mattered.
+   *
+   * A freshly attached machine with no model server fell into the branch above
+   * and was told *this endpoint serves models but does not install them* — a
+   * description of a running vLLM, about an address where nothing is listening —
+   * followed by "add it there and restart that server", where there is no
+   * server. The row beside it already read `fetch failed`, so the screen carried
+   * a true fact and a false explanation of it at once.
+   */
+  it('says nothing is there when nothing is there, and names the address', async () => {
     const fake = (async () => {
       throw new Error('ECONNREFUSED');
     }) as unknown as typeof fetch;
-    // Wrong in the safe direction: the cost is a sentence telling somebody to
-    // install a model themselves; the cost of the other error is a dead button.
-    expect((await detectRunner('x', 'http://127.0.0.1:9/v1', fake)).canInstall).toBe(false);
+    const runner = await detectRunner('x', 'http://127.0.0.1:11434/v1', fake);
+    expect(runner.canInstall).toBe(false);
+    expect(runner.reason).toContain('nothing answered at http://127.0.0.1:11434');
+    // Emphatically not the other sentence, which is about a server that exists.
+    expect(runner.reason).not.toMatch(/vLLM/);
+  });
+
+  it('still distinguishes a server that answered with an error', async () => {
+    // A 404 from `/api/version` proves something is listening — which is the
+    // whole difference between "not Ollama" and "not there".
+    const fake = (async () => new Response('nope', { status: 404 })) as unknown as typeof fetch;
+    const runner = await detectRunner('x', 'http://gpu-box:8000/v1', fake);
+    expect(runner.reason).toMatch(/vLLM/);
   });
 });
 

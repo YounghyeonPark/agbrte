@@ -114,7 +114,22 @@ export interface SshRunner {
   exec(
     alias: string,
     command: string,
-    opts?: { timeoutMs?: number },
+    opts?: {
+      timeoutMs?: number;
+      /**
+       * Standard output as it arrives, in addition to the buffered result.
+       *
+       * Added for `provision.ts`, which runs one script whose steps take
+       * minutes and must be reported while they happen. The streaming was
+       * always here — `systemSshRunner` accumulates from a `data` handler — it
+       * simply had no way out, so a caller wanting progress had to split one
+       * command into six and pay six connection setups for it.
+       *
+       * Optional on the interface, so the fake runners the tests inject stay
+       * two lines long and ignoring it is the correct default.
+       */
+      onData?: (chunk: string) => void;
+    },
   ): Promise<{ code: number; stdout: string; stderr: string }>;
   /** Copy local bytes to a remote path. */
   upload(alias: string, remotePath: string, contents: Buffer): Promise<void>;
@@ -394,7 +409,16 @@ export function nodeTarballUrl(platform: string, arch: string, version = REMOTE_
  * directory rather than adding a second one to choose between.
  */
 export async function installRemoteNode(
-  runner: SshRunner,
+  /**
+   * `exec` only, because that is all this uses.
+   *
+   * Narrowed when `provision.ts` began calling it with a runner that has no
+   * `upload` and no `forward` — a local machine needs neither, and widening the
+   * local runner to satisfy a type it never exercises would mean two methods
+   * that exist to throw. Every existing caller passes a full `SshRunner`, which
+   * still satisfies this.
+   */
+  runner: Pick<SshRunner, 'exec'>,
   alias: string,
   probe: RemoteProbe,
 ): Promise<void> {
@@ -439,7 +463,15 @@ export async function uploadHostBundle(
   // the deployed version with `sed` instead of running the bundle.
   const stamped = Buffer.concat([Buffer.from(`// agbrte-bundle: ${version}\n`), hostBytes]);
 
-  await runner.exec(alias, `mkdir -p ${shellQuote(remoteRoot(home))}`);
+  // `chmod 700` alongside the `mkdir`, because §13 says `~/.agbrte` is 0700 and
+  // `mkdir -p` leaves it at the umask — 0755 on an ordinary machine. It mattered
+  // less when the directory held a Node runtime and a bundle; `endpoints.json`
+  // with an API key now lives here too, and a 0600 file under a 0755 directory
+  // is still a directory every account on a build box can list.
+  await runner.exec(
+    alias,
+    `mkdir -p ${shellQuote(remoteRoot(home))} && chmod 700 ${shellQuote(remoteRoot(home))}`,
+  );
   await runner.upload(alias, remoteAgentBundle(home), agentBytes);
   // The session host is written last: the probe reads its stamp as "both are
   // deployed", so writing it first would make a half-deployment look complete.
@@ -579,7 +611,12 @@ export function systemSshRunner(sshPath = 'ssh'): SshRunner {
       let stdout = '';
       let stderr = '';
       let cutShort = false;
-      child.stdout.on('data', (d) => (stdout += d));
+      child.stdout.on('data', (d) => {
+        stdout += d;
+        // Both, never one or the other: a caller watching the stream still gets
+        // the whole output at the end, and one that ignores it is unaffected.
+        opts?.onData?.(String(d));
+      });
       child.stderr.on('data', (d) => (stderr += d));
       /*
        * Kill, but keep what arrived.

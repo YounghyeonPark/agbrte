@@ -63,10 +63,30 @@ export async function detectRunner(
   baseUrl: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<RunnerInfo> {
+  /*
+   * Unreachable and not-Ollama are **not** the same answer, and treating them as
+   * one produced a confidently wrong sentence.
+   *
+   * The comment here used to read "Unreachable or not Ollama. Both mean the same
+   * thing here, and neither is worth distinguishing: what follows is true either
+   * way." It was not true either way. A freshly attached machine with no model
+   * server at all fell into this branch and the picker told the user *this
+   * endpoint serves models but does not install them* — a sentence describing a
+   * running vLLM, about an address where nothing is listening. It then sent them
+   * to "add it there and restart that server", where there is no server.
+   *
+   * The `error` on the same row already said `fetch failed`, so the screen
+   * carried both a true fact and a false explanation of it, which is worse than
+   * carrying only the fact.
+   */
+  let reachable = false;
   try {
     const res = await fetchImpl(`${nativeBase(baseUrl)}/api/version`, {
       signal: AbortSignal.timeout(4000),
     });
+    // A reply of any status proves something is listening — a 404 from a vLLM is
+    // exactly the expected shape here, and is the case this distinguishes.
+    reachable = true;
     if (res.ok) {
       const body = (await res.json()) as { version?: string };
       return {
@@ -77,16 +97,21 @@ export async function detectRunner(
       };
     }
   } catch {
-    // Unreachable or not Ollama. Both mean the same thing here, and neither is
-    // worth distinguishing: what follows is true either way.
+    // Connection refused, DNS, or a timeout. Nothing is there.
   }
+
   return {
     endpointId,
     kind: 'openai-compatible',
     canInstall: false,
-    reason:
-      'this endpoint serves models but does not install them — vLLM, llama.cpp and NIM ' +
-      'each take their model at launch, so add it there and restart that server',
+    reason: reachable
+      ? 'this endpoint serves models but does not install them — vLLM, llama.cpp and NIM ' +
+        'each take their model at launch, so add it there and restart that server'
+      : // Named as an absence, with the address, because that is the fact and
+        // because it is the one this app can now do something about: it is the
+        // state "Set up this machine" installs Ollama for.
+        `nothing answered at ${nativeBase(baseUrl)} — no model server is running there, so ` +
+        `there is nothing to install a model into yet`,
   };
 }
 

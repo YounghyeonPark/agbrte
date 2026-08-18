@@ -122,6 +122,7 @@ const api: AgbrteApi = {
     modelCapabilities: call(CH.hostsModelCapabilities),
     installModel: call(CH.hostsInstallModel),
     installProgress: call(CH.hostsInstallProgress),
+    setUp: call(CH.hostsSetUp),
   },
 
   // Routed to the server: what the About page describes is the program serving
@@ -270,6 +271,7 @@ const api: AgbrteApi = {
     permission: (cb) => link.on(PUSH.permission, cb as (p: unknown) => void),
     permissionResolved: (cb) => link.on(PUSH.permissionResolved, cb as (p: unknown) => void),
     hosts: (cb) => link.on(PUSH.hosts, cb as (p: unknown) => void),
+    setup: (cb) => link.on(PUSH.setup, cb as (p: unknown) => void),
     shell: (cb) => link.on(PUSH.shell, cb as (p: unknown) => void),
     shellExit: (cb) => link.on(PUSH.shellExit, cb as (p: unknown) => void),
     // Never pushed to a browser: there is no updater on this side. A no-op

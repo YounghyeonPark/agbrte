@@ -54,6 +54,7 @@ import { searchWorkspace } from '@main/store/searchSessions.js';
 import {
   MIN_CLIENT_PROTOCOL,
   SESSION_PROTOCOL_VERSION,
+  type EndpointAdded,
   type HostIdentity,
   type HostSideSessionChannel,
   type RequestId,
@@ -114,6 +115,25 @@ export interface SessionHostOptions {
   /** Starts a pull and reports on every one started. Absent where nothing can. */
   installModel?: (endpointId: string, tag: string) => Promise<void>;
   installProgress?: () => Promise<ModelInstallProgress[]>;
+  /**
+   * Write a model endpoint into this host's `endpoints.json` (§6.5, §13).
+   *
+   * A callback, like `models` beside it, so this file never imports the module
+   * that touches a credential — the key passes through as an argument to
+   * something `hostMain` supplied and is not held here, not defaulted here, and
+   * not describable from here.
+   *
+   * Absent means this host will not write one, which is the honest state for a
+   * server constructed without a home directory to write into. Said by name
+   * rather than silently succeeding.
+   */
+  addEndpoint?: (input: {
+    id: string;
+    label?: string;
+    provider: string;
+    baseUrl: string;
+    apiKey?: string;
+  }) => Promise<EndpointAdded>;
   /**
    * Called whenever this server stops serving, for any reason.
    *
@@ -629,6 +649,33 @@ export class SessionHostServer {
 
         case 'models.progress':
           return (await this.opts.installProgress?.()) ?? [];
+
+        case 'endpoints.add': {
+          /*
+           * A write, and the strongest case for that word in this switch.
+           *
+           * It changes where this host's turns can be sent, and every turn sent
+           * there spends somebody's money. §7's `read-only` role exists so a
+           * phone pinned by an access policy can watch a build box without
+           * driving it; a client that could add a keyed endpoint could point
+           * that box at an account it does not own.
+           *
+           * **Nothing about `command.endpoint` is logged, reported or echoed.**
+           * The reply is `EndpointAdded`, the failure carries only the
+           * validator's sentence, and the argument goes straight to the callback
+           * that writes the file. `reply()` below turns a thrown error into its
+           * `message`, which is exactly why the writer never interpolates a key
+           * into one.
+           */
+          this.requireWrite(client, 'add a model endpoint');
+          const add = this.opts.addEndpoint;
+          if (add === undefined) {
+            throw new Error(
+              'this host cannot write endpoints — it was started without a place to keep them',
+            );
+          }
+          return add(command.endpoint);
+        }
 
         case 'models.list': {
           // A read: asking a server what it has changes nothing about the work.

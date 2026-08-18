@@ -30,6 +30,8 @@ import {
   type HostInfo,
   type AgbrteApi,
   type SendRequest,
+  type SetupPlanDto,
+  type SetupProgressDto,
   type ShellChunk,
   type ShellExitDto,
   type UpdateState,
@@ -71,6 +73,8 @@ const api: AgbrteApi = {
     installModel: (instanceId: string, endpointId: string, tag: string) =>
       ipcRenderer.invoke(CH.hostsInstallModel, instanceId, endpointId, tag),
     installProgress: (instanceId: string) => ipcRenderer.invoke(CH.hostsInstallProgress, instanceId),
+    setUp: (instanceId: string, plan: SetupPlanDto) =>
+      ipcRenderer.invoke(CH.hostsSetUp, instanceId, plan),
   },
   app: {
     about: () => ipcRenderer.invoke(CH.appAbout),
@@ -211,6 +215,7 @@ const api: AgbrteApi = {
     permissionResolved: (cb: (r: PermissionResolved) => void) =>
       subscribe(PUSH.permissionResolved, cb),
     hosts: (cb: (h: HostInfo[]) => void) => subscribe(PUSH.hosts, cb),
+    setup: (cb: (p: SetupProgressDto) => void) => subscribe(PUSH.setup, cb),
     update: (cb: (s: UpdateState) => void) => subscribe(PUSH.update, cb),
     // Its own channel, never `events`. Terminal bytes are not durable, are
     // never acked, and must not be delayed by a batch window a person can feel.

@@ -88,7 +88,22 @@ export interface HostInfo {
    * is sent — §13 requires that adding a provider never quietly change that, and
    * a picker that only shows model names changes it quietly.
    */
-  endpoints: Array<{ id: string; label: string; provider: string; authenticated: boolean }>;
+  endpoints: Array<{
+    id: string;
+    label: string;
+    provider: string;
+    /**
+     * Where it sends to, which is half of what §13 requires be legible.
+     *
+     * Not a secret — `PublicEndpoint` is defined as *everything except the key*
+     * — and carried because a decision needs it: "install Ollama" must not add a
+     * second endpoint to a host already pointed at `127.0.0.1:11434`. It was
+     * being dropped at three separate layers, so the only way to answer that was
+     * a round trip that guessed.
+     */
+    baseUrl: string;
+    authenticated: boolean;
+  }>;
   /**
    * Runtimes this host looked for and did not find, with why (§3.12).
    *
@@ -501,6 +516,51 @@ export interface EndpointModelsDto {
   capabilities?: ModelCapabilityHint[];
 }
 
+/**
+ * What "set up this machine" was asked to do (§6.4, §3.8, §6.5).
+ *
+ * A closed union rather than a form, which is the whole reason nothing here can
+ * become a shell command: the two routes that run a script take a value from a
+ * two-member set, and the one that takes free text — provider, URL, key — never
+ * goes near a shell at all. It is written by the host with `fs`.
+ *
+ * `apiKey` is the only field in this entire contract that carries a secret. It
+ * travels renderer → main → host and stops; nothing sends it back, and
+ * `SetupOutcomeDto` is deliberately incapable of holding it.
+ */
+export type SetupPlanDto =
+  | { kind: 'cli'; cli: 'claude-code' | 'gemini-cli' }
+  | { kind: 'ollama' }
+  | {
+      kind: 'endpoint';
+      endpoint: { id: string; label?: string; provider: string; baseUrl: string; apiKey?: string };
+    };
+
+/** One step, as it happens. Broadcast so a slow install is not a frozen panel. */
+export interface SetupProgressDto {
+  instanceId: string;
+  step: string;
+}
+
+/**
+ * How it went, in halves.
+ *
+ * `installed` and `redetected` are separate because they fail for unrelated
+ * reasons: an install fails on a network or a disk, the re-detect fails because
+ * somebody is mid-turn on that host and it is entitled to refuse. "It worked and
+ * the host has not noticed yet" is a real state with its own remedy, and folding
+ * it into either success or failure loses the only sentence worth reading.
+ */
+export interface SetupOutcomeDto {
+  installed: boolean;
+  redetected: boolean;
+  summary: string;
+  steps: string[];
+  /** What the person must still do themselves — signing a CLI in, chiefly. */
+  followUp?: string;
+  detail?: string;
+}
+
 /** How far one install has got, as the renderer polls it. */
 export interface ModelInstallDto {
   endpointId: string;
@@ -589,6 +649,23 @@ export interface AgbrteApi {
      */
     installModel(instanceId: string, endpointId: string, tag: string): Promise<void>;
     installProgress(instanceId: string): Promise<ModelInstallDto[]>;
+    /**
+     * Put what is missing onto the machine this host runs on (§6.4, §3.8).
+     *
+     * The answer to a screen that names three absences and offers nothing —
+     * *Claude Code … not detected*, *Gemini CLI … not detected*, *0 found* —
+     * every one of which the app has the reach to fix and used only to report.
+     *
+     * Resolves when the whole thing is done, including the host restart that
+     * makes the result visible; progress arrives on `on.setup` in the meantime,
+     * because an Ollama install is a gigabyte and a promise with nothing under
+     * it is a frozen panel. Rejects only for a route that cannot run here — a
+     * Windows machine, a transport that cannot hold a daemon — or an install
+     * that failed; a *restart* that did not happen comes back as a value with
+     * `redetected: false`, since the thing is installed either way and saying
+     * otherwise would be a lie about somebody's machine.
+     */
+    setUp(instanceId: string, plan: SetupPlanDto): Promise<SetupOutcomeDto>;
     /**
      * Ask a host to exit. It is allowed to refuse.
      *
@@ -1015,6 +1092,15 @@ export interface AgbrteApi {
     permissionResolved(cb: (r: PermissionResolved) => void): () => void;
     /** A host was attached, detached, or changed availability. */
     hosts(cb: (hosts: HostInfo[]) => void): () => void;
+    /**
+     * Steps of a machine being set up, as they happen.
+     *
+     * A push rather than a polled progress list — unlike `installProgress`,
+     * which is polled because a model pull is minutes of a number changing.
+     * These are a handful of discrete steps over a few minutes, and each one is
+     * news exactly once.
+     */
+    setup(cb: (progress: SetupProgressDto) => void): () => void;
     update(cb: (state: UpdateState) => void): () => void;
     /**
      * Terminal output, on its own channel.
@@ -1092,6 +1178,7 @@ export const CH = {
   hostsModelCapabilities: 'agbrte:hosts.modelCapabilities',
   hostsInstallModel: 'agbrte:hosts.installModel',
   hostsInstallProgress: 'agbrte:hosts.installProgress',
+  hostsSetUp: 'agbrte:hosts.setUp',
   updateState: 'agbrte:update.state',
   updateInstall: 'agbrte:update.install',
   appAbout: 'agbrte:app.about',
@@ -1163,6 +1250,8 @@ export const PUSH = {
   permissionResolved: 'agbrte:push.permissionResolved',
   hosts: 'agbrte:push.hosts',
   update: 'agbrte:push.update',
+  /** One step of `hosts.setUp`, on the way to an answer that takes minutes. */
+  setup: 'agbrte:push.setup',
   /**
    * Terminal bytes, and the one push that never touches `EventBridge`.
    *
