@@ -7,19 +7,33 @@ Version 2.0.
 
 --------------------------------------------------------------------------------
 
-A note on one dependency, because it is not open source.
+What this project distributes, and under what terms.
 
-`@anthropic-ai/claude-agent-sdk` is published under Anthropic's own terms
-("© Anthropic PBC. All rights reserved", see
-https://code.claude.com/docs/en/legal-and-compliance) and is **not** covered by
-this project's licence. It is a build-time dependency of the optional
-`claude-agent-sdk` runtime adapter.
+The eight runtime dependencies are all MIT: `@lydell/node-pty`,
+`@radix-ui/react-select`, `@xterm/xterm`, `@xterm/addon-fit`, `electron-updater`,
+`react`, `react-dom`, and `zustand`. The desktop application also carries
+Electron, which brings Chromium and Node.js; their licence texts ship beside the
+executable as `LICENSE.electron.txt` and `LICENSES.chromium.html`.
 
-It is deliberately absent from everything this project distributes. The bundles
-carried by `dist/install-agbrte.sh` — the CLI, the session host, and the agent
-host — contain no Anthropic code, and a test enforces that so it cannot start
-shipping by accident. Anyone wanting that adapter installs the SDK themselves and
-accepts Anthropic's terms directly, which is the only arrangement this project's
-licence could honestly describe.
+Build-time tooling is not redistributed and is therefore not covered by that
+sentence. It is a larger tree under more varied terms — permissive for the most
+part, with some file-level copyleft (MPL-2.0) and other licences among the
+transitive development dependencies.
 
-Everything else in the dependency tree is MIT, ISC, BSD, 0BSD, or public domain.
+--------------------------------------------------------------------------------
+
+A note kept for the record, because a guard outlived what it guarded.
+
+This project once had one dependency that was not open source:
+`@anthropic-ai/claude-agent-sdk`, published under Anthropic's own terms
+("© Anthropic PBC. All rights reserved"). It was a build-time dependency of an
+optional runtime adapter, and both the adapter and the dependency have since
+been removed.
+
+`scripts/package.mjs` still refuses to package any bundle containing that
+dependency's markers, and the check stays deliberately. It never fired: the
+adapter was not registered in any headless entry point, so proprietary code
+reached no distributed bundle by accident rather than by construction. Packaging
+is where redistribution would actually happen — not at build, not at install —
+so that is where the refusal belongs, ready for the next proprietary SDK that
+arrives as a convenience inside one adapter.

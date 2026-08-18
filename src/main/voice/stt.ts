@@ -20,7 +20,7 @@
  * §3.12 refuses to vendor a CLI and §12.1 refuses to vendor a browser, both
  * because "the installer is one self-contained shell script" and a per-platform
  * download would be "the heaviest dependency in the project — for a feature many
- * sessions never use". The installer is ~370 KB and carries the three bundles
+ * sessions never use". The installer is under a megabyte and carries the bundles
  * that *are* Agbrte on a headless machine. The smallest useful whisper model is
  * around 75 MB and a good multilingual one is several hundred; a native binary
  * per platform sits on top of that. Bundling would make the installer two orders

@@ -4,57 +4,38 @@
 /ˈæɡbərt/ *(AG-burt)*. Both are correct: it is a contraction rather than a word,
 so there is nothing here to get wrong.
 
-An agent-based development workbench. Many sessions, one model each, any model
-behind a pluggable adapter, running on your machine or on a server — and agent
-memory that survives the workspace folder being moved.
+An agent-based development workbench. Many sessions, one model each, running on
+your machine or on a server — and agent memory that survives the workspace
+folder being moved.
 
-**Status: phases 1, 2, 4, 5 and 6 done; 3 and 7 partly.** A text session edits a
-real repository and its transcript survives an app restart. Remote workspaces,
-hosts that outlive the app, and several clients on one session are exercised
-against a real server — including a phone, over a browser, on a tailnet. There
-is a dashboard with a Needs-you rail, stall detection, quota parking that
-resumes on its own, an inbox, notifications, a CLI for headless machines, and a
-one-file installer. One conformance suite runs against five deliberately
-different runtimes, including the agent CLI you already have installed.
+## Status
 
-A session is one agent, and you can change its model mid-session — the seat you
-had is retired and the new one takes over, both written into the transcript so
-it says what answered and when. Models collaborate as *grouped sessions* rather
-than as a roster in one: each keeps its own log, budget and permissions, and
-they say one thing to each other at a time. Sessions built before that rule
-still run several agents under file leases, messaging each other on the record,
-a git worktree each. A session too large to hold can propose splitting into a
-child with its own log and a slice of its budget — a person approves it — and a
-permission prompt raised three levels down surfaces at the top of the dashboard.
+[DESIGN.md §15](DESIGN.md) is the authority and says which part of a phase is
+only partly true. In summary: **phases 1, 2, 4 and 6 are done; 5 and 7 met their
+acceptance criteria with named substitutions; 3 is half validated; 8 is
+started.**
 
-You can point at things. Drag a region of your own screen, black out the parts
-that should not leave the machine, circle what is wrong, and send it — the
-blackout is painted into the pixels *before* anything is written, so the original
-never exists on disk to be pushed anywhere. Every other mark stays editable and
-arrives with a sentence describing it, because a weaker vision model often reads
-only the sentence. An agent can screenshot a page it is serving and look at its
-own output. And you can hold a key and talk: the transcription runs on your
-machine, the recording never leaves it, and the text lands in the composer for
-you to edit rather than being sent.
+A text session edits a real repository and its transcript survives an app restart.
+Remote workspaces, hosts that outlive the app, and several clients on one session
+are exercised against a real server — including a phone, over a browser, on a
+tailnet. There is a dashboard, stall detection, quota parking that resumes on its
+own, notifications, a CLI for headless machines, and a one-file installer. One
+conformance suite runs against four deliberately different runtimes, including the
+agent CLI you already have installed.
 
-**Not built yet:** a second cloud provider (phase 3); OCR and text-to-speech
-(phase 7). Glyph rendering is refused rather than pending — annotation text
-travels as words beside the picture, which is the part a model actually reads.
-
-**Built but never run as one flow:** capture a region of a remote preview, circle
-it, say what is wrong, and have the remote agent fix it and screenshot its own
-fix. Every piece of that works and has been exercised against real hardware — a
-real display, a real ssh transfer, a real speech engine — but the whole sentence
-has only been run with a stub agent at the far end.
-
-[DESIGN.md §15](DESIGN.md) says what each phase covers and what is deliberately
-unfinished; where something is only partly true, it says which part.
+**What is not proven, named rather than glossed.** The model-provider axis has
+exactly one implementation (`openai-compatible`), so it describes one wire format
+rather than abstracting several; the runtime axis has four. The remote-detached
+mechanism is verified against a real server but its model half is not — "an agent
+on a GPU box using that box's own model server" has never run, because that box
+has no model server. Phase 7's acceptance sentence *has* run end to end, with the
+agent local rather than remote and unable to see the picture. **OCR is not built**,
+so the redaction sweep reports `scanned: false` rather than an empty match list.
 
 > **[The idea, and the shape it forces](https://younghyeonpark.github.io/agbrte/)** — the
 > design concept as a page: the process model, how a remote host is bootstrapped
 > and what does *not* cross the link, how a session tree reserves budget and
-> bubbles blockage, and what is deliberately not built. Source in
-> [docs/](docs/).
+> bubbles blockage, and what is deliberately not built. Source in [docs/](docs/).
 
 ## The one idea
 
@@ -66,207 +47,57 @@ a machine with no display. All of them are clients, and none of them holds the
 session.
 
 Closing the app mid-run, driving one session from a second machine, and resuming
-after a restart are not three features. They are three consequences of that.
+after a restart are not three features but three consequences of that. It is also
+the whole name: **Ag**ent **Br**idge **Te**rminal, in the order the architecture
+is built.
 
-That is the whole name: **Ag**ent **Br**idge **Te**rminal, in the order the
-architecture is built.
+## What it does that a chat window does not
 
-## Ways to use it
+- **The run outlives the client, and the client is plural.** Quitting the app does
+  not stop a turn. Two machines on one session see one transcript, and a
+  permission prompt raised on either is answerable from the other — pending
+  requests live in the log, not in a callback in some process's memory.
+- **Everything resumes from its own log** — which agent ran, under which model and
+  adapter version, what it was asked, what it did, and who approved each thing it
+  needed permission for. A moved folder, a switched provider and a restarted
+  machine are therefore one problem rather than three.
+- **A session holds one agent, and a model change is recorded rather than
+  swapped.** The seat you had is retired and the new one takes over, both written
+  into the transcript, so it says what answered and when. Sessions built before
+  that rule still run several agents under file leases, a git worktree each.
+- **Work is decomposed into sessions, not into a roster.** A session too large to
+  hold can propose splitting into a child with its own log and a slice of its
+  budget, on another machine if that is where the work is. Sessions can also be
+  *grouped* and reach each other one bounded `message_peer` at a time, carrying
+  words and never authority — the recipient runs the woken turn under its own
+  gate. **Grouping is one host only.** What a session may reach is likewise its
+  own: MCP servers and skills attach from the new-session form, not from an
+  app-wide registry somebody enabled months ago.
+- **There is a real terminal, and it says when it is off the record.** One pane
+  shows what a CLI seat printed; the other is a PTY running your shell, an agent
+  CLI the host detected, or Agbrte's own CLI attached to the session on screen.
+  That second pane writes no events, passes no permission gate, and spends your
+  own allowance — and its header says so every time it is open.
+- **You can point at things, and talk.** Black out what should not leave the
+  machine and the blackout is painted into the pixels *before* anything is
+  written, so the original never exists on disk to be pushed anywhere. Dictation
+  is the same bargain: it runs on your machine, the recording never leaves it,
+  and the text lands in the composer for you to edit rather than being sent.
 
-### 1. A folder on this machine
+### Attaching a server over ssh
 
-`Attach host… → Use a folder on this machine`. Create a session, add an agent,
-type. Pick the `echo` runtime to exercise everything without a model at all.
-
-### 2. A server over ssh
-
-`Attach host… → Remote`, then a name and a path. The name is an alias from your
-`~/.ssh/config` if you have one, or `user@hostname`, which needs no config at
-all — Agbrte shells out to `ssh`, so your keys, ports, jump hosts and
-`ProxyCommand`s already apply, and any NAT-traversal tool that makes `ssh <name>`
-work makes this work too.
-
-The first attach to a machine installs a private Node under `~/.agbrte` and copies
-two ~100 KB bundles there. Nothing system-wide, no sudo. Later attaches reuse
-them.
-
-If ssh has never connected to that machine, it will fail in one of a few
-specific ways — an unconfirmed host key, refused credentials, a name that does
-not resolve — and Agbrte names which one and the command that settles it. It will
-not accept a host key for you: that check only means something if a human
-compares the fingerprint against something other than the connection presenting
-it.
-
-### 3. Close the app; the run keeps going
-
-The host is detached, so quitting the app does not stop a turn. Reopen and
-attach the same workspace to land back on the session, mid-turn if it is still
-working. The same holds for a link that breaks rather than an app that closes: a
-dropped tunnel or a closed laptop lid marks the host `reconnecting` rather than
-removing it, retries until it is back, and replays exactly what was missed —
-`seq` is monotonic per session, so catch-up loses nothing and repeats nothing. Detaching a host in the app (`×`) drops the connection and leaves the
-run alone; a host with nothing attached and nothing running then exits on its
-own after a while rather than lingering forever.
-
-There is no button to stop a host that is still busy, and that is the honest
-state rather than a design: the protocol has a shutdown that refuses while work
-is in flight, but nothing in the UI sends it yet.
-
-`agbrte interrupt` stops whatever is running in a workspace, which is also the
-way past a turn that **died** rather than finished. A session whose agent went
-away mid-turn stays `working` — correctly, since a stall is a suspicion and an
-agent may simply be slow — and `agbrte stop` then refuses on its behalf. An
-explicit interrupt resolves it and gives the host back.
-
-### 4. The same session from a second machine
-
-Attach the same remote workspace from another computer. Both clients see one
-transcript because there is one session; commands from either queue in arrival
-order. A permission prompt raised on one is answerable from the other, because
-pending requests live in the log rather than in a callback in some process's
-memory.
-
-### 5. Watch without being able to type
-
-A client asks for `read-write` or `read-only` at handshake and the host decides —
-enforcement is the owner's, never the client's. To pin a machine to watching,
-put this in the workspace's `.devagents/access.json`:
-
-```json
-{ "rules": [{ "client": "agbrte-app@laptop-*", "role": "read-only" }] }
-```
-
-A rule is a ceiling: it never grants more than a client asked for. This is a
-seatbelt, not a lock — the label is self-reported, and anyone who can reach the
-host's socket is already the workspace's owner. It exists because a live run on
-a screen you are only watching is one keystroke from being driven.
-
-### 6. Find out who did what
-
-Every event a person caused carries an actor — who sent that turn, who approved
-that shell command. Events with no actor were caused by no person; agent output
-and state transitions carry none. With one user this is a nicety. With a host
-several people attach to, "the gate said yes" is not an answer to "who let it
-run that".
-
-### 7. From a terminal, with no GUI anywhere
-
-`agbrte` is a client of the same host the window uses, so a session started at a
-terminal is the same session the app opens — not a second, lesser mode.
-
-```bash
-agbrte                      # drive the workspace here, interactively
-agbrte /srv/api             # or one elsewhere on this machine
-agbrte ls                   # one session per line, greppable
-agbrte run . "add a test for the parser"
-agbrte stop                 # asks; refuses while work is in flight
-```
-
-`agbrte run` is the scriptable half: no prompts, output on stdout, and the result
-in the exit code — **0** done, **1** failed in a way rerunning will not fix
-(misconfigured, no auth, a limit you set, something needed permission), **2**
-stopped short in a way a later rerun might get past (model unreachable, rate
-limited, quota exhausted). A retry loop wants those apart. A permission request with no `--yes` is **denied, not queued**: in cron
-there is nobody to ask, and waiting would be a job that never ends. The denial
-reaches the agent as a reason it can adapt to.
-
-`agbrte attach` is line-based on purpose — no full-screen interface, no cursor
-addressing. It is meant for an ssh session on a machine with no display, likely
-in tmux, possibly with a `TERM` nobody has tested. Ctrl-C interrupts the turn;
-Ctrl-D leaves and the run keeps going.
-
-A host can reach several models. List them in `~/.agbrte/endpoints.json` (mode
-`0600`) and an agent picks one:
-
-```json
-{
-  "endpoints": [
-    { "id": "local",  "baseUrl": "http://127.0.0.1:11434/v1" },
-    { "id": "gpu",    "baseUrl": "http://gpu-box:8000/v1" },
-    { "id": "vendor", "baseUrl": "https://api.example.com/v1",
-      "provider": "Example AI", "apiKey": "sk-..." }
-  ],
-  "default": "local"
-}
-```
-
-```bash
-agbrte run . --endpoint vendor --model some-model "..."
-```
-
-A file rather than an environment variable because a host started over ssh by the
-app runs a non-login shell and never sources your profile. The key stays on the
-host — it is never put on an endpoint object, never sent to a client, and never
-written to a transcript; the provider fetches it only where the request is made.
-
-**Credentials belong to the workspace, not to whoever is attached.** One
-workspace has one host process running as one user, so a second person driving
-that session spends the owner's budget. The log still says who: every
-human-caused event carries an actor. If that is not the arrangement you want,
-give people separate accounts and separate workspaces.
-
-`provider` is shown in the agent picker before the first turn, so you can see
-where your code is about to go while you can still choose otherwise.
-
-Installing on a server is one file and one command. Build it here, send it there:
-
-```bash
-npm run package                        # → dist/install-agbrte.sh, ~100 KB
-scp dist/install-agbrte.sh server:
-ssh server 'sh install-agbrte.sh'
-```
-
-`npm run package`, not `npm run build`. Building refreshes the bundles and
-leaves `dist/install-agbrte.sh` untouched beside them, so a `scp` after a build
-ships whatever was last packaged — silently, since the installer succeeds and
-the server simply runs old code. Package before you send.
-
-**Upgrading a running host is `agbrte stop` and start it again.** That used to
-be untrue across a protocol change: the stop command speaks the *new* protocol
-and the old host refused it at the handshake, so the tool that would shut it
-down was the one that could no longer talk to it, and upgrading meant `kill`.
-Versions are now a range rather than an equality — a newer client connects to an
-older host, loses only the commands that host predates, and says which. Killing
-is still safe if you need it, since the log is the truth and every session
-reopens from it.
-
-**Nothing needs to be on that machine** — no git, no npm, no registry, no
-checkout, no build. The installer carries the three bundles that are Agbrte on a
-headless machine (~280 KB), and downloads a private Node 22 only if the machine
-has none. It works piped, too, if you have somewhere to host it:
-`curl -fsSL <url> | sh`.
-
-Requirements on the target: a POSIX shell, plus curl-or-wget and tar-with-xz only
-when it has no Node 22+.
-
-Nothing is written outside `$HOME`: the runtime and the app land in `~/.agbrte`, the
-binary in `~/.agbrte/bin/agbrte`, and `rm -rf ~/.agbrte` removes all of it. No sudo, no
-package manager, no service. On a machine that already has the source and Node,
-`npm i -g .` does the same job.
-
-### 8. Open it in a browser — a phone, over your VPN
-
-```bash
-agbrte web .                       # loopback only
-agbrte web . --bind $(tailscale ip -4)
-```
-
-The same app, not a cut-down one: the renderer is unchanged and talks to a
-WebSocket instead of Electron IPC, so what a phone sees is what the desktop sees.
-
-**There is no login.** Anyone who can reach the address can drive the session, so
-the address is the entire boundary — which is why it binds to loopback unless you
-name something else, and why a tailnet address is the intended answer. Your phone
-is already on that private network; nothing is exposed to the internet, and the
-network has already established who is connecting. Do not bind this to `0.0.0.0`.
-
-### 9. Resume anything
-
-Every session on disk reopens from its own log — which agent ran, under which
-model and adapter version, what it was asked, what it did, and who approved
-each thing it needed permission for. The log is the truth, not a cache of some
-provider's session state, which is why a moved folder, a switched provider and a
-restarted machine are all the same problem.
+The one flow worth spelling out, because the name field does more than it looks
+like. `Attach host… → Remote`, then a name and a path. The name is an alias from
+your `~/.ssh/config`, or `user@hostname`, which needs no config at all — Agbrte
+shells out to `ssh`, so your keys, ports, jump hosts and `ProxyCommand`s already
+apply, and any NAT-traversal tool that makes `ssh <name>` work makes this work
+too. The first attach installs a private Node under `~/.agbrte` and copies the
+session and agent host bundles there; nothing system-wide, no sudo, and later
+attaches reuse them. A machine ssh has never reached fails in one of a few
+specific ways — an unconfirmed host key, refused credentials, a name that does not
+resolve — and Agbrte names which one and the command that settles it. It will not
+accept a host key for you: that check only means something if a human compares the
+fingerprint against something other than the connection presenting it.
 
 ## Running it
 
@@ -281,70 +112,103 @@ npm start                     # build, then launch
 npm run cli -- --help         # the terminal client, from a checkout
 ```
 
-`npm run agbrte:direct` is a different thing and is not the CLI: it builds its own
-`SessionManager` in-process to exercise adapters with no host in the way, which
-makes it useful for adapter work and wrong for anything else — two of them on one
-workspace would both own the log.
+`npm run agbrte:direct` is not the CLI: it builds its own `SessionManager`
+in-process to exercise adapters with no host in the way, which makes it useful
+for adapter work and wrong for anything else — two of them on one workspace would
+both own the log.
 
-## The shape of it
+### From a terminal, with no GUI anywhere
 
-Three axes, deliberately independent, so adding a vendor never touches transport
-code and vice versa:
+`agbrte` is a client of the same host the window uses, so a session started at a
+terminal is the same session the app opens — not a second, lesser mode. **`agbrte
+--help` is the complete reference** for the commands (`attach`, `run`, `ls`,
+`serve`, `web`, `interrupt`, `stop`, `update`) and every flag; `attach` is
+line-based on purpose, because the first place it runs is an ssh session on a
+machine with no display, likely in tmux, possibly with a `TERM` nobody has tested.
 
-| Axis | Interface | Means |
-|---|---|---|
-| Harness | `AgentRuntime` | who runs the loop — a vendor SDK, a CLI, or our own |
-| Model | `ModelProvider` | which model answers |
-| Location | `HostChannel` | where it executes — in-memory, a forked process, a socket, an ssh forward |
+Two properties worth knowing before you script it. `agbrte run` puts its result in
+the **exit code** — **0** done, **1** failed in a way rerunning will not fix, **2**
+stopped short in a way a later rerun might get past (model unreachable, rate
+limited, quota exhausted) — because a retry loop wants those apart. And a
+permission request with no `--yes` is **denied, not queued**: in cron there is
+nobody to ask, and waiting would be a job that never ends.
 
-The load-bearing decision is that **the append-only event log is the source of
-truth**. One function, `rehydrate()`, reconstructs context from that log, and it
-serves four separate requirements: a moved folder, a migrated machine, a
-switched provider, and a resumed quota window. It is also the in-session
-compactor, so the durable path is exercised constantly and cannot rot.
+`agbrte web .` serves the same app in a browser — the renderer is unchanged and
+talks to a WebSocket instead of Electron IPC, so what a phone sees is what the
+desktop sees. **There is no login:** anyone who can reach the address can drive
+the session, so the address is the entire boundary. It binds to loopback unless
+you name something else, and a tailnet address (`--bind $(tailscale ip -4)`) is
+the intended answer. Do not bind it to `0.0.0.0`.
 
-`DESIGN.md` is the real specification — 17 sections, including what is
-deliberately unfinished and why. Read §1–§3 for the architecture, §5 for
-durability, §6.4 and §8 for the host model, §13 for permissions.
+### Two config files, since `--help` covers flags and not files
 
-## Tests
+`~/.agbrte/endpoints.json` (mode `0600`) is the set of models a host can reach,
+selected with `--endpoint <id>`. A file rather than an environment variable
+because a host started over ssh runs a non-login shell and never sources your
+profile; the key stays on the host and never reaches a client or a transcript.
 
-Four layers, each with a different job:
+```json
+{ "endpoints": [{ "id": "local", "baseUrl": "http://127.0.0.1:11434/v1" },
+                { "id": "vendor", "baseUrl": "https://api.example.com/v1",
+                  "provider": "Example AI", "apiKey": "sk-..." }],
+  "default": "local" }
+```
+
+A workspace's `.devagents/access.json` pins a client to watching rather than
+driving — a seatbelt and not a lock, since the label is self-reported and anyone
+who can reach the host's socket already owns the workspace.
+
+```json
+{ "rules": [{ "client": "agbrte-app@laptop-*", "role": "read-only" }] }
+```
+
+**DESIGN.md §3.8 and §8.2 are the full reference for both**, including why
+credentials belong to the workspace rather than to whoever is attached.
+
+### Installing on a server
+
+One file, one command. Build it here, send it there:
 
 ```bash
-npm test          # Vitest over the headless core — no Electron, ~3s
-npm run smoke     # a real window + a real host process, 15 checks
-npm run e2e       # Playwright drives the built app as a user
-npm run check     # typecheck (node + web projects) then npm test
+npm run package                 # → dist/install-agbrte.sh, under a megabyte
+scp dist/install-agbrte.sh server:
+ssh server 'sh install-agbrte.sh'
 ```
 
-`npm test` is the one to run constantly. `npm run smoke` catches the class of
-failure where the app opens and every button silently does nothing — a preload
-built as ESM exposes nothing, with no error anywhere. `npm run e2e` is the only
-layer that can verify §15's acceptance criteria, including closing the app and
-relaunching it to prove a transcript survived.
+`npm run package`, not `npm run build`. Building refreshes the bundles and leaves
+`dist/install-agbrte.sh` untouched beside them, so a `scp` after a build ships
+whatever was last packaged — silently, since the installer succeeds and the server
+simply runs old code. Package before you send.
 
-Tests that need a local model **skip loudly** rather than passing. A criterion
-whose test was skipped is not a criterion that holds. The remote transport's
-tests cover its decisions without a server; whether `ssh -L` reaches a remote
-unix socket, and whether a detached child outlives its session, cannot be faked
-and are not pretended at — those were established against a real machine.
+**Nothing needs to be on that machine** — no git, no npm, no registry, no
+checkout, no build. The installer carries the CLI, the session host, the agent
+host, the web bridge and the renderer, and downloads a private Node 22 only if the
+machine has none. It works piped: `curl -fsSL <url> | sh`. The target needs a
+POSIX shell, plus curl-or-wget and tar-with-xz only when it has no Node 22+.
+Nothing is written outside `$HOME`, and `rm -rf ~/.agbrte` removes all of it.
+**Upgrading a running host is `agbrte update`**, which stops it so the next attach
+deploys this build; versions negotiate as a range, so a newer client connects to
+an older host and says which commands that host predates.
 
-## Layout
+### Testing it
 
-```
-src/shared/      types, the IPC contract, the agent + session protocols
-src/main/        the app side: fleet, host connections, ssh transport, IPC
-src/host/        the session host — owns sessions, the log, the gate, the queue
-src/preload/     the entire privileged surface the renderer gets
-src/renderer/    React + Tailwind, windowed projection over the log
-src/cli/         the terminal client — a peer of the window, not a subset
-```
+`npm run check` (typecheck + Vitest over the headless core) is the everyday one;
+`npm run smoke` drives a real window and a real host process, and `npm run e2e` is
+the only layer that can verify §15's acceptance criteria, including closing the
+app and relaunching it to prove a transcript survived. Tests that need a local
+model **skip loudly** rather than passing: a criterion whose test was skipped is
+not a criterion that holds.
 
-Three processes per workspace, not two: the app holds no session state, the host
-owns sessions and the log, and a forked agent host runs the loops and tools. A
-crashing adapter cannot take down the session, and a closing window cannot take
-down the run.
+## Where to read more
+
+**[DESIGN.md](DESIGN.md) is the real specification** — 17 sections, including what
+is deliberately unfinished and why. Read §1–§3 for the architecture, §5 for
+durability, §6.4 and §8 for the host model, §13 for permissions, §15 for phase
+status. The load-bearing decision behind all of it is that **the append-only event
+log is the source of truth**: `rehydrate()` reconstructs context from that log for
+a moved folder, a migrated machine, a switched provider and a resumed quota
+window, and doubles as the in-session compactor, so the durable path is exercised
+constantly and cannot rot.
 
 ## A note on the workspace
 
@@ -392,16 +256,20 @@ works the same either way.
 
 ## Licence
 
-Apache License 2.0 — see [LICENSE](LICENSE). Chosen over MIT for two things it
-adds: an explicit patent grant, and a trademark clause, so the code can be forked
-freely while the name stays with the project.
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Chosen over MIT
+for two things it adds: an explicit patent grant, and a trademark clause, so the
+code can be forked freely while the name stays with the project.
 
-**One dependency is not open source.** `@anthropic-ai/claude-agent-sdk` is
-published under Anthropic's own terms and covers the optional `claude-agent-sdk`
-runtime adapter. It is a *build* dependency, not a runtime one — nothing this
-project distributes contains it. `dist/install-agbrte.sh` carries only the CLI,
-the session host, and the agent host, and `npm run package` refuses to build the
-installer if any Anthropic code appears in them, so the exclusion cannot lapse by
-accident. Anyone wanting that adapter installs the SDK themselves and accepts
-Anthropic's terms directly. Everything else in the tree is MIT, ISC, BSD, 0BSD or
-public domain. See [NOTICE](NOTICE).
+**The one proprietary dependency is gone.** `@anthropic-ai/claude-agent-sdk`,
+published under Anthropic's own terms, was a build dependency of an in-process
+adapter; both were removed (DESIGN.md §3.14). It reached no shipped bundle — but
+only because the adapter importing it happened not to be registered in a headless
+entry point, and an accident that holds is not a guarantee. So the licence gate in
+`npm run package`, which refuses to build the installer if any Anthropic code
+appears in the bundles, stays now that the dependency is gone: the next
+proprietary SDK will arrive as a convenience inside one adapter, and that script
+is where redistribution would actually happen.
+
+Every runtime dependency — React, `react-dom`, zustand, one Radix component,
+xterm, `node-pty`, `electron-updater` — is MIT. The wider build tree is permissive
+but not uniformly one licence; [NOTICE](NOTICE) carries the attribution.

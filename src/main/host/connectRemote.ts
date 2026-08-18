@@ -130,8 +130,9 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
   }
 
   if (probe.bundleVersion !== opts.bundleVersion) {
-    // Version-stamped rather than always uploaded: the bundle is ~100 KB, and
-    // re-sending it on every attach is a needless round trip on a slow link.
+    // Version-stamped rather than always uploaded: the bundle is a few hundred
+    // kilobytes, and re-sending it on every attach is a needless round trip on
+    // a slow link.
     report('deploying the host');
     await uploadHostBundle(runner, opts.alias, probe.home, opts.bundles, opts.bundleVersion);
   }
