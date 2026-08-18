@@ -29,6 +29,16 @@ import type { JSX } from 'react';
 
 export interface WelcomeProps {
   hasHosts: boolean;
+  /**
+   * Whether this fleet has any session at all, loaded or on disk.
+   *
+   * The primary button is for an empty app. Once sessions exist the way in is
+   * to open one — they are listed a few inches to the left — and a large
+   * accent button offering to make *another* competes with the list for the
+   * eye while being the rarer intent. The sidebar keeps `New session`, which
+   * is the same act where somebody with sessions would look for it.
+   */
+  hasSessions: boolean;
   /** The one-shot: folder, session, agent, chat (App.tsx `newSessionOneShot`). */
   onNewSession: () => void;
   /** True while that sequence is running, so the button says so. */
@@ -51,6 +61,7 @@ function greeting(hour: number): string {
 
 export function Welcome({
   hasHosts,
+  hasSessions,
   starting = false,
   onNewSession,
   onAttachLocal,
@@ -80,12 +91,15 @@ export function Welcome({
          * much else is offered underneath.
          */}
         <p className="text-muted text-sm leading-relaxed">
-          {hasHosts
-            ? 'Ready when you are. Start a session in a folder — or open one you already have, from the host list.'
-            : 'Welcome to Agbrte. Point it at a folder and you are working — it attaches the machine, opens a session and brings your usual agent.'}
+          {hasSessions
+            ? 'Ready when you are. Pick a session from the list, or start another with New session.'
+            : hasHosts
+              ? 'Ready when you are. Start a session in a folder — it brings your usual agent with it.'
+              : 'Welcome to Agbrte. Point it at a folder and you are working — it attaches the machine, opens a session and brings your usual agent.'}
         </p>
       </div>
 
+      {!hasSessions && (
       <div className="flex flex-wrap gap-2">
         {/*
          * The primary action, and the reason this screen is not a form.
@@ -104,6 +118,7 @@ export function Welcome({
           {starting ? 'Starting…' : 'New session in a folder…'}
         </button>
       </div>
+      )}
 
       {!hasHosts && (
         /* The longer way round, kept: a machine over ssh has no folder picker

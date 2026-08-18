@@ -235,7 +235,13 @@ export function AttachHost({
   const found = search?.result ?? null;
 
   return (
-    <div className="border-line grid gap-3 border-b p-4" data-testid="attach-panel">
+    /* `min-h-0` + its own scroll as the backstop: the list above is bounded,
+       but a short window can still leave this panel taller than the column it
+       sits in, and a flex child that cannot shrink overflows silently. */
+    <div
+      className="border-line grid max-h-[calc(100vh-16rem)] min-h-0 gap-3 overflow-y-auto border-b p-4"
+      data-testid="attach-panel"
+    >
       <div className="flex gap-2">
         {(['local', 'remote'] as const).map((m) => (
           <button
@@ -336,7 +342,18 @@ export function AttachHost({
               )}
 
               {found !== null && (
-                <>
+                /*
+                 * The results scroll, the controls do not.
+                 *
+                 * A machine with a dozen repositories and fourteen ordinary
+                 * folders makes this list longer than the sidebar, and the
+                 * panel is a flex child of a column that does not scroll — so
+                 * the overflow simply ran off the bottom of the window, taking
+                 * the Attach button with it and leaving no way to reach either.
+                 * Bounding the list keeps the field and the button in view,
+                 * which is the pair a person needs to finish the job.
+                 */
+                <div className="grid gap-3" data-testid="attach-found-list">
                 {GROUPS.map(({ kind, title, hint }) => {
                   const rows = found.candidates.filter((c) => c.kind === kind);
                   if (rows.length === 0) return null;
@@ -400,7 +417,7 @@ export function AttachHost({
                     {found.depth - 1 === 1 ? '' : 's'} down.
                   </p>
                 )}
-                </>
+                </div>
               )}
             </div>
           )}

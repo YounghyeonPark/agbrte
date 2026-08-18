@@ -41,6 +41,7 @@ import { StartGuide } from './StartGuide.js';
 import { Welcome } from './Welcome.js';
 import { About } from './About.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
+import { SetUpMachine } from './SetUpMachine.js';
 import { CapabilityBadges } from './CapabilityBadges.js';
 import { panelBadges, rowBadges, toolWarning, worthChecking } from './modelCapabilities.js';
 import { useAgbrte } from './store.js';
@@ -49,7 +50,13 @@ import { Preview } from './Preview.js';
 import { TerminalView } from './TerminalView.js';
 import { Shell, type ShellChoice } from './Shell.js';
 import { FileBrowser, FileViewer, VIEWER_DEFAULT } from './FileBrowser.js';
-import type { EndpointModelsDto, ModelInstallDto, SessionTemplateDto } from '@shared/ipc/contract.js';
+import type {
+  EndpointModelsDto,
+  ModelInstallDto,
+  SessionTemplateDto,
+  SetupOutcomeDto,
+  SetupPlanDto,
+} from '@shared/ipc/contract.js';
 import CATALOGUE from '../shared/models/catalogue.json' with { type: 'json' };
 import type { HostInfo, RuntimeInfo } from '../shared/ipc/contract.js';
 import type {
@@ -979,6 +986,9 @@ export function App(): JSX.Element {
              explanation waits under the button that names it (Welcome.tsx). */
           <Welcome
             hasHosts={hosts.length > 0}
+            /* On disk counts: a session nobody has resumed this launch is
+               still a session, and it is listed in the sidebar as one. */
+            hasSessions={sessions.length > 0 || onDisk.length > 0}
             starting={starting !== null}
             onNewSession={() => void newSessionOneShot()}
             onAttachLocal={() => setAttaching('local')}
@@ -1061,6 +1071,7 @@ export function App(): JSX.Element {
                     window.agbrte.hosts.installModel(active.instanceId, endpointId, tag)
                   }
                   installProgress={() => window.agbrte.hosts.installProgress(active.instanceId)}
+                  machine={machineFor(active.instanceId, activeHost)}
                   // Remembering on success is what makes the *next* session
                   // skip this form entirely (agentDefaults.ts).
                   onAdd={addAgentRemembering}
@@ -1122,6 +1133,7 @@ export function App(): JSX.Element {
                         window.agbrte.hosts.installModel(active.instanceId, endpointId, tag)
                       }
                       installProgress={() => window.agbrte.hosts.installProgress(active.instanceId)}
+                      machine={machineFor(active.instanceId, activeHost)}
                       // Success saves the choice as the new default and closes
                       // the form; failure leaves it open with the error banner.
                       onAdd={addAgentRemembering}
@@ -1977,6 +1989,40 @@ function ModelCapabilities({
   );
 }
 
+/**
+ * How the picker reaches the machine behind a host (§6.4).
+ *
+ * A tiny adapter rather than three props, because two of the three are the same
+ * `window.agbrte` call at both call sites and the third — naming the machine —
+ * is the one that is easy to get subtly wrong. `label` is the ssh alias for a
+ * remote, which is exactly what a refusal from `runSetup` will name; for a local
+ * host it is the workspace's folder, which would read as "could not install
+ * Claude Code on my-project". `this machine` is both truthful and the string
+ * main passes to the provisioner for that case, so the two sides agree.
+ *
+ * The progress subscription is **filtered by host**. Setting up two machines at
+ * once is unusual and entirely possible, and an unfiltered listener would show
+ * one machine's steps under the other's name — a wrong sentence, not a missing
+ * one.
+ */
+function machineFor(
+  instanceId: string,
+  host: HostInfo | undefined,
+): {
+  where: string;
+  setUp: (plan: SetupPlanDto) => Promise<SetupOutcomeDto>;
+  subscribeProgress: (cb: (step: string) => void) => () => void;
+} {
+  return {
+    where: host === undefined || host.targetKind === 'local' ? 'this machine' : host.label,
+    setUp: (plan) => window.agbrte.hosts.setUp(instanceId, plan),
+    subscribeProgress: (cb) =>
+      window.agbrte.on.setup((p) => {
+        if (p.instanceId === instanceId) cb(p.step);
+      }),
+  };
+}
+
 function AgentPicker({
   runtimes,
   notes,
@@ -1986,6 +2032,7 @@ function AgentPicker({
   checkModel,
   installModel,
   installProgress,
+  machine,
   onAdd,
   submitLabel,
   busy,
@@ -2015,6 +2062,20 @@ function AgentPicker({
   checkModel: (endpointId: string, modelId: string) => Promise<ModelCapabilityHint | null>;
   installModel: (endpointId: string, tag: string) => Promise<void>;
   installProgress: () => Promise<ModelInstallDto[]>;
+  /**
+   * The machine behind this host, and how to change it (§6.4).
+   *
+   * Passed in rather than reached for, like every other capability this
+   * component uses: the picker is the screen that *notices* a machine has
+   * nothing on it, and putting the remedy anywhere else means somebody has to
+   * know to go looking for it. `where` is what a refusal will name, so it comes
+   * from the same place the host record does.
+   */
+  machine: {
+    where: string;
+    setUp: (plan: SetupPlanDto) => Promise<SetupOutcomeDto>;
+    subscribeProgress: (cb: (step: string) => void) => () => void;
+  };
   onAdd: (runtimeId: string, modelId: string | null, endpointId?: string) => Promise<void>;
   /**
    * What the submit button says.
@@ -2309,6 +2370,24 @@ function AgentPicker({
     <div className="m-auto grid w-full max-w-md gap-3 p-6" data-testid="picker">
       <h3 className="text-sm">Add an agent</h3>
 
+      {/*
+        The remedy, above everything it is a remedy for.
+
+        Rendered even when `runtimes` is empty — *especially* then. A host whose
+        agent host failed to start reports nothing, and the sentence below it
+        ("nothing can run here") was previously the end of the screen. It is now
+        the first thing with a button under it.
+      */}
+      <SetUpMachine
+        where={machine.where}
+        notes={notes}
+        endpoints={endpoints}
+        anyModels={knownModels.length > 0}
+        anyCli={runtimes.some((r) => r.id.startsWith('cli:'))}
+        setUp={machine.setUp}
+        subscribeProgress={machine.subscribeProgress}
+      />
+
       {runtimes.length === 0 ? (
         <p className="text-muted text-xs">
           This host has not reported any runtimes. If it failed to start, nothing can run here.
@@ -2460,7 +2539,28 @@ function AgentPicker({
                     Suggested models · verified {CATALOGUE.verifiedAt}
                   </span>
 
-                  {installTarget === undefined ? (
+                  {endpoints.length === 0 ? (
+                    /*
+                      No endpoint at all is a different sentence, and it used not
+                      to have one.
+
+                      The catalogue below is a list of things to install *into*
+                      an endpoint. With none, the fallback note said "this
+                      endpoint serves models but does not install them" — a
+                      sentence about an endpoint that does not exist — and the
+                      other branch offered "Refresh to find out whether this host
+                      can install models", which no amount of refreshing can
+                      answer. Both read as a feature that is nearly working. The
+                      honest answer is that the list is inert until something is
+                      pointed at, and the two ways to point at something are
+                      three inches above.
+                    */
+                    <p className="text-muted m-0 text-[11px]" data-testid="no-endpoint">
+                      This host has no model endpoint, so there is nothing to install a model
+                      into. Use “Set up {machine.where}” above to install Ollama on that machine
+                      or add an API endpoint — then this list will work.
+                    </p>
+                  ) : installTarget === undefined ? (
                     /*
                       Said rather than shown as a dead button.
 
@@ -2475,7 +2575,7 @@ function AgentPicker({
                     </p>
                   ) : null}
 
-                  <div className="grid gap-1">
+                  <div className="grid gap-1" data-testid="catalogue" data-inert={endpoints.length === 0 ? 'true' : undefined}>
                     {CATALOGUE.models.map((m) => {
                       const here = knownModels.includes(m.tag);
                       const run = installs.find((i) => i.tag === m.tag);

@@ -12,8 +12,9 @@
  */
 
 import { expect, test, type Page } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 import { readFile, rm, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { launch, makeRepo, modelAvailable, warmModel } from './harness.js';
 import {
   addAgent,
@@ -162,6 +163,51 @@ test.describe('the shell', () => {
       expect(await runtimeOptions(agbrte.window)).toEqual(
         expect.arrayContaining(['echo', 'agbrte-harness']),
       );
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('offers to start one only when there is none to open', async () => {
+    /*
+     * The greeting's button is for an empty app.
+     *
+     * This is the state a returning person actually opens into: sessions on
+     * disk, none resumed yet, so the main pane greets rather than showing a
+     * dashboard. A large accent button offering to make *another* competes
+     * with the list of the ones they came back for, while being the rarer
+     * intent — so it is absent here and the sidebar keeps the same act.
+     *
+     * The session is made by the CLI rather than through the window, because
+     * a session created in the app is also *open* in it, and this is about
+     * the screen you get when none is.
+     */
+    const repo = await makeRepo();
+    execFileSync(
+      process.execPath,
+      [resolve('dist/cli/agbrte.js'), 'run', repo, '--runtime', 'echo', '--title', 'made earlier', 'go'],
+      { stdio: 'ignore', env: { ...process.env, AGBRTE_HOST_LINGER_MS: '500' } },
+    );
+    /*
+     * Wait for that host to go.
+     *
+     * A host outlives the command that used it, and a session it still holds
+     * is *loaded* — which is the dashboard's state, not the greeting's. The
+     * short linger above is what makes this a wait rather than a hope.
+     */
+    await new Promise((done) => setTimeout(done, 3_000));
+    const agbrte = await launch(repo);
+
+    try {
+      const welcome = agbrte.window.locator('[data-testid=welcome]');
+      await expect(welcome).toBeVisible({ timeout: 25_000 });
+      await expect(agbrte.window.locator('[data-testid=session]').first()).toBeVisible();
+
+      await expect(welcome.locator('[data-testid=welcome-new-session]')).toHaveCount(0);
+      await expect(welcome).toContainText('Pick a session');
+      // The act itself did not go away, only its second copy.
+      await expect(agbrte.window.locator('[data-testid=new-session-oneshot]')).toBeVisible();
     } finally {
       await agbrte.close();
       await rm(repo, { recursive: true, force: true });
@@ -739,6 +785,7 @@ test.describe('the first screen, the guide, and about', () => {
 
       await createSession(agbrte.window, 'Guide check');
       await expect(welcome).toBeHidden();
+
 
       // The fast path is an addition, so the granular controls it shortcuts are
       // still here — and the header button survives a session being open, which

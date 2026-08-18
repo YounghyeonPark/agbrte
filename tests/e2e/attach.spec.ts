@@ -116,6 +116,32 @@ test.describe('remote workspaces are offered, not asked for', () => {
        * change removes.
        */
       await expect(page.locator('[data-testid=attach-found]')).toBeVisible();
+
+      /*
+       * The list scrolls; the controls do not.
+       *
+       * A machine with two dozen folders made this panel taller than the
+       * sidebar, and the column it sits in does not scroll — so the overflow
+       * ran off the bottom of the window, taking the Attach button with it.
+       * Asserting the *button* is reachable is the property; the scrollbox is
+       * how it is kept.
+       */
+      const list = page.locator('[data-testid=attach-found-list]');
+      await expect(list).toBeVisible();
+      // `page.viewportSize()` is null for an Electron window, so the height
+      // comes from the page itself rather than from Playwright's idea of it.
+      // `globalThis` rather than `window`: this file is typechecked by the node
+      // project, which has no DOM lib, and the expression runs in the page.
+      const height = await page.evaluate(
+        () => (globalThis as unknown as { innerHeight: number }).innerHeight,
+      );
+      const panelBox = await page.locator('[data-testid=attach-panel]').boundingBox();
+      expect(panelBox!.y + panelBox!.height).toBeLessThanOrEqual(height + 1);
+      // And everything in it is reachable by scrolling the panel — which is
+      // what was lost: the button ran off the window with nothing to scroll.
+      const go = page.locator('[data-testid=attach-remote-go]');
+      await go.scrollIntoViewIfNeeded();
+      await expect(go).toBeInViewport();
       await expect(page.locator('[data-testid=attach-group-devagents]')).toContainText(
         '/home/dev/agbrte-build-01',
       );
@@ -191,6 +217,32 @@ test.describe('remote workspaces are offered, not asked for', () => {
       const page = agbrte.window;
       await openRemote(page);
       await expect(page.locator('[data-testid=attach-found]')).toBeVisible();
+
+      /*
+       * The list scrolls; the controls do not.
+       *
+       * A machine with two dozen folders made this panel taller than the
+       * sidebar, and the column it sits in does not scroll — so the overflow
+       * ran off the bottom of the window, taking the Attach button with it.
+       * Asserting the *button* is reachable is the property; the scrollbox is
+       * how it is kept.
+       */
+      const list = page.locator('[data-testid=attach-found-list]');
+      await expect(list).toBeVisible();
+      // `page.viewportSize()` is null for an Electron window, so the height
+      // comes from the page itself rather than from Playwright's idea of it.
+      // `globalThis` rather than `window`: this file is typechecked by the node
+      // project, which has no DOM lib, and the expression runs in the page.
+      const height = await page.evaluate(
+        () => (globalThis as unknown as { innerHeight: number }).innerHeight,
+      );
+      const panelBox = await page.locator('[data-testid=attach-panel]').boundingBox();
+      expect(panelBox!.y + panelBox!.height).toBeLessThanOrEqual(height + 1);
+      // And everything in it is reachable by scrolling the panel — which is
+      // what was lost: the button ran off the window with nothing to scroll.
+      const go = page.locator('[data-testid=attach-remote-go]');
+      await go.scrollIntoViewIfNeeded();
+      await expect(go).toBeInViewport();
 
       await page.locator('[data-testid=attach-alias]').fill('slow-01');
       // A still panel for as long as a bounded command can take reads as a hang.
