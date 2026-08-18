@@ -397,12 +397,25 @@ describe('a clip stays on the machine that recorded it', () => {
    * session rehydrated.
    */
   let dir: string;
+  /**
+   * The `mkdtemp` root, which is what has to be removed.
+   *
+   * `dir` is a `clips` *subdirectory* of it, because a `ClipStore` is given a
+   * path it may create rather than one that already exists. Removing `dir` left
+   * the temp directory that contained it behind on every test in this block —
+   * 738 empty `agbrte-clips-*` folders on one developer's machine before anyone
+   * looked, one per test per suite run, growing forever. Nothing failed, which
+   * is why it lasted: a leak with no assertion attached to it is only ever found
+   * by looking.
+   */
+  let root: string;
 
   beforeEach(async () => {
-    dir = join(await mkdtemp(join(tmpdir(), 'agbrte-clips-')), 'clips');
+    root = await mkdtemp(join(tmpdir(), 'agbrte-clips-'));
+    dir = join(root, 'clips');
   });
   afterEach(async () => {
-    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
   const wav = (n: number): Buffer => Buffer.from(encodeWav(new Int16Array(n)));

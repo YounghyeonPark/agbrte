@@ -42,6 +42,33 @@ async function workspace(): Promise<{ root: string; servers: PreviewServers }> {
 }
 
 /**
+ * A fixture script on disk.
+ *
+ * **`.cjs`, and the extension is the entire point.** These fixtures live under
+ * `os.tmpdir()`, and Node decides whether a `.js` file is CommonJS or ESM by
+ * walking *up* from it to the nearest `package.json` — through directories this
+ * test does not own, did not create, and cannot see. One stray
+ * `{"type": "module"}` anywhere above the temp directory silently turns every
+ * fixture here into an ES module, at which point `require` is not defined and
+ * the script dies on line 1, before doing the thing the test is about.
+ *
+ * Not hypothetical. A copy of this project's own `package.json` sat in `%TEMP%`
+ * on a developer machine for three days and broke exactly one test in a suite of
+ * 1442 — the grandchild test below, the only one whose fixture used `require`.
+ * It failed identically on a clean tree, because the cause was not in the tree.
+ * `.cjs` states what the file is *in the file*, so nothing above it gets a vote;
+ * `mcp.test.ts` reached the same conclusion earlier and this is why.
+ *
+ * Everything goes through here rather than through a bare `writeFile` so the
+ * rule is structural: there is no way to add a fixture and forget.
+ */
+async function fixture(root: string, name: string, body: string): Promise<string> {
+  const path = join(root, `${name}.cjs`);
+  await writeFile(path, body, 'utf8');
+  return path;
+}
+
+/**
  * A script on disk, run as `node <path>`.
  *
  * Not `node -e '…'`: a one-liner has to survive `cmd.exe` on Windows and `sh`
@@ -50,9 +77,7 @@ async function workspace(): Promise<{ root: string; servers: PreviewServers }> {
  * closer to what a real preview command is.
  */
 async function script(root: string, name: string, body: string): Promise<string> {
-  const path = join(root, name);
-  await writeFile(path, body, 'utf8');
-  return `node "${path}"`;
+  return `node "${await fixture(root, name, body)}"`;
 }
 
 const FOREVER = 'setInterval(() => {}, 1000);';
@@ -60,7 +85,7 @@ const FOREVER = 'setInterval(() => {}, 1000);';
 describe('it belongs to the host, not to a turn', () => {
   it('keeps a server running past the call that started it', async () => {
     const { root, servers } = await workspace();
-    const cmd = await script(root, 'up.js', `console.log('listening on 3000');\n${FOREVER}`);
+    const cmd = await script(root, 'up', `console.log('listening on 3000');\n${FOREVER}`);
     const started = servers.start('s1', cmd);
 
     expect(started.pid).toBeGreaterThan(0);
@@ -78,7 +103,7 @@ describe('it belongs to the host, not to a turn', () => {
     // Two servers racing for one port produce `EADDRINUSE`, which points at
     // neither of them.
     const { root, servers } = await workspace();
-    const cmd = await script(root, 'twice.js', FOREVER);
+    const cmd = await script(root, 'twice', FOREVER);
     const first = servers.start('s1', cmd);
     const second = servers.start('s1', cmd);
     expect(second.id).toBe(first.id);
@@ -98,7 +123,7 @@ describe('the log is the answer to “nothing is listening”', () => {
     const { root, servers } = await workspace();
     const cmd = await script(
       root,
-      'crash.js',
+      'crash',
       `console.error('Error: listen EADDRINUSE 0.0.0.0:3000');\nprocess.exit(1);\n`,
     );
     const dead = servers.start('s1', cmd);
@@ -114,7 +139,7 @@ describe('the log is the answer to “nothing is listening”', () => {
     // Most dev servers print progress without a trailing newline while starting,
     // which is the moment there is most to see.
     const { root, servers } = await workspace();
-    const cmd = await script(root, 'partial.js', `process.stdout.write('compiling...');\n${FOREVER}`);
+    const cmd = await script(root, 'partial', `process.stdout.write('compiling...');\n${FOREVER}`);
     const s = servers.start('s1', cmd);
     await until(() => (servers.log(s.id)?.lines ?? []).some((l) => l.includes('compiling')));
   }, 30_000);
@@ -126,7 +151,7 @@ describe('the log is the answer to “nothing is listening”', () => {
     const many = LOG_LINES + 50;
     const cmd = await script(
       root,
-      'chatty.js',
+      'chatty',
       `for (let i = 0; i < ${many}; i++) console.log('line ' + i);\n${FOREVER}`,
     );
     const s = servers.start('s1', cmd);
@@ -176,16 +201,16 @@ describe('stopping reaches the process that holds the port', () => {
      */
     const { root, servers } = await workspace();
     const marker = join(root, 'alive.txt');
-    await writeFile(
-      join(root, 'inner.js'),
+    const inner = await fixture(
+      root,
+      'inner',
       `const fs = require('node:fs');\n` +
         `setInterval(() => fs.writeFileSync(${JSON.stringify(marker)}, String(Date.now())), 100);\n`,
-      'utf8',
     );
     const cmd = await script(
       root,
-      'outer.js',
-      `require('node:child_process').spawn(process.execPath, [${JSON.stringify(join(root, 'inner.js'))}], { stdio: 'ignore' });\n` +
+      'outer',
+      `require('node:child_process').spawn(process.execPath, [${JSON.stringify(inner)}], { stdio: 'ignore' });\n` +
         FOREVER,
     );
 
@@ -199,6 +224,26 @@ describe('stopping reaches the process that holds the port', () => {
     };
 
     /**
+     * What the parent said, for a wait that runs out.
+     *
+     * The supervisor has been collecting the parent's output all along — that is
+     * its whole job — so a timeout here can quote the reason instead of naming
+     * the timer. It cost three days not to: `condition never held within
+     * 20000ms` at line 236 was read as "the kill is broken on Windows", when
+     * `outer` had died instantly with a `ReferenceError` that was sitting in
+     * `servers.log(parent.id)` the entire time, one call away.
+     */
+    const parentSaid = (): string => {
+      const record = servers.list('s1').find((s) => s.id === parent.id);
+      const said = servers.log(parent.id)?.lines.join('\n').trim() ?? '';
+      return [
+        `the grandchild never wrote ${marker}.`,
+        `parent pid=${String(record?.pid)} exit=${JSON.stringify(record?.exit)}`,
+        said === '' ? 'parent said nothing at all' : `parent said:\n${said}`,
+      ].join('\n');
+    };
+
+    /**
      * Liveness is established by *waiting for it*, not by sleeping and hoping.
      *
      * The first version read the marker once, slept, read again and asserted it
@@ -208,26 +253,37 @@ describe('stopping reaches the process that holds the port', () => {
      * wrong. Waiting for the value to *change* proves the writer is running,
      * whatever the machine's mood.
      */
-    await until(async () => (await stamp()) !== '', 20_000);
+    await until(async () => (await stamp()) !== '', 20_000, parentSaid);
     const first = await stamp();
-    await until(async () => (await stamp()) !== first, 20_000);
+    await until(async () => (await stamp()) !== first, 20_000, parentSaid);
 
     expect(servers.stop(parent.id)).toBe(true);
 
-    // A sleep is right *here* and nowhere else in this test: the claim is that
-    // nothing happens for a while, and there is no fact to poll for. An absence
-    // only means something if you waited.
+    /**
+     * A sleep is right *here* and nowhere else in this test: the claim is that
+     * nothing happens for a while, and there is no fact to poll for. An absence
+     * only means something if you waited.
+     *
+     * The marker is **deleted** rather than merely re-read. "The contents
+     * stopped changing" is a weaker claim than it looks — a writer that is
+     * merely descheduled, or one whose clock has not ticked, satisfies it too,
+     * so the test could pass with the grandchild alive and still on the port. A
+     * writer that is actually running recreates this file within 100 ms; one
+     * that is gone never does. That is the invariant the port cares about: no
+     * descendant of the killed process survived, whatever the mechanism that was
+     * supposed to reach it.
+     */
     await new Promise((r) => setTimeout(r, 1_500));
-    const after = await stamp();
+    await rm(marker, { force: true, maxRetries: 5, retryDelay: 50 });
 
-    await new Promise((r) => setTimeout(r, 800));
-    expect(await stamp(), 'the grandchild outlived the kill and still holds the port').toBe(after);
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(await stamp(), 'the grandchild outlived the kill and still holds the port').toBe('');
   }, 60_000);
 
   it('stops everything a session started', async () => {
     const { root, servers } = await workspace();
-    const a = await script(root, 'a.js', FOREVER);
-    const b = await script(root, 'b.js', FOREVER);
+    const a = await script(root, 'a', FOREVER);
+    const b = await script(root, 'b', FOREVER);
     servers.start('s1', a);
     servers.start('s1', b);
     servers.start('s2', a);
@@ -240,7 +296,7 @@ describe('stopping reaches the process that holds the port', () => {
 
   it('is a no-op for something already gone', async () => {
     const { root, servers } = await workspace();
-    const cmd = await script(root, 'quick.js', 'process.exit(0);\n');
+    const cmd = await script(root, 'quick', 'process.exit(0);\n');
     const s = servers.start('s1', cmd);
     await until(() => servers.list('s1')[0]?.exit !== null, 15_000);
     expect(servers.stop(s.id)).toBe(true); // found, already dead
@@ -253,7 +309,7 @@ describe('stopping reaches the process that holds the port', () => {
     // Dropping the record of a live process would leave it running with nothing
     // holding its handle — unkillable through this API, and invisible.
     const { root, servers } = await workspace();
-    const cmd = await script(root, 'live.js', FOREVER);
+    const cmd = await script(root, 'live', FOREVER);
     const s = servers.start('s1', cmd);
     expect(servers.forget(s.id)).toBe(false);
     expect(servers.list('s1')).toHaveLength(1);

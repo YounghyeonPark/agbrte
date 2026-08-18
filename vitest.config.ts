@@ -14,5 +14,8 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    // Suite-wide defaults for the processes tests start but do not own — see the
+    // file, which is one assignment and a long explanation of why it is there.
+    setupFiles: [resolve(here, 'tests/support/setup.ts')],
   },
 });

@@ -23,12 +23,27 @@
  */
 
 /** Poll until `what` holds, or fail saying so. */
-export async function until(what: () => boolean | Promise<boolean>, ms = 5_000): Promise<void> {
+export async function until(
+  what: () => boolean | Promise<boolean>,
+  ms = 5_000,
+  /**
+   * What to say when it never held, gathered only on failure.
+   *
+   * `condition never held within 20000ms` names the wait and nothing else, and
+   * a wait for another process to do something has an answer sitting right
+   * there — its output, its exit code — that the bare message throws away. One
+   * test spent three days failing with that line while the process it was
+   * waiting for had been printing a `ReferenceError` the whole time. Optional,
+   * because most conditions are about this process and need no explaining.
+   */
+  diagnose?: () => string | Promise<string>,
+): Promise<void> {
   const deadline = Date.now() + ms;
   for (;;) {
     if (await what()) return;
     if (Date.now() > deadline) {
-      throw new Error(`condition never held within ${ms}ms`);
+      const because = diagnose === undefined ? '' : `\n${await diagnose()}`;
+      throw new Error(`condition never held within ${ms}ms${because}`);
     }
     // Short, because the point is to finish as soon as the fact is true. The
     // cost of polling briskly is nothing; the cost of a long interval is that
