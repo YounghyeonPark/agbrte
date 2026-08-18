@@ -80,7 +80,16 @@ export function Inbox({
 
       {open && (
         <div
-          className="bg-panel absolute right-0 z-10 mt-1 max-h-96 w-96 overflow-y-auto rounded border border-white/10 shadow-lg"
+          /*
+           * Anchored left, not right, because this button lives in a 300px
+           * column and the panel is 384px wide: pinning its right edge sent
+           * the other 84px past the left of the window, where the entries
+           * painted as clipped fragments over the sidebar. Opening rightwards
+           * lets it lie over the main pane, which is what a dropdown does.
+           * The viewport cap is for the narrow layout, where the sidebar is
+           * the whole screen.
+           */
+          className="bg-panel absolute left-0 z-20 mt-1 max-h-96 w-96 max-w-[calc(100vw-2rem)] overflow-y-auto rounded border border-white/10 shadow-lg"
           data-testid="inbox-list"
         >
           {entries.length === 0 ? (
