@@ -7,9 +7,10 @@
  * palette entirely, and hand-rolling a styled replacement means writing the
  * roving focus, type-ahead, and escape handling that Radix already has right.
  *
- * One list, not two: an option names *what will run* — a model on an endpoint,
- * or a runtime that needs neither — and the runtime falls out of it. See
- * `AgentChoice` in App.tsx for why the two questions collapsed into one.
+ * One list, and now the *only* list: an option names *what will run* — a model
+ * on an endpoint, a runtime that needs neither, or a model that is not on that
+ * machine yet — and the runtime falls out of it. See `buildEntries` in
+ * `setupRoutes.ts` for why three separate screens collapsed into this one.
  *
  * `data-testid` on the trigger and each item, because Radix renders items into a
  * portal outside this component's DOM — a test cannot reach them by descending
@@ -44,17 +45,55 @@ export interface RuntimeOption {
    * name is the model.
    */
   badges?: CapabilityBadge[];
+  /**
+   * The second line: what this model is, or why a CLI is not offered yet.
+   *
+   * Outside `ItemText` for the same reason as the badges — Radix matches
+   * type-ahead against that element, and a sentence in it would make typing
+   * `qwen` stop matching. Kept rather than moved under the control, because the
+   * popper opens over exactly the space under the trigger: a description shown
+   * there is a description nobody can read while choosing.
+   */
+  note?: string;
+  /** Which group this belongs to; the select renders one heading per group. */
+  group?: string;
+  /**
+   * What pressing the button after choosing this will do, for the DOM.
+   *
+   * `data-runtime` and `data-model` are deliberately *absent* from an entry that
+   * has to be installed first: they mean "this host advertised this", which is
+   * exactly what an install entry is not, and the e2e helper that picks a model
+   * by those two attributes would otherwise select a four-minute download by
+   * accident. An install entry is addressed by its value or by this.
+   */
+  plan?: string;
+}
+
+/** A group of options, with the heading that says what the group means. */
+export interface RuntimeGroup {
+  id: string;
+  label: string;
+  options: RuntimeOption[];
 }
 
 export function RuntimeSelect({
   value,
   onChange,
-  options,
+  groups,
 }: {
   value: string;
   onChange: (value: string) => void;
-  options: RuntimeOption[];
+  /**
+   * The list, in two parts: what is ready, and what has to be fetched first.
+   *
+   * Groups rather than a flag on each row because the heading is the warning —
+   * "Will be installed first" above four rows says once, structurally, what four
+   * separate badges would say four times and still not rank. Empty groups are
+   * dropped rather than rendered as a heading with nothing under it.
+   */
+  groups: RuntimeGroup[];
 }): JSX.Element {
+  const options = groups.flatMap((g) => g.options);
   const selected = options.find((o) => o.value === value);
 
   return (
@@ -94,43 +133,67 @@ export function RuntimeSelect({
            * popper is left to place something taller than the window: entries
            * end up off-screen — the *first* one included, once shifting runs out
            * of room — where they can be seen and not clicked. It went unnoticed
-           * while every row was one line, and the capability badges below make
-           * each model row two; a host serving five models is then past the
-           * edge. The height is a property of the viewport, so it is read from
-           * Radix's own measurement rather than guessed at in `rem`.
+           * while every row was one line; the badges made model rows two, and the
+           * descriptions make catalogue rows two, so a host with a dozen entries
+           * is well past the edge. The height is a property of the viewport, so
+           * it is read from Radix's own measurement rather than guessed at.
            */
           className="bg-panel border-line z-50 max-h-[var(--radix-select-content-available-height)] overflow-hidden rounded-[2px] border shadow-lg"
         >
           {/* Radix gives the viewport `overflow: auto`; the cap above is what
               gives it something to scroll. */}
           <Select.Viewport className="p-1">
-            {options.map((option) => (
-              <Select.Item
-                key={option.value}
-                value={option.value}
-                data-testid="runtime-option"
-                data-value={option.value}
-                {...(option.runtimeId !== undefined ? { 'data-runtime': option.runtimeId } : {})}
-                {...(option.modelId !== undefined && option.modelId !== null
-                  ? { 'data-model': option.modelId }
-                  : {})}
-                {...(option.typed === true ? { 'data-typed': 'true' } : {})}
-                className="text-ink data-highlighted:bg-raised cursor-pointer rounded px-3 py-2 text-sm outline-hidden select-none"
-              >
-                <Select.ItemText>
-                  {option.label}
-                  {/* Inside ItemText, so Radix's type-ahead matches what is read
-                      — two endpoints can serve the same model name, and the
-                      hint is the only thing telling those entries apart. */}
-                  {option.hint !== undefined && <span className="text-muted"> · {option.hint}</span>}
-                </Select.ItemText>
-                {option.badges !== undefined && option.badges.length > 0 && (
-                  <span className="mt-0.5 flex flex-wrap gap-1">
-                    <CapabilityBadges badges={option.badges} />
-                  </span>
-                )}
-              </Select.Item>
-            ))}
+            {groups
+              .filter((group) => group.options.length > 0)
+              .map((group) => (
+                <Select.Group key={group.id} data-testid="runtime-group" data-group={group.id}>
+                  <Select.Label className="text-muted px-3 py-1 text-[10px] tracking-wider uppercase">
+                    {group.label}
+                  </Select.Label>
+                  {group.options.map((option) => (
+                    <Select.Item
+                      key={option.value}
+                      value={option.value}
+                      data-testid="runtime-option"
+                      data-value={option.value}
+                      data-group={group.id}
+                      {...(option.plan !== undefined ? { 'data-plan': option.plan } : {})}
+                      {...(option.runtimeId !== undefined
+                        ? { 'data-runtime': option.runtimeId }
+                        : {})}
+                      {...(option.modelId !== undefined && option.modelId !== null
+                        ? { 'data-model': option.modelId }
+                        : {})}
+                      {...(option.typed === true ? { 'data-typed': 'true' } : {})}
+                      className="text-ink data-highlighted:bg-raised cursor-pointer rounded px-3 py-2 text-sm outline-hidden select-none"
+                    >
+                      <Select.ItemText>
+                        {option.label}
+                        {/* Inside ItemText, so Radix's type-ahead matches what is
+                            read — two endpoints can serve the same model name,
+                            and the hint is the only thing telling those entries
+                            apart. */}
+                        {option.hint !== undefined && (
+                          <span className="text-muted"> · {option.hint}</span>
+                        )}
+                      </Select.ItemText>
+                      {option.note !== undefined && (
+                        <span
+                          className="text-muted mt-0.5 block text-[11px]"
+                          data-testid="runtime-option-note"
+                        >
+                          {option.note}
+                        </span>
+                      )}
+                      {option.badges !== undefined && option.badges.length > 0 && (
+                        <span className="mt-0.5 flex flex-wrap gap-1">
+                          <CapabilityBadges badges={option.badges} />
+                        </span>
+                      )}
+                    </Select.Item>
+                  ))}
+                </Select.Group>
+              ))}
           </Select.Viewport>
         </Select.Content>
       </Select.Portal>

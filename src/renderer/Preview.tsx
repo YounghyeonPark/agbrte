@@ -7,11 +7,21 @@
  * look at, and the only feedback loop left is asking it whether the page looks
  * right.
  *
- * ## Shown for remote sessions only
+ * ## Shown for remote sessions only, and only when asked for
  *
  * A local session's dev server is already on `localhost` and the user already
  * knows the port they started it on. Offering to "forward" it would be a button
  * that does nothing visible, which teaches people the feature does nothing.
+ *
+ * It is also **folded** now, behind `Ports` in the pane row beside `Files`
+ * (App.tsx, `portsOpen`). This row used to be permanently expanded above the
+ * roster and the transcript on every remote session, listing every port the
+ * host could see — on a shared build box, six of them, most belonging to
+ * somebody else's services. The feature is right and the placement was not: a
+ * session that has nothing to do with a web server should not open with a web
+ * server's controls. Nothing is announced while it is folded, for the reason
+ * recorded on `portsOpen`: the count would either be the noise itself, or would
+ * cost a poll of a machine to render a digit for a panel nobody has opened.
  *
  * ## "Nothing is answering" is a state, not an error
  *
@@ -98,10 +108,14 @@ export function Preview({
   return (
     // `shrink-0`: a fixed row beside the transcript, which is the only child of
     // the session column allowed to give up height (see SessionHeader).
-    <div className="border-line flex shrink-0 flex-wrap items-center gap-2 border-t px-3 py-2 text-xs">
+    <div
+      className="border-line flex shrink-0 flex-wrap items-center gap-2 border-t px-3 py-2 text-xs"
+      data-testid="ports-row"
+    >
       <span className="text-muted">Preview a port on that machine</span>
       <input
         className={FIELD}
+        data-testid="forward-port"
         value={port}
         inputMode="numeric"
         aria-label="Remote port to forward"
@@ -109,6 +123,7 @@ export function Preview({
       />
       <button
         className="border-line hover:border-accent rounded border px-2 py-1"
+        data-testid="forward-go"
         disabled={busy || port.trim() === ''}
         onClick={() => void open()}
       >
@@ -120,6 +135,8 @@ export function Preview({
         .map((f) => (
           <button
             key={f.port}
+            data-testid="detected-port"
+            data-port={f.port}
             className="border-line hover:border-accent text-muted rounded border border-dashed px-2 py-1"
             title={
               f.loopbackOnly
@@ -195,12 +212,14 @@ export function Preview({
         <span className="text-muted">Run a dev server there</span>
         <input
           className="bg-panel border-line focus:border-accent min-w-48 flex-1 rounded border px-2 py-1 text-xs outline-none"
+          data-testid="server-command"
           value={command}
           aria-label="Command to run on that machine"
           onChange={(e) => setCommand(e.target.value)}
         />
         <button
           className="border-line hover:border-accent rounded border px-2 py-1"
+          data-testid="server-start"
           disabled={busy || command.trim() === ''}
           onClick={() => {
             setError(null);

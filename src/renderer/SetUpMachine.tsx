@@ -1,385 +1,243 @@
 /**
- * Fixing the machine, from the screen that noticed it was broken (DESIGN.md
- * §6.4, §3.8, §6.5, §13).
+ * The two pieces of "set up this machine" that survived being absorbed into the
+ * picker (DESIGN.md §6.4, §3.7, §3.8, §6.5, §13).
  *
- * ## The screen this replaces
+ * ## Why there is no panel here any more
  *
- * A freshly attached ssh host gave `Add an agent` three sentences and no verbs:
- * *Claude Code … not detected on this host (ENOENT)*, *Gemini CLI … not detected
- * (ENOENT)*, *0 found. local: fetch failed*, and one runtime — the harness —
- * that cannot run without a model. Every sentence was accurate. Together they
- * described a dead end, and the app had the reach to fix all three and used it
- * only to report them. **A diagnosis with no remedy beside it is a worse screen
- * than a diagnosis with one, even when the diagnosis is perfect.**
+ * A freshly attached ssh host gave `Add an agent` three sentences and no verbs —
+ * *Claude Code … not detected (ENOENT)*, *Gemini CLI … not detected*, *0 found*
+ * — and the app had the reach to fix all three and used it only to report them.
+ * The remedy that answered it was a panel of routes, which was then cut to one
+ * obvious action, which was then re-ranked to put models first. Every version
+ * was an improvement and every version had the same flaw: **it was a second
+ * place to answer the question the picker underneath it was already asking.**
  *
- * ## Open when there is nothing to choose, closed otherwise
+ * The screen had three controls that all answered *what should run this
+ * session* — the set-up routes, the "what will run" dropdown, and a catalogue
+ * with its own Install buttons — and choosing between them required knowing
+ * which of our mechanisms applied to you. So the routes became entries in the
+ * one list (`setupRoutes.ts`, `buildEntries`), and the panel stopped existing.
  *
- * The panel is not a wizard and is not a step. Somebody whose machine already
- * has Claude Code should see a picker, not a setup form — so it is a disclosure,
- * and the *only* thing that opens it by itself is the state above: no installed
- * CLI and no model. That is the same rule the attach panel follows for its
- * search — the situation triggers it, not a click — and it fails the same way if
- * it is wrong: one extra closed row.
+ * What could not become a list entry is what is left here:
  *
- * ## Three routes, and why they look unequal
- *
- * They are unequal. Installing a CLI ends with something a person must still do
- * themselves — `claude` needs an interactive sign-in on that machine, and this
- * app's terminal pane is local-only — so it reports a follow-up sentence rather
- * than a tick. Installing Ollama ends with a working endpoint and then hands
- * over to the model browser that already exists. Adding an API endpoint is the
- * only one that both finishes the job and puts a credential on somebody else's
- * machine, which is stated at the moment of typing it rather than afterwards.
+ * - **`SetUpEndpoint`** — four fields and a credential, because a key cannot be
+ *   guessed from a menu selection. Selecting *Use a model API…* reveals it.
+ * - **`SetupProgress`** — the host's own words while something is being
+ *   installed, its failures verbatim, and the follow-up an install ends with.
  *
  * ## The key
  *
- * The field is `type="password"`, is never put in component state that anything
- * else reads, is cleared the moment the call resolves, and is the one value in
- * this file that is not echoed anywhere. What comes back names the file it
- * landed in and whether a credential is attached — never the credential. §13
- * keeps credentials host-side; this is the app *handing one over* and then not
- * having it.
+ * Unchanged, and the reason this file is worth its own module. The field is
+ * `type="password"`, is never echoed, and the value lives in exactly one place
+ * in the renderer: the picker's state, cleared the moment the call resolves.
+ * What comes back names the file it landed in and whether a credential is
+ * attached — never the credential. §13 keeps credentials host-side; this is the
+ * app *handing one over* and then not having it.
+ *
+ * ## What is refused, and by whom
+ *
+ * No entry is hidden for being impossible. A read-only browser client, a
+ * transport that cannot hold a process open past the connection, and a client
+ * built without a provisioner are each refused in main (`fleet.setUpHost`),
+ * which is the only side that knows — §7 puts enforcement there precisely
+ * because a client cannot police itself, and §6.2 says a transport's
+ * capabilities are asked rather than assumed, so the renderer deliberately does
+ * not keep a second copy of them to grey rows out with. The refusal arrives as a
+ * sentence naming the reason and the way round it, and `SetupProgress` prints it
+ * verbatim under the control that was pressed.
  */
 
-import { useEffect, useState, type JSX } from 'react';
-import type { HostInfo, SetupOutcomeDto, SetupPlanDto } from '../shared/ipc/contract.js';
-import { opensOnItsOwn, setupSummary } from './setupRoutes.js';
+import type { JSX } from 'react';
+import type { SetupOutcomeDto } from '../shared/ipc/contract.js';
 
-const LABEL = 'text-[10px] uppercase tracking-wider';
-
-export interface SetUpMachineProps {
-  /** How to name the machine in a sentence: an ssh alias, or "this machine". */
-  where: string;
-  /** Runtimes this host looked for and did not find (§3.12). */
-  notes: HostInfo['runtimeNotes'];
-  /** Endpoints it can reach. Empty is the case the model browser got wrong. */
-  endpoints: HostInfo['endpoints'];
-  /** Whether anything on this host can run a model right now. */
-  anyModels: boolean;
-  /** Whether an installed CLI is already offered here. */
-  anyCli: boolean;
-  setUp: (plan: SetupPlanDto) => Promise<SetupOutcomeDto>;
-  /** Steps as they happen, for this host. Returns its unsubscribe. */
-  subscribeProgress: (cb: (step: string) => void) => () => void;
+/** The endpoint form's four values, held by whoever renders it. */
+export interface EndpointDraft {
+  id: string;
+  provider: string;
+  baseUrl: string;
+  /** Never read back for display, never logged, cleared on success. */
+  apiKey: string;
 }
 
-type Route = 'cli' | 'ollama' | 'endpoint';
+export const EMPTY_ENDPOINT: EndpointDraft = {
+  id: 'openai',
+  provider: 'openai',
+  baseUrl: 'https://api.openai.com/v1',
+  apiKey: '',
+};
 
-export function SetUpMachine({
+/**
+ * Where a key is typed, and where the trade it makes is stated.
+ *
+ * Controlled rather than self-owning, so the one button on the screen can submit
+ * it: the alternative was a second submit inside the form, which is the shape
+ * this whole redesign exists to remove. The value lives one level up and nowhere
+ * else.
+ */
+export function SetUpEndpoint({
   where,
-  notes,
-  endpoints,
-  anyModels,
-  anyCli,
-  setUp,
-  subscribeProgress,
-}: SetUpMachineProps): JSX.Element {
-  const stuck = opensOnItsOwn(anyCli, anyModels);
-  const [open, setOpen] = useState(stuck);
-  const [route, setRoute] = useState<Route | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [steps, setSteps] = useState<string[]>([]);
-  const [outcome, setOutcome] = useState<SetupOutcomeDto | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
-
-  // Endpoint form. Kept here rather than in a child so switching routes and
-  // back does not silently keep a half-typed key alive in an unmounted tree.
-  const [provider, setProvider] = useState('openai');
-  const [baseUrl, setBaseUrl] = useState('https://api.openai.com/v1');
-  const [endpointId, setEndpointId] = useState('openai');
-  const [apiKey, setApiKey] = useState('');
-
-  /*
-   * Subscribed only while something is running.
-   *
-   * A push that nobody is looking at is a push that accumulates in a list a
-   * closed panel will show stale on its next open — and this one arrives for
-   * *every* host, so an unfiltered listener in a two-host app shows one
-   * machine's steps under the other's name.
-   */
-  useEffect(() => {
-    if (!busy) return;
-    return subscribeProgress((step) => setSteps((was) => [...was, step]));
-  }, [busy, subscribeProgress]);
-
-  const run = async (plan: SetupPlanDto): Promise<void> => {
-    setBusy(true);
-    setSteps([]);
-    setOutcome(null);
-    setFailure(null);
-    try {
-      const result = await setUp(plan);
-      setOutcome(result);
-      // Cleared on success only. A key that was rejected — a typo, a wrong URL —
-      // must survive so the fix is an edit rather than a retype from a password
-      // manager.
-      if (plan.kind === 'endpoint') setApiKey('');
-    } catch (err) {
-      // Verbatim. These sentences come from `curl`, `npm`, `tar` or the host's
-      // own validator, about a machine the reader cannot see, and every attempt
-      // to paraphrase one has made it less useful.
-      setFailure(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  value,
+  onChange,
+}: {
+  where: string;
+  value: EndpointDraft;
+  onChange: (next: EndpointDraft) => void;
+}): JSX.Element {
+  const set = (patch: Partial<EndpointDraft>): void => onChange({ ...value, ...patch });
 
   return (
-    <div className="border-line grid gap-2 rounded-[2px] border p-3" data-testid="setup-machine">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className={`${LABEL} text-muted`}>Set up {where}</span>
-        <button
-          type="button"
-          className="btn-quiet shrink-0 text-[11px]"
-          data-testid="setup-toggle"
-          onClick={() => setOpen((was) => !was)}
-        >
-          {open ? 'Hide' : 'Show'}
-        </button>
-      </div>
-
+    <div className="grid gap-1" data-testid="setup-endpoint">
       {/*
-        The diagnosis, in one line, above the remedies.
+        §6.5's table, in one line, at the moment of the decision.
 
-        Deliberately the *same* facts `runtime-notes` and the model note carry —
-        this does not detect anything of its own. Two answers to "what is missing
-        here" would be two things to keep in step, and the picker's notes are the
-        host's own words.
+        This is the *remote-resident credential* row: highest exposure, and the
+        only arrangement in which a detached run keeps going with this app
+        closed. Both halves of that trade are in the sentence, because reading
+        only one of them leads to the wrong choice.
       */}
-      <p className="text-muted m-0 text-[11px]" data-testid="setup-summary">
-        {setupSummary(where, anyCli, anyModels)}
+      <p className="text-muted m-0 text-[11px]">
+        The key is written to <code>~/.agbrte/endpoints.json</code> on {where} and not kept here —
+        which is what lets a run continue with this app closed, and means anyone who can read your
+        home directory there can use it.
       </p>
+      <label className="text-muted grid gap-1 text-xs">
+        Name
+        <input
+          className="field"
+          data-testid="setup-endpoint-id"
+          value={value.id}
+          onChange={(e) => set({ id: e.target.value })}
+          placeholder="openai"
+        />
+      </label>
+      <label className="text-muted grid gap-1 text-xs">
+        Provider
+        <input
+          className="field"
+          data-testid="setup-endpoint-provider"
+          value={value.provider}
+          onChange={(e) => set({ provider: e.target.value })}
+          placeholder="openai"
+        />
+      </label>
+      <label className="text-muted grid gap-1 text-xs">
+        Base URL
+        <input
+          className="field"
+          data-testid="setup-endpoint-url"
+          value={value.baseUrl}
+          onChange={(e) => set({ baseUrl: e.target.value })}
+          placeholder="https://api.example.com/v1"
+        />
+      </label>
+      <label className="text-muted grid gap-1 text-xs">
+        API key
+        <input
+          className="field"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          data-testid="setup-endpoint-key"
+          value={value.apiKey}
+          onChange={(e) => set({ apiKey: e.target.value })}
+          placeholder="leave empty for a server that needs none"
+        />
+      </label>
+    </div>
+  );
+}
 
-      {open && (
-        <div className="grid gap-2">
-          <div className="flex flex-wrap gap-1">
-            {(
-              [
-                ['cli', 'Install an agent CLI'],
-                ['ollama', 'Install Ollama'],
-                ['endpoint', 'Add an API endpoint'],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                className={`btn-quiet text-[11px] ${route === id ? 'text-accent' : ''}`}
-                data-testid={`setup-route-${id}`}
-                aria-pressed={route === id}
-                disabled={busy}
-                onClick={() => setRoute(route === id ? null : id)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+/**
+ * What is happening on that machine, in its own words.
+ *
+ * Rendered under the one button, for every kind of work it does: installing a
+ * model server, pulling a model, installing a CLI, writing an endpoint. One
+ * place, because from here they are the same event — *the app is doing
+ * something to a machine you cannot see* — and four differently-shaped progress
+ * areas were four things to keep in step.
+ */
+export function SetupProgress({
+  where,
+  busy,
+  steps,
+  failure,
+  outcome,
+}: {
+  where: string;
+  busy: boolean;
+  steps: string[];
+  failure: string | null;
+  outcome: SetupOutcomeDto | null;
+}): JSX.Element | null {
+  if (!busy && steps.length === 0 && failure === null && outcome === null) return null;
 
-          {route === 'cli' && (
-            <div className="grid gap-1" data-testid="setup-cli">
-              {/*
-                Named honestly before the click, not after it.
+  return (
+    <div className="grid gap-1">
+      {steps.length > 0 && (
+        /*
+          Every step, kept.
 
-                An install that ends in "now go and sign in over ssh" is a fine
-                outcome and a terrible surprise. Saying it up front is what makes
-                the button worth pressing: somebody who cannot open a terminal on
-                that machine now knows to choose a different route instead of
-                spending four minutes finding out.
-              */}
-              <p className="text-muted m-0 text-[11px]">
-                Installs into <code>~/.agbrte/npm</code> on {where} with its own npm prefix —
-                nothing system-wide, no sudo. Signing in is still yours to do afterwards, in an
-                ssh session there.
-              </p>
-              {notes.length > 0 && (
-                <ul className="text-muted m-0 grid gap-0.5 pl-4 text-[11px]">
-                  {notes.map((n) => (
-                    <li key={n.id}>{n.label} is not there now</li>
-                  ))}
-                </ul>
-              )}
-              <div className="flex flex-wrap gap-1">
-                <button
-                  type="button"
-                  className="btn-quiet text-accent text-[11px]"
-                  data-testid="setup-install-claude"
-                  disabled={busy}
-                  onClick={() => void run({ kind: 'cli', cli: 'claude-code' })}
-                >
-                  Install Claude Code
-                </button>
-                <button
-                  type="button"
-                  className="btn-quiet text-accent text-[11px]"
-                  data-testid="setup-install-gemini"
-                  disabled={busy}
-                  onClick={() => void run({ kind: 'cli', cli: 'gemini-cli' })}
-                >
-                  Install Gemini CLI
-                </button>
-              </div>
-            </div>
-          )}
+          A single replaced line loses the one thing worth having when an install
+          fails four minutes in: which step it got to. The host's own words, in
+          order, are also what make "the download worked and the unpack did not"
+          legible without reading a log on another machine — and they are where
+          the mechanism belongs, because while it is happening it explains
+          something.
+        */
+        <ol className="text-muted m-0 grid gap-0.5 pl-4 text-[11px]" data-testid="setup-steps">
+          {steps.map((step, i) => (
+            <li key={`${i}-${step}`}>{step}</li>
+          ))}
+        </ol>
+      )}
 
-          {route === 'ollama' && (
-            <div className="grid gap-1" data-testid="setup-ollama">
-              <p className="text-muted m-0 text-[11px]">
-                Downloads Ollama into <code>~/.agbrte/ollama</code> on {where}, checks it against
-                the checksum the release publishes, and starts it listening on{' '}
-                <code>127.0.0.1:11434</code> — loopback only, so nobody else on that machine can
-                reach it. About a gigabyte. Then pick a model from Browse models below.
-              </p>
-              <button
-                type="button"
-                className="btn-quiet text-accent justify-self-start text-[11px]"
-                data-testid="setup-install-ollama"
-                disabled={busy}
-                onClick={() => void run({ kind: 'ollama' })}
-              >
-                Install and start Ollama
-              </button>
-            </div>
-          )}
+      {busy && (
+        <p className="text-accent m-0 text-[11px]" data-testid="setup-busy">
+          Working on {where}… this can take several minutes and survives closing this window.
+        </p>
+      )}
 
-          {route === 'endpoint' && (
-            <div className="grid gap-1" data-testid="setup-endpoint">
-              {/*
-                §6.5's table, at the moment of the decision.
+      {failure !== null && (
+        /*
+          Verbatim. These sentences come from `curl`, `npm`, `tar`, `ollama` or
+          the host's own validator, about a machine the reader cannot see, and
+          every attempt to paraphrase one has made it less useful. The refusals
+          arrive here too, each already carrying its own way round.
+        */
+        <p className="text-state-fail m-0 text-[11px]" data-testid="setup-failure">
+          {failure}
+        </p>
+      )}
 
-                This is the *remote-resident credential* row: highest exposure,
-                and the only arrangement in which a detached run keeps going with
-                this app closed. Both halves are said here because they are one
-                trade and reading only one of them leads to the wrong choice.
-              */}
-              <p className="text-muted m-0 text-[11px]">
-                The key is sent to the host over this session's own channel — a unix socket for a
-                local host, an ssh tunnel for a remote one — and written to{' '}
-                <code>~/.agbrte/endpoints.json</code> there, mode 0600. It is not kept on this
-                computer. That is what lets a run continue while this app is closed, and it means
-                anyone who can read your home directory on {where} can use it.
-              </p>
-              <label className="text-muted grid gap-1 text-xs">
-                Name
-                <input
-                  className="field"
-                  data-testid="setup-endpoint-id"
-                  value={endpointId}
-                  onChange={(e) => setEndpointId(e.target.value)}
-                  placeholder="openai"
-                />
-              </label>
-              <label className="text-muted grid gap-1 text-xs">
-                Provider
-                <input
-                  className="field"
-                  data-testid="setup-endpoint-provider"
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
-                  placeholder="openai"
-                />
-              </label>
-              <label className="text-muted grid gap-1 text-xs">
-                Base URL
-                <input
-                  className="field"
-                  data-testid="setup-endpoint-url"
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://api.example.com/v1"
-                />
-              </label>
-              <label className="text-muted grid gap-1 text-xs">
-                API key
-                <input
-                  className="field"
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  data-testid="setup-endpoint-key"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="leave empty for a server that needs none"
-                />
-              </label>
-              <button
-                type="button"
-                className="btn-quiet text-accent justify-self-start text-[11px]"
-                data-testid="setup-add-endpoint"
-                disabled={busy || endpointId.trim() === '' || baseUrl.trim() === ''}
-                onClick={() =>
-                  void run({
-                    kind: 'endpoint',
-                    endpoint: {
-                      id: endpointId.trim(),
-                      provider: provider.trim(),
-                      baseUrl: baseUrl.trim(),
-                      // Omitted rather than sent empty, so "no credential" is a
-                      // shape the host can see rather than a string it has to
-                      // interpret.
-                      ...(apiKey === '' ? {} : { apiKey }),
-                    },
-                  })
-                }
-              >
-                Add endpoint
-              </button>
-            </div>
-          )}
-
-          {steps.length > 0 && (
+      {outcome !== null && (
+        <div className="grid gap-1" data-testid="setup-outcome">
+          <p
+            className={
+              outcome.redetected ? 'text-muted m-0 text-[11px]' : 'text-state-paused m-0 text-[11px]'
+            }
+            data-testid="setup-outcome-summary"
+          >
+            {/*
+              Which half worked, always. "Installed, and the host has not
+              noticed" is the state that actually happens — a host mid-turn is
+              entitled to refuse a restart — and reporting it as either success
+              or failure would be a false sentence about somebody's machine.
+            */}
+            {outcome.detail ?? outcome.summary}
+          </p>
+          {outcome.followUp !== undefined && (
             /*
-              Every step, kept.
+              The half this app cannot do.
 
-              A single replaced line loses the one thing worth having when an
-              install fails four minutes in: which step it got to. The host's own
-              words, in order, is also what makes "the download worked and the
-              unpack did not" legible without reading a log on another machine.
+              For a CLI it is a sign-in that needs a browser and a terminal on
+              that machine, and the agent seated a moment later cannot run
+              without it — so it is also raised as a notice that survives landing
+              in the chat (App.tsx, `say`). Printed here as well, because the
+              person who is still looking at this pane should not have to go
+              looking for it.
             */
-            <ol className="text-muted m-0 grid gap-0.5 pl-4 text-[11px]" data-testid="setup-steps">
-              {steps.map((step, i) => (
-                <li key={`${i}-${step}`}>{step}</li>
-              ))}
-            </ol>
-          )}
-
-          {busy && (
-            <p className="text-accent m-0 text-[11px]" data-testid="setup-busy">
-              Working on {where}… this can take several minutes and survives closing this panel.
-            </p>
-          )}
-
-          {failure !== null && (
-            <p className="text-state-fail m-0 text-[11px]" data-testid="setup-failure">
-              {failure}
-            </p>
-          )}
-
-          {outcome !== null && (
-            <div className="grid gap-1" data-testid="setup-outcome">
-              <p
-                className={outcome.redetected ? 'text-muted m-0 text-[11px]' : 'text-state-paused m-0 text-[11px]'}
-                data-testid="setup-outcome-summary"
-              >
-                {/*
-                  Which half worked, always. "Installed, and the host has not
-                  noticed" is the state that actually happens — a host mid-turn
-                  is entitled to refuse a restart — and reporting it as either
-                  success or failure would be a false sentence about somebody's
-                  machine.
-                */}
-                {outcome.detail ?? outcome.summary}
-              </p>
-              {outcome.followUp !== undefined && (
-                <p className="text-state-paused m-0 text-[11px]" data-testid="setup-followup">
-                  {outcome.followUp}
-                </p>
-              )}
-            </div>
-          )}
-
-          {endpoints.length === 0 && (
-            <p className="text-muted m-0 text-[11px]" data-testid="setup-no-endpoint">
-              This host has no model endpoint at all, so there is nothing for a model to be
-              installed into yet.
+            <p className="text-state-paused m-0 text-[11px]" data-testid="setup-followup">
+              {outcome.followUp}
             </p>
           )}
         </div>

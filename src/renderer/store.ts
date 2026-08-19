@@ -208,6 +208,20 @@ export interface AgbrteState {
   reconcileSessions(): Promise<void>;
   dismissError(): void;
   dismissNotice(): void;
+  /**
+   * Say something that has to outlive the screen it happened on.
+   *
+   * One caller: an installed vendor CLI ends with a sign-in this app cannot
+   * perform, and the agent is seated in the same press — which navigates away
+   * from the pane the sentence was printed in. A follow-up that vanishes at the
+   * moment it becomes actionable is the failure the whole set-up feature exists
+   * to remove, in miniature: no error, and still nothing that runs.
+   *
+   * Deliberately the same slot the permission narration uses, rather than a
+   * second banner: it is dismissible, it sits above whatever is open, and two
+   * kinds of "something happened elsewhere" would be two things to keep in step.
+   */
+  say(notice: string): void;
 }
 
 const agbrte = () => window.agbrte;
@@ -813,6 +827,10 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
 
   dismissNotice() {
     set({ notice: null });
+  },
+
+  say(notice) {
+    set({ notice });
   },
 
   dismissError() {

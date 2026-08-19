@@ -41,7 +41,13 @@ import { StartGuide } from './StartGuide.js';
 import { Welcome } from './Welcome.js';
 import { About } from './About.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
-import { SetUpMachine } from './SetUpMachine.js';
+import { EMPTY_ENDPOINT, SetUpEndpoint, SetupProgress, type EndpointDraft } from './SetUpMachine.js';
+import {
+  actionLabel,
+  buildEntries,
+  entryNote,
+  type AgentEntry,
+} from './setupRoutes.js';
 import { CapabilityBadges } from './CapabilityBadges.js';
 import { panelBadges, rowBadges, toolWarning, worthChecking } from './modelCapabilities.js';
 import { useAgbrte } from './store.js';
@@ -210,6 +216,41 @@ export function App(): JSX.Element {
    * is not a fact about the session, so it is never sent anywhere and two
    * devices cannot fight over it.
    */
+  /**
+   * Which sessions have the ports row open, keyed by session.
+   *
+   * ## Why it is folded at all
+   *
+   * §6.8 is a real feature and was permanently expanded: every session on a
+   * remote host opened with *Preview a port on that machine*, a port field, a
+   * Forward button, `Run a dev server there`, and — on a shared build box — six
+   * detected ports, most of them somebody else's services. That row sat above
+   * the roster and the transcript whether or not the session had anything to do
+   * with a web server. The feature is right; being permanently on screen for
+   * everybody is what was wrong, so it now works the way `Files` and the
+   * Chat/Terminal toggle already work in that pane: nothing until asked for.
+   *
+   * ## Nothing announced while it is folded
+   *
+   * A count of *detected* ports is the noise the fold exists to remove — they
+   * are other people's services on a machine this session happens to share, and
+   * a badge saying `6` would move that noise into the header rather than delete
+   * it. A count of *our own* forwards would be defensible, and is not free: the
+   * numbers come from a 4-second poll that only runs while the panel is
+   * mounted, so a badge would mean polling a machine forever to render a digit
+   * for a panel nobody has opened — the same trade §6.8 already refused. What it
+   * would announce is also something the person did deliberately, seconds
+   * earlier, in this panel. So: silence, and `aria-pressed` on the control.
+   *
+   * ## Per session, and view state
+   *
+   * Keyed by session so somebody doing web work does not reopen it every turn,
+   * and a session that has nothing to do with ports does not inherit the fold
+   * from the one before it. View state like `focusedAgent`: where somebody is
+   * looking is not a fact about the session, so it is never sent anywhere and
+   * two devices cannot fight over it.
+   */
+  const [portsOpen, setPortsOpen] = useState<Record<string, boolean>>({});
   const [filesOpen, setFilesOpen] = useState(false);
   const [openFile, setOpenFile] = useState<string | null>(null);
   /**
@@ -608,6 +649,17 @@ export function App(): JSX.Element {
    * host, rather than vanishing and looking like a feature that does not exist.
    */
   const shellHere = activeHost?.targetKind === 'local';
+  /**
+   * Whether this session's workspace is on another machine (§6.8).
+   *
+   * The one condition the ports row has ever had, and the reason is unchanged:
+   * a local dev server is already on `localhost` at a port the person chose, so
+   * offering to forward it is a button that does nothing visible — which teaches
+   * people the feature does nothing.
+   */
+  const remoteHere = activeHost !== undefined && activeHost.targetKind !== 'local';
+  /** Whether *this* session's ports row is unfolded. Folded is the default. */
+  const portsShowing = active !== null && portsOpen[active.sessionId] === true;
 
   /*
    * What the terminal pane can run on this host, and what it opens by default.
@@ -1013,18 +1065,6 @@ export function App(): JSX.Element {
               <CredentialsNotice advice={credentialsAdvice} />
             )}
 
-            {/* §6.8. Remote only: a local dev server is already on localhost, and
-                a button that does nothing visible teaches people the feature
-                does nothing. */}
-            <Preview
-              sessionId={active.sessionId}
-              instanceId={active.instanceId}
-              remote={
-                (hosts.find((h) => h.instanceId === active.instanceId)?.targetKind ?? 'local') !==
-                'local'
-              }
-            />
-
             {/*
               Above the seat, not beside it (§17 Q20, §3.5).
 
@@ -1049,34 +1089,67 @@ export function App(): JSX.Element {
                   Starting your usual agent…
                 </p>
               ) : (
-                <AgentPicker
-                  /* Remounted per host: the model list it holds is that host's
-                     answer, and §13 will not have one machine's endpoints shown
-                     while an agent is added on another. */
-                  key={active.instanceId}
-                  runtimes={runtimesHere}
-                  notes={notesHere}
-                  conformance={conformanceHere}
-                  endpoints={hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []}
-                  // Bound to the open session's host: "which models" is a question
-                  // about a machine, and the picker does not know which one it is
-                  // looking at.
-                  listModels={() => window.agbrte.hosts.models(active.instanceId)}
-                  // The expensive half of the same question (§3.3): asked for
-                  // one model, when somebody is looking at it.
-                  checkModel={(endpointId, modelId) =>
-                    window.agbrte.hosts.modelCapabilities(active.instanceId, endpointId, modelId)
-                  }
-                  installModel={(endpointId, tag) =>
-                    window.agbrte.hosts.installModel(active.instanceId, endpointId, tag)
-                  }
-                  installProgress={() => window.agbrte.hosts.installProgress(active.instanceId)}
-                  machine={machineFor(active.instanceId, activeHost)}
-                  // Remembering on success is what makes the *next* session
-                  // skip this form entirely (agentDefaults.ts).
-                  onAdd={addAgentRemembering}
-                  busy={busy}
-                />
+                /*
+                  The one scroll region on this screen, and the reason it exists.
+
+                  With a host that has just been set up, this column holds the
+                  set-up panel *and* its progress, the detection notes, the
+                  runtime select, the conformance matrix, the capability badges,
+                  the model field and a twelve-entry catalogue with a description
+                  on every row: 1215 px of content. Rendered straight into
+                  `main`'s flex column that is 722 px tall on a 1180x820 window,
+                  and a flex item's `min-height: auto` means it does not shrink,
+                  so nothing scrolled — `main` measured 1274 against a 781 px
+                  viewport and the last model's row ended 387 px below the window
+                  edge, unreachable. At 481 px tall it was 832 px below it.
+
+                  `grow min-h-0 overflow-y-auto` rather than a `max-h` on the
+                  catalogue, because the catalogue's descriptions are the reason
+                  it is worth the space and a scrollbox inside a scrollbox is the
+                  thing that made the attach panel confusing. It takes only free
+                  space, so the `shrink-0` rows above it keep their height
+                  exactly as before: the session header measures 60 px with this
+                  wrapper and 60 px without it, at every size tested.
+
+                  A flex column so the picker's own `m-auto` still centres it
+                  when the host needs nothing and the form is short: auto margins
+                  resolve to zero once free space is negative, which is why this
+                  is safe here and `justify-center` would clip the top.
+                */
+                <div
+                  className="flex min-h-0 min-w-0 grow flex-col overflow-y-auto"
+                  data-testid="picker-scroll"
+                >
+                  <AgentPicker
+                    /* Remounted per host: the model list it holds is that host's
+                       answer, and §13 will not have one machine's endpoints shown
+                       while an agent is added on another. */
+                    key={active.instanceId}
+                    runtimes={runtimesHere}
+                    notes={notesHere}
+                    conformance={conformanceHere}
+                    endpoints={hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []}
+                    // Bound to the open session's host: "which models" is a question
+                    // about a machine, and the picker does not know which one it is
+                    // looking at.
+                    listModels={() => window.agbrte.hosts.models(active.instanceId)}
+                    // The expensive half of the same question (§3.3): asked for
+                    // one model, when somebody is looking at it.
+                    checkModel={(endpointId, modelId) =>
+                      window.agbrte.hosts.modelCapabilities(active.instanceId, endpointId, modelId)
+                    }
+                    installModel={(endpointId, tag) =>
+                      window.agbrte.hosts.installModel(active.instanceId, endpointId, tag)
+                    }
+                    installProgress={() => window.agbrte.hosts.installProgress(active.instanceId)}
+                    machine={machineFor(active.instanceId, activeHost)}
+                    // Remembering on success is what makes the *next* session
+                    // skip this form entirely (agentDefaults.ts).
+                    say={store.say}
+                    onAdd={addAgentRemembering}
+                    busy={busy}
+                  />
+                </div>
               )
             ) : (
               <>
@@ -1136,6 +1209,7 @@ export function App(): JSX.Element {
                       machine={machineFor(active.instanceId, activeHost)}
                       // Success saves the choice as the new default and closes
                       // the form; failure leaves it open with the error banner.
+                      say={store.say}
                       onAdd={addAgentRemembering}
                       submitLabel="Change model"
                       busy={busy}
@@ -1201,11 +1275,35 @@ export function App(): JSX.Element {
                   >
                     Terminal
                   </button>
-                  {/* At the far end, and not grouped with the three above:
-                      grouping it there would say it is a fourth mode, and it
-                      chooses nothing about the main pane at all. */}
+                  {/* At the far end with `Files`, and for the same reason: it
+                      chooses nothing about the main pane, so grouping it with
+                      the three modes would say it was a fourth one. Remote only
+                      — a local dev server is already on localhost, and a button
+                      that does nothing visible teaches people the feature does
+                      nothing (§6.8). */}
+                  {remoteHere && (
+                    <button
+                      className="btn ml-auto text-[11px]"
+                      data-testid="toggle-ports"
+                      title="Forward a port from that machine to this one, and run a dev server there that outlives the turn"
+                      aria-pressed={portsShowing}
+                      onClick={() =>
+                        setPortsOpen((was) => ({
+                          ...was,
+                          [active.sessionId]: was[active.sessionId] !== true,
+                        }))
+                      }
+                    >
+                      Ports
+                    </button>
+                  )}
+                  {/* Not grouped with the three above: grouping it there would
+                      say it is a fourth mode, and it chooses nothing about the
+                      main pane at all. `ml-auto` moved to `Ports` when that
+                      joined it at this end, so the pair stays together and the
+                      modes stay together. */}
                   <button
-                    className="btn ml-auto text-[11px]"
+                    className={`btn text-[11px] ${remoteHere ? '' : 'ml-auto'}`}
                     data-testid="toggle-files"
                     title="The files in this workspace, listed by the machine that owns it"
                     aria-pressed={filesOpen}
@@ -1214,6 +1312,23 @@ export function App(): JSX.Element {
                     Files
                   </button>
                 </div>
+                {portsShowing && (
+                  /*
+                    Directly under the control that opened it (§6.8).
+
+                    It used to sit above the roster, between the header and
+                    everything else, on every remote session — so the first thing
+                    a person saw about a session was six ports on a shared build
+                    box. Here it is a fixed row that exists only while somebody is
+                    looking at it, and it costs the transcript no height at all
+                    until then.
+                  */
+                  <Preview
+                    sessionId={active.sessionId}
+                    instanceId={active.instanceId}
+                    remote={remoteHere}
+                  />
+                )}
                 {/*
                   The pane, with the workspace sidebar beside it.
 
@@ -1820,108 +1935,6 @@ function runtimeLabel(id: string): string {
 }
 
 /**
- * One thing a person can pick: what will run, with the runtime implied.
- *
- * The picker used to ask twice — runtime, then model — and the two questions
- * were not independent: the answer to the first decided whether the second one
- * existed, which meant you had to know which runtimes take a model before you
- * could answer either. Flattening them asks the question people actually have.
- * A runtime that needs a model contributes one entry per reachable model; one
- * that does not contributes exactly one entry.
- */
-interface AgentChoice {
-  /**
-   * The select's value, and stable across refreshes.
-   *
-   * A bare runtime id where no model is involved — so `echo` stays addressable
-   * as `echo`, by a person reading the DOM and by the e2e helpers.
-   */
-  value: string;
-  runtimeId: string;
-  /** What it will run, or `null`: no model at all, or one still to be typed. */
-  modelId: string | null;
-  endpointId?: string;
-  /** The escape hatch. Reveals a field for a model the host did not list. */
-  typed?: boolean;
-  label: string;
-  /** Secondary text — which recipient, or which runtime. */
-  hint?: string;
-  /**
-   * What this model can do, as far as the host could say for free (§3.3).
-   *
-   * Absent for a runtime that takes no model, for the escape hatch, and for a
-   * host older than protocol v14 — three different reasons that all mean the
-   * same thing to a reader: nobody could tell, so nothing is claimed.
-   */
-  capabilities?: ModelCapabilityHint;
-}
-
-/**
- * The flat list, from what the host reports and what its endpoints serve.
- *
- * Pure, and outside the component, because the invariant worth keeping is
- * structural: **every runtime yields at least one entry**. A model list that
- * failed to load must not make a runtime unpickable, so a required-model runtime
- * always ends with its "another model…" entry whether or not anything was listed
- * — which is also the whole of the old manual-entry path, kept.
- */
-function buildChoices(
-  runtimes: RuntimeInfo[],
-  answers: EndpointModelsDto[],
-  endpoints: HostInfo['endpoints'],
-): AgentChoice[] {
-  const out: AgentChoice[] = [];
-  for (const runtime of runtimes) {
-    if (runtime.model !== 'required') {
-      // `optional` lands here with `none`: an installed CLI has its own model
-      // configured where it lives, and asking again in this window offered a
-      // second answer to a question the CLI had already settled.
-      out.push({
-        value: runtime.id,
-        runtimeId: runtime.id,
-        modelId: null,
-        label: runtimeLabel(runtime.id),
-      });
-      continue;
-    }
-    for (const answer of answers) {
-      for (const model of answer.models) {
-        // Matched by name because that is what the host keyed it by. Absent is
-        // ordinary — an endpoint that does not self-describe, a host too old to
-        // carry the field, a model past the host's describe limit — and every
-        // one of those renders as unknown rather than as a missing badge.
-        const hint = answer.capabilities?.find((c) => c.modelId === model);
-        out.push({
-          value: `${runtime.id}::${answer.endpointId}::${model}`,
-          runtimeId: runtime.id,
-          modelId: model,
-          endpointId: answer.endpointId,
-          label: model,
-          ...(hint !== undefined ? { capabilities: hint } : {}),
-          /*
-           * The recipient, on the entry itself.
-           *
-           * §13 wants where the code goes legible at the moment of choosing, and
-           * with two endpoints the same model name appears twice in this list
-           * meaning two different things — one of them possibly the network.
-           */
-          hint: endpoints.find((e) => e.id === answer.endpointId)?.label ?? answer.endpointId,
-        });
-      }
-    }
-    out.push({
-      value: `${runtime.id}::__type__`,
-      runtimeId: runtime.id,
-      modelId: null,
-      typed: true,
-      label: 'Another model…',
-      hint: runtimeLabel(runtime.id),
-    });
-  }
-  return out;
-}
-
-/**
  * What the selected model can do, before it is chosen (§3.3, §3.5).
  *
  * The panel form of the badges on each row, and it exists because a row has
@@ -2023,6 +2036,37 @@ function machineFor(
   };
 }
 
+/**
+ * The whole of "Add an agent": one list, one button.
+ *
+ * ## Three questions that were one question
+ *
+ * This screen used to carry a set-up panel with its own routes, a "what will
+ * run" dropdown, and a catalogue of models with their own Install buttons. All
+ * three answered *what should run this session*, and choosing between them
+ * required knowing which of our mechanisms applied to you: that Ollama is a
+ * model server, that a CLI brings its own model, that a catalogue installs into
+ * an endpoint. None of that is the user's problem.
+ *
+ * So there is one list. An entry names the concrete thing that will run —
+ * `qwen2.5:7b · Agbrte harness` — and the list is grouped by the only
+ * distinction that changes what pressing the button costs: whether it is
+ * already there, or has to be fetched first. `buildEntries` in
+ * `setupRoutes.ts` is that list, pure and tested, including its order.
+ *
+ * ## One button that does whatever it takes
+ *
+ * `go()` is the whole of it. A ready model is seated immediately. A catalogue
+ * model installs Ollama if the machine has no model server, pulls the model,
+ * waits for the pull, then seats the agent. A vendor CLI is installed and then
+ * seated. *Use a model API…* reveals the four fields a key needs, and the same
+ * button writes the endpoint and re-asks the host what it can now reach.
+ *
+ * The one thing that is *not* absorbed is the sign-in a CLI ends with: the app
+ * cannot do it, an agent seated without it cannot run, and the pane it was
+ * printed in is gone the moment the agent is seated. So it is also raised as a
+ * notice, which survives landing in the chat.
+ */
 function AgentPicker({
   runtimes,
   notes,
@@ -2036,15 +2080,16 @@ function AgentPicker({
   onAdd,
   submitLabel,
   busy,
+  say,
 }: {
   runtimes: RuntimeInfo[];
   /**
    * What this host looked for and did not find (§3.12).
    *
-   * Rendered rather than dropped, because an *absent* row is the one thing a
-   * picker cannot explain: somebody with Claude Code installed sees a list
-   * without it and reasonably concludes the app is broken. Naming the machine
-   * moves the question to where the answer is.
+   * Carried onto the entry for the CLI it is about, rather than listed
+   * separately: "`claude` could not be started … or not on the PATH this host
+   * was started with" is the difference between installing a second copy and
+   * fixing a PATH, and it belongs on the row that offers the install.
    */
   notes: HostInfo['runtimeNotes'];
   /** The support matrix for this host, so the choice is informed (§3.13). */
@@ -2060,6 +2105,7 @@ function AgentPicker({
    * has a different remedy: update the host rather than choose another model.
    */
   checkModel: (endpointId: string, modelId: string) => Promise<ModelCapabilityHint | null>;
+  /** Begins a pull. Resolves when it has *started*; `installProgress` watches. */
   installModel: (endpointId: string, tag: string) => Promise<void>;
   installProgress: () => Promise<ModelInstallDto[]>;
   /**
@@ -2078,15 +2124,17 @@ function AgentPicker({
   };
   onAdd: (runtimeId: string, modelId: string | null, endpointId?: string) => Promise<void>;
   /**
-   * What the submit button says.
+   * What the submit button says when nothing has to be installed first.
    *
    * The same form seats the first agent and changes the model of a session that
    * already has one (§4.2), and those are different sentences: "Add agent"
-   * above a session that is about to *retire* one would describe the opposite
-   * of what the click does.
+   * above a session that is about to *retire* one would describe the opposite of
+   * what the click does. When work is needed the label names the work instead.
    */
   submitLabel?: string;
   busy: boolean;
+  /** Raises a sentence that has to outlive this pane. See `go()`. */
+  say: (notice: string) => void;
 }): JSX.Element {
   /**
    * The chosen entry's `value`, or `null` while nobody has chosen.
@@ -2102,22 +2150,28 @@ function AgentPicker({
   const [chosen, setChosen] = useState<string | null>(null);
   /** The escape hatch's field: a model the host did not list. */
   const [typedModel, setTypedModel] = useState('qwen2.5:7b');
-  /** Which recipient a *typed* model goes to. Listed ones carry their own. */
-  const [endpointId, setEndpointId] = useState('');
   /**
    * What the host says its endpoints serve, verbatim.
    *
    * Kept per endpoint rather than flattened to a name list: the endpoint is half
-   * of what an entry means (§13), and `canInstall` / `installHint` come from the
-   * same answer.
+   * of what an entry means (§13), and `canInstall` comes from the same answer —
+   * which is what decides whether a pull needs a model server put there first.
    */
   const [answers, setAnswers] = useState<EndpointModelsDto[]>([]);
   const [modelsNote, setModelsNote] = useState<string | null>(null);
   const [modelsBusy, setModelsBusy] = useState(false);
-  const [browsing, setBrowsing] = useState(false);
-  const [installs, setInstalls] = useState<ModelInstallDto[]>([]);
   /** One list per mounted picker. See the effect below. */
   const asked = useRef(false);
+
+  /** The endpoint draft, revealed by the *Use a model API…* entry. */
+  const [draft, setDraft] = useState<EndpointDraft>(EMPTY_ENDPOINT);
+
+  /* Work in flight, and what the machine said about it. */
+  const [running, setRunning] = useState(false);
+  const [steps, setSteps] = useState<string[]>([]);
+  const [outcome, setOutcome] = useState<SetupOutcomeDto | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+
   /**
    * Probes this picker has paid for, keyed `endpoint::model`.
    *
@@ -2152,8 +2206,13 @@ function AgentPicker({
    * running its Ollama — the other endpoints still answered, and the "another
    * model…" entry still takes a typed id. A host too old to answer is a
    * *different* sentence from "no models", and has to read as one.
+   *
+   * Returns what it found, because `go()` needs the answer *now*: a model server
+   * installed a second ago is not in `answers` until this resolves, and reading
+   * state that a `set` has not committed yet is how a pull ends up with nowhere
+   * to go.
    */
-  const refreshModels = async (): Promise<void> => {
+  const refreshModels = async (): Promise<EndpointModelsDto[]> => {
     setModelsBusy(true);
     try {
       const found = await listModels();
@@ -2164,11 +2223,13 @@ function AgentPicker({
         failed.length > 0
           ? `${count} found. ${failed.map((f) => `${f.endpointId}: ${f.error}`).join('; ')}`
           : count > 0
-            ? `${count} reachable from that host.`
-            : 'That host reported no models. Type one if you know it is there.',
+            ? `${count} ready on ${machine.where}.`
+            : null,
       );
+      return found;
     } catch (err) {
       setModelsNote(err instanceof Error ? err.message : String(err));
+      return [];
     } finally {
       setModelsBusy(false);
     }
@@ -2177,18 +2238,10 @@ function AgentPicker({
   /*
    * Ask once, when this picker opens and a model could be part of the answer.
    *
-   * The old rule — ask when a model-taking runtime is *selected* — was written
-   * when the runtime came first and the model second. With one list the models
-   * are the list, so waiting for a selection would mean opening on a dropdown
-   * that does not yet contain the thing you came to choose.
-   *
-   * The cost is unchanged in practice: the harness was the first runtime and so
-   * the default selection, which made the old rule fire on mount anyway. And
-   * this form is only ever on screen because somebody is adding an agent — the
-   * roster reads fine without it.
-   *
-   * Guarded by a ref, not by the dependency list: `runtimes` is rebuilt on every
-   * host push, and a fresh array identity is not a new question.
+   * With one list the models *are* the list, so waiting for a selection would
+   * mean opening on a dropdown that does not yet contain the thing you came to
+   * choose. Guarded by a ref, not by the dependency list: `runtimes` is rebuilt
+   * on every host push, and a fresh array identity is not a new question.
    */
   const wantsModels = runtimes.some((r) => r.model === 'required');
   useEffect(() => {
@@ -2200,58 +2253,60 @@ function AgentPicker({
   }, [wantsModels]);
 
   /*
-   * Poll only while the menu is open.
+   * The host's own account of what it is doing, while it is doing it.
    *
-   * A pull is minutes long and nobody is watching a closed panel; polling
-   * regardless would be a request every two seconds for the lifetime of the app,
-   * to learn something nothing is displaying.
+   * Subscribed only while something runs: this push arrives for *every* host, so
+   * an unfiltered listener in a two-host app shows one machine's steps under the
+   * other's name, and a list nobody is watching is one a later render shows
+   * stale.
    */
   useEffect(() => {
-    if (!browsing) return;
-    let live = true;
-    const tick = async (): Promise<void> => {
-      try {
-        const p = await installProgress();
-        if (live) setInstalls(p);
-      } catch {
-        // The host may be older than v9, or gone. Neither is worth a banner
-        // while somebody is reading a list of models.
-      }
-    };
-    void tick();
-    const timer = setInterval(() => void tick(), 2000);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-  }, [browsing, installProgress]);
+    if (!running) return;
+    return machine.subscribeProgress((step) => setSteps((was) => [...was, step]));
+  }, [running, machine]);
 
-  const choices = useMemo(
-    () => buildChoices(runtimes, answers, endpoints),
-    [runtimes, answers, endpoints],
+  const entries = useMemo(
+    () =>
+      buildEntries(
+        runtimes,
+        answers,
+        endpoints,
+        CATALOGUE.models,
+        notes,
+        runtimeLabel,
+      ),
+    [runtimes, answers, endpoints, notes],
   );
+
   // Falls back to the first entry both while untouched and if a chosen model
   // disappears from a later refresh — the list is the authority on what is
   // there, and a selection pointing at nothing is a disabled button with no
   // explanation.
-  const value = chosen !== null && choices.some((c) => c.value === chosen) ? chosen : (choices[0]?.value ?? '');
-  const current = choices.find((c) => c.value === value);
+  const value = chosen !== null && entries.some((c) => c.value === chosen) ? chosen : (entries[0]?.value ?? '');
+  const current = entries.find((c) => c.value === value);
   /** Whether the chosen entry involves a model at all. */
   const needsModel = current !== undefined && (current.typed === true || current.modelId !== null);
-  /** The recipient this add would use: the entry's own, or the typed one's. */
+  /** The recipient this add would use. */
   const endpoint =
     current?.endpointId !== undefined
       ? endpoints.find((e) => e.id === current.endpointId)
-      : (endpoints.find((e) => e.id === endpointId) ?? endpoints[0]);
+      : endpoints[0];
 
   /**
    * The best claim about one model: what was probed here, else what the host
    * volunteered. Never merged — a probed answer replaces a declared one whole,
    * because the two disagree exactly when the declaration was wrong.
    */
-  const hintOf = (choice: AgentChoice | undefined): ModelCapabilityHint | undefined => {
-    if (choice === undefined || choice.modelId === null) return undefined;
-    return probed[`${choice.endpointId ?? ''}::${choice.modelId}`] ?? choice.capabilities;
+  const hintOf = (entry: AgentEntry | undefined): ModelCapabilityHint | undefined => {
+    if (entry === undefined || entry.modelId === null || entry.endpointId === undefined) {
+      return undefined;
+    }
+    return (
+      probed[`${entry.endpointId}::${entry.modelId}`] ??
+      answers
+        .find((a) => a.endpointId === entry.endpointId)
+        ?.capabilities?.find((c) => c.modelId === entry.modelId)
+    );
   };
 
   /**
@@ -2262,9 +2317,12 @@ function AgentPicker({
    * is known — `/v1/models` is optional, so a server that cannot list what it
    * serves cannot describe it either — and leaving the one entry with no answer
    * unable to *get* one would make the honest path the least informed one.
+   *
+   * A model that is not on the machine yet is not probeable by definition, so an
+   * install entry answers `null` and the panel below says unknown.
    */
   const checkable = ((): { endpointId: string; modelId: string } | null => {
-    if (current === undefined) return null;
+    if (current === undefined || current.plan.kind === 'pull') return null;
     const modelId = current.typed === true ? typedModel.trim() : current.modelId;
     const from = current.endpointId ?? endpoint?.id;
     if (modelId === null || modelId === '' || from === undefined) return null;
@@ -2273,7 +2331,7 @@ function AgentPicker({
 
   const currentHint =
     checkable !== null
-      ? (probed[`${checkable.endpointId}::${checkable.modelId}`] ?? current?.capabilities)
+      ? (probed[`${checkable.endpointId}::${checkable.modelId}`] ?? hintOf(current))
       : undefined;
 
   /**
@@ -2320,13 +2378,10 @@ function AgentPicker({
    * menu opened would spend somebody's money and send a prompt over the network
    * without them asking. `authenticated` is the honest proxy for "this costs
    * something", and it is the same flag the recipient line below reads.
-   *
-   * Skipped when the claim is already probed: the host caches, but a round trip
-   * per render is still a round trip.
    */
   useEffect(() => {
     if (current === undefined || current.typed === true || current.modelId === null) return;
-    if (current.endpointId === undefined) return;
+    if (current.plan.kind !== 'ready' || current.endpointId === undefined) return;
     if (endpoint === undefined || endpoint.authenticated) return;
     const key = `${current.endpointId}::${current.modelId}`;
     if (attempted.current.has(key) || !worthChecking(hintOf(current))) return;
@@ -2338,368 +2393,311 @@ function AgentPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.value, endpoint?.id, endpoint?.authenticated, checking]);
 
-  const knownModels = useMemo(
-    () => [...new Set(answers.flatMap((a) => a.models))],
-    [answers],
-  );
-  /** The one endpoint that can take an install, if exactly one can. */
-  const installTarget = answers.find((e) => e.canInstall === true);
+  /**
+   * Watch a pull to the end, reporting it as it goes.
+   *
+   * `installModel` resolves when the pull has *started* — a model is gigabytes —
+   * so the only honest end of this route is polling until the host says done.
+   * The percentage replaces its own line rather than accumulating, because a
+   * download that reports every two seconds for six minutes would bury the
+   * install steps above it in 180 lines of the same sentence.
+   */
+  const awaitPull = async (endpointId: string, tag: string): Promise<void> => {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const all = await installProgress().catch(() => [] as ModelInstallDto[]);
+      const mine = all.find((i) => i.tag === tag && i.endpointId === endpointId);
+      if (mine === undefined) continue;
+      if (mine.error !== undefined) throw new Error(mine.error);
+      const pct = mine.total > 0 ? Math.round((mine.completed / mine.total) * 100) : null;
+      setSteps((was) => {
+        const line = `pulling ${tag}${pct === null ? ` — ${mine.status}` : ` — ${pct}%`}`;
+        const kept = was.filter((s) => !s.startsWith(`pulling ${tag}`));
+        return [...kept, line];
+      });
+      if (mine.done) return;
+    }
+  };
 
   /**
-   * "Use" in the catalogue: select the entry for that tag, or type it in.
+   * The one button, and everything it might have to do first.
    *
-   * Scoped to the runtime already chosen where it can be — with two
-   * model-driven runtimes the same tag appears twice, and picking a model out
-   * of a catalogue is not a request to change which runtime runs it.
+   * Ordered by what the machine is missing rather than by what the user picked:
+   * a model with nowhere to live needs a server first, and a server with no
+   * model in it runs nothing. Each step reports itself through the same progress
+   * area, and any refusal — read-only client, a transport that cannot hold a
+   * process open, a client with no provisioner — arrives from main as a sentence
+   * and is printed verbatim.
    */
-  const chooseModel = (tag: string): void => {
-    const mine = (c: AgentChoice): boolean => c.runtimeId === current?.runtimeId;
-    const listed = choices.filter((c) => c.modelId === tag);
-    const pick = listed.find(mine) ?? listed[0];
-    if (pick !== undefined) {
-      setChosen(pick.value);
-      return;
+  const go = async (): Promise<void> => {
+    const entry = current;
+    if (entry === undefined) return;
+    setRunning(true);
+    setSteps([]);
+    setOutcome(null);
+    setFailure(null);
+    try {
+      switch (entry.plan.kind) {
+        case 'ready':
+        case 'typed':
+          await onAdd(
+            entry.runtimeId,
+            entry.typed === true ? typedModel.trim() : entry.modelId,
+            // Unchanged contract: the store drops this when the model is null,
+            // so a no-model runtime is unaffected either way.
+            needsModel ? (entry.endpointId ?? endpoint?.id) : undefined,
+          );
+          return;
+
+        case 'endpoint': {
+          const result = await machine.setUp({
+            kind: 'endpoint',
+            endpoint: {
+              id: draft.id.trim(),
+              provider: draft.provider.trim(),
+              baseUrl: draft.baseUrl.trim(),
+              // Omitted rather than sent empty, so "no credential" is a shape
+              // the host can see rather than a string it has to interpret.
+              ...(draft.apiKey === '' ? {} : { apiKey: draft.apiKey }),
+            },
+          });
+          setOutcome(result);
+          // Cleared on success only. A key that was rejected — a typo, a wrong
+          // URL — must survive so the fix is an edit rather than a retype from a
+          // password manager.
+          setDraft((was) => ({ ...was, apiKey: '' }));
+          // The endpoint exists; what it serves is the next question, and it is
+          // the list itself that answers it.
+          await refreshModels();
+          setChosen(null);
+          return;
+        }
+
+        case 'cli': {
+          const result = await machine.setUp({ kind: 'cli', cli: entry.plan.cli });
+          setOutcome(result);
+          if (!result.redetected) return;
+          // The sign-in this app cannot do, carried out of a pane that is about
+          // to be replaced by the chat.
+          if (result.followUp !== undefined) say(result.followUp);
+          await onAdd(entry.runtimeId, null);
+          return;
+        }
+
+        case 'pull': {
+          let target = answers.find((a) => a.canInstall === true)?.endpointId;
+          if (target === undefined) {
+            const result = await machine.setUp({ kind: 'ollama' });
+            setOutcome(result);
+            target = (await refreshModels()).find((a) => a.canInstall === true)?.endpointId;
+          }
+          if (target === undefined) {
+            // Said rather than shown as a spinner that never ends: the server
+            // went on and the app still has nowhere to put a model, which is a
+            // different problem from a failed download.
+            setFailure(
+              `${machine.where} has no model server that takes an install, so ${entry.plan.tag} has nowhere to go.`,
+            );
+            return;
+          }
+          await installModel(target, entry.plan.tag);
+          await awaitPull(target, entry.plan.tag);
+          await refreshModels();
+          await onAdd(entry.runtimeId, entry.plan.tag, target);
+          return;
+        }
+      }
+    } catch (err) {
+      setFailure(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunning(false);
     }
-    setTypedModel(tag);
-    const typed = choices.filter((c) => c.typed === true);
-    const hatch = typed.find(mine) ?? typed[0];
-    if (hatch !== undefined) setChosen(hatch.value);
   };
+
+  const note = current === undefined ? null : entryNote(current, machine.where);
+  const working = busy || running;
 
   return (
     <div className="m-auto grid w-full max-w-md gap-3 p-6" data-testid="picker">
       <h3 className="text-sm">Add an agent</h3>
 
-      {/*
-        The remedy, above everything it is a remedy for.
-
-        Rendered even when `runtimes` is empty — *especially* then. A host whose
-        agent host failed to start reports nothing, and the sentence below it
-        ("nothing can run here") was previously the end of the screen. It is now
-        the first thing with a button under it.
-      */}
-      <SetUpMachine
-        where={machine.where}
-        notes={notes}
-        endpoints={endpoints}
-        anyModels={knownModels.length > 0}
-        anyCli={runtimes.some((r) => r.id.startsWith('cli:'))}
-        setUp={machine.setUp}
-        subscribeProgress={machine.subscribeProgress}
-      />
-
-      {runtimes.length === 0 ? (
+      {runtimes.length === 0 && (
         <p className="text-muted text-xs">
           This host has not reported any runtimes. If it failed to start, nothing can run here.
         </p>
-      ) : (
-        <>
-          {/*
-            Above the select, not below it.
+      )}
 
-            The question this answers — "where is Claude Code?" — is asked while
-            reading the list and finding it absent, and an explanation underneath
-            two other panels is one somebody has already given up before reaching.
-            Not selectable, and deliberately not a disabled row inside the list:
-            an entry that cannot be chosen still reads as an offer, and offering
-            something that cannot run is the failure this whole change is about.
-          */}
-          {notes.length > 0 && (
-            <ul className="text-muted grid gap-0.5 text-[11px]" data-testid="runtime-notes">
-              {notes.map((note) => (
-                <li key={note.id} data-runtime={note.id}>
-                  {note.label}: not detected on this host ({note.reason})
-                </li>
-              ))}
-            </ul>
-          )}
+      <label className="text-muted grid gap-1 text-xs">
+        What will run
+        {/*
+          The only control on this screen, and the only list.
 
-          <label className="text-muted grid gap-1 text-xs">
-            What will run
-            <RuntimeSelect
-              value={value}
-              onChange={setChosen}
-              options={choices.map((c) => ({
-                value: c.value,
-                label: c.label,
-                ...(c.hint !== undefined ? { hint: c.hint } : {}),
-                runtimeId: c.runtimeId,
-                modelId: c.modelId,
-                ...(c.typed === true ? { typed: true } : {}),
+          Grouped by whether anything has to happen first, which is the one
+          distinction that changes what the button costs. Ready entries stay at
+          the top, where a returning user's choice lives.
+        */}
+        <RuntimeSelect
+          value={value}
+          onChange={setChosen}
+          groups={[
+            { id: 'ready', label: 'Ready to use', options: [] },
+            { id: 'install', label: 'Will be installed first', options: [] },
+          ].map((group) => ({
+            ...group,
+            options: entries
+              .filter((e) => e.group === group.id)
+              .map((e) => ({
+                value: e.value,
+                label: e.label,
+                ...(e.hint !== undefined ? { hint: e.hint } : {}),
+                ...(e.note !== undefined ? { note: e.note } : {}),
+                plan: e.plan.kind,
+                /*
+                 * Only what the host actually advertised.
+                 *
+                 * `data-runtime` / `data-model` say "this machine offers this",
+                 * which is the one thing an install entry does not mean — and
+                 * the e2e helper that selects a model by those attributes would
+                 * otherwise pick a gigabyte download by accident.
+                 */
+                ...(e.group === 'ready' ? { runtimeId: e.runtimeId, modelId: e.modelId } : {}),
+                ...(e.typed === true ? { typed: true } : {}),
                 /*
                  * Only on the entries a badge can be true of.
                  *
                  * A runtime that runs no model of ours — an installed CLI, echo
-                 * — has no per-model answer to give, and the escape hatch has no
-                 * model yet. Painting `tools: unknown` on those would be four
-                 * words of noise on a row whose capabilities §3.13's matrix
-                 * below already covers.
+                 * — has no per-model answer to give; the escape hatch has no
+                 * model yet; and a model that is not on the machine cannot have
+                 * been probed. Painting `tools: unknown` on those would be four
+                 * words of noise on a row §3.13's matrix below already covers.
                  */
-                ...(c.modelId !== null ? { badges: rowBadges(hintOf(c)) } : {}),
-              }))}
-            />
-          </label>
+                ...(e.modelId !== null && e.plan.kind === 'ready'
+                  ? { badges: rowBadges(hintOf(e)) }
+                  : {}),
+              })),
+          }))}
+        />
+      </label>
 
-          {/* §3.13: the choice shows what its runtime can actually do here. Bound
-              to the *entry's* runtime, which is now something a person picks
-              without naming — all the more reason to keep saying it. */}
-          <SupportMatrix cells={conformance} runtimeId={current?.runtimeId ?? ''} />
+      {note !== null && (
+        /*
+          The description, and what the choice will cost.
 
-          {/*
-            What the *chosen* model can do, in full (§3.3, §3.5).
+          One line, for the selected entry, under the control: the same text is
+          the second line of the row itself, and it is repeated here because the
+          popper closes over exactly this space — once it is shut, the trigger
+          shows `model · runtime` and nothing else.
+        */
+        <p className="text-muted m-0 text-[11px]" data-testid="entry-note">
+          {note}
+        </p>
+      )}
 
-            Beside the matrix rather than inside it, because they answer
-            different questions with different evidence: that one is per runtime
-            and comes from conformance runs, this one is per model and comes
-            from a probe or the server's own account of itself. Folding a
-            per-model claim into a per-runtime grid is precisely the bug §3.3
-            calls out — "keying on `runtimeId` alone is the bug that makes a 3B
-            model inherit a frontier model's declared abilities".
-          */}
-          {needsModel && (
-            <ModelCapabilities
-              hint={currentHint}
-              busy={checkable !== null && checking === `${checkable.endpointId}::${checkable.modelId}`}
-              note={
-                checkable !== null &&
-                checkNote?.key === `${checkable.endpointId}::${checkable.modelId}`
-                  ? checkNote.text
-                  : null
-              }
-              {...(checkable !== null
-                ? { onCheck: () => void check(checkable.endpointId, checkable.modelId) }
-                : {})}
-            />
-          )}
+      {current?.typed === true && (
+        /*
+          The escape hatch, and the whole reason a closed list is honest.
 
-          {/* Only where a model is part of the answer. Under the one select
-              rather than beside a second one: refreshing and installing are
-              things you do *to the list*, and a person choosing an installed CLI
-              is not looking at a list of local models. */}
-          {needsModel && (
-            <div className="text-muted grid gap-1 text-xs">
-              {current?.typed === true && (
-                /*
-                  The escape hatch, and the whole reason a closed list is honest.
+          `/v1/models` is optional in the OpenAI-compatible shape, so a server
+          that does not implement it would otherwise be unusable through a UI
+          that had merely failed to ask.
+        */
+        <input
+          className="field"
+          data-testid="model-id"
+          placeholder="e.g. qwen2.5-coder:7b"
+          value={typedModel}
+          onChange={(e) => setTypedModel(e.target.value)}
+        />
+      )}
 
-                  `/v1/models` is optional in the OpenAI-compatible shape, so a
-                  server that does not implement it would otherwise be unusable
-                  through a UI that had merely failed to ask.
-                */
-                <input
-                  className="field"
-                  data-testid="model-id"
-                  placeholder="e.g. qwen2.5-coder:7b"
-                  value={typedModel}
-                  onChange={(e) => setTypedModel(e.target.value)}
-                />
-              )}
+      {current?.plan.kind === 'endpoint' && (
+        <SetUpEndpoint where={machine.where} value={draft} onChange={setDraft} />
+      )}
 
-              <div className="flex items-baseline gap-2">
-                <small className="text-muted min-w-0 grow text-[11px]">
-                  {modelsNote ??
-                    'An Ollama or other OpenAI-compatible model reachable from that host.'}
-                </small>
-                <button
-                  type="button"
-                  className="btn-quiet shrink-0 text-xs"
-                  data-testid="refresh-models"
-                  title="Ask this host what its endpoints serve now"
-                  disabled={modelsBusy}
-                  onClick={() => void refreshModels()}
-                >
-                  {modelsBusy ? '…' : 'Refresh'}
-                </button>
-              </div>
+      {/* §3.13: the choice shows what its runtime can actually do here. Bound to
+          the *entry's* runtime, which is now something a person picks without
+          naming — all the more reason to keep saying it. */}
+      <SupportMatrix cells={conformance} runtimeId={current?.runtimeId ?? ''} />
 
-              <button
-                type="button"
-                className="btn-quiet justify-self-start text-xs"
-                data-testid="browse-models"
-                onClick={() => {
-                  setBrowsing((open) => !open);
-                  if (knownModels.length === 0) void refreshModels();
-                }}
-              >
-                {browsing ? 'Hide models' : 'Browse models…'}
-              </button>
+      {needsModel && (
+        /*
+          What the *chosen* model can do, in full (§3.3, §3.5).
 
-              {browsing && (
-                <div className="border-line bg-panel grid gap-2 rounded-[2px] border p-3">
-                  {/*
-                    The list is a starting point, not a boundary.
+          Beside the matrix rather than inside it, because they answer different
+          questions with different evidence: that one is per runtime and comes
+          from conformance runs, this one is per model and comes from a probe or
+          the server's own account of itself. Folding a per-model claim into a
+          per-runtime grid is precisely the bug §3.3 calls out.
+        */
+        <ModelCapabilities
+          hint={currentHint}
+          busy={checkable !== null && checking === `${checkable.endpointId}::${checkable.modelId}`}
+          note={
+            checkable !== null &&
+            checkNote?.key === `${checkable.endpointId}::${checkable.modelId}`
+              ? checkNote.text
+              : null
+          }
+          {...(checkable !== null
+            ? { onCheck: () => void check(checkable.endpointId, checkable.modelId) }
+            : {})}
+        />
+      )}
 
-                    Every tag here was checked against the registry when the
-                    catalogue was generated — one invented entry was caught that
-                    way — but "another model…" still takes anything, because the
-                    catalogue is there to save somebody knowing that "a good
-                    small coding model" is spelled `qwen2.5-coder:7b`.
-                  */}
-                  <span className={`${LABEL} text-muted`}>
-                    Suggested models · verified {CATALOGUE.verifiedAt}
-                  </span>
+      {endpoint !== undefined && needsModel && (
+        /*
+         * Named before the first turn, not after. §13 requires that adding a
+         * provider never quietly change where source code is transmitted, and a
+         * picker that shows only a model name is exactly that quiet change — the
+         * recipient has to be legible at the moment of choosing, which is the
+         * only moment it can still be reconsidered. Collapsing three screens
+         * into one does not get to collapse this.
+         */
+        <small
+          data-testid="endpoint-provider"
+          className={endpoint.authenticated ? 'text-state-paused text-[11px]' : 'text-muted text-[11px]'}
+        >
+          {endpoint.authenticated
+            ? `Your code and prompts go to ${endpoint.provider}, over the network.`
+            : `Stays on the host — ${endpoint.provider}.`}
+        </small>
+      )}
 
-                  {endpoints.length === 0 ? (
-                    /*
-                      No endpoint at all is a different sentence, and it used not
-                      to have one.
+      <button
+        className="btn text-accent"
+        data-testid="add-agent"
+        disabled={
+          working ||
+          current === undefined ||
+          (current.typed === true && typedModel.trim() === '') ||
+          (current.plan.kind === 'endpoint' &&
+            (draft.id.trim() === '' || draft.baseUrl.trim() === ''))
+        }
+        onClick={() => void go()}
+      >
+        {working && running
+          ? 'Working…'
+          : current === undefined
+            ? (submitLabel ?? 'Add agent')
+            : actionLabel(current.plan, submitLabel)}
+      </button>
 
-                      The catalogue below is a list of things to install *into*
-                      an endpoint. With none, the fallback note said "this
-                      endpoint serves models but does not install them" — a
-                      sentence about an endpoint that does not exist — and the
-                      other branch offered "Refresh to find out whether this host
-                      can install models", which no amount of refreshing can
-                      answer. Both read as a feature that is nearly working. The
-                      honest answer is that the list is inert until something is
-                      pointed at, and the two ways to point at something are
-                      three inches above.
-                    */
-                    <p className="text-muted m-0 text-[11px]" data-testid="no-endpoint">
-                      This host has no model endpoint, so there is nothing to install a model
-                      into. Use “Set up {machine.where}” above to install Ollama on that machine
-                      or add an API endpoint — then this list will work.
-                    </p>
-                  ) : installTarget === undefined ? (
-                    /*
-                      Said rather than shown as a dead button.
+      <SetupProgress
+        where={machine.where}
+        busy={running}
+        steps={steps}
+        failure={failure}
+        outcome={outcome}
+      />
 
-                      vLLM, llama.cpp and NIM all take their model at launch, so
-                      "install" against them is not a slow operation — it is not
-                      an operation. The reason comes from the host, which is the
-                      only side that knows which runner it is talking to.
-                    */
-                    <p className="text-muted m-0 text-[11px]">
-                      {answers.find((e) => e.installHint !== undefined)?.installHint ??
-                        'Refresh to find out whether this host can install models.'}
-                    </p>
-                  ) : null}
-
-                  <div className="grid gap-1" data-testid="catalogue" data-inert={endpoints.length === 0 ? 'true' : undefined}>
-                    {CATALOGUE.models.map((m) => {
-                      const here = knownModels.includes(m.tag);
-                      const run = installs.find((i) => i.tag === m.tag);
-                      const pct =
-                        run !== undefined && run.total > 0
-                          ? Math.round((run.completed / run.total) * 100)
-                          : null;
-                      return (
-                        <div
-                          key={m.tag}
-                          data-testid="catalogue-row"
-                          data-tag={m.tag}
-                          className="flex items-baseline justify-between gap-3"
-                        >
-                          <span className="min-w-0">
-                            <span className="truncate-line">{m.label}</span>
-                            <span className="text-muted text-[11px]"> · {m.note}</span>
-                          </span>
-                          <span className="text-muted flex shrink-0 items-baseline gap-2 text-[11px]">
-                            <span className="tabular-nums">
-                              {(m.bytes / 1e9).toFixed(1)} GB
-                            </span>
-                            {here ? (
-                              <button
-                                type="button"
-                                className="btn-quiet text-[11px]"
-                                onClick={() => chooseModel(m.tag)}
-                              >
-                                Use
-                              </button>
-                            ) : run !== undefined && !run.done ? (
-                              <span className="text-accent tabular-nums">
-                                {pct === null ? run.status : `${pct}%`}
-                              </span>
-                            ) : run?.error !== undefined ? (
-                              <span className="text-state-fail">failed</span>
-                            ) : installTarget !== undefined ? (
-                              <button
-                                type="button"
-                                className="btn-quiet text-accent text-[11px]"
-                                data-testid="install-model"
-                                onClick={() => {
-                                  void installModel(installTarget.endpointId, m.tag).catch(
-                                    (err: unknown) =>
-                                      setModelsNote(
-                                        err instanceof Error ? err.message : String(err),
-                                      ),
-                                  );
-                                }}
-                              >
-                                Install
-                              </button>
-                            ) : null}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Only for a typed model: a listed one already names its endpoint
-                  in the entry that was chosen, and offering to override it would
-                  be a second answer to a question already settled. */}
-              {current?.typed === true && endpoints.length > 1 && (
-                <label className="text-muted mt-1 grid gap-1 text-xs">
-                  Sent to
-                  <select
-                    className="field"
-                    data-testid="endpoint"
-                    value={endpoint?.id ?? ''}
-                    onChange={(e) => setEndpointId(e.target.value)}
-                  >
-                    {endpoints.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.label} — {e.provider}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-
-              {endpoint !== undefined && (
-                /*
-                 * Named before the first turn, not after. §13 requires that
-                 * adding a provider never quietly change where source code is
-                 * transmitted, and a picker that shows only a model name is
-                 * exactly that quiet change — the recipient has to be legible at
-                 * the moment of choosing, which is the only moment it can still
-                 * be reconsidered. Collapsing two dropdowns into one does not
-                 * get to collapse this.
-                 */
-                <small
-                  data-testid="endpoint-provider"
-                  className={endpoint.authenticated ? 'text-state-paused text-[11px]' : 'text-muted text-[11px]'}
-                >
-                  {endpoint.authenticated
-                    ? `Your code and prompts go to ${endpoint.provider}, over the network.`
-                    : `Stays on the host — ${endpoint.provider}.`}
-                </small>
-              )}
-            </div>
-          )}
-
-          <button
-            className="btn"
-            data-testid="add-agent"
-            disabled={
-              busy || current === undefined || (current.typed === true && typedModel.trim() === '')
-            }
-            onClick={() => {
-              if (current === undefined) return;
-              void onAdd(
-                current.runtimeId,
-                current.typed === true ? typedModel.trim() : current.modelId,
-                // Unchanged contract: the store drops this when the model is
-                // null, so a no-model runtime is unaffected either way.
-                needsModel ? endpoint?.id : undefined,
-              );
-            }}
-          >
-            {submitLabel ?? 'Add agent'}
-          </button>
-        </>
+      {modelsNote !== null && (
+        /* What the host answered when asked what it can reach, verbatim: an
+           endpoint that refused is the difference between "no models" and
+           "this one machine is unreachable from here". */
+        <small className="text-muted text-[11px]" data-testid="models-note">
+          {modelsNote}
+          {modelsBusy && ' …'}
+        </small>
       )}
     </div>
   );
