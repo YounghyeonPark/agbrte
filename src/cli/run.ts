@@ -203,7 +203,7 @@ async function main(): Promise<void> {
   console.log(`  cost        ${projection.usage.cost === 'unknown' ? 'not visible to Agbrte' : `$${projection.usage.cost}`}`);
   if (progress.total > 0) console.log(`  checklist   ${progress.done}/${progress.total}`);
   console.log(
-    c.dim(`\n  transcript  ${args.workspace}/.devagents/sessions/${session.sessionId}/events.jsonl`),
+    c.dim(`\n  transcript  ${args.workspace}/.agbrte/sessions/${session.sessionId}/events.jsonl`),
   );
   console.log(c.dim(`  replay      npm run agbrte -- --workspace ${args.workspace} --inspect ${session.sessionId}`));
 

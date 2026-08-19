@@ -74,7 +74,12 @@ describe('the export says what it contains', () => {
     ]);
 
     expect(out).toMatch(/2 attachment\(s\).*not included/i);
-    expect(out).toContain('.devagents/sessions/sess-1/attachments/');
+    // Not `.agbrte/sessions/...`: the workspace directory is `.agbrte/` on a
+    // workspace made today and `.devagents/` on one made before the rename
+    // (§5.1), and the exporter has no workspace root to ask which.
+    expect(out).toContain('sessions/sess-1/attachments/');
+    expect(out).not.toContain('.agbrte/sessions/');
+    expect(out).not.toContain('.devagents/sessions/');
   });
 
   it('says plainly when there were none, rather than staying silent', () => {

@@ -190,6 +190,6 @@ describe('across a restart, which is the whole point', () => {
     // Two devices attached to one host should agree about what has been looked
     // at, which is why the marker lives beside the log rather than in a client.
     expect((await second.inbox()).every((e) => !e.unread)).toBe(true);
-    expect(workspaceLayout(root).devagents).toBeTruthy();
+    expect(workspaceLayout(root).dir).toBeTruthy();
   });
 });

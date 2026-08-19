@@ -107,6 +107,15 @@ describe('the command that is sent', () => {
     expect(script).toContain('timeout');
   });
 
+  it('asks for both workspace names', () => {
+    // The marker walk is the only place discovery can see a workspace at all, so
+    // dropping the old name here would make a machine full of `.devagents`
+    // folders answer "nothing found" (§5.1).
+    const script = discoveryScript();
+    expect(script).toContain('-name .agbrte');
+    expect(script).toContain('-name .devagents');
+  });
+
   it('does not depend on anything the user typed', async () => {
     // The alias is an argv element of `ssh`, never part of the command. Two
     // different machines are asked with a byte-identical script, which is the
@@ -136,7 +145,7 @@ describe('reading what came back', () => {
   it('ranks a used workspace above a repository above a folder', () => {
     const { candidates } = parseDiscovery(answer);
     expect(candidates).toEqual([
-      { path: '/home/a b/work stuff', kind: 'devagents' },
+      { path: '/home/a b/work stuff', kind: 'workspace' },
       { path: '/home/a b/src/api', kind: 'git' },
       { path: '/home/a b/Documents', kind: 'folder' },
     ]);
@@ -144,6 +153,25 @@ describe('reading what came back', () => {
     // as a plain folder — and appears once, under the strongest claim. A demotion
     // here would hide the only row that is *known* to hold sessions.
     expect(candidates.filter((c) => c.path === '/home/a b/work stuff')).toHaveLength(1);
+  });
+
+  it('reads both workspace names, because the old one is read forever', () => {
+    const { candidates } = parseDiscovery(
+      [
+        '=roots',
+        HOME,
+        '=marks',
+        `${HOME}/old one/.devagents`,
+        `${HOME}/new one/.agbrte`,
+        '=dirs',
+        '',
+      ].join('\n'),
+    );
+    expect(candidates.every((c) => c.kind === 'workspace')).toBe(true);
+    expect(candidates.map((c) => c.path).sort()).toEqual([
+      '/home/a b/new one',
+      '/home/a b/old one',
+    ]);
   });
 
   it('reports the roots, so an empty list means something', () => {
@@ -321,7 +349,10 @@ describe.skipIf(sh === null)('the script, under a real shell', () => {
     // A space in the home directory, because that is the case a quoting mistake
     // breaks and nothing else would notice.
     const home = await mkdtemp(join(tmpdir(), 'agbrte home '));
+    // Both workspace names, because §5.1 reads the old one forever: a machine
+    // whose sessions predate the rename must still be offered its folders.
     await mkdir(join(home, 'used', '.devagents'), { recursive: true });
+    await mkdir(join(home, 'used new', '.agbrte'), { recursive: true });
     await mkdir(join(home, 'plain repo', '.git'), { recursive: true });
     await mkdir(join(home, 'src', 'deep', 'api', '.git'), { recursive: true });
     await mkdir(join(home, 'Documents'), { recursive: true });
@@ -353,7 +384,8 @@ describe.skipIf(sh === null)('the script, under a real shell', () => {
     expect(roots).toContain(`${posixHome}/src`);
 
     const byPath = new Map(candidates.map((c) => [c.path, c.kind]));
-    expect(byPath.get(`${posixHome}/used`)).toBe('devagents');
+    expect(byPath.get(`${posixHome}/used`)).toBe('workspace');
+    expect(byPath.get(`${posixHome}/used new`)).toBe('workspace');
     expect(byPath.get(`${posixHome}/plain repo`)).toBe('git');
     // Two levels below a root: reached through `~/src`, which is why the
     // conventional project parents are roots of their own.

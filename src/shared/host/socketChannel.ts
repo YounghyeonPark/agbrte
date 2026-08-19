@@ -11,7 +11,7 @@
  *
  * No port to allocate, collide over, or accidentally expose. A Windows named
  * pipe and a unix domain socket are both reachable by path, which means host
- * discovery is a file (`.devagents/host.json`) rather than a registry, and access
+ * discovery is a file (`.agbrte/host.json`) rather than a registry, and access
  * is enforced by the OS rather than by anything Agbrte has to get right at runtime
  * — see `listen`, which narrows the socket to its owner. A TCP listener
  * on localhost is reachable by every process on the machine, including a browser
@@ -348,7 +348,7 @@ export function connect<Out, In>(
  * one host. Two checkouts of the same repo get different sockets for free, and a
  * moved workspace keeps its own.
  *
- * Neither platform puts the socket inside `.devagents/`. Windows named pipes
+ * Neither platform puts the socket inside `.agbrte/`. Windows named pipes
  * live in a global namespace, not the filesystem; and a unix socket path has a
  * hard length limit around 104 bytes, which a deep workspace path plus a
  * filename can exceed — an unusual failure to debug, and easy to avoid.

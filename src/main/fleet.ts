@@ -216,6 +216,20 @@ function bubbleAcrossHosts(sessions: Session[]): Session[] {
 
 /** One attached host: a workspace, the process owning it, and its sessions. */
 export interface AttachedHost {
+  /**
+   * Which machine this host runs on (§5.2, §8).
+   *
+   * Not a second name for `instanceId`. Two folders on one build box are two
+   * checkouts and *one* machine, and every question of the form "can these
+   * reach each other" is about the machine — which is why asking `instanceId`
+   * produced sentences like "those sessions are on 2 machines" about one
+   * computer.
+   *
+   * `undefined` from a host that predates this field, and that is *cannot tell*
+   * rather than *a different machine*: a caller must fall back to something it
+   * can defend rather than treating an absent id as a distinct one.
+   */
+  machineId?: string;
   instanceId: InstanceId;
   lineageId: LineageId;
   workspaceRoot: string;
@@ -492,6 +506,11 @@ export class Fleet extends EventEmitter {
   private adopt(entry: Entry, identity: HostIdentity, connection: HostConnection): void {
     entry.lineageId = identity.lineageId;
     entry.workspaceRoot = identity.workspaceRoot;
+    // Deleted rather than left stale when a host stops reporting one: an entry
+    // reattached to an older host must read as *cannot tell*, not as the machine
+    // the previous handshake happened to name.
+    if (identity.machineId === undefined) delete entry.machineId;
+    else entry.machineId = identity.machineId;
     entry.pid = identity.pid;
     entry.role = connection.role;
 
@@ -1690,6 +1709,20 @@ export class Fleet extends EventEmitter {
    * derives a *view* the fleet can recompute — it would write into another
    * machine's durable log, which cannot be taken back if the far host is
    * unreachable halfway through.
+   *
+   * **The constraint is one host, and it was being described as one folder.**
+   * The check keyed on `instanceId` and the sentence said "machines", so two
+   * folders on one build box — two checkouts, one computer — were refused with
+   * a claim that was simply false, and a person with a session in each was told
+   * to do something about machines that were not involved. What actually has to
+   * be true is that both sessions are held by the same *host process*, because
+   * delivery is a lookup in one manager's `sessions` map; a host serving several
+   * workspaces satisfies that across folders, and this refusal stops firing for
+   * them without anything here being special-cased (§8). `machineId` is what
+   * makes the two remaining refusals separable, and they are genuinely different
+   * problems: another machine is §17 Q22 and unbuilt, while another host on
+   * *this* machine is something the user can fix by opening both folders on one
+   * host.
    */
   async group(sessionIds: SessionId[], name: string, groupId?: string): Promise<Session[]> {
     if (sessionIds.length === 0) throw new AttachRefused('name at least one session to group');
@@ -1701,11 +1734,30 @@ export class Fleet extends EventEmitter {
     }
 
     if (owners.size > 1) {
-      const where = [...owners.values()].map(labelOf).sort();
+      const entries = [...owners.values()];
+      const where = entries.map(labelOf).sort();
+      /*
+       * Grouped by machine, and an unreported `machineId` counts as its own.
+       *
+       * A host too old to say which machine it is on must not be folded in with
+       * one that did: the honest reading of absence is *cannot tell* (§6.7), and
+       * assuming "same machine" would produce the more confident of the two
+       * refusals about a fact nobody established. Keyed on the entry's own
+       * `instanceId` in that case, which is what this check used before and is
+       * exactly as strong as it ever was.
+       */
+      const machines = new Set(entries.map((e) => e.machineId ?? `instance:${e.instanceId}`));
+      if (machines.size > 1) {
+        throw new AttachRefused(
+          `those sessions are on ${machines.size} machines (${where.join(', ')}), and sessions ` +
+            'in a group message each other, which does not cross machines yet. Group the ones ' +
+            'on each machine separately.',
+        );
+      }
       throw new AttachRefused(
-        `those sessions are on ${owners.size} machines (${where.join(', ')}), and a group is ` +
-          'one host in this version — sessions in a group message each other, and that does ' +
-          'not cross machines yet. Group the ones on each machine separately.',
+        `those sessions are in ${owners.size} workspaces on one machine (${where.join(', ')}), ` +
+          'served by separate hosts — a group is delivered inside one host, so both folders ' +
+          'have to be open on the same one.',
       );
     }
 
@@ -1735,7 +1787,13 @@ export class Fleet extends EventEmitter {
   > {
     const perHost = await Promise.all(
       [...this.entries.values()].map(async (entry) =>
-        (await entry.connection.listOnDisk()).map((s) => ({ instanceId: entry.instanceId, ...s })),
+        (await entry.connection.listOnDisk()).map((s) => ({
+          // The host's answer wins where it gives one: a host serving several
+          // workspaces knows which of them a row came from, and the entry's own
+          // id is only right for a host that has exactly one.
+          ...s,
+          instanceId: (s.instanceId as InstanceId | undefined) ?? entry.instanceId,
+        })),
       ),
     );
     return perHost.flat();
@@ -2029,6 +2087,10 @@ function sameOrigin(a: string, b: string): boolean {
 
 function snapshot(entry: Entry): AttachedHost {
   return {
+    // Copied, for the reason `bundleVersion` documents below: this function is
+    // the only way an entry ever leaves the fleet, so a field written onto the
+    // entry and not listed here is a field that no reader has ever seen.
+    ...(entry.machineId !== undefined ? { machineId: entry.machineId } : {}),
     instanceId: entry.instanceId,
     lineageId: entry.lineageId,
     workspaceRoot: entry.workspaceRoot,

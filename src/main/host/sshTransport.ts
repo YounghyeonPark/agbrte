@@ -59,6 +59,7 @@
 import { spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:net';
 import { readFile } from 'node:fs/promises';
+import { LEGACY_WORKSPACE_DIR, WORKSPACE_DIR } from '@main/store/layout.js';
 
 /**
  * How Agbrte is laid out in a remote home directory.
@@ -506,7 +507,12 @@ export async function startRemoteHost(
 ): Promise<RemoteHostRecord> {
   const linger = opts.lingerMs === undefined ? '' : `AGBRTE_HOST_LINGER_MS=${opts.lingerMs} `;
   const log = shellQuote(`${remoteRoot(home)}/host.log`);
-  const record = shellQuote(`${workspaceRoot}/.devagents/host.json`);
+  // Both workspace names, because §5.1 reads the old one forever and a remote
+  // host opening a `.devagents/` workspace writes its record there. Waiting on
+  // only the new name would time out against a host that had already started.
+  const records = [WORKSPACE_DIR, LEGACY_WORKSPACE_DIR].map((d) =>
+    shellQuote(`${workspaceRoot}/${d}/host.json`),
+  );
   const attempts = Math.max(1, Math.ceil((opts.readyTimeoutMs ?? 30_000) / 500));
 
   // Assembled with explicit separators rather than joined on '; ': `&` already
@@ -536,7 +542,8 @@ export async function startRemoteHost(
     // here also keeps the session open past the moment a freshly started child
     // would otherwise be killed by it closing.
     `for i in $(seq 1 ${attempts}); do ` +
-    `if [ -s ${record} ]; then cat ${record}; exit 0; fi; sleep 0.5; done; ` +
+    `for r in ${records.join(' ')}; do ` +
+    `if [ -s "$r" ]; then cat "$r"; exit 0; fi; done; sleep 0.5; done; ` +
     `echo TIMEOUT >&2; tail -20 ${log} >&2; exit 1`;
 
   const started = await runner.exec(alias, command);
@@ -567,9 +574,13 @@ export async function readRemoteHostRecord(
   alias: string,
   workspaceRoot: string,
 ): Promise<RemoteHostRecord | null> {
+  // The new name first and the old one as a fallback (§5.1): a workspace that
+  // predates the rename still has its host record under `.devagents/`.
   const result = await runner.exec(
     alias,
-    `cat ${shellQuote(`${workspaceRoot}/.devagents/host.json`)} 2>/dev/null`,
+    [WORKSPACE_DIR, LEGACY_WORKSPACE_DIR]
+      .map((d) => `cat ${shellQuote(`${workspaceRoot}/${d}/host.json`)} 2>/dev/null`)
+      .join(' || '),
   );
   if (result.code !== 0 || result.stdout.trim() === '') return null;
   try {

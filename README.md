@@ -154,7 +154,7 @@ profile; the key stays on the host and never reaches a client or a transcript.
   "default": "local" }
 ```
 
-A workspace's `.devagents/access.json` pins a client to watching rather than
+A workspace's `.agbrte/access.json` pins a client to watching rather than
 driving — a seatbelt and not a lock, since the label is self-reported and anyone
 who can reach the host's socket already owns the workspace.
 
@@ -212,11 +212,17 @@ constantly and cannot rot.
 
 ## A note on the workspace
 
-Agbrte stores everything in `.devagents/` inside the workspace, which means
+Agbrte stores everything in `.agbrte/` inside the workspace, which means
 **do not put a workspace inside a sync-managed folder** (Google Drive, Dropbox,
 OneDrive). The log is append-only with byte-offset resume, and sync clients
 rewrite files and create conflict copies. Use a git remote for backup instead;
 the repository history is the durable copy.
+
+Workspaces created before v0.0.12 use `.devagents/` instead. That name is read
+forever and is never renamed for you: a rename would move an `events.jsonl` a
+detached host may be appending to, would show up as deletions in your tracked
+tree, and would hide your sessions from an older release. Both names work, side
+by side, on the same machine.
 
 ## Using it in research, or in a patent
 

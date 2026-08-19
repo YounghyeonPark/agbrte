@@ -47,7 +47,7 @@ export interface AccessPolicy {
 }
 
 export function accessPolicyPath(workspaceRoot: string): string {
-  return join(workspaceLayout(workspaceRoot).devagents, 'access.json');
+  return join(workspaceLayout(workspaceRoot).dir, 'access.json');
 }
 
 export class AccessPolicyInvalid extends Error {

@@ -37,7 +37,7 @@ const MODEL = 'qwen2.5:7b';
 
 /** Every event of a type, from the one session's log on disk. */
 async function logRows(repo: string): Promise<Array<Record<string, unknown>>> {
-  const dir = join(repo, '.devagents', 'sessions');
+  const dir = join(repo, '.agbrte', 'sessions');
   const ids = await readdir(dir);
   const log = await readFile(join(dir, ids[0]!, 'events.jsonl'), 'utf8');
   return log

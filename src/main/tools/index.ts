@@ -154,7 +154,17 @@ function confine(ctx: ToolContext, raw: unknown): { path: string } | { error: st
   return { path: abs };
 }
 
-const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'out', 'coverage', '.devagents']);
+const SKIP_DIRS = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'out',
+  'coverage',
+  // Both workspace names: a folder created before the rename still holds a
+  // session store, and walking one is walking our own bookkeeping (§5.1).
+  '.agbrte',
+  '.devagents',
+]);
 
 /** Depth-first walk of the workspace, bounded and skipping noise directories. */
 async function walk(root: string, signal: AbortSignal): Promise<string[]> {

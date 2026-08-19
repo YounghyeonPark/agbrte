@@ -30,6 +30,7 @@
  */
 
 import { loadReport } from '@main/conformance.js';
+import { LEGACY_WORKSPACE_DIR, WORKSPACE_DIR } from '@main/store/layout.js';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -122,9 +123,14 @@ function findHostEntry(): string {
  * The label carries the machine because that is what a rule wants to match on:
  * "the laptop watches, the desk machine drives" is a sentence about devices.
  */
-/** Whether this directory is already a workspace, without making it one. */
+/**
+ * Whether this directory is already a workspace, without making it one.
+ *
+ * Both names, because §5.1 reads the old one forever — `ls` in a folder holding
+ * a `.devagents/` must report its sessions rather than say there is nothing here.
+ */
 function hasWorkspace(path: string): boolean {
-  return existsSync(join(path, '.devagents'));
+  return existsSync(join(path, WORKSPACE_DIR)) || existsSync(join(path, LEGACY_WORKSPACE_DIR));
 }
 
 async function open(path: string): Promise<HostConnection> {
@@ -255,8 +261,9 @@ async function main(): Promise<number> {
    * Asking what is here must not make something be here.
    *
    * Found by running `agbrte ls` on a server's home directory to see what was
-   * running: it created `~/.devagents` and started a host, because every verb
-   * went through `open` and opening a workspace creates one. For a command
+   * running: it made a workspace store in the home directory and started a host
+   * there, because every verb went through `open` and opening a workspace
+   * creates one. For a command
    * whose entire job is to report, that is a side effect nobody asked for — and
    * it lands in whatever directory the user happened to be standing in.
    *

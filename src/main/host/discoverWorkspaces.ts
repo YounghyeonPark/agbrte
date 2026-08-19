@@ -68,6 +68,7 @@ import {
   type SshRunner,
 } from './sshTransport.js';
 import { probeWindows, windowsSshRunner } from './windowsBootstrap.js';
+import { LEGACY_WORKSPACE_DIR, WORKSPACE_DIR } from '@main/store/layout.js';
 
 /** How far below a root a marker may be found: a workspace two levels down. */
 export const DISCOVERY_MAX_DEPTH = 3;
@@ -115,7 +116,7 @@ export const ABSOLUTE_ROOTS = ['/srv', '/opt', '/workspace'] as const;
  *
  * `.*` covers every hidden directory in one rule — `.cache`, `.npm`, `.cargo`,
  * `.rustup`, `.local` — and is why this list is short. It is applied *after* the
- * marker test, so `.git` and `.devagents` are still found; they are pruned too,
+ * marker test, so `.git` and `.agbrte` are still found; they are pruned too,
  * as soon as they are printed, because there is nothing inside either of them
  * that this is looking for.
  *
@@ -141,8 +142,8 @@ export const PRUNED_NAMES = [
 
 /** What a candidate is, which is the whole reason they are not one flat list. */
 export type WorkspaceCandidateKind =
-  /** Holds a `.devagents/` — this project has run here, and sessions may exist. */
-  | 'devagents'
+  /** Holds a `.agbrte/` — this project has run here, and sessions may exist. */
+  | 'workspace'
   /** A git repository. The next-best guess at "a thing you would work in". */
   | 'git'
   /** A directory that is neither. Offered last, and separately. */
@@ -175,7 +176,7 @@ export interface WorkspaceDiscovery {
 }
 
 /** Rank order. Definitive first, guesses second, noise last. */
-const RANK: Record<WorkspaceCandidateKind, number> = { devagents: 0, git: 1, folder: 2 };
+const RANK: Record<WorkspaceCandidateKind, number> = { workspace: 0, git: 1, folder: 2 };
 
 /**
  * Refuse an alias that could be read as an option by `ssh`.
@@ -243,7 +244,10 @@ export function discoveryScript(
   const cap = opts.cap ?? DISCOVERY_MAX_RESULTS;
   const seconds = opts.findSeconds ?? REMOTE_FIND_SECONDS;
   const roots = rootTokens().join(' ');
-  const markers = `\\( -name .devagents -o -name .git \\)`;
+  // Both workspace names, because §5.1 reads the old one forever: a machine
+  // with sessions in `.devagents` folders must still be offered them, and this
+  // walk is the only place discovery can see them at all.
+  const markers = `\\( -name ${WORKSPACE_DIR} -o -name ${LEGACY_WORKSPACE_DIR} -o -name .git \\)`;
   const pruned = PRUNED_NAMES.map((name) => `-name ${shellQuote(name)}`).join(' -o ');
 
   return [
@@ -315,8 +319,11 @@ export function parseDiscovery(
     if (section === 'roots') {
       roots.push(line);
     } else if (section === 'marks') {
-      if (line.endsWith('/.devagents')) {
-        found.push({ path: line.slice(0, -'/.devagents'.length), kind: 'devagents' });
+      const marker = [WORKSPACE_DIR, LEGACY_WORKSPACE_DIR].find((name) =>
+        line.endsWith(`/${name}`),
+      );
+      if (marker !== undefined) {
+        found.push({ path: line.slice(0, -(marker.length + 1)), kind: 'workspace' });
       } else if (line.endsWith('/.git')) {
         found.push({ path: line.slice(0, -'/.git'.length), kind: 'git' });
       }
@@ -327,7 +334,7 @@ export function parseDiscovery(
 
   /*
    * One path can arrive several times — the roots overlap (`$HOME` and
-   * `$HOME/src` both reach `~/src/proj`), and a `.devagents` workspace is
+   * `$HOME/src` both reach `~/src/proj`), and a `.agbrte` workspace is
    * usually a git repository as well. The strongest claim wins, which is the
    * whole point of ranking them: a workspace this project has already used must
    * not be demoted to "a git repository" by the order the far side happened to

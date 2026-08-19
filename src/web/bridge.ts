@@ -244,7 +244,7 @@ const api: AgbrteApi = {
    * the same screen. This is a shorter path to reach a person already has, not a
    * new one — and it is refused in exactly the places the desktop client is
    * refused: the host declines a `read-only` client (which is what
-   * `.devagents/access.json` exists to pin a phone to), and the fleet declines a
+   * `.agbrte/access.json` exists to pin a phone to), and the fleet declines a
    * remote host by name. Putting either refusal here instead would be a second
    * copy that can disagree with the authoritative one.
    *

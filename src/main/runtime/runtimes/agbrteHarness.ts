@@ -38,7 +38,7 @@ import {
   type UserTurn,
 } from '@shared/types/index.js';
 import { DEFAULT_TOOLS, toolByName, type ToolDefinition } from '../../tools/index.js';
-import { WorkspaceLeases } from '../../tools/leases.js';
+import { LeaseTables, type WorkspaceLeases } from '../../tools/leases.js';
 import { fitContent } from '../../content/fit.js';
 // The **same** estimator the budget is denominated in. A second opinion about
 // what a token is would let the harness ask for a size the owner measures
@@ -70,15 +70,17 @@ export interface AgbrteHarnessOptions {
   endpointFor: (endpointId?: string) => ModelEndpoint;
   tools?: ToolDefinition[];
   /**
-   * The workspace's lease table (§9).
+   * The lease tables, one per workspace root (§9).
    *
-   * Injected rather than created here, because it must be shared by everything
-   * that writes this workspace — leases are keyed by path and scoped to the
-   * workspace, and two tables would mean two agents each believing they hold the
-   * same file. Defaults to a private one so a single-runtime setup and every
-   * test still get arbitration rather than none.
+   * Injected rather than created here, because a table must be shared by
+   * everything that writes one workspace — leases are keyed by path and scoped
+   * to the workspace, and two tables for one folder would mean two agents each
+   * believing they hold the same file. It is a *set* of tables rather than one
+   * because a host now holds several folders (§8) and one runtime instance
+   * serves agents in all of them. Defaults to a private set so a single-runtime
+   * setup and every test still get arbitration rather than none.
    */
-  leases?: WorkspaceLeases;
+  leases?: LeaseTables;
   /** Hard ceiling on provider round trips per turn. */
   maxIterations?: number;
 }
@@ -184,7 +186,11 @@ class AgbrteHarnessHandle implements AgentHandle {
       },
     }));
     this.tools = [...(opts.tools ?? DEFAULT_TOOLS), ...injected];
-    this.leases = opts.leases ?? new WorkspaceLeases();
+    // Resolved once, from the path this agent actually works in: `shared`
+    // isolation gives every agent in one workspace the same root and therefore
+    // the same table, and `worktree` isolation gives an agent its own checkout
+    // and its own — which is the isolation it asked for (§9).
+    this.leases = (opts.leases ?? new LeaseTables()).for(spec.workspacePath);
     // A rehydrated seed is conversation, not tool mechanics — it replays as
     // ordinary turns (§5.4).
     this.replaceHistory(ctx.seedHistory ?? []);

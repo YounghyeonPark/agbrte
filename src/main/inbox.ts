@@ -127,8 +127,8 @@ export function merge(parts: readonly InboxEntry[][], limit = 100): InboxEntry[]
 export class ReadMarker {
   constructor(private readonly path: string) {}
 
-  static in(devagentsDir: string): ReadMarker {
-    return new ReadMarker(join(devagentsDir, 'inbox.json'));
+  static in(workspaceDir: string): ReadMarker {
+    return new ReadMarker(join(workspaceDir, 'inbox.json'));
   }
 
   async read(): Promise<number> {

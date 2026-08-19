@@ -610,6 +610,23 @@ export interface ModelChip {
 export interface CreateSessionInput {
   title: string;
   goal: string;
+  /**
+   * The folder this session works in (§5.1, §8).
+   *
+   * **Chosen when the session is created**, which is the moment a person is
+   * looking at a picker, rather than when a machine is attached — a machine is a
+   * machine and a folder is a piece of work, and binding the second to the first
+   * made every session on a box share one project. A folder that already has an
+   * `.agbrte` in it is *loaded*, not refused: the sessions that are there are
+   * the sessions you get.
+   *
+   * Absent means the workspace the owning host was started with. Every caller
+   * that has only ever had one folder keeps working unchanged, and a host too
+   * old to hold more than one ignores this field — which is why a client must
+   * check `HostIdentity.workspaces` before offering the choice rather than
+   * sending a path and hoping.
+   */
+  workspaceRoot?: string;
   target?: ExecutionTarget;
   policy?: ToolPolicy;
   /**

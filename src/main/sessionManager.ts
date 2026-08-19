@@ -15,7 +15,7 @@
 import { EventEmitter } from 'node:events';
 import { readdir, readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 import {
   byAttentionThenRecency,
   TREE_LIMITS,
@@ -71,7 +71,8 @@ import {
 import { McpConnection } from './mcp/client.js';
 import { truncateToolOutput } from './tools/index.js';
 import { SessionStore, type SessionMeta } from './store/sessionStore.js';
-import { workspaceLayout } from './store/layout.js';
+import { sessionLayout, workspaceLayout } from './store/layout.js';
+import { openWorkspace } from './store/identity.js';
 import { addCost } from '@shared/cost.js';
 import { ensureBlob } from './store/blobTransfer.js';
 import { compactionSizes, rehydrate } from './store/rehydrate.js';
@@ -331,8 +332,42 @@ interface LiveSession {
   skills: SkillConfig[];
 }
 
+/**
+ * One workspace this manager has sessions in (DESIGN.md §5.1, §8).
+ *
+ * **Keyed by `instanceId`, never by path.** §5.2 makes `instanceId` the identity
+ * of one checkout on one machine, and §5.3 makes a path the one thing about a
+ * workspace that changes underneath you — so a map from path to workspace would
+ * be a map that a `mv` invalidates, which is the failure relocation handling
+ * exists to prevent. A session already carries its `instanceId`; that is the
+ * whole lookup.
+ */
+export interface ManagedWorkspace {
+  root: string;
+  instanceId: InstanceId;
+  /**
+   * Where this checkout was before it moved (§5.3).
+   *
+   * Per workspace and not per manager, which is the point of the change: with
+   * one manager holding several checkouts, "the workspace moved" is a fact about
+   * one of them, and a manager-wide flag would discard every native resume token
+   * in every other workspace because one folder was dragged.
+   */
+  relocatedFrom?: string;
+}
+
 export interface SessionManagerDeps {
   registry: RuntimeRegistry;
+  /**
+   * The workspace this manager starts with.
+   *
+   * Not "the workspace this manager is". A manager holds a *table* of open
+   * workspaces (`ManagedWorkspace`) and a session names its own through
+   * `instanceId`; this is simply the first entry, and the one a `createSession`
+   * that names no folder lands in. Kept because every caller has exactly one
+   * workspace to give at construction, and because a host that serves several
+   * still has to have started somewhere.
+   */
   workspaceRoot: string;
   instanceId: InstanceId;
   /**
@@ -485,9 +520,30 @@ export class SessionManager extends EventEmitter {
   /** How many turns this host runs at once (§8). */
   private readonly slots: TurnSlots;
 
+  /**
+   * The workspaces this manager has sessions in, by `instanceId` (§5.1, §8).
+   *
+   * A manager used to be one workspace, one log, one host. The middle of those
+   * is the invariant and it is unchanged: **one log has one writer**, and each
+   * session still owns exactly one log which only this process appends to. What
+   * moved is the outer scope — a host is now one per *machine* (§8), so the
+   * manager that host owns holds a table rather than a field. N logs under one
+   * manager preserves single-writer exactly as N managers over N logs did; what
+   * it additionally buys is that two sessions in different folders are in one
+   * `sessions` map, which is what lets them be grouped and message each other
+   * without the delivery crossing a process (§17 Q22).
+   */
+  private readonly workspaces = new Map<InstanceId, ManagedWorkspace>();
+
   constructor(private readonly deps: SessionManagerDeps) {
     super();
     this.now = deps.now ?? (() => new Date());
+
+    this.workspaces.set(deps.instanceId, {
+      root: deps.workspaceRoot,
+      instanceId: deps.instanceId,
+      ...(deps.relocatedFrom !== undefined ? { relocatedFrom: deps.relocatedFrom } : {}),
+    });
 
     // One timer for every session and both jobs, rather than one each: each
     // check is a comparison against a number, and N timers would be N wakeups
@@ -513,6 +569,77 @@ export class SessionManager extends EventEmitter {
     );
     // Never hold the process open just to notice silence.
     this.sweeper.unref?.();
+  }
+
+  // --------------------------------------------------------------- workspaces
+
+  /** Every workspace this manager holds sessions in (§5.1). */
+  listWorkspaces(): ManagedWorkspace[] {
+    return [...this.workspaces.values()];
+  }
+
+  /**
+   * Open another workspace and hold its sessions alongside the rest (§8).
+   *
+   * Idempotent by `instanceId`, and **refused rather than aliased when the same
+   * checkout turns up at a second path**: that is §5.3's fork — a folder copied
+   * including `instance.json` — and resolving it is a decision with a UI, not
+   * something a lookup may make on the way past. Refused *by name*, both paths
+   * in the sentence, because a person can only act on it if they can see which
+   * two folders are involved.
+   *
+   * `record` is off by default for the same reason `openWorkspace` defaults it
+   * off (§5.3): recording consumes the relocation signal, and only the owner of
+   * the workspace may spend it. The host passes `true`; nothing else should.
+   */
+  async addWorkspace(root: string, opts: { record?: boolean } = {}): Promise<ManagedWorkspace> {
+    const identity = await openWorkspace(root, { ...(opts.record === true ? { record: true } : {}) });
+    const held = this.workspaces.get(identity.instanceId);
+    if (held !== undefined) {
+      if (resolvePath(held.root) !== resolvePath(identity.layout.root)) {
+        throw new Error(
+          `the checkout at ${identity.layout.root} is the same one already open at ${held.root} ` +
+            `— a copied \`instance.json\`, which is a fork to resolve rather than two workspaces to hold`,
+        );
+      }
+      return held;
+    }
+    const workspace: ManagedWorkspace = {
+      root: identity.layout.root,
+      instanceId: identity.instanceId,
+      ...(identity.origin === 'relocated' && identity.movedFrom !== undefined
+        ? { relocatedFrom: identity.movedFrom }
+        : {}),
+    };
+    this.workspaces.set(workspace.instanceId, workspace);
+    return workspace;
+  }
+
+  /**
+   * The workspace a session belongs to.
+   *
+   * Resolved through `instanceId` and never through a stored path, so a session
+   * whose folder moved between one open and the next resolves to wherever the
+   * host found it (§5.3). A session naming an `instanceId` this manager does not
+   * hold is a bug in whoever loaded it, and it is refused by name rather than
+   * silently answered with the first workspace — which would write one
+   * workspace's session into another one's directory.
+   */
+  workspaceOf(session: { instanceId: InstanceId; sessionId?: SessionId }): ManagedWorkspace {
+    const held = this.workspaces.get(session.instanceId);
+    if (held === undefined) {
+      throw new Error(
+        `no workspace ${session.instanceId} is open on this host${
+          session.sessionId === undefined ? '' : `, so session ${session.sessionId} has nowhere to write`
+        }`,
+      );
+    }
+    return held;
+  }
+
+  /** The path of the workspace a live session writes into. */
+  private rootOf(live: LiveSession): string {
+    return this.workspaceOf(live.session).root;
   }
 
   /** Stop the stall sweeper. Sessions are unaffected; they live in the log. */
@@ -543,7 +670,7 @@ export class SessionManager extends EventEmitter {
   async releaseWorktrees(): Promise<void> {
     for (const live of this.sessions.values()) {
       for (const [agentId, worktree] of live.worktrees) {
-        await removeWorktree(this.deps.workspaceRoot, worktree);
+        await removeWorktree(this.rootOf(live), worktree);
         live.worktrees.delete(agentId);
       }
     }
@@ -592,9 +719,24 @@ export class SessionManager extends EventEmitter {
     const sessionId = newSessionId();
     const createdAt = this.now().toISOString();
 
-    const store = await SessionStore.create(this.deps.workspaceRoot, {
+    /*
+     * Which folder this session works in, chosen at creation (§5.1, §8).
+     *
+     * Opened here rather than assumed, because "the folder already has an
+     * `.agbrte` with sessions in it" is the ordinary case and not an error: the
+     * sessions that are there are the sessions you get, and `addWorkspace` is
+     * idempotent by `instanceId` so naming the same folder twice costs one
+     * `stat`. Absent means the workspace this manager was constructed with,
+     * which is what every caller that has only ever had one folder still sends.
+     */
+    const workspace =
+      input.workspaceRoot === undefined
+        ? this.workspaceOf({ instanceId: this.deps.instanceId })
+        : await this.addWorkspace(input.workspaceRoot);
+
+    const store = await SessionStore.create(workspace.root, {
       sessionId,
-      instanceId: this.deps.instanceId,
+      instanceId: workspace.instanceId,
       title: input.title,
       goal: input.goal,
       createdAt,
@@ -602,7 +744,7 @@ export class SessionManager extends EventEmitter {
 
     const session: Session = {
       sessionId,
-      instanceId: this.deps.instanceId,
+      instanceId: workspace.instanceId,
       target: input.target ?? { kind: 'local' },
       title: input.title,
       goal: input.goal,
@@ -921,7 +1063,7 @@ export class SessionManager extends EventEmitter {
       // agent in the session — including one on a coarse-gated runtime (§13).
       toolPolicy: input.policy ?? clonePolicy(live.policy),
       limits: input.limits ?? {},
-      workspacePath: this.deps.workspaceRoot,
+      workspacePath: this.rootOf(live),
       ...(input.model !== undefined ? { model: input.model } : {}),
       ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
     };
@@ -943,7 +1085,7 @@ export class SessionManager extends EventEmitter {
     let isolation = requested;
     let downgraded: string | null = null;
     if (requested === 'worktree') {
-      const support = await worktreeSupport(this.deps.workspaceRoot);
+      const support = await worktreeSupport(this.rootOf(live));
       if (!support.ok) {
         isolation = 'shared';
         downgraded = support.reason;
@@ -956,7 +1098,7 @@ export class SessionManager extends EventEmitter {
     // Cut after admission, so a configuration that was going to be refused
     // anyway does not leave a branch behind.
     if (isolation === 'worktree') {
-      const worktree = await createWorktree(this.deps.workspaceRoot, spec.agentId);
+      const worktree = await createWorktree(this.rootOf(live), spec.agentId);
       live.worktrees.set(spec.agentId, worktree);
       spec.workspacePath = worktree.path;
     }
@@ -1405,7 +1547,7 @@ export class SessionManager extends EventEmitter {
 
     await this.surfaceMerge(live, agentId);
 
-    await this.setState(live, outcome.nextState, this.stopReason(outcome.stop));
+    await this.setState(live, outcome.nextState, this.stopReason(outcome.stop, live));
     await live.store.maybeCheckpoint();
   }
 
@@ -1433,7 +1575,11 @@ export class SessionManager extends EventEmitter {
     // directory the code is no longer in. §15's criterion for this phase is
     // explicitly "verified with the native resume token deliberately
     // invalidated", because the durable path is the one that has to carry it.
-    const trustToken = this.deps.relocatedFrom === undefined;
+    // Per workspace, not per manager: one host now holds several checkouts
+    // (§8), and one of them moving must not throw away the resume tokens of
+    // sessions in the folders that did not.
+    const workspace = this.workspaceOf(live.session);
+    const trustToken = workspace.relocatedFrom === undefined;
 
     // Recorded whether or not there was a token to discard. The move is a fact
     // about the workspace, not about one runtime's resume support — putting it
@@ -1444,8 +1590,8 @@ export class SessionManager extends EventEmitter {
       live.notedRelocation = true;
       await live.store.append({
         type: 'workspace.relocated',
-        from: this.deps.relocatedFrom as string,
-        to: this.deps.workspaceRoot,
+        from: workspace.relocatedFrom as string,
+        to: workspace.root,
       });
     }
 
@@ -1454,7 +1600,7 @@ export class SessionManager extends EventEmitter {
         'resume-rejected',
         live.session.sessionId,
         spec.agentId,
-        new Error(`workspace moved from ${this.deps.relocatedFrom}; native resume token discarded`),
+        new Error(`workspace moved from ${workspace.relocatedFrom}; native resume token discarded`),
       );
     }
 
@@ -1909,11 +2055,14 @@ export class SessionManager extends EventEmitter {
   /**
    * Put sessions in a group, so they can message each other (§17 Q22).
    *
-   * **Same host, and refused by name otherwise.** A `SessionManager` knows one
-   * workspace, so a session it cannot find is one it cannot deliver to, and the
-   * only honest thing it can do is say which id it does not have. The fleet
-   * refuses earlier and more usefully — it can name the *machines* — but this
-   * check is not a duplicate of that one: the fleet is a dependency of the app,
+   * **Same host, and refused by name otherwise.** The constraint is *this
+   * manager*, not this folder: delivery is a lookup in `this.sessions`, so two
+   * sessions in different workspaces held by one host group perfectly well and
+   * two on different hosts cannot, whatever folders they are in. A session this
+   * manager cannot find is one it cannot deliver to, and the only honest thing
+   * it can say is which id it does not have. The fleet refuses earlier and more
+   * usefully — it can tell a second machine from a second host on this one — but
+   * this check is not a duplicate of that: the fleet is a dependency of the app,
    * and a guard that lives only there is a guard the CLI and the next client do
    * not have. §13's rule about a bypassable gate applies to a refusal too.
    *
@@ -1948,7 +2097,7 @@ export class SessionManager extends EventEmitter {
       if (found === undefined) {
         throw new Error(
           `no session ${sessionId} on this host, so it cannot join a group here — ` +
-            'a group is same-host in v1, and messaging between machines is not built',
+            'a group is delivered inside one host, and messaging between hosts is not built',
         );
       }
       return found;
@@ -2239,7 +2388,7 @@ export class SessionManager extends EventEmitter {
   private async surfaceMerge(live: LiveSession, agentId: AgentId): Promise<void> {
     const worktree = live.worktrees.get(agentId);
     if (worktree === undefined) return;
-    if (!(await hasCommits(this.deps.workspaceRoot, worktree))) return;
+    if (!(await hasCommits(this.rootOf(live), worktree))) return;
 
     await live.store.append(
       {
@@ -2378,7 +2527,7 @@ export class SessionManager extends EventEmitter {
   ): Promise<PermissionDecision> {
     // The workspace root is what makes §13's inside/outside rows evaluable.
     const evaluation = evaluatePolicy(spec.toolPolicy, ask.tool, ask.args, {
-      workspaceRoot: this.deps.workspaceRoot,
+      workspaceRoot: this.rootOf(live),
     });
 
     const request: PermissionRequest = {
@@ -2584,12 +2733,15 @@ export class SessionManager extends EventEmitter {
    * is not fixed by going anywhere, so naming a machine there would be noise on
    * every row to make one row right.
    */
-  private stopReason(stop: StopReason): string {
+  private stopReason(stop: StopReason, live: LiveSession): string {
     const summary = stopReasonSummary(stop);
     if (stop.kind !== 'auth') return summary;
     const machine = this.deps.machineName ?? hostname();
+    // The session's own workspace, not the host's first one: a remedy naming
+    // the wrong folder on the right machine is the same class of unusable
+    // instruction as one naming the wrong machine.
     return (
-      `${summary} (machine: ${machine}, workspace: ${this.deps.workspaceRoot}). ` +
+      `${summary} (machine: ${machine}, workspace: ${this.rootOf(live)}). ` +
       `Nothing is lost — the session is holding its work and picks this turn up when you send again.`
     );
   }
@@ -2780,8 +2932,8 @@ export class SessionManager extends EventEmitter {
   async hasBlob(sessionId: SessionId, sha256: Sha256, mime: string): Promise<boolean> {
     // Throws on an unknown session rather than answering `false`, which would
     // read as "send it to me" and then fail on the write.
-    this.live(sessionId);
-    return ensureBlob(this.deps.workspaceRoot, sessionId, sha256, mime);
+    const live = this.live(sessionId);
+    return ensureBlob(this.rootOf(live), sessionId, sha256, mime);
   }
 
   /**
@@ -3448,11 +3600,36 @@ export class SessionManager extends EventEmitter {
    * opening it cost more the longer a workspace had been used.
    */
   async inbox(limit = 50): Promise<InboxEntry[]> {
-    const readAt = await this.readMarker().read();
+    /*
+     * One marker per workspace, not one per host (§5.1).
+     *
+     * The marker lives inside the workspace, so it moves with the folder along
+     * with the sessions it describes — which is the requirement a host serving
+     * several folders must not quietly break. A host-wide marker would live
+     * where the host is, and dragging a project to another machine would arrive
+     * with every finished session unread again.
+     */
+    const markers = new Map<InstanceId, number>(
+      await Promise.all(
+        this.listWorkspaces().map(
+          async (ws): Promise<[InstanceId, number]> => [
+            ws.instanceId,
+            await this.readMarker(ws.root).read(),
+          ],
+        ),
+      ),
+    );
     const parts = await Promise.all(
       [...this.sessions.values()].map(async (live) => {
         const from = Math.max(0, live.store.nextSeq - INBOX_EVENT_WINDOW);
-        return entriesFrom(live.session, await live.store.readEvents(from), readAt);
+        return entriesFrom(
+          live.session,
+          await live.store.readEvents(from),
+          // Zero for a workspace with no marker, which is `ReadMarker.read`'s
+          // own answer for one that was never read: everything unread, which is
+          // the direction that shows you something twice rather than hiding it.
+          markers.get(live.session.instanceId) ?? 0,
+        );
       }),
     );
     return merge(parts, limit);
@@ -3466,37 +3643,92 @@ export class SessionManager extends EventEmitter {
    * session state at all (§8).
    */
   async markInboxRead(at: Date = this.now()): Promise<void> {
-    await this.readMarker().mark(at);
+    // Every workspace this host holds, because the inbox the person just looked
+    // at spanned all of them. Marking only one would leave rows they have seen
+    // coming back unread, which is the failure that makes an inbox stop being
+    // read at all.
+    await Promise.all(this.listWorkspaces().map((ws) => this.readMarker(ws.root).mark(at)));
   }
 
-  private readMarker(): ReadMarker {
-    return ReadMarker.in(workspaceLayout(this.deps.workspaceRoot).devagents);
+  private readMarker(root: string): ReadMarker {
+    return ReadMarker.in(workspaceLayout(root).dir);
   }
 
-  /** Session ids present on disk, whether or not they are loaded (§5.1). */
-  async listOnDisk(): Promise<Array<{ sessionId: SessionId; title: string; goal: string }>> {
-    const dir = workspaceLayout(this.deps.workspaceRoot).sessionsDir;
-    let names: string[];
-    try {
-      names = await readdir(dir);
-    } catch {
-      return []; // no sessions yet is not an error
-    }
-
-    const found: Array<{ sessionId: SessionId; title: string; goal: string }> = [];
-    for (const name of names) {
+  /**
+   * Session ids present on disk, whether or not they are loaded (§5.1).
+   *
+   * Across every workspace this host holds, each row saying which one it came
+   * from. `instanceId` and not a path: the row is an answer about a *checkout*
+   * (§5.2), and a caller that wanted to open it would look it up rather than
+   * join a string.
+   */
+  async listOnDisk(): Promise<
+    Array<{ sessionId: SessionId; title: string; goal: string; instanceId: InstanceId }>
+  > {
+    const found: Array<{
+      sessionId: SessionId;
+      title: string;
+      goal: string;
+      instanceId: InstanceId;
+    }> = [];
+    for (const workspace of this.listWorkspaces()) {
+      const dir = workspaceLayout(workspace.root).sessionsDir;
+      let names: string[];
       try {
-        const meta = JSON.parse(
-          await readFile(join(dir, name, 'session.json'), 'utf8'),
-        ) as SessionMeta;
-        found.push({ sessionId: meta.sessionId, title: meta.title, goal: meta.goal });
+        names = await readdir(dir);
       } catch {
-        // A directory without readable metadata is not a session. Skipping it
-        // is right: this list drives a picker, and one bad entry must not hide
-        // every good one.
+        continue; // no sessions yet is not an error
+      }
+      for (const name of names) {
+        try {
+          const meta = JSON.parse(
+            await readFile(join(dir, name, 'session.json'), 'utf8'),
+          ) as SessionMeta;
+          found.push({
+            sessionId: meta.sessionId,
+            title: meta.title,
+            goal: meta.goal,
+            instanceId: workspace.instanceId,
+          });
+        } catch {
+          // A directory without readable metadata is not a session. Skipping it
+          // is right: this list drives a picker, and one bad entry must not hide
+          // every good one.
+        }
       }
     }
     return found;
+  }
+
+  /**
+   * Which open workspace holds a session's log (§5.1).
+   *
+   * Named when the caller knows — the fleet does, from the row it clicked — and
+   * looked for on disk when it does not, which is the CLI's case and the case a
+   * `sessionId` typed at a terminal has to work in. Looked for by reading the
+   * session's own `session.json`, never by trusting a path: the only thing that
+   * makes a session belong to a folder is its log being in it.
+   *
+   * Refused **naming every workspace searched**, because "no such session" on a
+   * host holding four folders is a sentence a person cannot act on.
+   */
+  private async workspaceHolding(
+    sessionId: SessionId,
+    instanceId?: InstanceId,
+  ): Promise<ManagedWorkspace> {
+    if (instanceId !== undefined) return this.workspaceOf({ instanceId, sessionId });
+    const held = this.listWorkspaces();
+    for (const workspace of held) {
+      try {
+        await readFile(sessionLayout(workspace.root, sessionId).sessionFile, 'utf8');
+        return workspace;
+      } catch {
+        // Not in this one. The next workspace, or the refusal below.
+      }
+    }
+    throw new Error(
+      `no session ${sessionId} on this host — looked in ${held.map((w) => w.root).join(', ')}`,
+    );
   }
 
   /**
@@ -3513,11 +3745,12 @@ export class SessionManager extends EventEmitter {
    * which can change while the app is closed. Trusting the recording would let
    * an agent resume claiming a capability its upgraded runtime no longer has.
    */
-  async resumeSession(sessionId: SessionId): Promise<Session> {
+  async resumeSession(sessionId: SessionId, instanceId?: InstanceId): Promise<Session> {
     const existing = this.sessions.get(sessionId);
     if (existing) return existing.session; // idempotent
 
-    const { store, truncatedBytes } = await SessionStore.open(this.deps.workspaceRoot, sessionId);
+    const workspace = await this.workspaceHolding(sessionId, instanceId);
+    const { store, truncatedBytes } = await SessionStore.open(workspace.root, sessionId);
     const meta = await store.readMeta();
     const { projection } = await store.load();
 
@@ -3546,7 +3779,7 @@ export class SessionManager extends EventEmitter {
     const grant = projection.standingGrant;
     const session: Session = {
       sessionId,
-      instanceId: this.deps.instanceId,
+      instanceId: workspace.instanceId,
       target,
       title: meta.title,
       goal: meta.goal,
@@ -3627,7 +3860,7 @@ export class SessionManager extends EventEmitter {
         auth: { kind: 'none' },
         toolPolicy: clonePolicy(live.policy),
         limits: projected.limits ?? {},
-        workspacePath: this.deps.workspaceRoot,
+        workspacePath: workspace.root,
         ...(projected.model !== undefined ? { model: projected.model } : {}),
         ...(projected.systemPrompt !== undefined ? { systemPrompt: projected.systemPrompt } : {}),
         ...(projected.reasoning !== undefined ? { reasoning: projected.reasoning } : {}),

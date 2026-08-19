@@ -466,8 +466,15 @@ describe('a group does not span machines', () => {
     }
   });
 
-  /** Two real hosts over two real workspaces, reached through a real connection. */
-  function makeFleet(): Fleet {
+  /**
+   * Two real hosts over two real workspaces, reached through a real connection.
+   *
+   * `machineId` is a parameter because the interesting distinction is exactly
+   * that: two hosts on *one* machine and two hosts on two are different
+   * refusals with different remedies, and before this field existed the fleet
+   * could only give the more confident of the two.
+   */
+  function makeFleet(machineId?: string): Fleet {
     const hosts = new Map<string, SessionHostServer>();
     const fleet = new Fleet({
       runtimes: RUNTIMES,
@@ -493,6 +500,7 @@ describe('a group does not span machines', () => {
               lineageId: identity.lineageId,
               workspaceRoot,
               runtimes: ['echo'],
+              ...(machineId === undefined ? {} : { machineId }),
             },
           });
           hosts.set(workspaceRoot, server);
@@ -540,6 +548,44 @@ describe('a group does not span machines', () => {
     );
 
     // Nothing was written on either side.
+    expect((await fleet.get(here.sessionId)).group).toBeUndefined();
+    expect((await fleet.get(there.sessionId)).group).toBeUndefined();
+  });
+
+  it('says "two folders on one machine" when that is what it is, not "two machines"', async () => {
+    /*
+     * The same-workspace assumption that was hiding in `Fleet.group`.
+     *
+     * The check keyed on `instanceId` — one *checkout* — and the sentence said
+     * "machines", so two folders on one build box were refused with a claim that
+     * was false and a remedy that pointed at machines nobody was using. What is
+     * actually required is one *host process*, because a group is delivered by a
+     * lookup in one manager's session map.
+     */
+    const fleet = makeFleet('machine-1');
+    const one = await root();
+    const two = await root();
+    const hostA = await fleet.attach(local(one));
+    const hostB = await fleet.attach(local(two));
+
+    // Two checkouts, one machine — which is the fact the fleet could not state
+    // before there was a machine id to state it with.
+    expect(hostA.instanceId).not.toBe(hostB.instanceId);
+    expect(hostA.machineId).toBe('machine-1');
+    expect(hostB.machineId).toBe('machine-1');
+
+    const here = await fleet.createSession(hostA.instanceId, { title: 'here', goal: 'g' });
+    const there = await fleet.createSession(hostB.instanceId, { title: 'there', goal: 'g' });
+
+    const refusal = fleet.group([here.sessionId, there.sessionId], 'across');
+    await expect(refusal).rejects.toThrow(/workspaces on one machine/);
+    // And explicitly not the other sentence, which would send somebody to look
+    // at a second machine that does not exist.
+    await expect(
+      fleet.group([here.sessionId, there.sessionId], 'across'),
+    ).rejects.not.toThrow(/on 2 machines/);
+
+    // Still refused rather than half-made: nothing was written on either side.
     expect((await fleet.get(here.sessionId)).group).toBeUndefined();
     expect((await fleet.get(there.sessionId)).group).toBeUndefined();
   });

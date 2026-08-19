@@ -50,7 +50,7 @@ async function screen(page: Page): Promise<string> {
  * program, once the host kills the pty (measured at well under a second, and
  * never orphaned — a kill at 100 ms into startup leaves nothing behind), and the
  * detached host itself, which lingers `AGBRTE_HOST_LINGER_MS` — 3 s in this
- * suite — before exiting and releasing the files it has open under `.devagents`.
+ * suite — before exiting and releasing the files it has open under `.agbrte`.
  *
  * So the window has to be comfortably longer than the linger, not merely longer
  * than the pty teardown: at 3 s of retries this failed about one run in three,
@@ -132,7 +132,7 @@ test.describe('your own terminal', () => {
        * not contain it. A terminal that worked and quietly appended would break
        * that promise with nothing on screen to show it.
        */
-      const sessionsDir = join(repo, '.devagents', 'sessions');
+      const sessionsDir = join(repo, '.agbrte', 'sessions');
       const ids = await readdir(sessionsDir);
       const log = await readFile(join(sessionsDir, ids[0]!, 'events.jsonl'), 'utf8');
       expect(log).not.toContain('claude-code');
@@ -273,7 +273,7 @@ test.describe('your own terminal', () => {
         ).toHaveCount(1, { timeout: 30_000 });
       }
 
-      const sessionsDir = join(repo, '.devagents', 'sessions');
+      const sessionsDir = join(repo, '.agbrte', 'sessions');
       const ids = await readdir(sessionsDir);
       // One session, not two: `--session` attaches and never creates.
       expect(ids).toHaveLength(1);
@@ -365,7 +365,7 @@ test.describe('your own terminal', () => {
        * break the promise the pane makes in its own label, and nothing about the
        * screen would show it.
        */
-      const sessionsDir = join(repo, '.devagents', 'sessions');
+      const sessionsDir = join(repo, '.agbrte', 'sessions');
       const ids = await readdir(sessionsDir);
       const log = await readFile(join(sessionsDir, ids[0]!, 'events.jsonl'), 'utf8');
       expect(log).not.toContain(marker);

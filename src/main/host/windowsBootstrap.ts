@@ -38,6 +38,7 @@ import { randomUUID } from 'node:crypto';
 import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { LEGACY_WORKSPACE_DIR, WORKSPACE_DIR } from '@main/store/layout.js';
 import type { RemoteProbe, SshRunner } from './sshTransport.js';
 import {
   RemoteBootstrapFailed,
@@ -65,6 +66,22 @@ export function windowsAgentBundle(home: string): string {
  * `-NonInteractive` because there is no one to answer a prompt, and a prompt on
  * a detached channel is a hang rather than a question.
  */
+/**
+ * PowerShell that picks the workspace's own directory, new name or old.
+ *
+ * The same rule as `workspaceDirName` and for the same reason (§5.1): a
+ * workspace created before the rename keeps `.devagents/`, so a Windows host
+ * started against one has to write its record where that host will look for it.
+ * Expects `$ws` to be set and defines `$dir`.
+ */
+export function workspaceDirScript(): string {
+  return [
+    `$dir = if (Test-Path (Join-Path $ws "${WORKSPACE_DIR}")) { Join-Path $ws "${WORKSPACE_DIR}" }`,
+    `elseif (Test-Path (Join-Path $ws "${LEGACY_WORKSPACE_DIR}")) { Join-Path $ws "${LEGACY_WORKSPACE_DIR}" }`,
+    `else { Join-Path $ws "${WORKSPACE_DIR}" }`,
+  ].join(' ');
+}
+
 export function psCommand(script: string): string {
   /**
    * Full-line comments are stripped before encoding, and that is not tidiness.
@@ -369,7 +386,9 @@ export async function readWindowsHostRecord(
   const result = await runner.exec(
     alias,
     psCommand(`
-$p = Join-Path "${workspaceRoot}" ".devagents\\host.json"
+$ws = "${workspaceRoot}"
+${workspaceDirScript()}
+$p = Join-Path $dir "host.json"
 if (Test-Path $p) { try { Get-Content $p -Raw -ErrorAction Stop } catch { } }
 `.trim()),
   );
@@ -400,9 +419,10 @@ export async function startWindowsHost(
 
   const script = `
 $ws = "${workspaceRoot}"
-$record = Join-Path $ws ".devagents\\host.json"
 New-Item -ItemType Directory -Force -Path $ws | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $ws ".devagents") | Out-Null
+${workspaceDirScript()}
+$record = Join-Path $dir "host.json"
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
 # The log lives in the **workspace**, not in the profile.
 #
 # It was one shared path for every host on the machine, so a second host could
@@ -415,7 +435,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $ws ".devagents") | Out-Nul
 # startup failure says the thing that just failed worked, and the error stream
 # had exactly that bug while the output stream did not, which is how a port from
 # an earlier run ended up in a diagnosis.
-$log = Join-Path $ws ".devagents\\host.log"
+$log = Join-Path $dir "host.log"
 Set-Content -Path $log -Value "" -NoNewline
 Set-Content -Path "$log.err" -Value "" -NoNewline
 # Started through WMI rather than Start-Process, and that IS the detachment.

@@ -253,10 +253,10 @@ describe('a real host, reached over loopback', () => {
     expect(record?.token).toMatch(/^[0-9a-f]{64}$/);
 
     if (process.platform !== 'win32') {
-      // The record is a credential now. `.devagents/` is already 0700, so this
+      // The record is a credential now. `.agbrte/` is already 0700, so this
       // changes nothing for another user — it is the belt to that braces, and
       // free.
-      const mode = (await stat(join(root, '.devagents', 'host.json'))).mode & 0o777;
+      const mode = (await stat(join(root, '.agbrte', 'host.json'))).mode & 0o777;
       expect(mode, 'the host record carrying a token is readable by others').toBe(0o600);
     }
 
@@ -325,7 +325,7 @@ describe('a real host, reached over loopback', () => {
     connection.disconnect();
 
     const log = await readFile(
-      join(root, '.devagents', 'sessions', session.sessionId, 'events.jsonl'),
+      join(root, '.agbrte', 'sessions', session.sessionId, 'events.jsonl'),
       'utf8',
     );
     expect(log).not.toContain(token);

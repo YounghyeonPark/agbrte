@@ -20,9 +20,10 @@
  * so anything exported there simply is not present. A file the host reads for
  * itself works identically however it was started.
  *
- * `~/.agbrte/` and not `.devagents/`, because `.devagents/` lives inside the
- * user's git repository and a credential put there is a credential that gets
- * committed.
+ * The machine's `~/.agbrte/` and not the *workspace's* `.agbrte/`. The two
+ * spell their name the same way and are different things (§5.1): a workspace's
+ * directory lives inside the user's git repository, and a credential put there
+ * is a credential that gets committed.
  *
  * ## What this does and does not separate
  *
@@ -41,6 +42,7 @@
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { machineRoot } from './machine.js';
 import { restrictToOwner } from './ownerOnly.js';
 import type { ModelEndpoint } from '@shared/types/index.js';
 import { OPENAI_COMPATIBLE_PROVIDER_ID } from '@main/runtime/providers/openaiCompatible.js';
@@ -96,7 +98,10 @@ interface Entry {
 }
 
 export function endpointsPath(): string {
-  return join(homedir(), '.agbrte', 'endpoints.json');
+  // Through `machineRoot` rather than joined here, so the machine's install area
+  // has one definition and nothing can drift into computing a workspace path by
+  // accident now that the two names are the same (§5.1).
+  return join(machineRoot(), 'endpoints.json');
 }
 
 /**

@@ -2,7 +2,7 @@
  * Finding the host that owns a workspace (DESIGN.md §6.4, §8).
  *
  * A detached host has to be *discoverable*, because the app that started it is
- * gone and a different app has to find it. `.devagents/host.json` is that
+ * gone and a different app has to find it. `.agbrte/host.json` is that
  * record: which process, which socket, which protocol.
  *
  * ## Why the file is a hint, never the truth
@@ -40,15 +40,15 @@ export interface HostRecord {
    * **This file is a credential when this field is set.** A loopback port is
    * reachable by every process on the machine, so the token is what stands in
    * for the `0600` unix socket's OS-enforced proof of who you are — which is why
-   * the record is written `0600` inside `.devagents/`'s `0700` (§13), and why
+   * the record is written `0600` inside `.agbrte/`'s `0700` (§13), and why
    * nothing may copy this field into a log, an event, or an error string.
    */
   token?: string;
 }
 
-/** Where a workspace's host record lives. Inside `.devagents/`, 0700 (§13). */
+/** Where a workspace's host record lives. Inside `.agbrte/`, 0700 (§13). */
 export function hostRecordPath(workspaceRoot: string): string {
-  return join(workspaceLayout(workspaceRoot).devagents, 'host.json');
+  return join(workspaceLayout(workspaceRoot).dir, 'host.json');
 }
 
 export async function readHostRecord(workspaceRoot: string): Promise<HostRecord | null> {

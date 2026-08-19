@@ -242,9 +242,9 @@ describe('terminal output', () => {
 describe('asking what is here must not make something be here', () => {
   /**
    * Found on a server, not in a test. I ran `agbrte ls` in a home directory to
-   * see what was running, and it created `~/.devagents` and started a host —
-   * because every verb went through `open`, and opening a workspace creates
-   * one. For a command whose whole job is to report, that is a side effect
+   * see what was running, and it made a workspace store there and started a
+   * host — because every verb went through `open`, and opening a workspace
+   * creates one. For a command whose whole job is to report, that is a side effect
    * nobody asked for, landing in whatever directory the user was standing in.
    *
    * Driven as a subprocess against the built CLI rather than by calling a
@@ -277,9 +277,9 @@ describe('asking what is here must not make something be here', () => {
 
     expect(code).toBe(0);
     expect(out).toMatch(/no agbrte workspace/i);
-    // The whole point. A `.devagents` here would be a directory the user did
+    // The whole point. A `.agbrte` here would be a directory the user did
     // not ask for, in a directory they may not have meant to be in.
-    expect(existsSync(join(dir, '.devagents'))).toBe(false);
+    expect(existsSync(join(dir, '.agbrte'))).toBe(false);
   });
 
   it('guards only ls, because every other verb is "do something here"', async () => {
@@ -294,7 +294,7 @@ describe('asking what is here must not make something be here', () => {
      * far enough to make the workspace.
      */
     await cli(['run', dir, 'hello']);
-    expect(existsSync(join(dir, '.devagents'))).toBe(true);
+    expect(existsSync(join(dir, '.agbrte'))).toBe(true);
   });
 
   it('still lists a real workspace', async () => {

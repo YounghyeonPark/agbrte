@@ -29,7 +29,7 @@
  * weaker than the file permission it stands in for, moving to TCP is a downgrade
  * dressed as a feature.
  *
- * Which is why the token is kept in the host record, inside `.devagents/` at
+ * Which is why the token is kept in the host record, inside `.agbrte/` at
  * `0700` (§13), in a file written `0600`. Reading it then requires exactly the
  * filesystem permission that reaching the unix socket required. Same gate, same
  * owner, expressed in the only currency this transport has.

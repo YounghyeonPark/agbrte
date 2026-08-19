@@ -73,7 +73,7 @@ async function whatIsOnScreen(page: Page): Promise<string> {
  */
 async function whatTheAgentDid(repo: string): Promise<string> {
   try {
-    const dir = join(repo, '.devagents', 'sessions');
+    const dir = join(repo, '.agbrte', 'sessions');
     const ids = await readdir(dir);
     const log = await readFile(join(dir, ids[0]!, 'events.jsonl'), 'utf8');
     const interesting = log
@@ -325,7 +325,7 @@ test.describe('the shell', () => {
       await send(agbrte.window, 'write something down');
       await expect(agbrte.window.locator('[data-testid=row-agent]')).toBeVisible();
 
-      const sessionsDir = join(repo, '.devagents', 'sessions');
+      const sessionsDir = join(repo, '.agbrte', 'sessions');
       const ids = await readdir(sessionsDir);
       expect(ids).toHaveLength(1);
 
@@ -388,7 +388,7 @@ test.describe('several hosts at once', () => {
 
       const logs = await Promise.all(
         [repoA, repoB].map(async (repo) => {
-          const dir = join(repo, '.devagents', 'sessions');
+          const dir = join(repo, '.agbrte', 'sessions');
           const ids = await readdir(dir);
           return readFile(join(dir, ids[0]!, 'events.jsonl'), 'utf8');
         }),

@@ -32,7 +32,7 @@ import {
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { CliStdioRuntime, detectCli, runtimeIdFor } from '@main/runtime/runtimes/cliStdio.js';
 import { CLI_MANIFESTS } from '@main/runtime/cli/manifests.js';
-import { WorkspaceLeases } from '@main/tools/leases.js';
+import { LeaseTables } from '@main/tools/leases.js';
 import {
   OpenAiCompatibleProvider,
   OPENAI_COMPATIBLE_PROVIDER_ID,
@@ -165,19 +165,22 @@ export async function buildHostRegistry(
   const registry = new RuntimeRegistry();
 
   /**
-   * One table for the whole workspace (§9).
+   * One table per workspace root (§9).
    *
    * Created here rather than inside a runtime so the sharing is visible at the
    * wiring site: leases are keyed by path and scoped to the *workspace*, so two
-   * tables would let two agents each believe they hold the same file. This
-   * process is one per workspace and adjacent to its filesystem, which is
+   * tables for one folder would let two agents each believe they hold the same
+   * file. This process is adjacent to the filesystem it arbitrates, which is
    * exactly where §9 says lease authority belongs.
    *
-   * It covers contention between sessions as well as within one, with no extra
-   * mechanism — the property that stops hierarchy reintroducing cross-session
-   * clobbering the moment it is used.
+   * A *set* of tables rather than one, because this process is now one per
+   * machine rather than one per workspace (§8): a single table spanning two
+   * unrelated repositories would make a write in one wait on a lease held in the
+   * other. Each table still covers contention between sessions as well as within
+   * one, with no extra mechanism — the property that stops hierarchy
+   * reintroducing cross-session clobbering the moment it is used.
    */
-  const leases = new WorkspaceLeases();
+  const leases = new LeaseTables();
 
   registry.register(
     new AgbrteHarnessRuntime({

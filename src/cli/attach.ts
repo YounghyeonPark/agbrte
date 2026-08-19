@@ -382,7 +382,7 @@ async function namedSession(
     return await connection.resumeSession(sessionId as SessionId);
   } catch {
     // The reason is always "there is no such session here", and the underlying
-    // error is an ENOENT naming a path inside `.devagents` — our own layout,
+    // error is an ENOENT naming a path inside `.agbrte` — our own layout,
     // presented as though the user had mistyped a filename. What helps instead
     // is the command that lists what *is* here.
     say(c.fail(`no session ${sessionId} in this workspace`));

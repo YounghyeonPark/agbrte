@@ -7,7 +7,7 @@
  * from.
  *
  * Two things are worth asserting hard. A template is **committed** — it lives
- * beside `memory/` on the tracked side of `.devagents/`'s own `.gitignore` — so
+ * beside `memory/` on the tracked side of `.agbrte/`'s own `.gitignore` — so
  * a credential reaching one would travel to everyone with the repo. And its
  * `id` becomes a **filename**, from a string a person typed.
  */
@@ -204,7 +204,7 @@ describe('a template is committed, so it must carry no secret', () => {
     /**
      * §13's rule is that credentials never reach a file that travels. This file
      * is *designed* to travel — it sits beside `memory/` on the tracked side of
-     * `.devagents/`'s `.gitignore`, so anyone who clones the repo gets it.
+     * `.agbrte/`'s `.gitignore`, so anyone who clones the repo gets it.
      *
      * `AuthMode` is `{api-key, endpointId}` / `{vendor-cli-session, cliId,
      * quotaGroup}` / `{none}`, which is why this is safe at all. Asserted rather
@@ -231,15 +231,15 @@ describe('a template is committed, so it must carry no secret', () => {
     }
   }, 30_000);
 
-  it('lives beside memory, on the side of .devagents that is tracked', async () => {
+  it('lives beside memory, on the side of .agbrte that is tracked', async () => {
     const { root, manager, sessionId } = await realSession();
     await saveTemplate(root, fromSession(await manager.get(sessionId), 'Nightly review'));
 
-    const ignore = await readFile(join(root, '.devagents', '.gitignore'), 'utf8');
+    const ignore = await readFile(join(root, '.agbrte', '.gitignore'), 'utf8');
     // `sessions/`, `index/`, `run/` and `instance.json` are excluded; templates
     // are not, which is the whole point — a colleague gets them by cloning.
     expect(ignore).not.toContain('templates');
-    expect(templatesDir(root)).toBe(join(root, '.devagents', 'templates'));
+    expect(templatesDir(root)).toBe(join(root, '.agbrte', 'templates'));
   }, 30_000);
 });
 

@@ -18,7 +18,7 @@
  *
  * ## Beside memory, and committed for the same reason
  *
- * `.devagents/`'s own `.gitignore` excludes `sessions/`, `index/`, `run/` and
+ * `.agbrte/`'s own `.gitignore` excludes `sessions/`, `index/`, `run/` and
  * `instance.json` — derived state — and commits `project.json` and `memory/`.
  * Templates belong on the committed side: "this is how we run a review session
  * in this repo" is a fact about the project, and it is the kind of thing a new
@@ -108,7 +108,7 @@ export class TemplateRefused extends Error {
 }
 
 export function templatesDir(workspaceRoot: string): string {
-  return join(workspaceLayout(workspaceRoot).devagents, 'templates');
+  return join(workspaceLayout(workspaceRoot).dir, 'templates');
 }
 
 /**
@@ -239,7 +239,7 @@ export async function saveTemplate(
   const dir = templatesDir(workspaceRoot);
   // Not `PRIVATE_DIR_MODE`: this directory is meant to be committed and read by
   // colleagues, and it holds no secret by construction. The rest of
-  // `.devagents/` stays `0700`.
+  // `.agbrte/` stays `0700`.
   await mkdir(dir, { recursive: true });
   await writeFile(
     join(dir, `${template.id}.json`),

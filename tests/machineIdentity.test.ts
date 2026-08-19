@@ -1,0 +1,101 @@
+/**
+ * A machine has its own identity, and its own directory (DESIGN.md §5.2, §8).
+ *
+ * Three ids now, and the third is not a rename of the second. `lineageId` is a
+ * repository, `instanceId` is one checkout of it on one machine, and `machineId`
+ * is the machine — one install area, one set of credentials, one lease
+ * authority, one host process. They were conflated for as long as a host was one
+ * per workspace, which is why a fleet holding two folders on one build box
+ * reported "those sessions are on 2 machines".
+ *
+ * The other half these tests exist for is §5.1's shared name: `~/.agbrte` and
+ * `<workspace>/.agbrte` spell themselves the same way on purpose, and nothing
+ * may confuse a machine's install area with a workspace's data.
+ */
+
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { machineFilePath, machineIdentity, machineRoot } from '../src/host/machine.js';
+import { endpointsPath } from '../src/host/endpoints.js';
+import { assertNotInstallRoot, workspaceLayout, WORKSPACE_DIR } from '@main/store/layout.js';
+import { isUuid } from '@shared/types/index.js';
+
+let home: string;
+
+beforeEach(async () => {
+  home = await mkdtemp(join(tmpdir(), 'agbrte-home-'));
+});
+
+afterEach(async () => {
+  await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+});
+
+describe('the machine id', () => {
+  it('is minted once and read every time after', async () => {
+    const first = await machineIdentity(home);
+    const second = await machineIdentity(home);
+
+    expect(isUuid(first.machineId)).toBe(true);
+    expect(second.machineId).toBe(first.machineId);
+  });
+
+  it('lives beside the machine\'s other things, not in any workspace', async () => {
+    await machineIdentity(home);
+
+    expect(machineFilePath(home)).toBe(join(home, '.agbrte', 'machine.json'));
+    // The credentials file is the neighbour that makes the point: §8.2 puts it
+    // here rather than in a workspace precisely because a workspace is inside
+    // somebody's git repository.
+    expect(endpointsPath().endsWith(join('.agbrte', 'endpoints.json'))).toBe(true);
+  });
+
+  it('is not derived from the hostname, which is reassigned and duplicated', async () => {
+    const other = await mkdtemp(join(tmpdir(), 'agbrte-home2-'));
+    try {
+      const a = await machineIdentity(home);
+      const b = await machineIdentity(other);
+      // Same host, two install areas, two ids: the id names an *install*, and a
+      // machine that has been wiped is a machine a client should not silently
+      // recognise as the one it knew.
+      expect(a.machineId).not.toBe(b.machineId);
+    } finally {
+      await rm(other, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+
+  it('replaces a malformed file rather than refusing to start', async () => {
+    await mkdir(machineRoot(home), { recursive: true });
+    await writeFile(machineFilePath(home), 'not json at all');
+
+    const minted = await machineIdentity(home);
+
+    expect(isUuid(minted.machineId)).toBe(true);
+    // The opposite of `endpoints.json`'s rule and right for the opposite
+    // reason: a broken endpoints file would misroute a turn, while a broken
+    // machine file only means this machine has not been named yet.
+    const written = JSON.parse(await readFile(machineFilePath(home), 'utf8')) as {
+      machineId: string;
+    };
+    expect(written.machineId).toBe(minted.machineId);
+  });
+});
+
+describe('the install area and a workspace share a name and nothing else', () => {
+  it('keeps a workspace\'s data out of the machine\'s directory', async () => {
+    const project = join(home, 'project');
+    await mkdir(project, { recursive: true });
+
+    // Same spelling, different directory — which is the whole arrangement.
+    expect(workspaceLayout(project).dir).toBe(join(project, WORKSPACE_DIR));
+    expect(workspaceLayout(project).dir).not.toBe(machineRoot(home));
+  });
+
+  it('refuses the one path where they would be the same folder', () => {
+    // A workspace rooted at `$HOME` would put `sessions/` beside the private
+    // Node and `instance.json` beside `endpoints.json`.
+    expect(() => assertNotInstallRoot(home, home)).toThrow(/install directory/);
+    expect(() => assertNotInstallRoot(join(home, 'project'), home)).not.toThrow();
+  });
+});

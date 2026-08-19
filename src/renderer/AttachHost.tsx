@@ -35,7 +35,7 @@
  *     pushed the path field and **Attach** below the fold — the results are the
  *     input to the decision, and the decision has to stay on screen. See
  *     `WorkspaceSelect.tsx`, which keeps the kinds as labelled groups inside the
- *     dropdown, because a folder holding `.devagents/` is a different claim from
+ *     dropdown, because a folder holding `.agbrte/` is a different claim from
  *     a git repository and from a folder that merely exists.
  *   * **what was searched is shown.** An empty list has to read as "nothing under
  *     these five directories" and never as "this is broken" — the difference is

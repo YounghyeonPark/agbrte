@@ -47,7 +47,7 @@ const found: WorkspaceDiscoveryDto = {
   roots: ['/home/dev', '/home/dev/src', '/srv'],
   depth: 3,
   candidates: [
-    { path: '/home/dev/agbrte', kind: 'devagents' },
+    { path: '/home/dev/agbrte', kind: 'workspace' },
     { path: '/home/dev/src/api', kind: 'git' },
     { path: '/home/dev/Documents', kind: 'folder' },
   ],

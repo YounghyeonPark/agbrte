@@ -9,7 +9,7 @@
  *
  * ## An export is the moment a transcript leaves
  *
- * §13 puts `.devagents/` at `0700` and says a workspace "sitting on a shared
+ * §13 puts `.agbrte/` at `0700` and says a workspace "sitting on a shared
  * server must not be a credential leak". Everything protecting a transcript so
  * far has been about a directory. An export is a file the user will attach to an
  * email, and none of that applies to it.
@@ -90,7 +90,13 @@ export function exportSessionMarkdown(
   );
   out.push(
     captures > 0
-      ? `${captures} attachment(s) are referenced by hash and **not included**; the images are in \`.devagents/sessions/${session.sessionId}/attachments/\`.`
+      ? // Named relative to the workspace's own Agbrte directory rather than
+        // spelling it: that directory is `.agbrte/` on a workspace made today
+        // and `.devagents/` on one made before the rename (§5.1), and this
+        // function has no workspace root to ask. A path that is right for one
+        // reader and wrong for the other is worse than one that says where to
+        // start looking.
+        `${captures} attachment(s) are referenced by hash and **not included**; the images are in the workspace's Agbrte directory, under \`sessions/${session.sessionId}/attachments/\`.`
       : 'No attachments were captured in this session.',
   );
   out.push('', '---', '');

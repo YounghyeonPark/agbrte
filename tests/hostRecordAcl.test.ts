@@ -52,14 +52,14 @@ onWindows('a host record carrying a token', () => {
   it('is not readable by other accounts, even under an open directory', async () => {
     const root = await mkdtemp(join(tmpdir(), 'agbrte-acl-'));
     try {
-      const devagents = join(root, '.devagents');
-      await mkdir(devagents, { recursive: true });
-      await icacls([devagents, '/grant', 'Users:(OI)(CI)R']);
+      const workspaceDir = join(root, '.agbrte');
+      await mkdir(workspaceDir, { recursive: true });
+      await icacls([workspaceDir, '/grant', 'Users:(OI)(CI)R']);
 
       // Proves the setup is doing what it claims: without the code under test,
       // a file created here inherits the open grant. If this ever stops being
       // true the test below would pass for the wrong reason.
-      const control = join(devagents, 'control.json');
+      const control = join(workspaceDir, 'control.json');
       await writeHostRecord(root, {
         pid: process.pid,
         socket: '127.0.0.1:1',
@@ -67,7 +67,7 @@ onWindows('a host record carrying a token', () => {
         instanceId: 'i',
       });
       await rm(control, { force: true });
-      expect(await icacls([join(devagents, 'host.json')])).toMatch(/Users:/);
+      expect(await icacls([join(workspaceDir, 'host.json')])).toMatch(/Users:/);
 
       // Now with a token, which is what makes the file a credential.
       await writeHostRecord(root, {
@@ -79,7 +79,7 @@ onWindows('a host record carrying a token', () => {
         token: 'a-secret-that-authenticates-everything',
       });
 
-      const acl = await icacls([join(devagents, 'host.json')]);
+      const acl = await icacls([join(workspaceDir, 'host.json')]);
       expect(acl, `the token is readable by others:\n${acl}`).not.toMatch(/BUILTIN\\Users:/);
       expect(acl).not.toMatch(/Everyone:/);
       expect(acl).not.toMatch(/Authenticated Users:/);

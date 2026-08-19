@@ -127,7 +127,7 @@ describe('take, draw, then store — in that order', () => {
     const blobs = async (): Promise<string[]> => {
       const { readdir } = await import('node:fs/promises');
       try {
-        return await readdir(join(root, '.devagents', 'sessions', session.sessionId, 'attachments'));
+        return await readdir(join(root, '.agbrte', 'sessions', session.sessionId, 'attachments'));
       } catch {
         return [];
       }
@@ -287,7 +287,7 @@ describe('take, draw, then store — in that order', () => {
 
     const { readFile } = await import('node:fs/promises');
     const stored = await readFile(
-      join(root, '.devagents', 'sessions', r.sessionId, 'attachments', `${result.block.sha256}.png`),
+      join(root, '.agbrte', 'sessions', r.sessionId, 'attachments', `${result.block.sha256}.png`),
     );
     const image = decodePng(stored);
 

@@ -38,7 +38,7 @@ const FOUND = {
   roots: ['/home/dev', '/home/dev/src/a-deeply-nested-projects-and-experiments-directory-name', '/srv'],
   depth: 3,
   candidates: [
-    ...Array.from({ length: 8 }, (_, i) => ({ path: `/home/dev/used-${i}`, kind: 'devagents' })),
+    ...Array.from({ length: 8 }, (_, i) => ({ path: `/home/dev/used-${i}`, kind: 'workspace' })),
     // Long on purpose: a trigger that takes its width from the longest path is
     // how a 300px sidebar grows a horizontal scrollbar.
     ...Array.from({ length: 6 }, (_, i) => ({
@@ -253,7 +253,7 @@ test.describe('remote workspaces are offered, not asked for', () => {
       // in the order discovery ranked them.
       await trigger.click();
       await expect(page.locator('[data-testid=attach-workspace-list]')).toBeVisible();
-      await expect(page.locator('[data-testid=attach-group-devagents]')).toContainText(
+      await expect(page.locator('[data-testid=attach-group-workspace]')).toContainText(
         'Used by Agbrte before (8)',
       );
       await expect(page.locator('[data-testid=attach-group-git]')).toContainText(

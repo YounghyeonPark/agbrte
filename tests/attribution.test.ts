@@ -234,7 +234,7 @@ describe('what a connection is worth', () => {
 
 describe('the access policy', () => {
   const write = async (body: unknown): Promise<void> => {
-    await mkdir(workspaceLayout(root).devagents, { recursive: true });
+    await mkdir(workspaceLayout(root).dir, { recursive: true });
     await writeFile(accessPolicyPath(root), JSON.stringify(body), 'utf8');
   };
 
@@ -281,7 +281,7 @@ describe('the access policy', () => {
   });
 
   it('refuses unparseable JSON for the same reason', async () => {
-    await mkdir(workspaceLayout(root).devagents, { recursive: true });
+    await mkdir(workspaceLayout(root).dir, { recursive: true });
     await writeFile(accessPolicyPath(root), '{ not json', 'utf8');
     await expect(loadAccessPolicy(root)).rejects.toThrow(AccessPolicyInvalid);
   });

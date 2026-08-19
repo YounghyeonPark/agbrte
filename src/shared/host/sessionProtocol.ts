@@ -67,6 +67,24 @@ export interface EndpointAdded {
 
 /** What a host reports about itself once a client connects. */
 export interface HostIdentity {
+  /**
+   * Which **machine** this host is (§5.2, §8).
+   *
+   * Distinct from `instanceId` and not a rename of it. `instanceId` is one
+   * checkout; this is the computer it is checked out on — one install area, one
+   * set of credentials, one lease authority, one host process. They coincided
+   * for as long as a host was one per workspace, which is exactly why anything
+   * asking "is this the same machine" ended up asking `instanceId` and getting
+   * the wrong answer for two folders on one build box.
+   *
+   * Minted in `~/.agbrte/machine.json`, never from a hostname: hostnames are
+   * reassigned, duplicated across a fleet, and change with the network.
+   *
+   * Optional because a host deployed before this existed does not send one, and
+   * a client must read absence as *cannot tell* rather than inventing an id —
+   * which is the same degradation `bundleVersion` takes (§6.7).
+   */
+  machineId?: string;
   instanceId: InstanceId;
   lineageId: LineageId;
   workspaceRoot: string;
@@ -943,4 +961,17 @@ export interface OnDiskSession {
   sessionId: string;
   title: string;
   goal: string;
+  /**
+   * Which checkout on that machine holds it (§5.2, §8).
+   *
+   * A host serves several workspaces, so "on this host" no longer answers
+   * "where". `instanceId` and not a path, because a path is the one thing about
+   * a workspace that changes underneath you (§5.3) and identity deliberately
+   * never derives from one.
+   *
+   * Absent from a host that predates a host serving more than one workspace, and
+   * a client must read absence as *this host's only workspace* rather than as
+   * unknown — which is what the host it is talking to actually means by it.
+   */
+  instanceId?: string;
 }

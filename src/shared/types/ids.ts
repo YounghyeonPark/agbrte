@@ -22,6 +22,21 @@ export type EventId = Brand<string, 'EventId'>;
 export type LineageId = Brand<string, 'LineageId'>;
 /** One checkout on one machine (§5.2). */
 export type InstanceId = Brand<string, 'InstanceId'>;
+/**
+ * One machine, whatever is checked out on it (§5.2, §8).
+ *
+ * The third identity, and it is not a rename of the second. `instanceId` answers
+ * *which checkout*, and for as long as a host was one per workspace that also
+ * answered *which host* — so the two were used interchangeably, and a fleet
+ * holding two folders on one build box reported "these sessions are on two
+ * machines". They are not. A machine has one host, one install area
+ * (`~/.agbrte`), one set of credentials and one lease authority; a checkout has
+ * a log, a memory directory and a path that moves. Minted once per machine, in
+ * `~/.agbrte/machine.json`, and never derived from a hostname — hostnames are
+ * reassigned, duplicated across a fleet, and change when a laptop joins a
+ * different network.
+ */
+export type MachineId = Brand<string, 'MachineId'>;
 export type Sha256 = Brand<string, 'Sha256'>;
 
 const UUID_RE =
@@ -69,6 +84,7 @@ export const newAgentId = (): AgentId => uuidv7() as AgentId;
 export const newEventId = (): EventId => uuidv7() as EventId;
 export const newLineageId = (): LineageId => uuidv7() as LineageId;
 export const newInstanceId = (): InstanceId => uuidv7() as InstanceId;
+export const newMachineId = (): MachineId => uuidv7() as MachineId;
 
 export function isUuid(value: string): boolean {
   return UUID_RE.test(value);

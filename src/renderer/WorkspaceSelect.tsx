@@ -20,7 +20,7 @@
  * one carries its own `data-testid` rather than being reachable by descending
  * from the trigger.
  *
- * **The groups survive the collapse.** A directory holding `.devagents/` is a
+ * **The groups survive the collapse.** A directory holding `.agbrte/` is a
  * different claim from a git repository, which is a different claim from a
  * folder that merely exists — that is the whole reason discovery ranks them, and
  * flattening them into one alphabetical list here would throw the ranking away
@@ -34,7 +34,7 @@ import type { WorkspaceCandidateDto } from '../shared/ipc/contract.js';
 
 /** How each kind is introduced, in the order they are worth looking at. */
 export const GROUPS: Array<{ kind: WorkspaceCandidateDto['kind']; title: string }> = [
-  { kind: 'devagents', title: 'Used by Agbrte before' },
+  { kind: 'workspace', title: 'Used by Agbrte before' },
   { kind: 'git', title: 'Git repositories' },
   { kind: 'folder', title: 'Other folders' },
 ];

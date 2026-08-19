@@ -82,12 +82,12 @@ describe('cutting a worktree', () => {
     expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('one\n');
   });
 
-  it('lives under .devagents rather than beside the repo', async () => {
+  it('lives under .agbrte rather than beside the repo', async () => {
     const wt = await createWorktree(root, 'agent-1' as AgentId);
     // Agbrte's bookkeeping belongs in the directory git is already told to
     // ignore. Beside the workspace it would litter the user's parent folder
     // with directories they did not create and will not recognise.
-    expect(wt.path.replace(/\\/g, '/')).toContain('/.devagents/worktrees/');
+    expect(wt.path.replace(/\\/g, '/')).toContain('/.agbrte/worktrees/');
   });
 });
 

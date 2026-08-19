@@ -37,6 +37,7 @@ import type { HostCommand, HostMessage, MainSideChannel } from '@shared/host/pro
 import { SessionHostServer, type ShellOwner } from './sessionServer.js';
 import { decideRole, loadAccessPolicy } from './accessPolicy.js';
 import { localIdentity } from './identity.js';
+import { machineIdentity } from './machine.js';
 import { clearHostRecord, writeHostRecord } from './discovery.js';
 import { addEndpoint } from './endpoints.js';
 import { addManagedToolsToPath } from './managedTools.js';
@@ -167,6 +168,9 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
   const workspaceRoot = resolve(opts.workspaceRoot);
   // The host owns the workspace, so the host is what records where it is.
   const identity = await openWorkspace(workspaceRoot, { record: true });
+  // Minted on first start and read every time after. A machine's identity is
+  // not a workspace's: see `machineIdentity`.
+  const machine = await machineIdentity();
   const socket = hostSocketPath(identity.instanceId);
 
   const agentEntry = opts.agentHostEntry ?? resolve(HERE, 'agentHost.js');
@@ -311,6 +315,11 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
   server = new SessionHostServer({
     manager,
     identity: {
+      // Which machine, as distinct from which checkout (§5.2). Read from
+      // `~/.agbrte/machine.json` at start rather than per handshake: it does not
+      // change while a host runs, and a file read per connection would be work
+      // done once per client to answer a constant.
+      machineId: machine.machineId,
       instanceId: identity.instanceId,
       lineageId: identity.lineageId,
       workspaceRoot,

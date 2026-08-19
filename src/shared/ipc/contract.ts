@@ -65,6 +65,18 @@ export interface HostInfo {
   lineageId: string;
   /** Gitignored, per checkout (§5.2). The fleet's primary key. */
   instanceId: string;
+  /**
+   * Which machine this host runs on (§5.2, §8).
+   *
+   * Two checkouts on one build box are two `instanceId`s and **one** machine, so
+   * anything grouping hosts by computer — a sidebar, a refusal that says where
+   * to go — has to read this rather than inferring from the target or the path.
+   *
+   * `undefined` from a host that predates the field, and that means *cannot
+   * tell*: two hosts with no id are not thereby the same machine, and treating
+   * them as one would be a claim nothing established.
+   */
+  machineId?: string;
   /** `local`, `ssh`, … — §10's target badge comes from this. */
   targetKind: string;
   /** A short label for the badge: the host name, or the folder for local. */
@@ -150,14 +162,14 @@ export interface SshHostInfo {
  * One place a remote session could live, as discovery found it (§6.2).
  *
  * `kind` is not decoration and is the reason these are not one flat list. A
- * directory holding `.devagents/` is a workspace this app has already run in and
+ * directory holding `.agbrte/` is a workspace this app has already run in and
  * probably has sessions in it; a git repository is a good guess; a plain folder
  * is mostly noise. Flattening the three would hide the only distinction the user
  * is actually choosing on.
  */
 export interface WorkspaceCandidateDto {
   path: string;
-  kind: 'devagents' | 'git' | 'folder';
+  kind: 'workspace' | 'git' | 'folder';
 }
 
 /**
@@ -793,7 +805,7 @@ export interface AgbrteApi {
    * Session templates (§17 Q12), derived from sessions rather than authored.
    *
    * Owned by the host because they live in the workspace, beside `memory/`
-   * and on the committed side of `.devagents/`'s `.gitignore` — so a
+   * and on the committed side of `.agbrte/`'s `.gitignore` — so a
    * colleague gets them by cloning rather than by being told.
    */
   templates: {

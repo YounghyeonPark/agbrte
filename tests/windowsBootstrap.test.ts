@@ -237,14 +237,14 @@ onWindows('against this machine, for real', () => {
     // there is no mode to check, so what is asserted is that it exists at all
     // and is not in the log.
     const record = JSON.parse(
-      await readFile(join(workspace, '.devagents', 'host.json'), 'utf8'),
+      await readFile(join(workspace, '.agbrte', 'host.json'), 'utf8'),
     ) as { token?: string; port?: number };
     expect(record.token).toBe(started.token);
     expect(record.port).toBe(started.port);
-    await expect(stat(join(workspace, '.devagents', 'host.json'))).resolves.toBeDefined();
+    await expect(stat(join(workspace, '.agbrte', 'host.json'))).resolves.toBeDefined();
 
     const log = await readFile(
-      join(workspace, '.devagents', 'sessions', session.sessionId, 'events.jsonl'),
+      join(workspace, '.agbrte', 'sessions', session.sessionId, 'events.jsonl'),
       'utf8',
     );
     expect(log).not.toContain(started.token);

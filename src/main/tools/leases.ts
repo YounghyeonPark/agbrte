@@ -39,6 +39,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
 import type { AgentId } from '@shared/types/index.js';
 
 /**
@@ -172,4 +173,48 @@ export class WorkspaceLeases {
 
 function hash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
+}
+
+/**
+ * One lease table per workspace root (DESIGN.md §9, §8).
+ *
+ * §9 puts lease authority with whoever is adjacent to the filesystem, and scopes
+ * a table to the **workspace** rather than the session — which was one table per
+ * process for as long as a process was one workspace. A host is now one per
+ * *machine* and can hold several folders at once, so "one table" became the
+ * wrong noun: a single table across two unrelated repositories would let a write
+ * in one wait on a lease held in the other, and worse, would make `releaseHeld`
+ * for an agent in one workspace look like activity in a workspace it has never
+ * touched.
+ *
+ * Keyed by the resolved root, so `C:\dev\x` and `C:/dev/x` are one table. Not
+ * lower-cased: two directories differing only in case are two directories on the
+ * platforms this runs on that care, and folding them would be the arbitration
+ * bug this class exists to prevent, in the other direction.
+ *
+ * **A worktree gets its own table, and that is correct** (§9): an agent under
+ * `worktree` isolation works a private checkout, so there is nobody to contend
+ * with, and the paths are distinct in any case. What must share a table is every
+ * agent under `shared` isolation in one workspace, and they all resolve the same
+ * root.
+ */
+export class LeaseTables {
+  private readonly byRoot = new Map<string, WorkspaceLeases>();
+
+  constructor(private readonly clock: () => number = () => Date.now()) {}
+
+  /** The table for one workspace root, created on first use. */
+  for(root: string): WorkspaceLeases {
+    const key = resolve(root);
+    const found = this.byRoot.get(key);
+    if (found !== undefined) return found;
+    const made = new WorkspaceLeases(this.clock);
+    this.byRoot.set(key, made);
+    return made;
+  }
+
+  /** How many roots have a table. Diagnostics and tests. */
+  get size(): number {
+    return this.byRoot.size;
+  }
 }

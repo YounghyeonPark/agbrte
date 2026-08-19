@@ -13,7 +13,7 @@ Thumbs.db
 .env.local
 
 # Scratch workspace the CLI driver writes into during live runs. Contains a real
-# `.devagents` session store — derived state, never source.
+# `.agbrte` session store — derived state, never source.
 sandbox/
 
 # Build output (esbuild → dist/main, vite → dist/renderer)
@@ -24,7 +24,7 @@ test-results/
 playwright-report/
 
 # Scratch workspaces from manual runs. Named this way because a stray one got
-# committed once: they contain .devagents/ with real session logs.
+# committed once: they contain .agbrte/ with real session logs.
 tmp-*/
 
 # electron-builder output. Installers are ~130-190 MB each and are produced by

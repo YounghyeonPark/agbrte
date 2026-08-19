@@ -65,7 +65,7 @@ async function repoWithFiles(): Promise<string> {
 
 /** `events.jsonl` for the one session in this workspace, byte for byte. */
 async function log(repo: string): Promise<string> {
-  const sessionsDir = join(repo, '.devagents', 'sessions');
+  const sessionsDir = join(repo, '.agbrte', 'sessions');
   const ids = await readdir(sessionsDir);
   return readFile(join(sessionsDir, ids[0]!, 'events.jsonl'), 'utf8');
 }
@@ -86,7 +86,7 @@ async function railBox(page: Page, testid: string): Promise<{ x: number; width: 
  * Remove the workspace, allowing for the detached host still holding it.
  *
  * The host lingers `AGBRTE_HOST_LINGER_MS` (3 s in this suite) past `app.close()`
- * before releasing its handles under `.devagents`, and Windows will not remove a
+ * before releasing its handles under `.agbrte`, and Windows will not remove a
  * directory anybody has open. Same reasoning — and the same generous window — as
  * `shell.spec.ts`.
  */

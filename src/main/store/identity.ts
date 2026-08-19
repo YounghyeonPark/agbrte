@@ -21,6 +21,7 @@ import {
   type LineageId,
 } from '@shared/types/index.js';
 import {
+  assertNotInstallRoot,
   NESTED_GITIGNORE,
   PRIVATE_DIR_MODE,
   SCHEMA_VERSION,
@@ -115,12 +116,16 @@ export async function openWorkspace(
   root: string,
   opts: OpenOptions = {},
 ): Promise<WorkspaceIdentity> {
+  // Before anything is created. `<root>/.agbrte` and the machine's own
+  // `~/.agbrte` are the same directory when root is `$HOME`, and the two are
+  // different things that must not share a folder — see `assertNotInstallRoot`.
+  assertNotInstallRoot(root);
   const layout = workspaceLayout(root);
 
-  // §13 specifies 0700 for `.devagents/`. `memory/` holds agent-written project
+  // §13 specifies 0700 for `.agbrte/`. `memory/` holds agent-written project
   // knowledge plus the identity files, so it is covered too — an earlier version
   // left both at the 0755 default, readable by every co-tenant on a shared host.
-  await mkdir(layout.devagents, { recursive: true, mode: PRIVATE_DIR_MODE });
+  await mkdir(layout.dir, { recursive: true, mode: PRIVATE_DIR_MODE });
   await mkdir(layout.memoryDir, { recursive: true, mode: PRIVATE_DIR_MODE });
   await mkdir(layout.sessionsDir, { recursive: true, mode: PRIVATE_DIR_MODE });
   await mkdir(layout.indexDir, { recursive: true, mode: PRIVATE_DIR_MODE });

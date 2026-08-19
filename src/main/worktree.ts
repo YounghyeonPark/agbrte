@@ -84,7 +84,7 @@ export async function worktreeSupport(
 /**
  * Cut a worktree for one agent.
  *
- * Placed under `.devagents/` rather than beside the workspace: it is Agbrte's
+ * Placed under `.agbrte/` rather than beside the workspace: it is Agbrte's
  * bookkeeping, it is already the directory git is told to ignore, and putting it
  * next to the repo would litter the user's parent folder with directories they
  * did not create and will not recognise.
@@ -99,7 +99,7 @@ export async function createWorktree(
 
   const base = await currentBranch(workspaceRoot, exec);
   const branch = `agbrte/${agentId}`;
-  const root = join(workspaceLayout(workspaceRoot).devagents, 'worktrees');
+  const root = join(workspaceLayout(workspaceRoot).dir, 'worktrees');
   const path = join(root, agentId);
 
   await mkdir(root, { recursive: true });

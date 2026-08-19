@@ -247,6 +247,7 @@ function toInfo(host: AttachedHost, shipping?: string): HostInfo {
     root: host.workspaceRoot,
     lineageId: host.lineageId,
     instanceId: host.instanceId,
+    ...(host.machineId !== undefined ? { machineId: host.machineId } : {}),
     targetKind: host.target.kind,
     label: labelFor(host),
     available: host.available,
