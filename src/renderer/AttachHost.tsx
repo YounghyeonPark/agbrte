@@ -29,11 +29,14 @@
  * So the machine is asked. Three things make that answer usable rather than a
  * wall of directories:
  *
- *   * **the kinds are visible.** A folder holding `.devagents/` is a workspace
- *     this app has already run in and probably has sessions in; a git repository
- *     is a good guess; a plain folder is mostly noise. Flattening them would hide
- *     the only distinction anybody is choosing on, so plain folders are folded
- *     away behind a disclosure and the definitive ones are open by default.
+ *   * **it is one control, not a list.** A working machine answers with eight
+ *     directories that have held sessions, a dozen repositories and whatever
+ *     else is one level below a root, and as rows that filled the sidebar and
+ *     pushed the path field and **Attach** below the fold — the results are the
+ *     input to the decision, and the decision has to stay on screen. See
+ *     `WorkspaceSelect.tsx`, which keeps the kinds as labelled groups inside the
+ *     dropdown, because a folder holding `.devagents/` is a different claim from
+ *     a git repository and from a folder that merely exists.
  *   * **what was searched is shown.** An empty list has to read as "nothing under
  *     these five directories" and never as "this is broken" — the difference is
  *     the roots, so the roots are on screen.
@@ -60,18 +63,7 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { useAgbrte } from './store.js';
 import { loadLastAlias, loadLastWorkspace, rememberRemoteWorkspace } from './remoteWorkspaces.js';
 import { autoDiscoverDelay } from './attachTrigger.js';
-import type { WorkspaceCandidateDto } from '../shared/ipc/contract.js';
-
-/** How each kind is introduced, in the order they are worth looking at. */
-const GROUPS: Array<{ kind: WorkspaceCandidateDto['kind']; title: string; hint: string }> = [
-  {
-    kind: 'devagents',
-    title: 'Used by Agbrte before',
-    hint: 'These hold a .devagents folder, so sessions may already be there.',
-  },
-  { kind: 'git', title: 'Git repositories', hint: '' },
-  { kind: 'folder', title: 'Other folders', hint: '' },
-];
+import { WorkspaceSelect } from './WorkspaceSelect.js';
 
 export function AttachHost({
   onDone,
@@ -97,6 +89,20 @@ export function AttachHost({
    */
   const [alias, setAlias] = useState(() => loadLastAlias() ?? '');
   const [path, setPath] = useState('');
+  /**
+   * Whether the picker is on screen.
+   *
+   * Closed by default, and that is the shape of the panel rather than a
+   * preference: the resting state is a machine, a path and **Attach**, which is
+   * everything somebody who knows where they are going needs. The dropdown and
+   * its Refresh are for the person who does not, and they arrive when asked for.
+   *
+   * The *search* is not behind this. It still runs the moment a machine is
+   * chosen (see below), so pressing Browse shows an answer that is already there
+   * instead of starting a wait — the reason to fold the control away is that it
+   * is noise until it is wanted, not that it is expensive.
+   */
+  const [browsing, setBrowsing] = useState(false);
   /**
    * The last value this panel put in the path field on the user's behalf.
    *
@@ -129,8 +135,21 @@ export function AttachHost({
 
   useEffect(() => {
     const remembered = loadLastWorkspace(alias.trim()) ?? '';
-    setPath((current) => (current === '' || current === suggested.current ? remembered : current));
+    /*
+     * Read the old suggestion *before* recording the new one.
+     *
+     * `setPath` with a function defers that function to the render; the line
+     * after it runs immediately. Written the obvious way round — assign the ref,
+     * then call `setPath` — the updater sees the value it is about to be
+     * compared against, so `current === suggested.current` is never true and a
+     * path this panel had filled in was treated as something the user typed.
+     * The effect: choosing a workspace on one machine and then switching
+     * machines carried that path across, still in the field, now pointing at a
+     * directory on a different computer. Found end to end, not by reading.
+     */
+    const previous = suggested.current;
     suggested.current = remembered;
+    setPath((current) => (current === '' || current === previous ? remembered : current));
     // A list of folders on one machine beside a field naming another is worse
     // than no list: it looks current. This also cancels a search still in flight
     // for the machine being left.
@@ -223,6 +242,11 @@ export function AttachHost({
 
   const choose = (candidate: string): void => {
     setPath(candidate);
+    // Folded away again, because it has done its job: the path is in the field,
+    // the next thing to press is Attach, and leaving the picker open would keep
+    // a control on screen whose only purpose was to fill a box that is now full.
+    // Browse reopens it, with the same answer, at no cost.
+    setBrowsing(false);
     // Counts as a suggestion, not as typing: picking `~/a` on one machine and
     // then switching machines should not carry that path across.
     suggested.current = candidate;
@@ -234,12 +258,50 @@ export function AttachHost({
   const looking = search?.phase === 'looking';
   const found = search?.result ?? null;
 
+  /**
+   * The single sentence worth showing when there is nothing to choose from.
+   *
+   * `null` while a search is running or when it produced a list — those speak
+   * for themselves — and otherwise the one thing a person needs to know: this
+   * machine could not be reached, or answered and cannot be listed, or has
+   * nothing under the roots that were searched.
+   */
+  const quietNote: string | null =
+    search === null || looking
+      ? null
+      : search.phase === 'failed'
+        ? `Could not look on ${search.alias} — ${search.error ?? 'no reason given'}. Type the path, or try again.`
+        : found !== null && found.unavailable !== undefined
+          ? found.unavailable
+          : found !== null && found.candidates.length === 0
+            ? `Nothing found on ${search.alias} under ${found.roots.join(', ')}. Type the path.`
+            : null;
+
   return (
-    /* `min-h-0` + its own scroll as the backstop: the list above is bounded,
-       but a short window can still leave this panel taller than the column it
-       sits in, and a flex child that cannot shrink overflows silently. */
+    /*
+     * A short panel that scrolls only if a window is genuinely too short for it.
+     *
+     * Two structures came and went here, and both were answers to a list that no
+     * longer exists. First `max-h-[calc(100vh-16rem)]`, a number picked to stop
+     * thirty result rows carrying the Attach button off the bottom of the
+     * window; then a scroll region above a pinned action row, when the dropdown
+     * had shrunk the panel to about thirty pixels more than the column would
+     * give it. Folding the picker behind **Browse** removes the pressure rather
+     * than routing around it, and it was re-measured rather than assumed: 333px
+     * of content in 333px at rest and 412px in 412px with the picker open and
+     * twenty-seven results, so nothing scrolls at the ordinary window size in
+     * either state and Attach sits 63px above this element's own bottom edge.
+     *
+     * What is left is one `min-h-0` and one `overflow-y-auto` — the ordinary way
+     * a flex child yields — and it earns its place at a window genuinely too
+     * short for the panel: at 481px the same 412px of content gets a 180px box
+     * and *scrolls*, which is reachable rather than clipped, and clipped with no
+     * scroll is the failure both earlier structures existed to prevent. The
+     * end-to-end test measures all three states against this element's box, so a
+     * regression fails rather than being scrolled past.
+     */
     <div
-      className="border-line grid max-h-[calc(100vh-16rem)] min-h-0 gap-3 overflow-y-auto border-b p-4"
+      className="border-line grid min-h-0 gap-3 overflow-y-auto border-b p-4"
       data-testid="attach-panel"
     >
       <div className="flex gap-2">
@@ -261,7 +323,7 @@ export function AttachHost({
         </button>
       ) : (
         <>
-          <label className="text-muted grid gap-1 text-xs">
+          <label className="text-muted grid min-w-0 gap-1 text-xs">
             Machine
             {sshHosts.length === 0 ? (
               <input
@@ -302,143 +364,158 @@ export function AttachHost({
             </small>
           </label>
 
-          {/* A retry, not the way in. The search has already run by the time this
-              is read; what it is for is a machine that was asleep, a key that has
-              since been unlocked, or a folder made a minute ago. */}
-          <button
-            className="btn"
-            data-testid="attach-discover"
-            disabled={looking || alias.trim() === ''}
-            onClick={() => look(alias.trim())}
-          >
-            {looking ? 'Looking…' : 'Look again'}
-          </button>
+          {/*
+            * `min-w-0` on every row that holds a field, and it is not decoration.
+            *
+            * A text input has an intrinsic width of about twenty characters and,
+            * as a flex or grid item, will not go below it — so `[input][Browse]`
+            * sets its own minimum, the grid track grows to match, and a 300px
+            * sidebar answers with a *horizontal* scrollbar next to the vertical
+            * one. `App.tsx`'s nav carries `overflow-x-hidden` because a 1px
+            * rounding at 150% Windows scaling paints a phantom one; a real one is
+            * worse.
+            *
+            * The margin is thin enough to be worth spending a class on: measured
+            * at the default window, Browse ends at 283px of 299, and at 20px text
+            * — where the panel scrolls and the scrollbar takes 15px of width —
+            * 264 of 284. The end-to-end test asserts `scrollWidth <= clientWidth`
+            * in every state, including one squeezed short enough to have that
+            * scrollbar.
+            */}
+          <label className="text-muted grid min-w-0 gap-1 text-xs">
+            Workspace path on that machine
+            {/* Browse beside the field rather than above it: what it opens is a
+                way of filling *this* box, and a control that names its target is
+                worth more than a row of its own. */}
+            <div className="flex min-w-0 gap-2">
+              <input
+                className="field min-w-0 flex-1"
+                data-testid="attach-path"
+                placeholder="/home/you/project"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void attachRemote();
+                }}
+              />
+              <button
+                className={`btn shrink-0 ${browsing ? 'border-accent' : ''}`}
+                data-testid="attach-browse"
+                aria-expanded={browsing}
+                onClick={() => {
+                  // Asking again costs nothing when the machine has already
+                  // answered — `askNow` returns early — and it covers the case
+                  // the automatic search skipped, so Browse always has either
+                  // something to show or something to say.
+                  if (!browsing) askNow();
+                  setBrowsing((open) => !open);
+                }}
+              >
+                Browse
+              </button>
+            </div>
+          </label>
 
-          {search !== null && (
-            <div className="border-line grid gap-2 rounded border p-2" data-testid="attach-found">
-              {/* One bounded command can take twenty seconds against a machine
-                  over a slow link, and a still panel for twenty seconds reads as
-                  a hang. It says which machine, because by then the field may
-                  have moved on. */}
+          {/*
+           * One quiet line when the machine could not be listed, whether or not
+           * anybody has pressed Browse.
+           *
+           * The alternative was to keep it inside the picker, and it is the worse
+           * one: this feature exists for the person who does *not* know the path,
+           * and if the search quietly failed they would sit in front of a Browse
+           * button that opens an empty box for a reason nothing on screen gives.
+           * A failure is not the resting state, so this costs a line only when
+           * something actually went wrong — and it names the machine, because by
+           * the time it arrives the field may say something else.
+           */}
+          {!browsing && quietNote !== null && (
+            <p className="text-muted wrap-anywhere text-[11px]" data-testid="attach-found-note">
+              {quietNote}
+            </p>
+          )}
+
+          {browsing && (
+            <div
+              className="border-line grid min-w-0 gap-2 rounded border p-2"
+              data-testid="attach-found"
+            >
+              {/* Pressing Browse mid-search must not open an empty box: one
+                  bounded command can take twenty seconds against a machine over a
+                  slow link, and this is where its answer will appear. */}
               {looking && (
                 <p className="text-muted text-[11px]" data-testid="attach-looking">
-                  Looking on {search.alias}…
+                  Looking on {search?.alias ?? alias.trim()}…
                 </p>
               )}
 
-              {/* Inline, never the app's error banner: nobody pressed anything to
-                  cause this, and the field below still works. */}
-              {search.phase === 'failed' && (
-                <p className="text-muted text-[11px]" data-testid="attach-found-note">
-                  Could not look on {search.alias} — {search.error}. Type the path below, or try
-                  again.
+              {/* `wrap-anywhere` because this is the one string here with no
+                  slashes to break after — ssh puts key fingerprints and base64 in
+                  its refusals. Proven rather than assumed: without it the panel
+                  measured 486px of content in a 299px column. */}
+              {quietNote !== null && (
+                <p className="text-muted wrap-anywhere text-[11px]" data-testid="attach-found-note">
+                  {quietNote}
                 </p>
               )}
 
-              {found !== null && found.unavailable !== undefined && (
-                <p className="text-muted text-[11px]" data-testid="attach-found-note">
-                  {found.unavailable}
-                </p>
-              )}
-
-              {found !== null && (
-                /*
-                 * The results scroll, the controls do not.
-                 *
-                 * A machine with a dozen repositories and fourteen ordinary
-                 * folders makes this list longer than the sidebar, and the
-                 * panel is a flex child of a column that does not scroll — so
-                 * the overflow simply ran off the bottom of the window, taking
-                 * the Attach button with it and leaving no way to reach either.
-                 * Bounding the list keeps the field and the button in view,
-                 * which is the pair a person needs to finish the job.
-                 */
-                <div className="grid gap-3" data-testid="attach-found-list">
-                {GROUPS.map(({ kind, title, hint }) => {
-                  const rows = found.candidates.filter((c) => c.kind === kind);
-                  if (rows.length === 0) return null;
-                  const list = (
-                    <div className="grid gap-1">
-                      {rows.map((c) => (
-                        <button
-                          key={c.path}
-                          className={`btn text-left text-xs ${path === c.path ? 'border-accent' : ''}`}
-                          data-testid="attach-candidate"
-                          data-kind={c.kind}
-                          data-path={c.path}
-                          onClick={() => choose(c.path)}
-                        >
-                          {c.path}
-                        </button>
-                      ))}
+              {found !== null && found.candidates.length > 0 && (
+                <div className="grid min-w-0 gap-2" data-testid="attach-found-list">
+                  {/* Refresh beside the thing it refreshes. It is not the way in
+                      — the search has already run by the time this is on screen —
+                      it is for a machine that was asleep, a key since unlocked,
+                      or a folder made a minute ago. */}
+                  <div className="flex min-w-0 gap-2">
+                    <div className="min-w-0 flex-1">
+                      <WorkspaceSelect candidates={found.candidates} value={path} onChange={choose} />
                     </div>
-                  );
-                  // Plain folders are folded away: they are the noisy two thirds of
-                  // any home directory, and putting them on the same footing as a
-                  // workspace this app has already used would bury the answer.
-                  return kind === 'folder' ? (
-                    <details key={kind} data-testid={`attach-group-${kind}`}>
-                      <summary className="text-muted cursor-pointer text-xs">
-                        {title} ({rows.length})
-                      </summary>
-                      <div className="pt-1">{list}</div>
-                    </details>
-                  ) : (
-                    <div key={kind} className="grid gap-1" data-testid={`attach-group-${kind}`}>
-                      <span className="text-muted text-xs">{title}</span>
-                      {hint !== '' && <span className="text-muted text-[11px]">{hint}</span>}
-                      {list}
-                    </div>
-                  );
-                })}
+                    <button
+                      className="btn shrink-0"
+                      data-testid="attach-discover"
+                      disabled={looking || alias.trim() === ''}
+                      onClick={() => look(alias.trim())}
+                    >
+                      {looking ? 'Looking…' : 'Refresh'}
+                    </button>
+                  </div>
 
-                {found.candidates.length === 0 && found.unavailable === undefined && (
-                  <p className="text-muted text-[11px]" data-testid="attach-found-note">
-                    Nothing found there. Type the path below.
-                  </p>
-                )}
+                  {found.truncated && (
+                    <p className="text-muted text-[11px]">
+                      There are more than these — showing the first {found.candidates.length}.
+                    </p>
+                  )}
+                  {found.partial && (
+                    <p className="text-muted text-[11px]">
+                      The search was cut short, so this list may be missing things.
+                    </p>
+                  )}
 
-                {found.truncated && (
-                  <p className="text-muted text-[11px]">
-                    There are more than these — showing the first {found.candidates.length}.
-                  </p>
-                )}
-                {found.partial && (
-                  <p className="text-muted text-[11px]">
-                    The search was cut short, so this list may be missing things.
-                  </p>
-                )}
-
-                {/* What was searched, next to the results and not in a log. Without
-                    it an empty list is indistinguishable from a broken feature. */}
-                {found.roots.length > 0 && (
-                  <p className="text-muted text-[11px]" data-testid="attach-searched">
-                    Searched {found.roots.join(', ')} — {Math.max(1, found.depth - 1)} level
-                    {found.depth - 1 === 1 ? '' : 's'} down.
-                  </p>
-                )}
+                  {/* What was searched, next to the results and not in a log. One
+                      line, and it is what makes a short or empty list legible:
+                      without it an empty dropdown is indistinguishable from a
+                      broken feature. */}
+                  {found.roots.length > 0 && (
+                    <p className="text-muted text-[11px]" data-testid="attach-searched">
+                      Searched {found.roots.join(', ')} — {Math.max(1, found.depth - 1)} level
+                      {found.depth - 1 === 1 ? '' : 's'} down.
+                    </p>
+                  )}
                 </div>
+              )}
+
+              {/* Nothing to choose from, so Refresh is the only control in here
+                  and has to be reachable on its own. */}
+              {(found === null || found.candidates.length === 0) && !looking && (
+                <button
+                  className="btn"
+                  data-testid="attach-discover"
+                  disabled={alias.trim() === ''}
+                  onClick={() => look(alias.trim())}
+                >
+                  Refresh
+                </button>
               )}
             </div>
           )}
-
-          <label className="text-muted grid gap-1 text-xs">
-            Workspace path on that machine
-            <input
-              className="field"
-              data-testid="attach-path"
-              placeholder="/home/you/project"
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void attachRemote();
-              }}
-            />
-            <small className="text-muted text-[11px]">
-              Filled in by the list above, or by what you attached here last time — and typed
-              directly for anything the search did not reach.
-            </small>
-          </label>
 
           <button
             className="btn"
