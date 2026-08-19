@@ -52,15 +52,41 @@ function manager(script: EchoStep[], opts: { stallAfterMs?: number; now?: () => 
   return m;
 }
 
+/**
+ * Turns started and deliberately not awaited.
+ *
+ * Every test here needs a turn that is *running* — that is what `working`
+ * means — so it starts one against a runtime that never answers and moves on.
+ * The turn is still live when the test returns, and interrupting it lets the
+ * loop finish and write its closing events; on a slow machine that append
+ * landed **after** the workspace had been deleted, which macOS CI reported as
+ * `ENOENT … events.jsonl` from a file nothing in the test names. So they are
+ * collected and drained before the directory goes.
+ */
+let turns: Array<Promise<unknown>>;
+
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'agbrte-stall-'));
   instanceId = (await openWorkspace(root)).instanceId;
   managers = [];
+  turns = [];
 });
 afterEach(async () => {
   for (const m of managers) m.dispose();
+  // Rejections are ordinary here: a turn interrupted mid-flight is how several
+  // of these tests end. What matters is that it has finished writing.
+  await Promise.allSettled(turns);
   await rm(root, { recursive: true, force: true });
 });
+
+/** Start a turn without waiting for it, and hand teardown the promise. */
+function start(m: SessionManager, sessionId: string, agentId: string): void {
+  turns.push(
+    m.send(sessionId as never, agentId as never, {
+      content: [{ type: 'text', text: 'go' }],
+    }),
+  );
+}
 
 /** Reach the private sweep, which is otherwise driven by a timer. */
 const sweep = (m: SessionManager): void =>
@@ -118,7 +144,7 @@ describe('a session that has gone quiet', () => {
     const time = clock();
     const m = manager(SILENT, { stallAfterMs: 60_000, now: time.now });
     const { session, agentId } = await working(m);
-    void m.send(session.sessionId, agentId, { content: [{ type: 'text', text: 'go' }] });
+    start(m, session.sessionId, agentId);
     await until(isWorking(m, session.sessionId));
 
     time.advance(61_000);
@@ -135,7 +161,7 @@ describe('a session that has gone quiet', () => {
     const time = clock();
     const m = manager(SILENT, { stallAfterMs: 60_000, now: time.now });
     const { session, agentId } = await working(m);
-    void m.send(session.sessionId, agentId, { content: [{ type: 'text', text: 'go' }] });
+    start(m, session.sessionId, agentId);
     await until(isWorking(m, session.sessionId));
 
     time.advance(30_000);
@@ -148,7 +174,7 @@ describe('a session that has gone quiet', () => {
     const time = clock();
     const m = manager(SILENT, { stallAfterMs: 60_000, now: time.now });
     const { session, agentId } = await working(m);
-    void m.send(session.sessionId, agentId, { content: [{ type: 'text', text: 'go' }] });
+    start(m, session.sessionId, agentId);
     // The stronger wait, because the last assertion is about a session that is
     // `working` with nothing running — see `isStuck`.
     await until(isStuck(m, session.sessionId));
@@ -196,7 +222,7 @@ describe('a session that has gone quiet', () => {
     const time = clock();
     const m = manager(SILENT, { stallAfterMs: 60_000, now: time.now });
     const { session, agentId } = await working(m);
-    void m.send(session.sessionId, agentId, { content: [{ type: 'text', text: 'go' }] });
+    start(m, session.sessionId, agentId);
     await until(isWorking(m, session.sessionId));
 
     time.advance(61_000);
@@ -215,7 +241,7 @@ describe('a session that has gone quiet', () => {
     const time = clock();
     const m = manager(SILENT, { stallAfterMs: 0, now: time.now });
     const { session, agentId } = await working(m);
-    void m.send(session.sessionId, agentId, { content: [{ type: 'text', text: 'go' }] });
+    start(m, session.sessionId, agentId);
     await until(isWorking(m, session.sessionId));
 
     time.advance(60 * 60_000);
