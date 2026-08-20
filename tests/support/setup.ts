@@ -1,3 +1,6 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 /**
  * Defaults that apply to the whole suite, set before any test runs.
  *
@@ -34,3 +37,29 @@
  * `??=` so a developer chasing a linger bug can still pin it from the shell.
  */
 process.env['AGBRTE_HOST_LINGER_MS'] ??= '2000';
+
+/**
+ * Give the suite its own machine directory.
+ *
+ * `~/.agbrte` holds what is true of a *machine*: its host record, its machine
+ * id, and the list of workspaces its host has been asked to serve (§8). All
+ * three are global by design, which makes them global to the suite too — a host
+ * started by one test would find, and reopen, every temporary workspace every
+ * other test had ever created, and would spend §5.3 relocation signals in the
+ * developer's own projects on the way past.
+ *
+ * `AGBRTE_HOME` is the variable the installer script already reads, so this is
+ * the existing seam rather than one invented for tests — and it is set here, in
+ * `process.env`, for the same reason the linger is: the mechanism is
+ * inheritance. `connectOrSpawnHost` copies this process's environment into the
+ * detached host it spawns, so one assignment reaches every host any test starts
+ * by any route.
+ *
+ * `??=` so a developer chasing a machine-directory bug can pin it from the
+ * shell, and one directory per run rather than per file because a machine host
+ * is shared by construction — that is the thing under test.
+ */
+process.env['AGBRTE_HOME'] ??= join(
+  tmpdir(),
+  `agbrte-suite-${process.pid}-${Math.random().toString(36).slice(2, 8)}`,
+);

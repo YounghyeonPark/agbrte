@@ -57,7 +57,8 @@ function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
 const api: AgbrteApi = {
   hosts: {
     list: () => ipcRenderer.invoke(CH.hostsList),
-    add: () => ipcRenderer.invoke(CH.hostsAdd),
+    add: (root?: string) => ipcRenderer.invoke(CH.hostsAdd, root),
+    pickFolder: () => ipcRenderer.invoke(CH.hostsPickFolder),
     remove: (instanceId: string) => ipcRenderer.invoke(CH.hostsRemove, instanceId),
     shutdown: (instanceId: string) => ipcRenderer.invoke(CH.hostsShutdown, instanceId),
     runtimes: (instanceId: string) => ipcRenderer.invoke(CH.hostsRuntimes, instanceId),

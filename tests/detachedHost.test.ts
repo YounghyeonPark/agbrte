@@ -16,7 +16,13 @@ import { mkdtemp, readFile, rm, rename, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { connectOrSpawnHost } from '@main/host/connectOrSpawn.js';
-import { readHostRecord, writeHostRecord, processAlive } from '../src/host/discovery.js';
+import {
+  readHostRecord,
+  readMachineRecord,
+  writeHostRecord,
+  processAlive,
+} from '../src/host/discovery.js';
+import { machineIdentity } from '../src/host/machine.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { hostSocketPath } from '@shared/host/socketChannel.js';
 import type { HostConnection } from '@main/host/hostConnection.js';
@@ -86,7 +92,7 @@ describe('a detached host', () => {
     // process, so this process going away cannot take them with it.
     expect(identity.pid).not.toBe(process.pid);
     expect(processAlive(identity.pid)).toBe(true);
-    expect(identity.workspaceRoot).toBe(resolve(root));
+    expect(identity.workspace?.root).toBe(resolve(root));
 
     /**
      * And it says which bundle it is executing (§6.3).
@@ -114,9 +120,19 @@ describe('a detached host', () => {
     const connection = await host();
     const identity = await connection.ready;
 
+    // The pointer record left in the workspace, naming the *machine's* socket
+    // (§8). It is not for us — it is for a released client that knows only how
+    // to look here, and for a current one deciding whether an older host is
+    // holding this folder. `machineId` is what says which.
     const record = await readHostRecord(root);
     expect(record?.pid).toBe(identity.pid);
-    expect(record?.socket).toBe(hostSocketPath(identity.instanceId));
+    expect(record?.socket).toBe(hostSocketPath((await machineIdentity()).machineId));
+    expect(record?.machineId).toBe((await machineIdentity()).machineId);
+
+    // And the machine's own record, which is the one a client looks for first.
+    const machineRecord = await readMachineRecord();
+    expect(machineRecord?.pid).toBe(identity.pid);
+    expect(machineRecord?.socket).toBe(record?.socket);
   }, 40_000);
 
   it('keeps a session alive across a client going away entirely', async () => {
@@ -191,9 +207,13 @@ describe('a stale record', () => {
     // A host that died without cleaning up — killed, out of memory, power cut.
     await writeHostRecord(root, {
       pid: 999_999,
-      socket: hostSocketPath(identity.instanceId),
+      socket: hostSocketPath('never-listened'),
       startedAt: new Date().toISOString(),
       instanceId: identity.instanceId,
+      // Written by a machine host, so the holder check reads it as one of ours
+      // rather than as an older host in the way (§8). The point of the test is
+      // the *stale* record, not the guard.
+      machineId: 'machine-that-is-gone',
     });
 
     // Trusting the file would give the classic stale-pidfile deadlock: refusing
@@ -219,18 +239,25 @@ describe('processAlive', () => {
 });
 
 /**
- * A workspace that moved while its host kept running (§5.3).
+ * A workspace that moved while its host kept running (§5.3, §8).
  *
- * The socket is keyed by `instanceId`, and that survives a move by design —
- * identity is never derived from a path, which is the whole reason relocation
- * works at all. The consequence is one no path-handling code can catch on its
- * own: a client opening the workspace at its *new* location computes the same
- * socket, reaches the host still serving the *old* one, and gets answers about a
- * directory that is no longer there. Every function involved is individually
- * correct.
+ * This used to be a test about retirement, and the thing it tested has been
+ * designed out. The socket was keyed by `instanceId`, which survives a move by
+ * design — identity is never derived from a path, which is the whole reason
+ * relocation works at all — so a client opening the workspace at its *new*
+ * location computed the same socket, reached the host still serving the *old*
+ * one, and got answers about a directory that was gone. Every function involved
+ * was individually correct, and the fix was for the client to ask that host to
+ * retire and start a replacement.
+ *
+ * A machine-keyed socket removes the premise. There is one host either way, it
+ * holds folders by path, and it opens the one it is asked for — so the move
+ * costs an `openWorkspace`, not a process. Kept as a test because the *outcome*
+ * is what matters and is easy to lose: the workspace answers at its new path,
+ * under the same checkout id, with the sessions still in it.
  */
 describe('a workspace that moved out from under its host', () => {
-  it('retires the host serving the old path instead of talking to it', async () => {
+  it('serves it at the new path, under the same identity, without a restart', async () => {
     if (!(await built())) throw new Error(`run \`npm run build\` first`);
 
     const first = await connectOrSpawnHost({
@@ -241,7 +268,7 @@ describe('a workspace that moved out from under its host', () => {
     });
     open.push(first);
     const before = await first.ready;
-    expect(resolve(before.workspaceRoot)).toBe(resolve(root));
+    expect(resolve(before.workspace?.root ?? '')).toBe(resolve(root));
 
     // The folder moves. The host does not notice — it has no reason to.
     const moved = `${root}-moved`;
@@ -257,14 +284,17 @@ describe('a workspace that moved out from under its host', () => {
     open.push(second);
     const after = await second.ready;
 
-    // A different process, serving the place the workspace actually is. Getting
-    // the old one back would mean every file operation aimed at a path that no
-    // longer exists.
-    expect(resolve(after.workspaceRoot)).toBe(resolve(moved));
-    expect(after.pid).not.toBe(before.pid);
+    // The place the workspace actually is. Getting the old path back would mean
+    // every file operation aimed at a directory that no longer exists.
+    expect(resolve(after.workspace?.root ?? '')).toBe(resolve(moved));
     // Same workspace, so the same identity: a new one here would orphan every
     // session in the folder.
-    expect(after.instanceId).toBe(before.instanceId);
-    // Two hosts started and one retired, which is not quick.
+    expect(after.workspace?.instanceId).toBe(before.workspace?.instanceId);
+    // And the *same process*, which is the change. A move no longer costs the
+    // host, so it no longer costs whatever else that host was running.
+    expect(after.pid).toBe(before.pid);
+    // Both folders are held, and the host says so — the old path is still there
+    // as a name because nothing has told it the directory went away.
+    expect(after.workspaces.map((w) => resolve(w.root))).toContain(resolve(moved));
   }, 60_000);
 });

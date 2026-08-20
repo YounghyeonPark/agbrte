@@ -26,7 +26,7 @@ import type { Server } from 'node:net';
 import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { HostSupervisor } from '@main/host/supervisor.js';
-import { openWorkspace } from '@main/store/identity.js';
+import { openWorkspace, peekIdentity } from '@main/store/identity.js';
 import { listen, hostSocketPath } from '@shared/host/socketChannel.js';
 import { listenLoopback, newControlToken } from '@shared/host/loopback.js';
 import { PreviewServers } from '@main/preview/servers.js';
@@ -34,11 +34,14 @@ import { Shells } from '@main/terminal/shell.js';
 import { TerminalPrograms } from '@main/terminal/programs.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { HostCommand, HostMessage, MainSideChannel } from '@shared/host/protocol.js';
-import { SessionHostServer, type ShellOwner } from './sessionServer.js';
+import { SessionHostServer, type HostWorkspace, type ShellOwner } from './sessionServer.js';
 import { decideRole, loadAccessPolicy } from './accessPolicy.js';
 import { localIdentity } from './identity.js';
 import { machineIdentity } from './machine.js';
-import { clearHostRecord, writeHostRecord } from './discovery.js';
+import type { AccessRole } from '@shared/types/index.js';
+import { clearHostRecord, clearMachineRecord, writeHostRecord, writeMachineRecord } from './discovery.js';
+import { refuseIfHeldElsewhere } from './legacyHost.js';
+import { readKnownWorkspaces, writeKnownWorkspaces } from './workspaces.js';
 import { addEndpoint } from './endpoints.js';
 import { addManagedToolsToPath } from './managedTools.js';
 
@@ -110,7 +113,25 @@ class ForkedAgentChannel implements MainSideChannel {
 }
 
 export interface StartHostOptions {
+  /**
+   * The workspace this host is started for.
+   *
+   * Still one path, and still required, because a host is always started
+   * *because of* a folder — somebody opened one. It is no longer the whole of
+   * what the host serves: everything this machine has served before is restored
+   * beside it, and clients open more with `workspace.open` (§8).
+   */
   workspaceRoot: string;
+  /**
+   * Where this machine's own directory is. Defaults to the real `~/.agbrte`.
+   *
+   * Injectable for one reason and it is not tidiness: the machine registry and
+   * the machine host record are *global*, so a test that used the real one would
+   * make every other test's temporary workspace a folder this host tries to
+   * reopen — and would consume §5.3 relocation signals in the developer's own
+   * projects. A global with no seam is a global every test shares.
+   */
+  home?: string;
   lingerMs?: number;
   /** Overridable so a test can point at a built agent-host bundle. */
   agentHostEntry?: string;
@@ -171,7 +192,18 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
   // Minted on first start and read every time after. A machine's identity is
   // not a workspace's: see `machineIdentity`.
   const machine = await machineIdentity();
-  const socket = hostSocketPath(identity.instanceId);
+  /*
+   * Keyed by the machine, which is what makes two hosts on one machine
+   * impossible rather than merely discouraged (§8).
+   *
+   * Every host on this machine computes this same path, so the second one loses
+   * the bind — and `listen` then asks the only question that settles it: is
+   * anything actually there. Something answering is a live host and this one
+   * refuses to start, saying so; nothing answering is debris from an unclean
+   * death and is removed. That handling is §17 Q9's and is unchanged by the
+   * move; only what the path is derived from changed.
+   */
+  const socket = hostSocketPath(machine.machineId);
 
   const agentEntry = opts.agentHostEntry ?? resolve(HERE, 'agentHost.js');
 
@@ -242,11 +274,9 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     unavailableReason = err instanceof Error ? err.message : String(err);
   }
 
-  // Read before listening, so a malformed policy stops the host instead of
-  // being discovered by the first client it silently over-grants.
-  const accessPolicy = await loadAccessPolicy(workspaceRoot);
   const bundleVersion = readOwnBundleVersion();
   const identityOf = localIdentity();
+  const home = opts.home;
 
   // Declared here rather than beside the listener below: the server closes over
   // `port` to exclude its own control channel from the preview list, and a `let`
@@ -256,13 +286,29 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
 
   let server!: SessionHostServer;
   let listener!: Server;
-
-  // §6.8: preview servers belong to the host, not to a turn — that is the
-  // whole point of §3.12's reaping being something to work around.
-  const servers = new PreviewServers(workspaceRoot);
+  /**
+   * Whether the socket is bound yet.
+   *
+   * The pointer record a workspace gets names the socket, so it cannot be
+   * written before there is one to name — and a record pointing at a socket
+   * nobody answers sends every client down the stale path for no reason (§6.4).
+   * So opening a workspace before the listener is up registers it and defers the
+   * record; the bind writes them all.
+   */
+  let listening = false;
 
   /**
-   * The user's own terminals, in this workspace, on this machine.
+   * The workspaces this host holds, keyed by resolved path (§8).
+   *
+   * Keyed by path here and by `instanceId` in the manager, and the difference is
+   * deliberate: this map answers "which folder did the client name", which is a
+   * path question, while the manager answers "where does this session write",
+   * which must survive a move and therefore cannot be.
+   */
+  const held = new Map<string, HostWorkspace>();
+
+  /**
+   * The user's own terminals, in one workspace, on this machine.
    *
    * Here rather than in main for the reason §6.8 gives for preview servers: the
    * host is the process that owns the workspace, so `cwd` is the workspace by
@@ -270,46 +316,177 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
    * shell. It is also the process that can afford to drain a PTY — §8's rule is
    * that main must never block, and a terminal is the loudest thing in the app.
    *
+   * One supervisor per workspace, because `cwd` is the whole of what it is for:
+   * a single one for a machine holding four repositories would open every
+   * terminal in whichever folder happened to be first.
+   *
    * The output sink posts to exactly one client's channel. Every other push in
    * this protocol is broadcast because it describes the session, which is
    * shared; this one describes one person's screen, and a second device
    * receiving it would be a leak rather than a feature.
    */
-  const shells = new Shells<ShellOwner>(workspaceRoot, {
+  const shellsFor = (root: string): Shells<ShellOwner> =>
+    new Shells<ShellOwner>(root, {
+      /*
+       * What a pane may open, built from what this host already decided.
+       *
+       * Not a second detection pass. `available` is the list `admit()` consults
+       * and the list the picker draws, and `runtimeNotes` is the sentence the
+       * picker shows beside a CLI it cannot offer — so a pane can open exactly
+       * the CLIs the picker offers, and refuses the rest with the wording
+       * already on screen, by construction. Detecting again here would have been
+       * two answers to one question about one machine, which is how the runtime
+       * list and the admission gate disagreed once already.
+       */
+      programs: new TerminalPrograms({ runtimeIds: available, notes: runtimeNotes }),
+      onData: (shellId, data, owner) => owner.post({ t: 'push.shell', shellId, data }),
+      onExit: (exit, owner) =>
+        owner.post({
+          t: 'push.shellExit',
+          shellId: exit.shellId,
+          exitCode: exit.exitCode,
+          ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
+        }),
+    });
+
+  /**
+   * The pointer record, left in a workspace this host has opened (§8).
+   *
+   * Not for us — we know where we are listening. For the two readers who cannot
+   * be told any other way: a **released client**, which knows only how to look
+   * in the workspace and would otherwise start its own host here, and a
+   * **current client** about to open this folder, which has to be able to tell
+   * an older per-workspace host from one of ours. `machineId` is what says
+   * which, and it is the field `legacyHost.ts` reads.
+   */
+  const publish = async (workspace: HostWorkspace): Promise<void> => {
+    await writeHostRecord(workspace.info.root, {
+      pid: process.pid,
+      socket,
+      startedAt: new Date().toISOString(),
+      instanceId: workspace.info.instanceId,
+      machineId: machine.machineId,
+      ...(port !== undefined ? { port } : {}),
+      ...(token !== undefined ? { token } : {}),
+    });
+  };
+
+  /**
+   * Open a folder and start serving it.
+   *
+   * Idempotent by path, and the recording is not: §5.3 says writing
+   * `lastKnownPath` *consumes* the relocation signal and only an owner may spend
+   * it, so a client asking for a folder records and a startup restore does not.
+   * A workspace already held is therefore still passed through `addWorkspace`
+   * when a client asks, which is what spends the signal at the moment somebody
+   * is there to be told about the move.
+   */
+  const openHostWorkspace = async (
+    root: string,
+    o: { record: boolean },
+  ): Promise<HostWorkspace> => {
+    const key = resolve(root);
+    // Before anything is created or registered. A second writer on one log is
+    // the failure this check exists for, and a gate a client can skip is not a
+    // gate (§13) — so it is here, in the host, as well as in the client.
+    await refuseIfHeldElsewhere(key, { socket, machineId: machine.machineId });
+
+    const workspace = await manager.addWorkspace(key, { record: o.record });
+    const already = held.get(key);
+    if (already !== undefined) return already;
+
     /*
-     * What a pane may open, built from what this host already decided.
+     * A workspace that moved is re-keyed, not held twice (§5.3).
      *
-     * Not a second detection pass. `available` is the list `admit()` consults
-     * and the list the picker draws, and `runtimeNotes` is the sentence the
-     * picker shows beside a CLI it cannot offer — so a pane can open exactly the
-     * CLIs the picker offers, and refuses the rest with the wording already on
-     * screen, by construction. Detecting again here would have been two answers
-     * to one question about one machine, which is how the runtime list and the
-     * admission gate disagreed once already (see the note above `available`).
+     * The manager resolves one checkout turning up at a second path — a rename
+     * rather than a copy — and this map is keyed by path, so the old key would
+     * otherwise sit here pointing at a directory that is gone. Its preview
+     * servers and terminals go with it, because their `cwd` is that directory:
+     * a shell whose working directory has been renamed out from under it is a
+     * process blocked in a place that no longer exists, and keeping it would be
+     * keeping the appearance of a terminal rather than one.
      */
-    programs: new TerminalPrograms({ runtimeIds: available, notes: runtimeNotes }),
-    onData: (shellId, data, owner) => owner.post({ t: 'push.shell', shellId, data }),
-    onExit: (exit, owner) =>
-      owner.post({
-        t: 'push.shellExit',
-        shellId: exit.shellId,
-        exitCode: exit.exitCode,
-        ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
+    for (const [oldKey, entry] of held) {
+      if (entry.info.instanceId !== workspace.instanceId) continue;
+      entry.servers?.stopAll();
+      entry.shells?.closeAll();
+      held.delete(oldKey);
+      await clearHostRecord(entry.info.root).catch(() => undefined);
+    }
+
+    // Read before it is served, so a malformed policy refuses the workspace
+    // rather than being discovered by the first client it silently over-grants.
+    const policy = await loadAccessPolicy(workspace.root);
+    const lineage = (await peekIdentity(workspace.root))?.lineageId ?? identity.lineageId;
+    const entry: HostWorkspace = {
+      info: {
+        instanceId: workspace.instanceId,
+        lineageId: lineage,
+        root: workspace.root,
+        ...(workspace.relocatedFrom !== undefined ? { movedFrom: workspace.relocatedFrom } : {}),
+      },
+      // §6.8: preview servers belong to the host, not to a turn — that is the
+      // whole point of §3.12's reaping being something to work around.
+      servers: new PreviewServers(workspace.root),
+      shells: shellsFor(workspace.root),
+      grantRole: (requested: AccessRole, client: string) => ({
+        role: decideRole(policy, requested, client, identityOf.ceiling),
+        actor: identityOf.actor,
       }),
-  });
+    };
+    held.set(key, entry);
+    await writeKnownWorkspaces(
+      [...held.values()].map((w) => ({ root: w.info.root, instanceId: w.info.instanceId })),
+      home,
+    );
+    if (listening) await publish(entry);
+    return entry;
+  };
+
+  // The workspace this host was started for, opened before it listens: a host
+  // that accepts a connection and then cannot say what it holds is a host that
+  // answers `welcome` with nothing in it.
+  await openHostWorkspace(workspaceRoot, { record: true });
+
+  /*
+   * Everything this machine has served before, restored as a *hint* (§8).
+   *
+   * The requirement is that sessions in a folder nobody has opened this launch
+   * are still findable, and `listOnDisk` is what answers it — which it can only
+   * do for folders the manager knows about. Restored with `record: false`,
+   * because reading a list is not a person asking for a folder, and failures are
+   * skipped rather than fatal: a deleted folder, an unmounted volume and a
+   * workspace held by an older host are all ordinary, and none of them is a
+   * reason a host should not start.
+   */
+  for (const known of await readKnownWorkspaces(home)) {
+    if (held.has(resolve(known.root))) continue;
+    try {
+      await openHostWorkspace(known.root, { record: false });
+    } catch {
+      // Reported by absence: it is not in `workspace.list`, which is the honest
+      // answer to "what is this host holding".
+    }
+  }
 
   const stop = async (): Promise<void> => {
     // Before the listener closes: a preview server outliving the host that
     // started it is a port answering with nothing to explain it, and nothing
     // left that knows how to stop it.
-    servers.stopAll();
-    // And every terminal, for the stronger reason: a shell survives its reader
-    // only as a process blocked on a prompt nobody can answer.
-    shells.closeAll();
+    for (const workspace of held.values()) {
+      workspace.servers?.stopAll();
+      // And every terminal, for the stronger reason: a shell survives its reader
+      // only as a process blocked on a prompt nobody can answer.
+      workspace.shells?.closeAll();
+    }
     server.stop('host stopping');
     supervisor.dispose();
     listener.close();
-    await clearHostRecord(workspaceRoot);
+    // Every pointer as well as the machine's own record. A pointer left behind
+    // is what sends the next client to a socket nobody answers — and worse, on
+    // the released build, is indistinguishable from a host that is alive.
+    await clearMachineRecord(home);
+    await Promise.all([...held.values()].map((w) => clearHostRecord(w.info.root)));
   };
 
   server = new SessionHostServer({
@@ -354,15 +531,24 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
      * being sent. `Fleet.setUpHost` restarts the host afterwards and says so.
      */
     addEndpoint: (input) => addEndpoint(input),
+    /*
+     * The machine's answer, for a connection bound to no workspace.
+     *
+     * A bound connection gets the *workspace's* policy instead (§8.2):
+     * `.agbrte/access.json` is per workspace and always has been, because "the
+     * phone watches this repository" is a sentence about a repository. This one
+     * is what a client attaching the machine gets, and it is the identity the
+     * socket already proved rather than a second, weaker door.
+     */
     grantRole: (requested, client) => ({
-      role: decideRole(accessPolicy, requested, client, identityOf.ceiling),
+      role: decideRole(null, requested, client, identityOf.ceiling),
       actor: identityOf.actor,
     }),
-    // Read when asked rather than captured now: the listener has not bound yet,
-    // so the port does not exist at this line. Offering to forward the channel a
-    // request arrived on would be offering a loop.
-    servers,
-    shells,
+    // Asked live rather than captured, because `workspace.open` changes the set
+    // while this host runs and a snapshot would make every later handshake
+    // describe the machine as it was when it started.
+    workspaces: () => [...held.values()],
+    openWorkspace: (root) => openHostWorkspace(root, { record: true }),
     controlPort: () => port,
     lingerMs: opts.lingerMs ?? DEFAULT_LINGER_MS,
     // Whatever the reason — the idle timer, or a client asking — the process
@@ -400,16 +586,29 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     );
   }
 
-  // Written only once we are actually listening. A record pointing at a socket
-  // nobody answers sends every client down the stale path for no reason.
-  await writeHostRecord(workspaceRoot, {
-    pid: process.pid,
-    socket,
-    startedAt: new Date().toISOString(),
-    instanceId: identity.instanceId,
-    ...(port !== undefined ? { port } : {}),
-    ...(token !== undefined ? { token } : {}),
-  });
+  listening = true;
+
+  /*
+   * Written only once we are actually listening. A record pointing at a socket
+   * nobody answers sends every client down the stale path for no reason (§6.4).
+   *
+   * The machine's own record first, because that is the one a current client
+   * looks for; the per-workspace pointers after it, for the released client that
+   * knows only how to look in a folder.
+   */
+  await writeMachineRecord(
+    {
+      pid: process.pid,
+      socket,
+      startedAt: new Date().toISOString(),
+      instanceId: identity.instanceId,
+      machineId: machine.machineId,
+      ...(port !== undefined ? { port } : {}),
+      ...(token !== undefined ? { token } : {}),
+    },
+    home,
+  );
+  for (const workspace of held.values()) await publish(workspace);
 
   return { socket, ...(port !== undefined ? { port } : {}), stop };
 }

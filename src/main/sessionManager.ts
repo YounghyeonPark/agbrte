@@ -72,7 +72,7 @@ import { McpConnection } from './mcp/client.js';
 import { truncateToolOutput } from './tools/index.js';
 import { SessionStore, type SessionMeta } from './store/sessionStore.js';
 import { sessionLayout, workspaceLayout } from './store/layout.js';
-import { openWorkspace } from './store/identity.js';
+import { openWorkspace, peekIdentity } from './store/identity.js';
 import { addCost } from '@shared/cost.js';
 import { ensureBlob } from './store/blobTransfer.js';
 import { compactionSizes, rehydrate } from './store/rehydrate.js';
@@ -596,13 +596,37 @@ export class SessionManager extends EventEmitter {
     const identity = await openWorkspace(root, { ...(opts.record === true ? { record: true } : {}) });
     const held = this.workspaces.get(identity.instanceId);
     if (held !== undefined) {
-      if (resolvePath(held.root) !== resolvePath(identity.layout.root)) {
+      const here = resolvePath(identity.layout.root);
+      if (resolvePath(held.root) === here) return held;
+
+      /*
+       * One checkout, two paths — which is two different things, and the
+       * identity alone cannot tell them apart (§5.3).
+       *
+       * A folder that was **renamed** and a folder that was **copied including
+       * `instance.json`** produce byte-identical evidence at the new path: same
+       * `instanceId`, same `lastKnownPath` pointing somewhere else. The one
+       * question that separates them is the one §5.3's flowchart asks — *is this
+       * instance still at the old path?* If it is, both exist and this is the
+       * fork, refused by name because resolving it is a decision with a UI. If
+       * it is not, the folder moved, and refusing would mean a rename made a
+       * workspace unopenable by the host that had it a moment ago.
+       */
+      const before = await peekIdentity(held.root).catch(() => null);
+      if (before?.instanceId === identity.instanceId) {
         throw new Error(
           `the checkout at ${identity.layout.root} is the same one already open at ${held.root} ` +
             `— a copied \`instance.json\`, which is a fork to resolve rather than two workspaces to hold`,
         );
       }
-      return held;
+
+      const moved: ManagedWorkspace = {
+        root: here,
+        instanceId: held.instanceId,
+        relocatedFrom: held.root,
+      };
+      this.workspaces.set(moved.instanceId, moved);
+      return moved;
     }
     const workspace: ManagedWorkspace = {
       root: identity.layout.root,
@@ -635,6 +659,22 @@ export class SessionManager extends EventEmitter {
       );
     }
     return held;
+  }
+
+  /**
+   * Which checkout a loaded session belongs to, synchronously.
+   *
+   * Synchronous because its caller is a *push*: the host has to decide, at the
+   * moment an event is emitted, which connections it belongs to — and a client
+   * bound to one folder must not be handed another folder's transcript. An
+   * `await` there would put a round trip inside an event handler that runs on
+   * every token.
+   *
+   * `null` for a session this manager has not loaded, which a caller must read
+   * as *cannot say* and never as "send it to everyone".
+   */
+  instanceOf(sessionId: SessionId): InstanceId | null {
+    return this.sessions.get(sessionId)?.session.instanceId ?? null;
   }
 
   /** The path of the workspace a live session writes into. */

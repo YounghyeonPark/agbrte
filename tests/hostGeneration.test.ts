@@ -26,13 +26,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Fleet, type FleetRuntime } from '@main/fleet.js';
 import { HostConnection } from '@main/host/hostConnection.js';
-import { SessionHostServer } from '../src/host/sessionServer.js';
+import { SessionHostServer, type HostSelfDescription } from '../src/host/sessionServer.js';
 import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
-import type { HostIdentity, SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
+import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 
 /** What this "app" knows how to label, mirroring `HOST_RUNTIMES` in main.ts. */
 const RUNTIMES: FleetRuntime[] = [
@@ -73,7 +73,7 @@ async function rig() {
   });
 
   /** What the *next* host to start will report. Mutated between generations. */
-  let next: Omit<HostIdentity, 'protocol' | 'pid'> = {
+  let next: HostSelfDescription = {
     instanceId: workspace.instanceId,
     lineageId: workspace.lineageId,
     workspaceRoot: root,
@@ -104,7 +104,7 @@ async function rig() {
     fleet,
     instanceId: workspace.instanceId,
     /** Retire this generation and decide what the next one will be. */
-    replaceWith(identity: Partial<Omit<HostIdentity, 'protocol' | 'pid'>>): void {
+    replaceWith(identity: Partial<HostSelfDescription>): void {
       next = { ...next, ...identity };
       reachable = false;
       live?.host.close();

@@ -47,8 +47,15 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connect, hostSocketPath } from '@shared/host/socketChannel.js';
+import { machineIdentity } from '../../host/machine.js';
+import { refuseIfHeldElsewhere } from '../../host/legacyHost.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
-import { clearHostRecord, readHostRecord } from '../../host/discovery.js';
+import {
+  clearHostRecord,
+  clearMachineRecord,
+  readHostRecord,
+  readMachineRecord,
+} from '../../host/discovery.js';
 import { openWorkspace } from '../store/identity.js';
 import { HostConnection, HostProtocolMismatch } from './hostConnection.js';
 
@@ -102,7 +109,7 @@ const HANDSHAKE_TIMEOUT_MS = 5_000;
 
 /** What is on the other end of the socket, asked with the handshake. */
 type Probe =
-  | { at: 'host'; connection: HostConnection; workspaceRoot: string }
+  | { at: 'host'; connection: HostConnection; workspaceRoot?: string }
   /** Nothing accepted the connection: no host, or the last one has gone. */
   | { at: 'empty' }
   /** Accepted, then went away without a handshake: a host on its way out. */
@@ -126,13 +133,23 @@ type Probe =
  * then says nothing is a different fact from one that refuses, and the only way
  * to tell them apart is to wait a little and see.
  */
-async function probeHost(socket: string, client?: string): Promise<Probe> {
+async function probeHost(
+  socket: string,
+  opts: { client?: string; workspace?: string } = {},
+): Promise<Probe> {
   let connection: HostConnection;
   try {
     const channel = await connect<SessionCommand, SessionMessage>(socket, 2_000);
     // The label reaches `grantRole`, so a workspace policy that pins a client
-    // family to read-only can never fire if this is dropped on the floor.
-    connection = new HostConnection({ channel, ...(client !== undefined ? { client } : {}) });
+    // family to read-only can never fire if this is dropped on the floor. The
+    // workspace reaches it too, and for a stronger reason: the policy that
+    // decides the role is *that workspace's* (§8.2), so it has to travel in the
+    // same message as the role being asked for.
+    connection = new HostConnection({
+      channel,
+      ...(opts.client !== undefined ? { client: opts.client } : {}),
+      ...(opts.workspace !== undefined ? { workspace: opts.workspace } : {}),
+    });
   } catch {
     // ENOENT or ECONNREFUSED: nothing is listening. Ordinary, not a failure.
     return { at: 'empty' };
@@ -159,43 +176,70 @@ async function probeHost(socket: string, client?: string): Promise<Probe> {
     if (!outcome.ok) {
       connection.disconnect();
       /*
-       * Two ways a handshake ends in a refusal, one per direction of the skew:
+       * Three ways a handshake ends in a refusal, and all of them are final:
        * this client is too new for the host (`HostProtocolMismatch`, raised
-       * here) or too old for it (`ClientTooOld`, sent by the host). Both are
-       * final and neither is a host that is leaving — waiting for the socket
-       * would report "still shutting down" about a host that is perfectly well.
+       * here), too old for it (`ClientTooOld`, sent by the host), or the host
+       * declined the workspace it asked for (`WorkspaceUnavailable` — usually an
+       * older per-workspace host still holding that folder). Waiting for the
+       * socket would report "still shutting down" about a host that is perfectly
+       * well.
        */
       if (
         outcome.error instanceof HostProtocolMismatch ||
-        outcome.error.name === 'ClientTooOld'
+        outcome.error.name === 'ClientTooOld' ||
+        outcome.error.name === 'WorkspaceUnavailable'
       ) {
         return { at: 'refused', error: outcome.error };
       }
       return { at: 'leaving', detail: outcome.error.message };
     }
-    return { at: 'host', connection, workspaceRoot: outcome.i.workspaceRoot };
+    return {
+      at: 'host',
+      connection,
+      ...(outcome.i.workspace !== undefined ? { workspaceRoot: outcome.i.workspace.root } : {}),
+    };
   } finally {
     clearTimeout(timer);
   }
 }
 
+/**
+ * A connection to this machine's host, bound to one workspace.
+ *
+ * **The socket is the machine's, and that is the change.** It used to be
+ * `agbrte-<instanceId>` — one per checkout — so opening a second folder started
+ * a second process. One machine, one host, one socket now (§8), and the folder
+ * travels in `hello` instead.
+ *
+ * Two things had to be added to make that safe rather than merely tidier, and
+ * both are about a build that predates the move:
+ *
+ *  - **An older host may already hold this workspace.** It listens on a socket
+ *    this build does not compute, so the two cannot see each other and would
+ *    each open the same `events.jsonl`. Refused by name before anything is
+ *    started — see `legacyHost.ts`, which also runs inside the host, because a
+ *    gate a client can skip is not a gate (§13).
+ *  - **An older *client* may find this host**, through the pointer record the
+ *    machine host leaves in each workspace. It is refused at the handshake by
+ *    `MIN_CLIENT_PROTOCOL` rather than served a `welcome` it will misread.
+ */
 export async function connectOrSpawnHost(opts: ConnectOptions): Promise<HostConnection> {
   const workspaceRoot = resolve(opts.workspaceRoot);
-  const identity = await openWorkspace(workspaceRoot);
-  const socket = hostSocketPath(identity.instanceId);
+  // Opened before the socket is computed, because this is what creates the
+  // workspace when it is new — and because a folder that cannot be opened at all
+  // should say so before anything is started on its behalf.
+  await openWorkspace(workspaceRoot);
+  const machine = await machineIdentity();
+  const socket = hostSocketPath(machine.machineId);
+  // Before a host is spawned, so the refusal names the process in the way rather
+  // than arriving fifteen seconds later as "did not start listening". Told who
+  // *we* are, so this host's own pointer records read as ours rather than as a
+  // rival — the false negative being the expensive one here.
+  await refuseIfHeldElsewhere(workspaceRoot, { socket, machineId: machine.machineId });
 
   const vacancyBy = Date.now() + (opts.vacancyTimeoutMs ?? DEFAULT_VACANCY_TIMEOUT_MS);
   let spawnedAt: number | null = null;
   let departed = false;
-  /**
-   * How many times a host serving the *old* path has been asked to retire.
-   *
-   * Bounded because the loop's only unbounded branch is this one: a host that
-   * answers `{stopped:true}` and then keeps answering would be asked again on
-   * every round, forever. Three tries and then a sentence — a spin with no
-   * output is the one outcome worse than a wrong error.
-   */
-  let retirements = 0;
 
   /*
    * One loop, because the states feed into each other: a departing host becomes
@@ -204,32 +248,33 @@ export async function connectOrSpawnHost(opts: ConnectOptions): Promise<HostConn
    * the previous one had finished, which is exactly the assumption that failed.
    */
   for (;;) {
-    const probe = await probeHost(socket, opts.client);
+    const probe = await probeHost(socket, {
+      ...(opts.client !== undefined ? { client: opts.client } : {}),
+      workspace: workspaceRoot,
+    });
 
     if (probe.at === 'host') {
-      if (resolve(probe.workspaceRoot) === workspaceRoot) return probe.connection;
-
-      // The host answering is serving a *different* directory under the same
-      // identity, which happens for exactly one reason: the workspace moved and a
-      // host at the old location is still running. The socket is keyed by
-      // `instanceId` and that survives a move by design, so the old host answers
-      // requests made from the new path and then fails opening files that are no
-      // longer there. Only a real move surfaces this — every path in the code is
-      // correct in isolation.
-      probe.connection.disconnect();
-      retirements += 1;
-      if (retirements > 3) {
+      /*
+       * The host answered and bound the folder that was asked for, or it did
+       * not — and "did not" is now a refusal from the host rather than something
+       * this side has to detect.
+       *
+       * This branch used to carry the stale-path retirement: the socket was
+       * keyed by `instanceId`, which survives a move, so a host at the old
+       * location answered for the new one and served a directory that was gone.
+       * That cannot happen to a machine-keyed socket — the host holds folders by
+       * path and opens the one it is asked for — and §5.3's relocation handling
+       * is where a moved workspace is resolved, which is where it always
+       * belonged.
+       */
+      if (probe.workspaceRoot === undefined) {
+        probe.connection.disconnect();
         throw new Error(
-          `a host on ${socket} keeps answering for ${probe.workspaceRoot} after agreeing to ` +
-            `stop, so ${workspaceRoot} cannot be served. Stop that process and try again.`,
+          `the host on ${socket} accepted a connection for ${workspaceRoot} without binding ` +
+            `it, so nothing here can be served. Stop that host and try again.`,
         );
       }
-      const stopped = await stopStale(socket, workspaceRoot, probe.workspaceRoot, opts.client);
-      if (!stopped.ok) throw new Error(stopped.reason);
-      await clearHostRecord(workspaceRoot);
-      // Round again rather than spawning here: what it just asked to stop is now
-      // a *departing* host, and the branch below is what knows to wait for it.
-      continue;
+      return probe.connection;
     }
 
     // A host that will not serve this client is a host all the same. Starting a
@@ -251,18 +296,19 @@ export async function connectOrSpawnHost(opts: ConnectOptions): Promise<HostConn
       }
       throw new Error(
         probe.at === 'leaving'
-          ? `the host for ${workspaceRoot} is still shutting down on ${socket} and has not ` +
-            `released it (${probe.detail}). Nothing was started, so nothing was lost — ` +
-            `try again in a moment.`
-          : `something is listening on ${socket} for ${workspaceRoot} but never completed a ` +
-            `handshake, so it cannot be used and cannot be replaced. If it is a wedged host, ` +
-            `stop that process and try again.`,
+          ? `this machine's host is still shutting down on ${socket} and has not released ` +
+            `it (${probe.detail}). Nothing was started, so nothing was lost — try again in ` +
+            `a moment.`
+          : `something is listening on ${socket} but never completed a handshake, so it ` +
+            `cannot be used and cannot be replaced. If it is a wedged host, stop that ` +
+            `process and try again.`,
       );
     }
 
     // Nothing answered. If a record says otherwise it describes a process that is
     // no longer there, so clear it rather than leaving a lie on disk.
     if (spawnedAt === null) {
+      if ((await readMachineRecord()) !== null) await clearMachineRecord();
       if ((await readHostRecord(workspaceRoot)) !== null) {
         await clearHostRecord(workspaceRoot);
       }
@@ -278,64 +324,6 @@ export async function connectOrSpawnHost(opts: ConnectOptions): Promise<HostConn
     // Polling rather than watching: a socket appearing is not a filesystem event
     // on Windows named pipes, so there is nothing to watch for.
     await new Promise((r) => setTimeout(r, 100));
-  }
-}
-
-/**
- * Retire a host still serving this workspace's previous location.
- *
- * Asked to stop rather than killed, and allowed to refuse: it may be holding a
- * live agent, and taking that down because a folder was renamed would lose work
- * for a reason the user would never connect to the cause. A refusal is reported
- * with both paths, because "no host for /new/path" is a true sentence that
- * explains nothing.
- */
-async function stopStale(
-  socket: string,
-  wanted: string,
-  serving: string,
-  client?: string,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const probe = await probeHost(socket, client);
-  // Anything that is not a live host is one that has gone or is going, and the
-  // caller's next round is what waits for the socket rather than this one.
-  if (probe.at !== 'host') return { ok: true };
-  const connection = probe.connection;
-
-  try {
-    const result = await connection.requestShutdown();
-    if (!result.stopped) {
-      return {
-        ok: false,
-        reason:
-          `this workspace has moved to ${wanted}, but a host is still running at ` +
-          `${serving} and will not stop: ${result.reason ?? 'work is in flight'}. ` +
-          `Let it finish, or stop it there.`,
-      };
-    }
-  } catch {
-    return { ok: true }; // it died while being asked, which is the outcome wanted
-  } finally {
-    connection.disconnect();
-  }
-
-  /*
-   * Waiting for it to actually be gone is what stops the replacement failing
-   * with `EADDRINUSE` — but the thing to wait *on* is the socket answering, not
-   * a filesystem entry. `existsSync` was the test here and is a no-op on the
-   * platform where it was written: a Windows named pipe has no directory entry
-   * to disappear, so the loop fell straight through and the caller spawned into
-   * a socket the old host still held. The caller's own round asks the honest
-   * question, so this only has to not return before there is a point in asking.
-   */
-  const deadline = Date.now() + 5_000;
-  for (;;) {
-    const gone = await probeHost(socket, client);
-    // Closed rather than left open: this is a poll, and a probe that finds the
-    // old host still up must not leave a channel behind on every iteration.
-    if (gone.at === 'host') gone.connection.disconnect();
-    if (gone.at === 'empty' || Date.now() >= deadline) return { ok: true };
-    await new Promise((r) => setTimeout(r, 50));
   }
 }
 

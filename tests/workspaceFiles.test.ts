@@ -305,6 +305,9 @@ describe('over the protocol', () => {
     // A v18 host: everything up to the terminal, and no file browsing. The
     // client learns this from `welcome` and declines to send, so meeting one
     // costs a sidebar rather than the connection.
+    // Deliberately the pre-v21 shape, because that is what a v18 host sends:
+    // the fields at the top level and no `workspaces`. `normaliseIdentity` is
+    // what turns it into the one this client speaks (§17 Q16).
     pair.host.post({
       t: 'welcome',
       id: 'c1',
@@ -317,7 +320,7 @@ describe('over the protocol', () => {
         pid: 1,
         protocol: 18,
       },
-    });
+    } as unknown as SessionMessage);
 
     // Awaited, because the handshake lands on the channel's own turn — asking
     // `supports` before it does answers about a connection with no identity yet,

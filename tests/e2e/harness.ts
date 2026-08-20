@@ -64,6 +64,20 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
   // for a test that makes a dozen throwaway workspaces.
   env['AGBRTE_HOST_LINGER_MS'] = '3000';
   /*
+   * Its own machine directory, per launch (§8).
+   *
+   * `~/.agbrte` holds what is true of a *machine*: the host record, the machine
+   * id, and the list of workspaces its host has been asked to serve. All three
+   * are global by design — which means a spec using the real one would start a
+   * host that reopens every workspace every other spec ever made, and the app
+   * would come up attached to folders this test knows nothing about.
+   *
+   * Per launch rather than per suite, because a machine host is *shared* by
+   * construction: two specs sharing this directory would share one host, and
+   * the second would inherit the first's workspaces on screen.
+   */
+  env['AGBRTE_HOME'] = join(userDataDir, 'machine');
+  /*
    * The version this checkout ships, for the same reason `scripts/launch.mjs`
    * sets it: the app path here is `dist/main`, which has no `package.json`, so
    * `app.getVersion()` answers with Electron's version instead of this

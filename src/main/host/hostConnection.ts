@@ -28,6 +28,7 @@ import {
   type OnDiskSession,
   type SessionCommand,
   type SessionMessage,
+  type WorkspaceInfo,
 } from '@shared/host/sessionProtocol.js';
 
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
@@ -42,6 +43,8 @@ import type {
   ContentBlock,
   AgentRecord,
   AgbrteEvent,
+  InstanceId,
+  LineageId,
   ModelCapabilityHint,
   PermissionDecision,
   InboxEntry,
@@ -105,6 +108,17 @@ export interface HostConnectionOptions {
   role?: AccessRole;
   /** Shown in the host's logs; useful when several devices are attached. */
   client?: string;
+  /**
+   * The folder this connection works in (§8).
+   *
+   * A **path**, because that is what a person or a picker hands over; the host
+   * answers with the checkout id. Absent attaches the *machine* and no folder,
+   * which is a real state — list what is here, ask about models, retire the host
+   * — and not a degraded one. A host holding exactly one workspace binds an
+   * unnamed connection to it, so nothing that has only ever had one folder has
+   * to start saying so.
+   */
+  workspace?: string;
   onClose?: (reason?: string) => void;
 }
 
@@ -155,6 +169,11 @@ export class HostConnection extends EventEmitter {
       // The host decides whether it will serve this, because the host is the
       // owner — the same reason roles are granted rather than claimed.
       protocol: SESSION_PROTOCOL_VERSION,
+      // Sent in the same message as the role for a reason: the host applies the
+      // *workspace's* access policy, so it has to know which workspace before it
+      // can decide what this client gets (§8.2). A separate bind command would
+      // mean a window in which a role had been granted against nothing.
+      ...(opts.workspace !== undefined ? { workspace: opts.workspace } : {}),
     });
   }
 
@@ -202,9 +221,10 @@ export class HostConnection extends EventEmitter {
           this.opts.channel.close();
           return;
         }
-        this.identity = message.identity;
+        const identity = normaliseIdentity(message.identity);
+        this.identity = identity;
         this.granted = message.role;
-        this.announce(message.identity);
+        this.announce(identity);
         return;
       }
 
@@ -821,6 +841,24 @@ export class HostConnection extends EventEmitter {
     return this.call({ t: 'permission.respond', requestId, decision });
   }
 
+  /** Every workspace this machine's host is holding right now (§8). */
+  listWorkspaces(): Promise<WorkspaceInfo[]> {
+    this.require('workspace.list');
+    return this.call({ t: 'workspace.list' });
+  }
+
+  /**
+   * Open a folder on this machine, so sessions can be created in it (§8).
+   *
+   * Idempotent by checkout: naming a folder that is already open returns what is
+   * already there, because "the sessions that are there are the sessions you
+   * get" and a second open has nothing different to say.
+   */
+  openWorkspace(root: string): Promise<WorkspaceInfo> {
+    this.require('workspace.open');
+    return this.call({ t: 'workspace.open', root });
+  }
+
   /** Ask the host to exit. It refuses while work is in flight. */
   requestShutdown(): Promise<{ stopped: boolean; reason?: string }> {
     return this.call({ t: 'shutdown' });
@@ -835,4 +873,50 @@ export class HostConnection extends EventEmitter {
   disconnect(): void {
     this.opts.channel.close();
   }
+}
+
+/**
+ * Read an older host's handshake into the shape this client speaks (§17 Q16).
+ *
+ * `HostIdentity` described a workspace until v21 and describes a machine holding
+ * workspaces after it. That is a shape change, and the rule Q16 settled is that
+ * **each side owns one end**: the host refuses a client below its minimum, and
+ * the client makes sense of a host below its own. This is the client's end of
+ * it, and it is what keeps `agbrte stop` able to retire a per-workspace host —
+ * the failure Q16 was actually written about, and the exact thing the user needs
+ * on a machine with live `.devagents` sessions running under an older build.
+ *
+ * A pre-v21 host sends `instanceId`, `lineageId` and `workspaceRoot` at the top
+ * level and no `workspaces`. One workspace is what it has, so one entry is what
+ * it means, and `workspace` is that entry because every connection to such a
+ * host is bound to it by construction. Nothing is invented: a field the old host
+ * never sent stays absent.
+ */
+function normaliseIdentity(identity: HostIdentity): HostIdentity {
+  if (Array.isArray(identity.workspaces)) return identity;
+
+  const legacy = identity as unknown as {
+    instanceId?: InstanceId;
+    lineageId?: LineageId;
+    workspaceRoot?: string;
+    movedFrom?: string;
+  };
+  if (
+    legacy.instanceId === undefined ||
+    legacy.lineageId === undefined ||
+    legacy.workspaceRoot === undefined
+  ) {
+    // Neither shape. Reported as a machine holding nothing rather than guessed
+    // at, so a caller that needs a workspace refuses by name instead of reading
+    // `undefined` as a path.
+    return { ...identity, workspaces: [] };
+  }
+
+  const workspace: WorkspaceInfo = {
+    instanceId: legacy.instanceId,
+    lineageId: legacy.lineageId,
+    root: legacy.workspaceRoot,
+    ...(legacy.movedFrom !== undefined ? { movedFrom: legacy.movedFrom } : {}),
+  };
+  return { ...identity, workspaces: [workspace], workspace };
 }

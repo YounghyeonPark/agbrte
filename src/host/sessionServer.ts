@@ -43,6 +43,10 @@ import {
   type Actor,
   type AgentId,
   type AgentSpec,
+  type InstanceId,
+  type LineageId,
+  type PermissionRequest,
+  type Session,
   type ModelCapabilityHint,
   type RuntimeCapabilities,
   type SessionId,
@@ -51,6 +55,7 @@ import {
 import { BlobIntake } from '@main/store/blobTransfer.js';
 import { listDirectory, readTextFile } from '@main/workspace/files.js';
 import { searchWorkspace } from '@main/store/searchSessions.js';
+import { resolve } from 'node:path';
 import {
   MIN_CLIENT_PROTOCOL,
   SESSION_PROTOCOL_VERSION,
@@ -59,8 +64,59 @@ import {
   type HostSideSessionChannel,
   type RequestId,
   type SessionCommand,
+  type WorkspaceInfo,
 } from '@shared/host/sessionProtocol.js';
 import type { SessionManager } from '@main/sessionManager.js';
+
+/**
+ * One workspace this host holds, with what belongs to it (§8, §9).
+ *
+ * A host is one per machine and holds several folders, so everything that was a
+ * property of "the workspace" is now a property of *a* workspace and lives here:
+ * its identity, its preview servers, its terminals, and the access policy that
+ * decided what a client connecting for it may do. Grouped in one object rather
+ * than four parallel maps because they are created and discarded together, and
+ * four maps is four chances to leave one entry behind.
+ */
+export interface HostWorkspace {
+  info: WorkspaceInfo;
+  /** Runs preview servers for this folder (§6.8). Absent means it will not. */
+  servers?: PreviewServers;
+  /** The user's own terminals in this folder. Absent means it will not open one. */
+  shells?: Shells<ShellOwner>;
+  /**
+   * What role a client connecting *for this workspace* gets (§8.2).
+   *
+   * Per workspace because `.agbrte/access.json` is per workspace and always has
+   * been: "the phone watches this repository" is a sentence about a repository.
+   * A client bound to no workspace falls back to the host-level function, which
+   * is the machine's own answer.
+   */
+  grantRole?: (requested: AccessRole, client: string) => { role: AccessRole; actor: Actor };
+}
+
+/**
+ * What a host says about itself, minus what only it can fill in.
+ *
+ * Machine-level facts plus **the workspace it was started with**. The second
+ * half is kept in this shape — rather than a `workspaces` array — because every
+ * caller that constructs a host directly (`agbrte serve`, the smoke run, and
+ * every test) has exactly one folder to give, and a host that holds exactly one
+ * has nothing to disambiguate. `hostMain` supplies the real table through
+ * `workspaces` and this becomes the default binding.
+ */
+export interface HostSelfDescription {
+  machineId?: string;
+  instanceId: InstanceId;
+  lineageId: LineageId;
+  workspaceRoot: string;
+  movedFrom?: string;
+  runtimes: string[];
+  runtimeNotes?: Array<{ id: string; label: string; reason: string }>;
+  endpoints?: HostIdentity['endpoints'];
+  unavailableReason?: string;
+  bundleVersion?: string;
+}
 
 export interface SessionHostOptions {
   manager: SessionManager;
@@ -79,7 +135,26 @@ export interface SessionHostOptions {
    * this file knows which channel that is.
    */
   shells?: Shells<ShellOwner>;
-  identity: Omit<HostIdentity, 'protocol' | 'pid'>;
+  identity: HostSelfDescription;
+  /**
+   * Every workspace this host holds, asked live.
+   *
+   * A function rather than a value because the set changes while the host runs —
+   * `workspace.open` adds to it — and a snapshot taken at construction would
+   * make every later handshake describe a machine as it was when it started.
+   *
+   * Absent means "just the one in `identity`", which is what `agbrte serve` and
+   * every direct construction mean.
+   */
+  workspaces?: () => HostWorkspace[];
+  /**
+   * Open a folder on this machine (§8).
+   *
+   * Absent means this host will not open one, which is the honest state for a
+   * server constructed around a single workspace: `workspace.open` is refused by
+   * name rather than silently succeeding against a folder nothing would serve.
+   */
+  openWorkspace?: (root: string) => Promise<HostWorkspace>;
   /**
    * Decides what role a client gets, and who the log will say it was.
    *
@@ -184,6 +259,43 @@ interface Client {
    * sent it rather than who is still attached when it finishes.
    */
   actor: Actor;
+  /**
+   * The workspace this connection was bound to at `hello`, or `null`.
+   *
+   * Fixed for the connection's life. Mutable binding was the obvious
+   * alternative and is a trap: a command's meaning would then depend on when it
+   * was sent relative to a rebind, and two clients racing a rebind on one socket
+   * is not a thing this protocol should be able to express.
+   *
+   * `null` is a *machine* connection — one that attached the box and no folder.
+   * It can list what is here, ask about models and retire the host; every
+   * workspace-scoped command is refused by name.
+   */
+  workspace: HostWorkspace | null;
+  /**
+   * Whether a `hello` has been *received* on this channel.
+   *
+   * Set synchronously as the message arrives, not when it has been handled —
+   * which is the distinction the flag exists for. Framing preserves order, so a
+   * command that arrives after a `hello` sees this set even though the handshake
+   * is still in flight.
+   */
+  helloSeen: boolean;
+  /**
+   * Resolves when the handshake has finished, including binding the workspace.
+   *
+   * `hello` became asynchronous when a connection started naming the folder it
+   * wants — the host may have to *open* it — and that turned "always first" from
+   * a fact about the wire into a race. A client posts `hello` and calls in the
+   * same tick, which is the ordinary case for `HostConnection`; both were
+   * dispatched, the second overtook the first at its `await`, and the command
+   * ran against a connection that had not been bound or had its role granted
+   * yet. Serialising *everything* would be the heavy fix and would cost the
+   * concurrency this server has always had; waiting only for the handshake costs
+   * nothing and is what the protocol already claims.
+   */
+  handshake: Promise<void>;
+  handshakeDone: () => void;
 }
 
 export class SessionHostServer {
@@ -197,29 +309,54 @@ export class SessionHostServer {
    * already is, rather than starting again because its old staging left with it.
    */
   private readonly intake = new BlobIntake();
+  /**
+   * Workspaces opened through `openWorkspace`, for a host that does not track
+   * them itself. Ignored when `opts.workspaces` answers — see `heldWorkspaces`.
+   */
+  private readonly opened = new Map<string, HostWorkspace>();
   private lingerTimer: NodeJS.Timeout | null = null;
   private closed = false;
 
   constructor(private readonly opts: SessionHostOptions) {
     const { manager } = opts;
 
-    // Pushed to every attached client. A client that connected halfway through a
-    // turn still sees the rest of it, because the events come from the manager
-    // rather than from any client's subscription.
+    /*
+     * Pushed to every client **working in that session's folder**.
+     *
+     * "Every attached client" was right while a host was one workspace, and
+     * became a leak the moment it held several: a connection bound to one
+     * project would receive another project's transcript, permission prompts and
+     * queue depths — and the app, which holds one entry per workspace, would
+     * show every session under every folder. Found end to end, by two hosts on
+     * one machine each listing the other's sessions.
+     *
+     * A client that connected halfway through a turn still sees the rest of it,
+     * because the events come from the manager rather than from any client's
+     * subscription. That part is unchanged.
+     */
     manager.on('event', (sessionId: SessionId, event: unknown) =>
-      this.broadcast({ t: 'push.event', sessionId, event: event as never }),
+      this.toWorkspaceOf(sessionId, { t: 'push.event', sessionId, event: event as never }),
     );
     manager.on('session', (session: unknown) =>
-      this.broadcast({ t: 'push.session', session: session as never }),
+      this.toWorkspace((session as Session).instanceId, {
+        t: 'push.session',
+        session: session as never,
+      }),
     );
     manager.on('permission', (request: unknown) =>
-      this.broadcast({ t: 'push.permission', request: request as never }),
+      this.toWorkspaceOf((request as PermissionRequest).sessionId, {
+        t: 'push.permission',
+        request: request as never,
+      }),
     );
     manager.on('permission-resolved', (resolved: unknown) =>
-      this.broadcast({ t: 'push.permissionResolved', resolved: resolved as never }),
+      this.toWorkspaceOf((resolved as { sessionId: SessionId }).sessionId, {
+        t: 'push.permissionResolved',
+        resolved: resolved as never,
+      }),
     );
     manager.on('queue', (sessionId: SessionId, agentId: AgentId, depth: number) =>
-      this.broadcast({ t: 'push.queue', sessionId, agentId, depth }),
+      this.toWorkspaceOf(sessionId, { t: 'push.queue', sessionId, agentId, depth }),
     );
 
     this.armLinger();
@@ -261,11 +398,26 @@ export class SessionHostServer {
       label: 'unknown',
       actor: { id: 'unknown', via: 'asserted' },
       shellOwner: { post: (message) => channel.post(message) },
+      // Bound at `hello` and not before. A connection that never says hello can
+      // reach nothing, which is the same rule its `read-only` role follows.
+      workspace: null,
+      helloSeen: false,
+      handshake: Promise.resolve(),
+      handshakeDone: () => undefined,
     };
+    client.handshake = new Promise<void>((done) => {
+      client.handshakeDone = done;
+    });
     this.clients.add(client);
     this.cancelLinger();
 
-    channel.onMessage((command) => void this.dispatch(client, command));
+    channel.onMessage((command) => {
+      // Flagged here rather than inside `dispatch`, because `dispatch` is async
+      // and this must be true the instant the message lands: it is what tells a
+      // command that overtook the handshake that there *is* one to wait for.
+      if (command.t === 'hello') client.helloSeen = true;
+      void this.dispatch(client, command);
+    });
     channel.onClose(() => {
       this.clients.delete(client);
       /*
@@ -284,12 +436,51 @@ export class SessionHostServer {
     });
   }
 
+  /** Every client, whatever they are bound to. For facts about the host itself. */
   private broadcast(message: Parameters<HostSideSessionChannel['post']>[0]): void {
     for (const client of this.clients) client.channel.post(message);
   }
 
+  /**
+   * Every client bound to one workspace.
+   *
+   * A client bound to nothing gets nothing here, and that is the same rule its
+   * refused commands follow: it attached a machine, not a project, and a
+   * transcript it did not ask for is a leak rather than a courtesy.
+   */
+  private toWorkspace(
+    instanceId: InstanceId,
+    message: Parameters<HostSideSessionChannel['post']>[0],
+  ): void {
+    for (const client of this.clients) {
+      if (client.workspace?.info.instanceId === instanceId) client.channel.post(message);
+    }
+  }
+
+  /**
+   * The same, for a push that names a session rather than a workspace.
+   *
+   * A session this manager has not loaded resolves to `null`, and nothing is
+   * sent — *cannot say* rather than "send it to everyone", because the failure
+   * of the second is silent and crosses a boundary.
+   */
+  private toWorkspaceOf(
+    sessionId: SessionId,
+    message: Parameters<HostSideSessionChannel['post']>[0],
+  ): void {
+    const instanceId = this.opts.manager.instanceOf(sessionId);
+    if (instanceId === null) return;
+    this.toWorkspace(instanceId, message);
+  }
+
   private async dispatch(client: Client, command: SessionCommand): Promise<void> {
     const { manager } = this.opts;
+
+    // Never before the handshake it followed. Only when one was seen, so a
+    // connection that never says hello is served exactly as it was — capped at
+    // `read-only` with no actor — rather than hanging on a promise nothing will
+    // resolve.
+    if (command.t !== 'hello' && client.helloSeen) await client.handshake;
 
     if (command.t === 'hello') {
       /**
@@ -326,10 +517,36 @@ export class SessionHostServer {
          * failing, which is how the last two holes in this section turned up.
          */
         client.channel.close();
+        client.handshakeDone();
         return;
       }
 
-      const decided = this.opts.grantRole?.(command.role, command.client);
+      /*
+       * Bound *before* the role is decided, because the policy that decides it
+       * is the bound workspace's (§8.2). Deciding first and binding after would
+       * grant a role from one folder's `access.json` to a connection working in
+       * another — exactly the "recorded and not enforced" failure §16 keeps
+       * finding.
+       */
+      let bound: HostWorkspace | null;
+      try {
+        bound = await this.bindFor(command.workspace);
+      } catch (err) {
+        client.channel.post({
+          t: 'err',
+          id: command.id,
+          name: 'WorkspaceUnavailable',
+          message: err instanceof Error ? err.message : String(err),
+        });
+        client.channel.close();
+        // Released even on the failing path: a command already queued behind
+        // this one must fail on a closed channel rather than wait forever.
+        client.handshakeDone();
+        return;
+      }
+      client.workspace = bound;
+
+      const decided = (bound?.grantRole ?? this.opts.grantRole)?.(command.role, command.client);
       const granted = decided?.role ?? command.role;
       client.role = granted;
       client.label = command.client;
@@ -339,12 +556,30 @@ export class SessionHostServer {
         id: command.id,
         role: granted,
         identity: {
-          ...this.opts.identity,
+          ...(this.opts.identity.machineId !== undefined
+            ? { machineId: this.opts.identity.machineId }
+            : {}),
+          workspaces: this.heldWorkspaces().map((w) => w.info),
+          ...(bound === null ? {} : { workspace: bound.info }),
+          runtimes: this.opts.identity.runtimes,
+          ...(this.opts.identity.runtimeNotes !== undefined
+            ? { runtimeNotes: this.opts.identity.runtimeNotes }
+            : {}),
+          ...(this.opts.identity.endpoints !== undefined
+            ? { endpoints: this.opts.identity.endpoints }
+            : {}),
+          ...(this.opts.identity.unavailableReason !== undefined
+            ? { unavailableReason: this.opts.identity.unavailableReason }
+            : {}),
+          ...(this.opts.identity.bundleVersion !== undefined
+            ? { bundleVersion: this.opts.identity.bundleVersion }
+            : {}),
           pid: process.pid,
           protocol: SESSION_PROTOCOL_VERSION,
           minProtocol: MIN_CLIENT_PROTOCOL,
         },
       });
+      client.handshakeDone();
       return;
     }
 
@@ -384,36 +619,40 @@ export class SessionHostServer {
 
     await this.reply(client, command.id, async () => {
       switch (command.t) {
-        case 'session.list':
-          return manager.list();
+        case 'session.list': {
+          // The bound folder's sessions, not the machine's. A host holds several
+          // now, and a client asked about one.
+          const bound = this.bound(client, 'list sessions').info.instanceId;
+          return (await manager.list()).filter((s) => s.instanceId === bound);
+        }
 
         case 'preview.start': {
           // A write: it runs a command on this machine. The role check is the
           // point — a read-only client watching from a phone must not be able
           // to start processes on a build box.
           this.requireWrite(client, 'start a preview server');
-          return this.servers().start(command.sessionId, command.command);
+          return this.servers(client).start(command.sessionId, command.command);
         }
 
         case 'preview.stop':
           this.requireWrite(client, 'stop a preview server');
-          return this.servers().stop(command.serverId);
+          return this.servers(client).stop(command.serverId);
 
         case 'preview.servers':
-          return this.servers().list(command.sessionId);
+          return this.servers(client).list(command.sessionId);
 
         case 'preview.log':
           return this.opts.servers?.log(command.serverId) ?? null;
 
         case 'template.list':
-          return listTemplates(this.opts.identity.workspaceRoot);
+          return listTemplates(this.bound(client, 'list templates').info.root);
 
         case 'template.save': {
           // A write: it puts a file in the repo that colleagues will pull.
           this.requireWrite(client, 'save a session template');
           const session = await manager.get(command.sessionId as SessionId);
           return saveTemplate(
-            this.opts.identity.workspaceRoot,
+            this.bound(client, 'save a template').info.root,
             // The target comes from the client, which is the only side that
             // knows it — see `TemplateOrigin`. A v5 client sends none and the
             // template records none, exactly as before.
@@ -427,14 +666,12 @@ export class SessionHostServer {
 
         case 'template.delete':
           this.requireWrite(client, 'delete a session template');
-          return deleteTemplate(this.opts.identity.workspaceRoot, command.templateId);
+          return deleteTemplate(this.bound(client, 'delete a template').info.root, command.templateId);
 
         case 'template.apply': {
           this.requireWrite(client, 'start a session from a template');
-          const template = await readTemplate(
-            this.opts.identity.workspaceRoot,
-            command.templateId,
-          );
+          const workspace = this.bound(client, 'start a session from a template');
+          const template = await readTemplate(workspace.info.root, command.templateId);
           if (template === null) {
             throw new Error(`no template "${command.templateId}" in this workspace`);
           }
@@ -462,6 +699,11 @@ export class SessionHostServer {
           const created = await manager.createSession({
             title: command.title ?? template.name,
             goal: template.goal ?? template.name,
+            // The folder the template came from. A manager holds several now
+            // (§8), and a template is a fact about *this* repository — applying
+            // one into whichever workspace happened to be first would put a
+            // session for one project in another project's store.
+            workspaceRoot: workspace.info.root,
           });
           for (const seat of template.roles) {
             // One at a time and not in parallel: `addAgent` is admission (§3.10),
@@ -487,22 +729,67 @@ export class SessionHostServer {
         case 'session.search':
           // A read, so no `requireWrite`: it answers from logs a client with
           // any role can already read one at a time.
-          return searchWorkspace(this.opts.identity.workspaceRoot, command.query, {
+          return searchWorkspace(this.bound(client, 'search').info.root, command.query, {
             ...(command.limit !== undefined ? { limit: command.limit } : {}),
           });
 
-        case 'session.listOnDisk':
-          return manager.listOnDisk();
+        case 'session.listOnDisk': {
+          /*
+           * The bound folder's sessions on disk, and only those.
+           *
+           * The manager can answer for every folder it holds and deliberately
+           * does not here: a connection is a workspace, and a client holding one
+           * entry per folder would otherwise see each folder's sessions once per
+           * entry. The machine-wide question has its own command —
+           * `workspace.list` says which folders are here, and opening one is how
+           * its sessions are seen.
+           */
+          const bound = this.bound(client, 'list sessions on disk').info.instanceId;
+          return (await manager.listOnDisk()).filter((s) => s.instanceId === bound);
+        }
+
+        case 'workspace.list':
+          // A read. Available to a `read-only` client on `files.list`'s
+          // reasoning: a client that can read a transcript naming these folders
+          // is not protected by withholding their names.
+          return this.heldWorkspaces().map((w) => w.info);
+
+        case 'workspace.open': {
+          // A write: it creates `.agbrte/` where there is none, which is a
+          // change to somebody's disk. A phone pinned to `read-only` by §7's
+          // policy must not be able to make one on a build box.
+          this.requireWrite(client, 'open a workspace');
+          const opened = await this.bindFor(command.root);
+          if (opened === null) {
+            throw new Error(`could not open ${command.root} on this host`);
+          }
+          return opened.info;
+        }
 
         case 'session.get':
           return manager.get(command.sessionId as SessionId);
 
-        case 'session.create':
+        case 'session.create': {
           this.requireWrite(client, 'create a session');
+          const input = command.input ?? { title: command.title, goal: command.goal };
           return manager.createSession(
-            command.input ?? { title: command.title, goal: command.goal },
+            {
+              ...input,
+              /*
+               * The connection's folder wins over anything the client named.
+               *
+               * A client asks for a workspace at `hello` and is answered with
+               * the checkout it got; letting a later `session.create` name a
+               * different one would make the binding advisory, and a binding
+               * that can be stepped around is not what the access policy above
+               * was applied to. A client that wants another folder opens
+               * another connection, which is the same act stated honestly.
+               */
+              workspaceRoot: this.bound(client, 'create a session').info.root,
+            },
             client.actor,
           );
+        }
 
         case 'session.resume':
           // A read: loading a session from its log changes nothing about it.
@@ -635,7 +922,15 @@ export class SessionHostServer {
           return manager.rawLog(command.sessionId as SessionId, command.agentId as AgentId);
 
         case 'runtime.capabilities':
-          return probeCapabilities(manager, this.opts.identity, command.runtimeId);
+          // The bound workspace's root, because §3.2 makes capabilities a
+          // function of adapter, model *and* the directory a spec names — and a
+          // host holding four folders would otherwise answer about whichever
+          // one it happened to start with.
+          return probeCapabilities(
+            manager,
+            this.bound(client, 'ask what a runtime can do').info.root,
+            command.runtimeId,
+          );
 
         case 'models.install': {
           // A write in the sense that matters: it puts gigabytes on somebody's
@@ -708,8 +1003,13 @@ export class SessionHostServer {
           return ask(command.endpointId, command.modelId);
         }
 
-        case 'inbox.list':
-          return manager.inbox(command.limit);
+        case 'inbox.list': {
+          // The bound folder's, for `session.list`'s reason: a client holding one
+          // entry per folder aggregates across them itself (§8), so a host-wide
+          // answer here would be counted once per entry.
+          const bound = this.bound(client, 'read the inbox').info.instanceId;
+          return (await manager.inbox(command.limit)).filter((e) => e.instanceId === bound);
+        }
 
         case 'inbox.markRead':
           // Not gated on write access. Marking what *you* have read changes
@@ -798,7 +1098,7 @@ export class SessionHostServer {
            * ever be wrong in the permissive direction.
            */
           this.requireWrite(client, 'open a terminal');
-          return this.shells().open(client.shellOwner, {
+          return this.shells(client).open(client.shellOwner, {
             sessionId: command.sessionId,
             ...(command.program !== undefined ? { program: command.program } : {}),
             ...(command.cols !== undefined ? { cols: command.cols } : {}),
@@ -812,11 +1112,11 @@ export class SessionHostServer {
           // exited — an answer rather than an error, because a keystroke landing
           // a millisecond after the program ended is an ordinary race and not
           // something to put a banner on screen for.
-          return this.shells().write(client.shellOwner, command.shellId, command.data);
+          return this.shells(client).write(client.shellOwner, command.shellId, command.data);
 
         case 'shell.resize':
           this.requireWrite(client, 'resize a terminal');
-          return this.shells().resize(
+          return this.shells(client).resize(
             client.shellOwner,
             command.shellId,
             command.cols,
@@ -825,7 +1125,7 @@ export class SessionHostServer {
 
         case 'shell.close':
           this.requireWrite(client, 'close a terminal');
-          return this.shells().close(client.shellOwner, command.shellId);
+          return this.shells(client).close(client.shellOwner, command.shellId);
 
         case 'files.list':
           /*
@@ -851,7 +1151,7 @@ export class SessionHostServer {
            * projection change — a client browsing leaves the transcript exactly
            * as it found it.
            */
-          return listDirectory(this.opts.identity.workspaceRoot, command.path, {
+          return listDirectory(this.bound(client, 'list files').info.root, command.path, {
             ...(command.limit !== undefined ? { limit: command.limit } : {}),
           });
 
@@ -859,7 +1159,7 @@ export class SessionHostServer {
           // The same read, the same reasoning. Bounded on this side rather than
           // trusted from the client: oversized and non-text are refused by name,
           // never truncated (see `readTextFile`).
-          return readTextFile(this.opts.identity.workspaceRoot, command.path);
+          return readTextFile(this.bound(client, 'read a file').info.root, command.path);
 
         case 'permission.pending':
           return manager.pendingPermissions();
@@ -960,11 +1260,105 @@ export class SessionHostServer {
    * embedding that does not want to run commands. Saying so beats a `?.` that
    * silently reports success for a server nobody started.
    */
-  private servers(): PreviewServers {
-    if (this.opts.servers === undefined) {
-      throw new Error('this host does not run preview servers');
+  private servers(client: Client): PreviewServers {
+    const found = client.workspace?.servers ?? this.opts.servers;
+    if (found === undefined) {
+      throw new Error(
+        client.workspace === null
+          ? 'this connection is not bound to a workspace, so there is nothing to run a preview in'
+          : 'this host does not run preview servers',
+      );
     }
-    return this.opts.servers;
+    return found;
+  }
+
+  // ------------------------------------------------------------- workspaces
+
+  /**
+   * The workspaces this host holds, always including the one it started with.
+   *
+   * The default entry is synthesised from `identity` rather than required from
+   * the caller, which is what keeps `agbrte serve` and every direct
+   * construction working unchanged: a host built around one folder holds one.
+   */
+  private heldWorkspaces(): HostWorkspace[] {
+    /*
+     * A caller that says what it holds is believed; one that does not gets what
+     * this server has opened.
+     *
+     * `hostMain` owns the set — it has to, because it also writes each folder's
+     * pointer record and stops each folder's servers — so when it answers, that
+     * answer is the whole truth and this map is not consulted. A host embedded
+     * without one (a test, `agbrte serve`) would otherwise open a workspace
+     * through the factory and immediately forget it, which is a drift waiting to
+     * happen rather than a state anybody wants.
+     */
+    const supplied = this.opts.workspaces?.();
+    if (supplied !== undefined && supplied.length > 0) return supplied;
+    return [this.defaultWorkspace(), ...this.opened.values()];
+  }
+
+  private defaultWorkspace(): HostWorkspace {
+    const id = this.opts.identity;
+    return {
+      info: {
+        instanceId: id.instanceId,
+        lineageId: id.lineageId,
+        root: id.workspaceRoot,
+        ...(id.movedFrom !== undefined ? { movedFrom: id.movedFrom } : {}),
+      },
+      ...(this.opts.servers !== undefined ? { servers: this.opts.servers } : {}),
+      ...(this.opts.shells !== undefined ? { shells: this.opts.shells } : {}),
+      ...(this.opts.grantRole !== undefined ? { grantRole: this.opts.grantRole } : {}),
+    };
+  }
+
+  /**
+   * Which workspace a connection asking for `root` gets.
+   *
+   * Three answers, and the third is the one worth stating. A path that is
+   * already held resolves to it; a path that is not is **opened**, because a
+   * client naming a folder is asking for it and refusing would mean a person
+   * has to open it somewhere else first. And a client that named *nothing*
+   * binds to the host's only workspace when there is exactly one — there being
+   * nothing to disambiguate — and to nothing at all when there are several,
+   * because picking the first would serve one folder's transcripts to a client
+   * that asked about another.
+   */
+  private async bindFor(root: string | undefined): Promise<HostWorkspace | null> {
+    const held = this.heldWorkspaces();
+    if (root === undefined) return held.length === 1 ? (held[0] ?? null) : null;
+
+    const wanted = resolve(root);
+    const found = held.find((w) => resolve(w.info.root) === wanted);
+    if (found !== undefined) return found;
+
+    if (this.opts.openWorkspace === undefined) {
+      throw new Error(
+        `this host serves ${held.map((w) => w.info.root).join(', ')} and cannot open ` +
+          `${wanted} — it was built around a single workspace`,
+      );
+    }
+    const opened = await this.opts.openWorkspace(wanted);
+    this.opened.set(resolve(opened.info.root), opened);
+    return opened;
+  }
+
+  /**
+   * The workspace a workspace-scoped command runs against, or a refusal.
+   *
+   * Named in the refusal, because "no workspace" on a host holding four folders
+   * is a sentence nobody can act on. The verb is carried for the same reason
+   * `requireWrite` carries one: a person needs to know what was refused, not
+   * merely that something was.
+   */
+  private bound(client: Client, verb: string): HostWorkspace {
+    if (client.workspace !== null) return client.workspace;
+    const held = this.heldWorkspaces().map((w) => w.info.root);
+    throw new Error(
+      `this connection is attached to the machine and not to a workspace, so it cannot ` +
+        `${verb}. Open one of ${held.length === 0 ? 'its folders' : held.join(', ')} first.`,
+    );
   }
 
   /**
@@ -976,11 +1370,16 @@ export class SessionHostServer {
    * bundle, and that one is refused deeper down by `ShellUnavailable`, which
    * carries the same class of message for the same reason.
    */
-  private shells(): Shells<ShellOwner> {
-    if (this.opts.shells === undefined) {
-      throw new Error('this host does not open terminals');
+  private shells(client: Client): Shells<ShellOwner> {
+    const found = client.workspace?.shells ?? this.opts.shells;
+    if (found === undefined) {
+      throw new Error(
+        client.workspace === null
+          ? 'this connection is not bound to a workspace, so there is no directory to open a terminal in'
+          : 'this host does not open terminals',
+      );
     }
-    return this.opts.shells;
+    return found;
   }
 
   /**
@@ -1040,7 +1439,7 @@ export class SessionHostServer {
  */
 async function probeCapabilities(
   manager: SessionManager,
-  identity: Omit<HostIdentity, 'protocol' | 'pid'>,
+  workspaceRoot: string,
   runtimeId: string,
 ): Promise<RuntimeCapabilities | null> {
   const registry = manager.registry;
@@ -1056,7 +1455,7 @@ async function probeCapabilities(
     auth: { kind: 'none' },
     toolPolicy: { rules: [], defaultAction: 'ask' },
     limits: {},
-    workspacePath: identity.workspaceRoot,
+    workspacePath: workspaceRoot,
   };
 
   try {

@@ -25,7 +25,7 @@ import { join, resolve } from 'node:path';
 import { Fleet } from '@main/fleet.js';
 import { HostConnection } from '@main/host/hostConnection.js';
 import { connectOrSpawnHost } from '@main/host/connectOrSpawn.js';
-import { SessionHostServer } from '../src/host/sessionServer.js';
+import { SessionHostServer, type HostSelfDescription } from '../src/host/sessionServer.js';
 import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
@@ -36,7 +36,7 @@ import { until } from './support/until.js';
 import { createApi } from '@main/ipc/api.js';
 import { CH } from '@shared/ipc/contract.js';
 import type { HostInfo } from '@shared/ipc/contract.js';
-import type { HostIdentity, SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
+import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { AgentId, InstanceId, Session, SessionId } from '@shared/types/index.js';
 
 const HOST_BUNDLE = resolve(import.meta.dirname, '../dist/main/agbrteHost.js');
@@ -415,7 +415,7 @@ describe('the Update button', () => {
     // What the *next* host to start reports about itself: the deployed bundle,
     // which is the app's own version once the update has happened (§6.3a).
     let running = '0.0.1-old';
-    const identity = (): Omit<HostIdentity, 'protocol' | 'pid'> => ({
+    const identity = (): HostSelfDescription => ({
       instanceId: workspace.instanceId,
       lineageId: workspace.lineageId,
       workspaceRoot: root,

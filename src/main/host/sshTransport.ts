@@ -507,12 +507,24 @@ export async function startRemoteHost(
 ): Promise<RemoteHostRecord> {
   const linger = opts.lingerMs === undefined ? '' : `AGBRTE_HOST_LINGER_MS=${opts.lingerMs} `;
   const log = shellQuote(`${remoteRoot(home)}/host.log`);
-  // Both workspace names, because §5.1 reads the old one forever and a remote
-  // host opening a `.devagents/` workspace writes its record there. Waiting on
-  // only the new name would time out against a host that had already started.
-  const records = [WORKSPACE_DIR, LEGACY_WORKSPACE_DIR].map((d) =>
-    shellQuote(`${workspaceRoot}/${d}/host.json`),
-  );
+  /*
+   * Where a started host says it is listening, in the order it writes them.
+   *
+   * The machine's own record first (§8) — a host is one per machine and
+   * `~/.agbrte/host.json` is the record it writes about itself. The workspace's
+   * two names after it, because §5.1 reads the old one forever and because a
+   * host from before v21, deployed on this machine last week and still running,
+   * writes only there. Waiting on the machine record alone would time out
+   * against a host that had already started; waiting on the workspace records
+   * alone would have missed the new one entirely, since it writes the machine
+   * record first and the pointer a moment later.
+   */
+  const records = [
+    shellQuote(`${remoteRoot(home)}/host.json`),
+    ...[WORKSPACE_DIR, LEGACY_WORKSPACE_DIR].map((d) =>
+      shellQuote(`${workspaceRoot}/${d}/host.json`),
+    ),
+  ];
   const attempts = Math.max(1, Math.ceil((opts.readyTimeoutMs ?? 30_000) / 500));
 
   // Assembled with explicit separators rather than joined on '; ': `&` already
@@ -566,6 +578,14 @@ export interface RemoteHostRecord {
   socket: string;
   protocol: number;
   instanceId: string;
+  /**
+   * Which machine's host wrote it (§8).
+   *
+   * Absent from a host deployed before v21, and that absence is the test the
+   * client uses to tell a per-workspace host from the machine's — see
+   * `legacyHost.ts`. Not defaulted, for that reason.
+   */
+  machineId?: string;
 }
 
 /** Read the host's own record of where it is listening. */
@@ -573,14 +593,25 @@ export async function readRemoteHostRecord(
   runner: SshRunner,
   alias: string,
   workspaceRoot: string,
+  home: string,
 ): Promise<RemoteHostRecord | null> {
-  // The new name first and the old one as a fallback (§5.1): a workspace that
-  // predates the rename still has its host record under `.devagents/`.
+  /*
+   * The machine's record first, then the workspace's under either name.
+   *
+   * The order is the priority: `~/.agbrte/host.json` is written by the host that
+   * serves this machine now, and a record under the workspace is either its
+   * pointer (same socket, so the same answer) or an older per-workspace host's.
+   * Reading the machine's first means a machine that has both answers with the
+   * one that is current.
+   */
   const result = await runner.exec(
     alias,
-    [WORKSPACE_DIR, LEGACY_WORKSPACE_DIR]
-      .map((d) => `cat ${shellQuote(`${workspaceRoot}/${d}/host.json`)} 2>/dev/null`)
-      .join(' || '),
+    [
+      `cat ${shellQuote(`${remoteRoot(home)}/host.json`)} 2>/dev/null`,
+      ...[WORKSPACE_DIR, LEGACY_WORKSPACE_DIR].map(
+        (d) => `cat ${shellQuote(`${workspaceRoot}/${d}/host.json`)} 2>/dev/null`,
+      ),
+    ].join(' || '),
   );
   if (result.code !== 0 || result.stdout.trim() === '') return null;
   try {

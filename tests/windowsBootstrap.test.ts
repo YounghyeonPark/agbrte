@@ -215,7 +215,7 @@ onWindows('against this machine, for real', () => {
     closers.push(() => connection.disconnect());
 
     const identity = await connection.ready;
-    expect(identity.workspaceRoot).toBe(workspace);
+    expect(identity.workspace?.root).toBe(workspace);
     expect(identity.pid).toBeGreaterThan(0);
 
     const session = await connection.createSession({ title: 'on windows', goal: 'g' });
@@ -356,7 +356,7 @@ describe('over real ssh, to this machine', () => {
     closers.push(() => connection.disconnect());
 
     const identity = await connection.ready;
-    expect(identity.workspaceRoot).toBe(workspace);
+    expect(identity.workspace?.root).toBe(workspace);
 
     const session = await connection.createSession({ title: 'over ssh', goal: 'g' });
     const agent = await connection.addAgent(session.sessionId, {
@@ -418,7 +418,7 @@ describe('over real ssh, to this machine', () => {
     closers.push(() => remote.close());
 
     const identity = await remote.connection.ready;
-    expect(identity.workspaceRoot).toBe(workspace);
+    expect(identity.workspace?.root).toBe(workspace);
 
     const session = await remote.connection.createSession({ title: 'via connect', goal: 'g' });
     const agent = await remote.connection.addAgent(session.sessionId, {
@@ -459,7 +459,7 @@ describe('over real ssh, to this machine', () => {
     });
     closers.push(() => again.close());
     const second = await again.connection.ready;
-    expect(second.instanceId, 'a second host was started').toBe(identity.instanceId);
+    expect(second.workspace?.instanceId, 'a second host was started').toBe(identity.workspace?.instanceId);
     expect(steps.filter((s) => s === 'starting the host')).toHaveLength(1);
 
     await remote.connection.requestShutdown().catch(() => undefined);

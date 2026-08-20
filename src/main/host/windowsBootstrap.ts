@@ -388,7 +388,11 @@ export async function readWindowsHostRecord(
     psCommand(`
 $ws = "${workspaceRoot}"
 ${workspaceDirScript()}
-$p = Join-Path $dir "host.json"
+# The machine's own record first (§8), then the workspace's. A host deployed
+# before v21 wrote only the second; one deployed after writes both and the
+# first is the current answer.
+$p = Join-Path "$env:USERPROFILE\\.agbrte" "host.json"
+if (-not (Test-Path $p)) { $p = Join-Path $dir "host.json" }
 if (Test-Path $p) { try { Get-Content $p -Raw -ErrorAction Stop } catch { } }
 `.trim()),
   );
@@ -421,6 +425,9 @@ export async function startWindowsHost(
 $ws = "${workspaceRoot}"
 New-Item -ItemType Directory -Force -Path $ws | Out-Null
 ${workspaceDirScript()}
+# Both records: the machine's own, which a host from v21 writes first, and the
+# workspace's, which is all a host deployed before it writes at all (§8).
+$machineRecord = Join-Path "$env:USERPROFILE\\.agbrte" "host.json"
 $record = Join-Path $dir "host.json"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 # The log lives in the **workspace**, not in the profile.
@@ -467,9 +474,11 @@ if ($spawned.ReturnValue -ne 0) { Write-Error "Win32_Process.Create returned $($
 # The record is written only once the port is accepting, so waiting for it is
 # waiting for readiness rather than for the process to exist.
 for ($i = 0; $i -lt ${attempts}; $i++) {
-  if ((Test-Path $record) -and (Get-Item $record).Length -gt 0) {
-    Get-Content $record -Raw
-    exit 0
+  foreach ($p in @($machineRecord, $record)) {
+    if ((Test-Path $p) -and (Get-Item $p).Length -gt 0) {
+      Get-Content $p -Raw
+      exit 0
+    }
   }
   Start-Sleep -Milliseconds 500
 }

@@ -40,11 +40,12 @@ so the redaction sweep reports `scanned: false` rather than an empty match list.
 ## The one idea
 
 **A session runs on the bridge, not inside the terminal.** The bridge is a
-workspace — a folder, on this machine or on a server — served by its own process
-that owns the event log, the permission gate, and the turn queue. The terminal is
-whatever you are sitting at: the desktop app, a browser on your phone, the CLI on
-a machine with no display. All of them are clients, and none of them holds the
-session.
+machine — this one, or a server over ssh — running one process that owns the
+event log, the permission gate, and the turn queue for every folder open on it. A
+session picks its folder when it is created, and that folder holds its own
+sessions, so moving the folder moves the work. The terminal is whatever you are
+sitting at: the desktop app, a browser on your phone, the CLI on a machine with
+no display. All of them are clients, and none of them holds the session.
 
 Closing the app mid-run, driving one session from a second machine, and resuming
 after a restart are not three features but three consequences of that. It is also
@@ -163,7 +164,7 @@ who can reach the host's socket already owns the workspace.
 ```
 
 **DESIGN.md §3.8 and §8.2 are the full reference for both**, including why
-credentials belong to the workspace rather than to whoever is attached.
+credentials belong to the machine's host rather than to whoever is attached.
 
 ### Installing on a server
 

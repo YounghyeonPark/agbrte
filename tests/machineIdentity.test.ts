@@ -46,9 +46,11 @@ describe('the machine id', () => {
 
     expect(machineFilePath(home)).toBe(join(home, '.agbrte', 'machine.json'));
     // The credentials file is the neighbour that makes the point: §8.2 puts it
-    // here rather than in a workspace precisely because a workspace is inside
-    // somebody's git repository.
-    expect(endpointsPath().endsWith(join('.agbrte', 'endpoints.json'))).toBe(true);
+    // in the machine's directory rather than in a workspace precisely because a
+    // workspace is inside somebody's git repository. Asserted against
+    // `machineRoot()` rather than against the literal `.agbrte`, because
+    // `AGBRTE_HOME` moves that directory and both readers must move with it.
+    expect(endpointsPath()).toBe(join(machineRoot(), 'endpoints.json'));
   });
 
   it('is not derived from the hostname, which is reassigned and duplicated', async () => {

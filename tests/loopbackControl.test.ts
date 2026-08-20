@@ -266,7 +266,7 @@ describe('a real host, reached over loopback', () => {
     );
     const connection = new HostConnection({ channel, client: 'agbrte-test@loopback' });
     const identity = await connection.ready;
-    expect(identity.workspaceRoot).toBe(root);
+    expect(identity.workspace?.root).toBe(root);
 
     const session = await connection.createSession({ title: 'over loopback', goal: 'g' });
     const agent = await connection.addAgent(session.sessionId, { role: 'worker', runtimeId: 'echo' });

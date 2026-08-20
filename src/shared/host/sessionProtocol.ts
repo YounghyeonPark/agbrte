@@ -65,29 +65,78 @@ export interface EndpointAdded {
   authenticated: boolean;
 }
 
-/** What a host reports about itself once a client connects. */
+/**
+ * One workspace a host holds (§5.1, §5.2).
+ *
+ * `instanceId` and not the path is what identifies it — the path is the one
+ * thing about a workspace that changes underneath you (§5.3) — but the path
+ * travels too, because a client has to show a person which folder this is and
+ * cannot derive one from an id.
+ */
+export interface WorkspaceInfo {
+  instanceId: InstanceId;
+  lineageId: LineageId;
+  root: string;
+  /**
+   * Where this checkout was before it moved (§5.3).
+   *
+   * Carried to clients because it explains a behaviour change they would
+   * otherwise see without a cause: agents that resumed natively yesterday
+   * rehydrate today. A move leaves no other trace — identity is deliberately not
+   * derived from a path — so if the host does not say so, nothing can.
+   */
+  movedFrom?: string;
+}
+
+/**
+ * What a host reports about itself once a client connects.
+ *
+ * **This describes a machine holding workspaces, and it used to describe a
+ * workspace.** That is the shape change v21 exists for. A host is one per
+ * machine now (§8): it has one install area, one set of credentials, one lease
+ * authority and one socket, and it holds however many folders its sessions
+ * named. So the machine-level facts — runtimes, endpoints, bundle, pid — stay
+ * at the top level where they always were and are now *true* at that level,
+ * while everything that was a fact about one checkout moved into `workspaces`.
+ *
+ * `workspace` is the one this connection is bound to. A connection names its
+ * workspace in `hello` and is bound for its lifetime; binding is not mutable,
+ * because a command's meaning would then depend on when it was sent.
+ */
 export interface HostIdentity {
   /**
    * Which **machine** this host is (§5.2, §8).
    *
-   * Distinct from `instanceId` and not a rename of it. `instanceId` is one
-   * checkout; this is the computer it is checked out on — one install area, one
-   * set of credentials, one lease authority, one host process. They coincided
-   * for as long as a host was one per workspace, which is exactly why anything
-   * asking "is this the same machine" ended up asking `instanceId` and getting
-   * the wrong answer for two folders on one build box.
+   * The primary key of a host now that a host is one per machine. Distinct from
+   * any `instanceId`, which is one checkout — they coincided for as long as a
+   * host was one per workspace, which is exactly why everything asking "is this
+   * the same computer" asked the wrong id and got the wrong answer for two
+   * folders on one build box.
    *
-   * Minted in `~/.agbrte/machine.json`, never from a hostname: hostnames are
-   * reassigned, duplicated across a fleet, and change with the network.
-   *
-   * Optional because a host deployed before this existed does not send one, and
-   * a client must read absence as *cannot tell* rather than inventing an id —
-   * which is the same degradation `bundleVersion` takes (§6.7).
+   * Minted in `~/.agbrte/machine.json`, never from a hostname. Optional only for
+   * the shape's sake: a host speaking v21 always sends one, and a host that does
+   * not send one is a host from before v21, which a client has already refused
+   * to adopt as a machine host.
    */
   machineId?: string;
-  instanceId: InstanceId;
-  lineageId: LineageId;
-  workspaceRoot: string;
+  /**
+   * Every workspace this host currently holds.
+   *
+   * The list a client needs to know what is open here without opening anything,
+   * and the list that makes a folder picker honest: a host that cannot answer
+   * this cannot honour a folder either.
+   */
+  workspaces: WorkspaceInfo[];
+  /**
+   * The workspace this connection is bound to, when it named one.
+   *
+   * Absent for a connection that attached the *machine* and no folder — which
+   * is a real and useful state (list what is here, ask about models, retire the
+   * host) and not a degraded one. Every workspace-scoped command is refused by
+   * name on such a connection rather than silently answered about whichever
+   * folder happened to be first.
+   */
+  workspace?: WorkspaceInfo;
   /**
    * Runtime ids this host will actually admit.
    *
@@ -135,15 +184,6 @@ export interface HostIdentity {
   }>;
   /** Set when the agent host could not start. Sessions still load read-only. */
   unavailableReason?: string;
-  /**
-   * Where this workspace was before it moved (§5.3).
-   *
-   * Carried to clients because it explains a behaviour change they would
-   * otherwise see without a cause: agents that resumed natively yesterday
-   * rehydrate today. A move leaves no other trace — identity is deliberately not
-   * derived from a path — so if the host does not say so, nothing can.
-   */
-  movedFrom?: string;
   /**
    * The bundle this host is executing (§6.3).
    *
@@ -406,8 +446,42 @@ export interface PreparedChild {
  * mode this enables is §6.5's **remote-resident credential** row: highest
  * exposure, and the only one in that table where a detached overnight run keeps
  * going with the laptop shut. It is offered as that, in those words.
+ *
+ * ## v21 moves the host from a workspace to a machine, and that is a shape change
+ *
+ * Every bump so far has been additive — a command appeared, or a field did — and
+ * §17 Q16's whole argument was that additive bumps must never cost a running
+ * host. This one is not additive, and the lever it reaches for is the one that
+ * paragraph reserved for exactly this and had never been pulled:
+ * `MIN_CLIENT_PROTOCOL`.
+ *
+ * What changed: `HostIdentity` used to *be* a workspace — `instanceId`,
+ * `lineageId`, `workspaceRoot` at the top level — and now describes a machine
+ * holding `workspaces`, with the connection's own folder in `workspace`. And the
+ * socket moved: it was `agbrte-<instanceId>` and is now `agbrte-<machineId>`,
+ * with the record at `~/.agbrte/host.json`.
+ *
+ * **The socket move is why a version check is not optional here.** A v20 client
+ * computes a per-workspace socket, finds nothing, and starts its own host
+ * against a workspace this one is already serving — two processes appending to
+ * one `events.jsonl`, which is the single thing §5.1 does not survive. A version
+ * number cannot stop that on its own, so two things do it together: the machine
+ * host leaves a **pointer record** in each workspace's `.agbrte/host.json`, so an
+ * old client dials the machine socket rather than spawning; and this host then
+ * refuses it by name at the handshake, because a v20 client would read a
+ * `welcome` with no `workspaceRoot` in it and conclude the host was shutting
+ * down. A refusal that names the remedy beats a client that waits ten seconds
+ * and reports the wrong fact.
+ *
+ * **The other direction still works, which is the part §17 Q16 was written
+ * about.** A v21 client meeting a v20-or-older host reads the legacy fields and
+ * normalises them into the new shape (`HostConnection` does this), so it can
+ * talk to it — and in particular `agbrte stop` can still retire it. That matters
+ * because the user's existing hosts are per-workspace and the polite way to
+ * replace one is to ask it to stop. A `kill` would work and would cost whatever
+ * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 20;
+export const SESSION_PROTOCOL_VERSION = 21;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -422,9 +496,19 @@ export const SESSION_ADDAGENT_REPLACING_SINCE = 18;
  * The oldest client a host will serve.
  *
  * Raised only when a command's shape *changes* — that is the case a version
- * check has to catch, and the case that has not happened yet.
+ * check has to catch, and until v21 it had not happened. It has now:
+ * `HostIdentity` stopped being a workspace and became a machine, so a v20
+ * client reading a `welcome` from this host finds no `workspaceRoot` and, in
+ * `connectOrSpawn`, treats a perfectly healthy host as one that is shutting
+ * down. That is a wrong fact reported after a ten-second wait, which is the
+ * failure mode a refusal exists to replace.
+ *
+ * Raising it costs exactly what §17 Q16 says a bump must never cost — the
+ * connection — and it is paid here on purpose, because the alternative is the
+ * one thing worse: a client that cannot see this host, starts its own against
+ * the same workspace, and puts a second writer on a log.
  */
-export const MIN_CLIENT_PROTOCOL = 1;
+export const MIN_CLIENT_PROTOCOL = 21;
 
 /**
  * When each command appeared.
@@ -465,6 +549,11 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'files.list': 19,
   'files.read': 19,
   'endpoints.add': 20,
+  // Below `MIN_CLIENT_PROTOCOL`, so no client that reaches a host can be told
+  // "too old" for these. Listed anyway: the table is the record of when a
+  // command appeared, and a gap in it is what makes the next raise unreadable.
+  'workspace.list': 21,
+  'workspace.open': 21,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -472,14 +561,35 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
 export type SessionCommand =
   /** Always first. Carries the role the client wants. */
   /**
-   * Always first. Carries the role the client wants and the protocol it speaks.
+   * Always first. Carries the role the client wants, the protocol it speaks, and
+   * the workspace it wants this connection bound to.
    *
    * `protocol` is optional because a host older than this field still has to be
    * able to read a `hello` from a client that sends it — and, symmetrically,
    * absent means "v1 or a client that predates negotiation", which is the safest
    * thing for it to mean.
+   *
+   * `workspace` is a **path**, not an `instanceId`, and that is the one place in
+   * this protocol where a path is the right key. A client is trying to open a
+   * folder it has just been handed by a person or a picker; it does not know the
+   * checkout's id until the host has read `instance.json` inside it, and the
+   * whole point of asking is to find out. The host answers with the id.
+   *
+   * Absent binds to the host's only workspace when it has exactly one, and
+   * binds to nothing when it has several — refusing to guess, because guessing
+   * would serve one folder's transcripts to a client that asked about another.
+   * A connection that names nothing on a multi-workspace host is not broken: it
+   * is a *machine* connection, and every workspace-scoped command on it is
+   * refused by name.
    */
-  | { t: 'hello'; id: RequestId; role: AccessRole; client: string; protocol?: number }
+  | {
+      t: 'hello';
+      id: RequestId;
+      role: AccessRole;
+      client: string;
+      protocol?: number;
+      workspace?: string;
+    }
   /**
    * What is listening on the machine this host runs on (§6.8).
    *
@@ -603,6 +713,28 @@ export type SessionCommand =
   | { t: 'preview.log'; id: RequestId; serverId: string }
   | { t: 'session.list'; id: RequestId }
   | { t: 'session.listOnDisk'; id: RequestId }
+  /**
+   * What this machine's host is holding right now (§8).
+   *
+   * A read, and deliberately available to a `read-only` client: the same
+   * reasoning as `files.list` — a client that can already read a transcript
+   * naming a folder is not being protected by hiding the folder's name.
+   */
+  | { t: 'workspace.list'; id: RequestId }
+  /**
+   * Open a folder on this machine, so its sessions can be worked in (§8).
+   *
+   * A **write**: it creates `.agbrte/` if the folder has none, which is a change
+   * to the user's disk, and a `read-only` client watching from a phone must not
+   * be able to make one on a build box. Idempotent by `instanceId` — naming a
+   * folder that is already open returns what is already there, because "the
+   * sessions that are there are the sessions you get" and a second open would
+   * have nothing different to say.
+   *
+   * The reply is the `WorkspaceInfo`, which is how a client learns the checkout
+   * id it will use for everything afterwards.
+   */
+  | { t: 'workspace.open'; id: RequestId; root: string }
   /**
    * Search this host's logs (§15 Phase 8).
    *

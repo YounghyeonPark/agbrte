@@ -137,7 +137,7 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
     await uploadHostBundle(runner, opts.alias, probe.home, opts.bundles, opts.bundleVersion);
   }
 
-  let record = await readRemoteHostRecord(runner, opts.alias, opts.workspaceRoot);
+  let record = await readRemoteHostRecord(runner, opts.alias, opts.workspaceRoot, probe.home);
 
   /**
    * A version difference is **not** a reason to refuse, and this used to think

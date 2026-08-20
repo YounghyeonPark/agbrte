@@ -105,7 +105,16 @@ export interface AgbrteState {
    * and a failure alike; the second has already put a line in the error banner,
    * and the first is not a failure at all.
    */
-  attachLocalHost(): Promise<HostInfo | null>;
+  attachLocalHost(root?: string): Promise<HostInfo | null>;
+  /**
+   * Name a folder without opening it (§8).
+   *
+   * The native picker on its own, because choosing a folder and opening one are
+   * now two acts: session creation asks which folder, shows what is already in
+   * it, and only then commits. `null` for a cancelled picker or a failure the
+   * banner already carries.
+   */
+  pickFolder(): Promise<string | null>;
   loadSshHosts(): Promise<void>;
   /**
    * Ask a machine what is on it (§6.2).
@@ -129,6 +138,8 @@ export interface AgbrteState {
    */
   clearDiscovery(): void;
   addRemoteHost(alias: string, workspaceRoot: string): Promise<boolean>;
+  /** The same, handing the host back so a caller can work in what it opened. */
+  attachRemoteHost(alias: string, workspaceRoot: string): Promise<HostInfo | null>;
   removeHost(instanceId: string): Promise<void>;
   /** Ask a host to exit. Returns false when it refused because work is running. */
   shutdownHost(instanceId: string): Promise<boolean>;
@@ -323,8 +334,15 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     await get().attachLocalHost();
   },
 
-  async attachLocalHost() {
-    const host = await guard(set, () => agbrte().hosts.add());
+  async pickFolder() {
+    const chosen = await guard(set, () => agbrte().hosts.pickFolder());
+    // `undefined` means it threw and `guard` has already put the reason in the
+    // banner; `null` means the picker was cancelled, which is not a failure.
+    return chosen === undefined ? null : chosen;
+  },
+
+  async attachLocalHost(root) {
+    const host = await guard(set, () => agbrte().hosts.add(root));
     // `null` means the picker was cancelled and `undefined` means it threw —
     // neither leaves a host to work with, and only the second is a failure,
     // which `guard` has already put in the banner.
@@ -388,10 +406,19 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
   },
 
   async addRemoteHost(alias, workspaceRoot) {
+    return (await get().attachRemoteHost(alias, workspaceRoot)) !== null;
+  },
+
+  async attachRemoteHost(alias, workspaceRoot) {
+    // Hands the host *back*, which `addRemoteHost` does not: session creation
+    // needs the checkout it just opened, to list what is already in it.
     const host = await guard(set, () => agbrte().hosts.addRemote(alias, workspaceRoot));
-    if (host === undefined) return false;
+    if (host === undefined) return null;
+    // Re-listed even when the folder was already attached: `boot` is also what
+    // refreshes the sessions on disk, and a workspace attached elsewhere in the
+    // meantime may have gained some.
     await get().boot();
-    return true;
+    return host;
   },
 
   async shutdownHost(instanceId) {

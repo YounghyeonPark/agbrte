@@ -27,6 +27,7 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { loadAgentDefault, resolveAgentDefault, saveAgentDefault } from './agentDefaults.js';
 import { AttachHost } from './AttachHost.js';
+import { NewSession } from './NewSession.js';
 import { Dashboard } from './Dashboard.js';
 import { SupportMatrix } from './SupportMatrix.js';
 import { Inbox } from './Inbox.js';
@@ -128,6 +129,16 @@ export const LABEL = 'text-[10px] uppercase tracking-wider';
 export function App(): JSX.Element {
   const store = useAgbrte();
   const [attaching, setAttaching] = useState<false | 'local' | 'remote'>(false);
+  /**
+   * Whether the "where should this work" panel is open (§8).
+   *
+   * Separate state from `attaching` and not a mode of it, because they are two
+   * different questions asked at two different times: naming a machine is a fact
+   * about somebody's setup, and choosing a folder is the start of a piece of
+   * work. Folding them into one flag would put them back in one form, which is
+   * the thing that changed.
+   */
+  const [creating, setCreating] = useState(false);
   /*
    * Which full-pane page is open over whatever else is showing, or `none`.
    *
@@ -596,29 +607,25 @@ export function App(): JSX.Element {
    * instead, which is the fallback rather than a failure, and choosing there
    * once is what makes every later run of this land in the chat.
    */
-  const newSessionOneShot = async (): Promise<void> => {
-    // A full-pane page would otherwise cover the session this is about to open,
-    // and below `md` the main pane is where the progress line and the error
-    // banner live — the sidebar this may have been pressed from is not.
+  /**
+   * Start a session, which begins by asking where it should work (§8).
+   *
+   * This used to be a folder picker and nothing else, because a folder was the
+   * only thing a session could be started in on this machine — the *machine* was
+   * decided when a host was attached. Both halves are now asked here, in
+   * `NewSession`, because a host is one per machine and a session names its own
+   * folder: picking only a folder would have quietly meant "on this computer",
+   * which is exactly the assumption the change removed.
+   *
+   * A full-pane page would otherwise cover the session this is about to open,
+   * and below `md` the main pane is where the progress line and the error banner
+   * live — the sidebar this may have been pressed from is not.
+   */
+  const newSessionOneShot = (): void => {
     setView('none');
     setPane('main');
-    setStarting('Choose a folder to work in…');
-    try {
-      const host = await store.attachLocalHost();
-      // Cancelled, or refused with the banner already saying why. Either way
-      // nothing is attached, which is as far as this got.
-      if (host === null) return;
-
-      // The folder's name, with no title dialog. Somebody who wants to name a
-      // session still can — that is what the per-host `+` form is for.
-      const title = folderName(host.root) ?? (host.label === '' ? 'New session' : host.label);
-      setStarting(`Starting a session in ${title}…`);
-      // Goal and title the same string: §7's `create` requires a goal, and
-      // inventing prose for one would put words in the user's mouth.
-      await store.createSession(host.instanceId, title, title);
-    } finally {
-      setStarting(null);
-    }
+    setStarting(null);
+    setCreating(true);
   };
 
   const runtimesHere = active === null ? [] : (runtimesByHost[active.instanceId] ?? []);
@@ -869,6 +876,10 @@ export function App(): JSX.Element {
             initialMode={attaching}
             onDone={() => setAttaching(false)}
           />
+        )}
+
+        {creating && (
+          <NewSession onOpened={() => setCreating(false)} onClose={() => setCreating(false)} />
         )}
 
         {/* `overflow-x-hidden`: at fractional display scales (150% Windows) the
@@ -1463,21 +1474,6 @@ export function App(): JSX.Element {
       </main>
     </div>
   );
-}
-
-/**
- * The folder's own name, out of a path this process must not parse with `path`.
- *
- * The renderer is sandboxed — no Node built-ins — and even if it were not, the
- * separator belongs to the *host*, not to this window: a workspace reached over
- * ssh is posix while the app runs on Windows. So both separators, and empty
- * segments dropped, because a trailing slash would otherwise name the session
- * after nothing. `null` where there is no segment at all (`/`), which the caller
- * answers with the host's own label.
- */
-function folderName(root: string): string | null {
-  const parts = root.split(/[\\/]/).filter((part) => part !== '' && part !== '.');
-  return parts.at(-1) ?? null;
 }
 
 /** One host and its sessions, with §10's target badge. */

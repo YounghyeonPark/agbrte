@@ -137,7 +137,7 @@ describe('an older host costs one command, not the connection', () => {
             protocol: 2,
             minProtocol: 1,
           },
-        } as SessionMessage);
+        } as unknown as SessionMessage);
       }
     });
 

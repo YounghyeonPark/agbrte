@@ -110,6 +110,7 @@ const api: AgbrteApi = {
   hosts: {
     list: call(CH.hostsList),
     add: call(CH.hostsAdd),
+    pickFolder: call(CH.hostsPickFolder),
     sshHosts: call(CH.hostsSsh),
     discoverWorkspaces: call(CH.hostsDiscover),
     addRemote: call(CH.hostsAddRemote),

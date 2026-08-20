@@ -55,7 +55,14 @@ export function WorkspaceSelect({
     <Select.Root value={chosen === undefined ? '' : value} onValueChange={onChange}>
       <Select.Trigger
         data-testid="attach-workspace-trigger"
-        className="field text-ink flex items-center justify-between gap-2"
+        /* `min-w-0` on the trigger itself, not only on whatever contains it.
+           This is a grid or flex *item* wherever it is used, and an item's
+           automatic minimum size is its max-content width — a seventy-character
+           path — so the `truncate-line` on the span inside cannot save the
+           column. It held together while this lived inside two nested `min-w-0`
+           containers and grew a 541px scroll in a 299px sidebar the moment it
+           was used somewhere else. Measured, in `attach.spec.ts`. */
+        className="field text-ink flex min-w-0 items-center justify-between gap-2"
         aria-label="Workspaces found on that machine"
       >
         {/* Not `Select.Value`: with an empty value Radix renders nothing at all,

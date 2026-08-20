@@ -23,6 +23,7 @@ import {
 import {
   assertNotInstallRoot,
   NESTED_GITIGNORE,
+  REQUIRED_GITIGNORE_LINES,
   PRIVATE_DIR_MODE,
   SCHEMA_VERSION,
   workspaceLayout,
@@ -132,6 +133,7 @@ export async function openWorkspace(
   await mkdir(layout.runDir, { recursive: true, mode: PRIVATE_DIR_MODE });
 
   await writeIfAbsent(layout.gitignoreFile, NESTED_GITIGNORE);
+  await repairGitignore(layout.gitignoreFile);
   await writeIfAbsent(layout.memoryIndex, MEMORY_INDEX_HEADER);
 
   const existingProject = await readJson<ProjectFile>(layout.projectFile);
@@ -209,6 +211,36 @@ async function readJson<T>(path: string): Promise<T | null> {
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * Add any exclusion this file is missing, without touching what is already in it.
+ *
+ * A workspace made before a line existed keeps the file it was given —
+ * `writeIfAbsent` will not replace it — so a rule added later reaches no
+ * existing workspace at all. That was tolerable for the first four lines and is
+ * not for `host.json`, which on a loopback host carries a bearer token (§6.2):
+ * the machine host now leaves that record in *every* folder it opens, so a gap
+ * here is a credential waiting to be committed.
+ *
+ * Appended rather than rewritten. This file is the user's to edit and a rule
+ * they added is theirs to keep, so only what is missing goes in. It runs after
+ * `writeIfAbsent`, which has always recreated a deleted one — the way to
+ * exclude `.agbrte/` wholesale is an entry in the repository's own
+ * `.gitignore`, which nothing here writes.
+ */
+async function repairGitignore(path: string): Promise<void> {
+  let current: string;
+  try {
+    current = await readFile(path, 'utf8');
+  } catch {
+    return; // Deliberately absent. See above.
+  }
+  const lines = new Set(current.split(/\r?\n/).map((line) => line.trim()));
+  const missing = REQUIRED_GITIGNORE_LINES.filter((line) => !lines.has(line));
+  if (missing.length === 0) return;
+  const separator = current.endsWith('\n') || current === '' ? '' : '\n';
+  await writeFile(path, `${current}${separator}${missing.join('\n')}\n`, 'utf8');
 }
 
 async function writeIfAbsent(path: string, contents: string): Promise<void> {

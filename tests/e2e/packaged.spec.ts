@@ -70,6 +70,10 @@ test('a packaged app starts its own CLI on the session in the pane', async () =>
   delete env['ELECTRON_RUN_AS_NODE'];
   env['AGBRTE_WORKSPACE_ROOT'] = repo;
   env['AGBRTE_HOST_LINGER_MS'] = '3000';
+  // Its own machine directory, for `harness.ts`'s reason: `~/.agbrte` is global
+  // to a machine, and a packaged app pointed at the real one would start a host
+  // that reopens the developer's workspaces (§8).
+  env['AGBRTE_HOME'] = join(userDataDir, 'machine');
 
   // No script argument: a packaged app is its own entry point, which is the
   // whole difference being tested.

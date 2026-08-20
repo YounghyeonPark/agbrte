@@ -437,16 +437,37 @@ export class Fleet extends EventEmitter {
       );
     }
 
-    const existing = this.entries.get(identity.instanceId);
+    /*
+     * The workspace this connection was bound to (§8).
+     *
+     * A host is one per machine now and holds several folders, so the handshake
+     * describes the machine and names the folder this connection got. A
+     * connection with none is a *machine* connection — a real state, and not one
+     * an entry can be built from, because an entry is a workspace. Refused by
+     * name rather than defaulted to the host's first folder, which would attach
+     * a card labelled with one project and pointed at another.
+     */
+    const bound = identity.workspace;
+    if (bound === undefined) {
+      connection.disconnect();
+      throw new AttachRefused(
+        `the host on that machine did not open ${workspaceRoot}` +
+          (identity.workspaces.length === 0
+            ? ''
+            : ` — it is holding ${identity.workspaces.map((w) => w.root).join(', ')}`),
+      );
+    }
+
+    const existing = this.entries.get(bound.instanceId);
     if (existing) {
       connection.disconnect();
       return snapshot(existing);
     }
 
     const entry: Entry = {
-      instanceId: identity.instanceId,
-      lineageId: identity.lineageId,
-      workspaceRoot: identity.workspaceRoot,
+      instanceId: bound.instanceId,
+      lineageId: bound.lineageId,
+      workspaceRoot: bound.root,
       target,
       available: [],
       endpoints: [],
@@ -463,7 +484,7 @@ export class Fleet extends EventEmitter {
     // handshake into a host record rather than two that can drift.
     this.adopt(entry, identity, connection);
     this.wire(entry, connection);
-    this.entries.set(identity.instanceId, entry);
+    this.entries.set(bound.instanceId, entry);
 
     this.emit('host', snapshot(entry));
     return snapshot(entry);
@@ -504,8 +525,20 @@ export class Fleet extends EventEmitter {
    * is worse than no value: it is a claim nothing supports.
    */
   private adopt(entry: Entry, identity: HostIdentity, connection: HostConnection): void {
-    entry.lineageId = identity.lineageId;
-    entry.workspaceRoot = identity.workspaceRoot;
+    /*
+     * The bound workspace, when the handshake named one.
+     *
+     * A reconnect that comes back *unbound* leaves the entry's own fields alone
+     * rather than clearing them: the entry is a workspace, and a host that
+     * answered without binding it has not told us the folder is gone — only
+     * that this connection is not working in it. Overwriting with `undefined`
+     * would put a card with no path on screen for a workspace that is fine.
+     */
+    const bound = identity.workspace;
+    if (bound !== undefined) {
+      entry.lineageId = bound.lineageId;
+      entry.workspaceRoot = bound.root;
+    }
     // Deleted rather than left stale when a host stops reporting one: an entry
     // reattached to an older host must read as *cannot tell*, not as the machine
     // the previous handshake happened to name.
@@ -532,8 +565,8 @@ export class Fleet extends EventEmitter {
     if (identity.bundleVersion === undefined) delete entry.bundleVersion;
     else entry.bundleVersion = identity.bundleVersion;
 
-    if (identity.movedFrom === undefined) delete entry.movedFrom;
-    else entry.movedFrom = identity.movedFrom;
+    if (bound?.movedFrom === undefined) delete entry.movedFrom;
+    else entry.movedFrom = bound.movedFrom;
 
     if (identity.unavailableReason === undefined) delete entry.unavailableReason;
     else entry.unavailableReason = identity.unavailableReason;
@@ -703,9 +736,10 @@ export class Fleet extends EventEmitter {
       try {
         connection = await this.deps.connect(entry.location);
         const identity = await connection.ready;
-        if (identity.instanceId !== entry.instanceId) {
-          // A different workspace answered on the path we remembered. Adopting
-          // it would silently point every open session at the wrong machine.
+        if (identity.workspace?.instanceId !== entry.instanceId) {
+          // A different workspace answered on the path we remembered — or none
+          // did, which is the same fact stated more weakly. Adopting either
+          // would silently point every open session at the wrong folder.
           connection.disconnect();
           const wrong = 'the workspace at that location is not the same one';
           this.forget(entry.instanceId, wrong);

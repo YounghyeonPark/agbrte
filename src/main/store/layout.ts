@@ -64,12 +64,35 @@ export const SCHEMA_VERSION = 4;
  * `run/`, and `instance.json` are excluded. A nested gitignore does this
  * without touching the user's root .gitignore (§1).
  */
-export const NESTED_GITIGNORE = `# Written by Agbrte. Delete this file to exclude .agbrte/ entirely.
+export const NESTED_GITIGNORE = `# Written by Agbrte. To exclude .agbrte/ entirely, add it to the repository's own .gitignore.
 sessions/
 index/
 run/
 instance.json
+host.json
 `;
+
+/**
+ * Lines this file must contain, whatever else a user has added to it.
+ *
+ * `host.json` is the one that made this necessary. It was never excluded — a
+ * gap that mattered little while it was written once per workspace by a host
+ * that was about to be the only one, and matters now that the machine host
+ * leaves a **pointer** in every folder it opens (§8). On a loopback control
+ * channel that record carries the bearer token that is the *entire*
+ * authentication for it (§6.2), so a committed one is a credential in a
+ * repository — exactly what §13 says the workspace store must never be.
+ *
+ * Repaired rather than rewritten: this file is the user's to edit — a rule they
+ * added is theirs to keep — and only the missing lines are appended.
+ *
+ * The header used to say "delete this file to exclude `.agbrte/` entirely",
+ * which `openWorkspace` has never honoured: it recreates the file on the next
+ * open, so a deletion lasted until the workspace was next touched. The
+ * instruction now names the thing that actually works — an entry in the
+ * repository's own `.gitignore`, which nothing here writes.
+ */
+export const REQUIRED_GITIGNORE_LINES = ['sessions/', 'index/', 'run/', 'instance.json', 'host.json'];
 
 /**
  * Which of the two names this workspace uses, decided by what is on disk.

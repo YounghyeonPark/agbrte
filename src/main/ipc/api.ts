@@ -377,20 +377,30 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
 
   handle(CH.hostsList, () => fleet.hosts().map((h) => toInfo(h, deps.shippingVersion)));
 
-  handle(CH.hostsAdd, async () => {
-    // A browser has no native folder picker, and inventing a path field would be
-    // a worse answer than saying so: the web client serves one workspace, and
-    // attaching another is a thing you do where the filesystem is.
-    if (deps.pickFolder === undefined) {
-      throw new Error('choose a folder from the desktop app — this client serves one workspace');
-    }
-    const chosen = await deps.pickFolder();
+  handle(CH.hostsAdd, async (root?: string) => {
+    const chosen = root ?? (await pickLocalFolder());
     if (chosen === null) return null;
     return toInfo(
       await fleet.attach({ target: { kind: 'local' }, workspaceRoot: chosen }),
       deps.shippingVersion,
     );
   });
+
+  handle(CH.hostsPickFolder, () => pickLocalFolder());
+
+  /**
+   * The native folder picker, or a sentence saying where to find one.
+   *
+   * A browser has no picker, and inventing a path field would be a worse answer
+   * than saying so: the web client serves the workspaces its server already has,
+   * and naming a new folder is a thing you do where the filesystem is.
+   */
+  async function pickLocalFolder(): Promise<string | null> {
+    if (deps.pickFolder === undefined) {
+      throw new Error('choose a folder from the desktop app — this client serves one workspace');
+    }
+    return deps.pickFolder();
+  }
 
   handle(CH.hostsRemove, (instanceId: string) => fleet.detach(instanceId as InstanceId));
 

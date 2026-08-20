@@ -187,7 +187,18 @@ test.describe('the shell', () => {
     execFileSync(
       process.execPath,
       [resolve('dist/cli/agbrte.js'), 'run', repo, '--runtime', 'echo', '--title', 'made earlier', 'go'],
-      { stdio: 'ignore', env: { ...process.env, AGBRTE_HOST_LINGER_MS: '500' } },
+      {
+        stdio: 'ignore',
+        env: {
+          ...process.env,
+          AGBRTE_HOST_LINGER_MS: '500',
+          // The same machine directory the app under test is using, or this
+          // would reach a *different* host — one per `~/.agbrte` (§8).
+          ...(process.env['AGBRTE_HOME'] === undefined
+            ? {}
+            : { AGBRTE_HOME: process.env['AGBRTE_HOME'] }),
+        },
+      },
     );
     /*
      * Wait for that host to go.
@@ -800,7 +811,10 @@ test.describe('the first screen, the guide, and about', () => {
       await expect(guide).toBeVisible();
       await expect(guide).toContainText('Sessions run on a host');
       // The usage half: what to press, in the order it can be pressed.
-      await expect(guide.locator('[data-testid=guide-steps]')).toContainText('Attach a host');
+      // Naming a machine, not attaching a workspace: the two split when a host
+      // became one per machine (§8), and the guide is the one place that says
+      // the order out loud.
+      await expect(guide.locator('[data-testid=guide-steps]')).toContainText('Name a machine');
       await expect(guide).not.toContainText(/phone/i);
 
       // The remote route opens the attach panel already on remote, rather than

@@ -226,7 +226,7 @@ describe('a host that predates the command', () => {
           protocol: COMMAND_SINCE['models.capabilities']! - 1,
           minProtocol: 1,
         },
-      } as SessionMessage);
+      } as unknown as SessionMessage);
     });
 
     await client.ready;

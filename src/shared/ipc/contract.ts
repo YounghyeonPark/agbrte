@@ -588,8 +588,26 @@ export interface AgbrteApi {
   hosts: {
     /** Every attached host. Several may be attached at once (§8). */
     list(): Promise<HostInfo[]>;
-    /** Native folder picker, then attach a local workspace. Null if cancelled. */
-    add(): Promise<HostInfo | null>;
+    /**
+     * Open a local workspace, and attach it (§8).
+     *
+     * With a path, that folder. Without one, the native folder picker first —
+     * which is what the sidebar's own control still does. The two are one method
+     * because they are one act: the picker is a way of naming the folder, not a
+     * different thing to do with it.
+     *
+     * `null` means the picker was cancelled, which is not a failure.
+     */
+    add(root?: string): Promise<HostInfo | null>;
+    /**
+     * Name a folder without opening it (§8).
+     *
+     * Separate from `add` because a folder is now chosen *before* the thing that
+     * happens to it: creating a session asks which folder, and it has to be able
+     * to show what is already in one before committing to open it. Returns the
+     * path, or `null` when the picker was cancelled.
+     */
+    pickFolder(): Promise<string | null>;
     /**
      * Machines the user already has configured.
      *
@@ -1183,6 +1201,7 @@ export interface ForwardDto {
 export const CH = {
   hostsList: 'agbrte:hosts.list',
   hostsAdd: 'agbrte:hosts.add',
+  hostsPickFolder: 'agbrte:hosts.pickFolder',
   hostsRemove: 'agbrte:hosts.remove',
   hostsShutdown: 'agbrte:hosts.shutdown',
   hostsUpdate: 'agbrte:hosts.update',

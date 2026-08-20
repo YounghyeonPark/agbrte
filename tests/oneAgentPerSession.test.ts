@@ -325,7 +325,7 @@ describe('a host that predates changing a model in place', () => {
             protocol: SESSION_ADDAGENT_REPLACING_SINCE - 1,
             minProtocol: 1,
           },
-        } as SessionMessage);
+        } as unknown as SessionMessage);
         return;
       }
       seen.push(command);

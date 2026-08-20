@@ -100,8 +100,8 @@ describe('the host owns the session', () => {
   it('announces who it is at handshake', async () => {
     const identity = await rig().connect().ready;
 
-    expect(identity.instanceId).toBe(instanceId);
-    expect(identity.workspaceRoot).toBe(root);
+    expect(identity.workspace?.instanceId).toBe(instanceId);
+    expect(identity.workspace?.root).toBe(root);
     expect(identity.runtimes).toEqual(['echo']);
     expect(identity.pid).toBe(process.pid);
   });
@@ -413,9 +413,8 @@ describe('protocol version is a range, not an equality', () => {
         id: command.id,
         role: 'read-write',
         identity: {
-          instanceId,
-          lineageId: lineageId as never,
-          workspaceRoot: root,
+          workspaces: [{ instanceId, lineageId: lineageId as never, root }],
+          workspace: { instanceId, lineageId: lineageId as never, root },
           runtimes: [],
           pid: 1,
           protocol: identity.protocol ?? 1,

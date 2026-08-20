@@ -204,3 +204,61 @@ describe('a workspace rooted at $HOME', () => {
     expect(() => assertNotInstallRoot(join(dir, 'project'), dir)).not.toThrow();
   });
 });
+
+/**
+ * The host record must not be committable (§13, §6.2).
+ *
+ * `host.json` was never in the nested `.gitignore`. That mattered little while
+ * it was written once per workspace by the host that owned it, and matters now
+ * that the machine host leaves a **pointer** in every folder it opens (§8) — and
+ * on a loopback control channel that record carries the bearer token that is the
+ * *entire* authentication for it. A committed one is a credential in a
+ * repository, which §13 says the workspace store must never be.
+ */
+describe('the nested gitignore', () => {
+  it('excludes the host record as well as the session store', async () => {
+    await openWorkspace(dir);
+    const ignore = await readFile(workspaceLayout(dir).gitignoreFile, 'utf8');
+    for (const line of ['sessions/', 'index/', 'run/', 'instance.json', 'host.json']) {
+      expect(ignore.split(/\r?\n/)).toContain(line);
+    }
+    // …and still tracks the two things that are supposed to travel with a clone.
+    expect(ignore).not.toContain('memory');
+    expect(ignore).not.toContain('project.json');
+  });
+
+  it('repairs a workspace written before a rule existed, without rewriting it', async () => {
+    await openWorkspace(dir);
+    const path = workspaceLayout(dir).gitignoreFile;
+    // The file a workspace made last month has, plus a line its owner added.
+    await writeFile(path, '# Written by Agbrte.\nsessions/\nindex/\nrun/\ninstance.json\nscratch/\n');
+
+    await openWorkspace(dir);
+
+    const ignore = await readFile(path, 'utf8');
+    expect(ignore.split(/\r?\n/)).toContain('host.json');
+    // Theirs is kept: this file is the user's to edit, and the header says so.
+    expect(ignore.split(/\r?\n/)).toContain('scratch/');
+  });
+
+  it('is put back when deleted, and says so rather than claiming otherwise', async () => {
+    await openWorkspace(dir);
+    await rm(workspaceLayout(dir).gitignoreFile);
+
+    await openWorkspace(dir);
+
+    /*
+     * The header used to read "delete this file to exclude `.agbrte/`
+     * entirely", and `openWorkspace` has never honoured it — the next open puts
+     * the file back, so the deletion lasted until the workspace was next
+     * touched. Asserted rather than fixed, because recreating it is the *right*
+     * behaviour: a `.gitignore` lost to a stray `rm -rf` would otherwise start
+     * committing session logs silently. What changed is the sentence, which now
+     * names the thing that actually works.
+     */
+    const ignore = await readFile(workspaceLayout(dir).gitignoreFile, 'utf8');
+    expect(ignore.split(/\r?\n/)).toContain('host.json');
+    expect(ignore).toContain("repository's own .gitignore");
+    expect(ignore).not.toContain('Delete this file');
+  });
+});

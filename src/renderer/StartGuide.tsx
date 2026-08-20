@@ -50,14 +50,14 @@ export interface StartGuideProps {
  */
 const STEPS: Array<{ title: string; detail: string }> = [
   {
-    title: 'Attach a host',
+    title: 'Name a machine',
     detail:
-      'A folder on this machine, or a workspace on a server over ssh — the buttons below, or Attach host… in the top bar.',
+      'This one is already here. For a server, give its ssh name — the buttons below, or Attach host… in the top bar. Naming a machine installs nothing.',
   },
   {
     title: 'Start a session',
     detail:
-      'Press + on the host in the sidebar and give it a title and a goal. The goal is what the transcript answers to.',
+      'New session asks which machine and which folder, and shows what is already in that folder before it starts anything.',
   },
   {
     title: 'Add an agent',

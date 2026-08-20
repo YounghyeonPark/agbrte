@@ -35,7 +35,10 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connectOrSpawnHost } from '@main/host/connectOrSpawn.js';
-import type { HostConnection } from '@main/host/hostConnection.js';
+import { hostHolding } from '../host/legacyHost.js';
+import { connect } from '@shared/host/socketChannel.js';
+import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
+import { HostConnection } from '@main/host/hostConnection.js';
 import { parse } from './args.js';
 import { attach } from './attach.js';
 import { once } from './once.js';
@@ -131,6 +134,64 @@ function findHostEntry(): string {
  */
 function hasWorkspace(path: string): boolean {
   return existsSync(join(path, WORKSPACE_DIR)) || existsSync(join(path, LEGACY_WORKSPACE_DIR));
+}
+
+/**
+ * Retire a host from before one-host-per-machine (§17 Q16, §8).
+ *
+ * The failure Q16 was written about, arriving for real: `agbrte stop` speaks the
+ * *new* protocol, and the host it exists to retire was started by the old one.
+ * Since v21 the two do not even share a socket — this build computes
+ * `agbrte-<machineId>` and that one listens on `agbrte-<instanceId>` — so
+ * `connectOrSpawnHost` cannot reach it, and would in any case refuse to open a
+ * workspace an older host is holding rather than become a second writer.
+ *
+ * So `stop` looks in the workspace, where that host left its record, and dials
+ * it directly. It answers, because a v20 host serves any client at or above
+ * `MIN_CLIENT_PROTOCOL: 1` and this one is; and its `welcome` is read through
+ * `HostConnection`'s normalisation, which is the client's end of the range rule.
+ *
+ * Returns `null` when nothing older is there, which is the ordinary case and
+ * means "carry on through the normal path".
+ */
+async function stopLegacyHost(path: string): Promise<number | null> {
+  const record = await hostHolding(path);
+  if (record === null) return null;
+
+  // A loopback host's control channel needs its bearer token, which this record
+  // carries and which nothing may print (§6.2). Only the socket case is handled
+  // here: a local host from before v21 listens on a pipe or a unix socket, and a
+  // loopback one is reached through a transport that has its own path.
+  if (record.port !== undefined) {
+    process.stderr.write(
+      `an older host (pid ${record.pid}) is serving ${path} on a loopback control port. ` +
+        `Stop it from the app that started it, or end pid ${record.pid}.\n`,
+    );
+    return 1;
+  }
+
+  const channel = await connect<SessionCommand, SessionMessage>(record.socket, 5_000).catch(
+    () => null,
+  );
+  if (channel === null) {
+    // It stopped between the probe and the dial, which is the outcome asked for.
+    process.stdout.write('host stopped\n');
+    return 0;
+  }
+
+  const connection = new HostConnection({ channel, client: 'agbrte-cli' });
+  try {
+    await connection.ready;
+    const result = await connection.requestShutdown();
+    if (result.stopped) {
+      process.stdout.write(`host stopped (pid ${record.pid}, started before v21)\n`);
+      return 0;
+    }
+    process.stderr.write(`host still running: ${result.reason ?? 'work in flight'}\n`);
+    return 1;
+  } finally {
+    connection.disconnect();
+  }
 }
 
 async function open(path: string): Promise<HostConnection> {
@@ -278,6 +339,19 @@ async function main(): Promise<number> {
 `),
     );
     return 0;
+  }
+
+  /*
+   * Retiring an older host is the one thing that must work before opening.
+   *
+   * `open` refuses a workspace an older host is holding, which is right for
+   * every other verb and is exactly backwards for this one — §17 Q16's rule is
+   * that a bump must never leave the tool that would politely shut a host down
+   * unable to reach it.
+   */
+  if (command === 'stop') {
+    const handled = await stopLegacyHost(path);
+    if (handled !== null) return handled;
   }
 
   const connection = await open(path);

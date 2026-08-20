@@ -1,75 +1,60 @@
 /**
- * Attaching a host (DESIGN.md §6.2, §10).
+ * Naming a machine (DESIGN.md §6.2, §8, §8.3).
  *
- * Two ways in, and the remote one is deliberately not a connection form. When the
- * user has an `~/.ssh/config`, their machines are already described in it —
- * hostname, user, port, key, jump host, proxy command — and every one of those
- * answers is better than what a form would collect, because it is the same answer
- * their terminal uses.
+ * This panel used to attach a *workspace*: a machine **and** a folder, in one
+ * form, because a host was one per folder and there was nothing else an attach
+ * could mean. A host is one per machine now, and a session picks its folder when
+ * it is created (§8) — so the form split, and this is the half that is about the
+ * machine.
+ *
+ * What that buys is not tidiness. A machine and a folder are answered by
+ * different people at different times: the machine is a fact about your setup
+ * that changes twice a year, and the folder is the piece of work you are about
+ * to start. Asking for both at once made naming a build box a thing you could
+ * only do while also deciding what to do on it — and, worse, made a second
+ * project on a machine you had already attached look like attaching it again.
+ *
+ * The workspace path field and the folder browser moved to `NewSession.tsx`,
+ * where the question is asked.
+ *
+ * ## The remote half is deliberately not a connection form
+ *
+ * When the user has an `~/.ssh/config`, their machines are already described in
+ * it — hostname, user, port, key, jump host, proxy command — and every one of
+ * those answers is better than what a form would collect, because it is the same
+ * answer their terminal uses.
  *
  * **A config is not required.** `ssh user@host` works with none at all, so the
  * field accepts that too and says so. Treating a config as a prerequisite would
  * invent one: there is nothing to "set up" before a first connection, only things
  * that can fail on it — and those are diagnosed where they happen, with the
- * command that settles each one.
+ * command that settles each one (§8.3).
  *
- * A first attach to a machine installs a private Node and deploys the host, which
- * takes seconds rather than milliseconds, so progress is shown rather than left
- * to a spinner that says nothing.
+ * ## Naming a machine installs nothing, and checking it is why
  *
- * ## The path was the half that had no picker
+ * Adding a machine produces no host, no private Node, no `.agbrte` on the far
+ * side — §6.4's bootstrap starts a host *because of* a workspace, and installing
+ * one on a box somebody was only looking at would be exactly the "we changed your
+ * machine" the private runtime exists to avoid.
  *
- * "This machine" opens a folder picker. "Remote" asked for a machine and then an
- * absolute path, typed from memory, against a placeholder reading
- * `/home/you/project` — so a machine you had not used in a month could not be
- * attached at all without opening a terminal to go and look. The two halves of
- * the same panel disagreed about whether you were expected to know where your own
- * work lives.
- *
- * So the machine is asked. Three things make that answer usable rather than a
- * wall of directories:
- *
- *   * **it is one control, not a list.** A working machine answers with eight
- *     directories that have held sessions, a dozen repositories and whatever
- *     else is one level below a root, and as rows that filled the sidebar and
- *     pushed the path field and **Attach** below the fold — the results are the
- *     input to the decision, and the decision has to stay on screen. See
- *     `WorkspaceSelect.tsx`, which keeps the kinds as labelled groups inside the
- *     dropdown, because a folder holding `.agbrte/` is a different claim from
- *     a git repository and from a folder that merely exists.
- *   * **what was searched is shown.** An empty list has to read as "nothing under
- *     these five directories" and never as "this is broken" — the difference is
- *     the roots, so the roots are on screen.
- *   * **the field stays.** Discovery is bounded on purpose (§6.2: a small set of
- *     roots, a shallow depth, a cap, a timeout), so a workspace four levels down
- *     is *expected* to be missed, and the manual field is where it is typed. It
- *     is the fallback, not a leftover.
- *
- * ## Asking is not a step the user takes
- *
- * It fires when a machine is chosen, because somebody who has just named a
- * machine needs exactly one thing next and it is not another button. What that
- * costs is handled rather than avoided: `attachTrigger.ts` decides *when* (at
- * once for a name from the user's own config, after the typing stops for one
- * they are spelling out, never for a name that could not be a destination), the
- * store drops a superseded answer so a slow machine cannot land its list under
- * the next machine's name, and a failure stays **inside this panel** instead of
- * raising the app's error banner — an alarm about an action nobody took, over a
- * field that still works. The button survives as a retry, for a machine that was
- * asleep or a folder made a minute ago.
+ * So **Attach** is a question rather than an installation: it asks the machine
+ * what workspaces are on it, which needs nothing but a POSIX shell (§6.2) and
+ * which is the same call the folder browser will make later. A machine that
+ * answers is remembered. One that cannot be reached fails here, with the
+ * diagnosis, rather than at the moment somebody was trying to start work.
  */
 
-import { useEffect, useRef, useState, type JSX } from 'react';
+import { useEffect, useState, type JSX } from 'react';
 import { useAgbrte } from './store.js';
-import { loadLastAlias, loadLastWorkspace, rememberRemoteWorkspace } from './remoteWorkspaces.js';
-import { autoDiscoverDelay } from './attachTrigger.js';
-import { WorkspaceSelect } from './WorkspaceSelect.js';
+import { loadLastAlias } from './remoteWorkspaces.js';
+import { isPlausibleAlias } from './attachTrigger.js';
+import { loadMachines, rememberMachine, type Machine } from './machines.js';
 
 export function AttachHost({
   onDone,
   initialMode = 'local',
 }: {
-  onDone: () => void;
+  onDone: (machine?: Machine) => void;
   /** Set when the start guide opened this for one particular way in. */
   initialMode?: 'local' | 'remote';
 }): JSX.Element {
@@ -88,31 +73,7 @@ export function AttachHost({
    * to be first in the user's config.
    */
   const [alias, setAlias] = useState(() => loadLastAlias() ?? '');
-  const [path, setPath] = useState('');
-  /**
-   * Whether the picker is on screen.
-   *
-   * Closed by default, and that is the shape of the panel rather than a
-   * preference: the resting state is a machine, a path and **Attach**, which is
-   * everything somebody who knows where they are going needs. The dropdown and
-   * its Refresh are for the person who does not, and they arrive when asked for.
-   *
-   * The *search* is not behind this. It still runs the moment a machine is
-   * chosen (see below), so pressing Browse shows an answer that is already there
-   * instead of starting a wait — the reason to fold the control away is that it
-   * is noise until it is wanted, not that it is expensive.
-   */
-  const [browsing, setBrowsing] = useState(false);
-  /**
-   * The last value this panel put in the path field on the user's behalf.
-   *
-   * The field is filled from memory when a machine is chosen and from the list
-   * when a row is clicked, and both must give way to typing: a path the user
-   * edited is theirs and changing machines must not silently discard it. So a
-   * suggestion is only ever replaced by another suggestion, and anything else in
-   * the field is left alone.
-   */
-  const suggested = useRef('');
+  const [machines, setMachines] = useState<Machine[]>(() => loadMachines());
 
   useEffect(() => {
     if (mode === 'remote') void store.loadSshHosts();
@@ -133,173 +94,57 @@ export function AttachHost({
     if (sshHosts.length > 0) setAlias((current) => (current === '' ? sshHosts[0]!.alias : current));
   }, [sshHosts, alias]);
 
+  /*
+   * A list of folders on one machine beside a field naming another is worse than
+   * no list: it looks current. This also cancels a search still in flight for
+   * the machine being left.
+   */
   useEffect(() => {
-    const remembered = loadLastWorkspace(alias.trim()) ?? '';
-    /*
-     * Read the old suggestion *before* recording the new one.
-     *
-     * `setPath` with a function defers that function to the render; the line
-     * after it runs immediately. Written the obvious way round — assign the ref,
-     * then call `setPath` — the updater sees the value it is about to be
-     * compared against, so `current === suggested.current` is never true and a
-     * path this panel had filled in was treated as something the user typed.
-     * The effect: choosing a workspace on one machine and then switching
-     * machines carried that path across, still in the field, now pointing at a
-     * directory on a different computer. Found end to end, not by reading.
-     */
-    const previous = suggested.current;
-    suggested.current = remembered;
-    setPath((current) => (current === '' || current === previous ? remembered : current));
-    // A list of folders on one machine beside a field naming another is worse
-    // than no list: it looks current. This also cancels a search still in flight
-    // for the machine being left.
     store.clearDiscovery();
   }, [alias]);
 
-  /**
-   * The machine this panel has already gone and looked at.
-   *
-   * Not state: nothing renders it, and it exists only so that the effect below
-   * does not open a second connection when it re-runs for a reason that is not
-   * the alias — the ssh-config list arriving a moment after mount being the one
-   * that actually happens.
-   */
-  const asked = useRef<string | null>(null);
-
-  const look = (target: string): void => {
-    asked.current = target;
-    void store.discoverWorkspaces(target);
-  };
-
-  /*
-   * Go and look, on our own, once there is a machine to look at.
-   *
-   * The delay is the whole decision and it lives in `attachTrigger.ts`: `0` for a
-   * name the user's config knows — they chose it, there is nothing to wait for —
-   * and a debounce for one being typed, because `user@10.0.0.9` passes through
-   * nine prefixes that are not machines. `null` means this could not be a
-   * destination at all, and nothing is attempted.
-   */
-  useEffect(() => {
-    if (mode !== 'remote') return;
-    const target = alias.trim();
-    if (asked.current === target) return;
-    const delay = autoDiscoverDelay(
-      target,
-      sshHosts.map((h) => h.alias),
-    );
-    if (delay === null) return;
-    // Guarded rather than merely cleared: leaving the field starts the same
-    // search early (see `askNow`), and the timer for that keystroke is still
-    // scheduled. Asking twice for one machine is the cost of not checking.
-    const timer = setTimeout(() => {
-      if (asked.current !== target) look(target);
-    }, delay);
-    return () => clearTimeout(timer);
-  }, [alias, mode, sshHosts]);
-
-  /** Leaving the field is a person saying they have finished naming a machine. */
-  const askNow = (): void => {
-    const target = alias.trim();
-    if (asked.current === target) return;
-    if (
-      autoDiscoverDelay(
-        target,
-        sshHosts.map((h) => h.alias),
-      ) === null
-    ) {
-      return;
-    }
-    look(target);
-  };
-
-  /*
-   * Closing the panel abandons the search.
-   *
-   * There is no cancel to send: this is one bounded, read-only command with its
-   * own kill on the far side. What is cancelled is the *answer* — nothing lands
-   * in a store the panel is no longer reading, and nothing is left half-shown if
-   * it is reopened.
-   */
   useEffect(() => () => store.clearDiscovery(), []);
 
-  const attachLocal = async (): Promise<void> => {
-    await store.addHost();
-    onDone();
-  };
-
+  /**
+   * Ask the machine what is on it, and remember it if it answers.
+   *
+   * The check *is* the attach. There is nothing else to do at this point — no
+   * host to start, nothing to install — so a panel that merely wrote the name
+   * down would report success for a machine nobody had spoken to, and the first
+   * time anyone found out would be halfway through starting a session. This is
+   * one bounded read-only command over the user's own ssh, with its own kill on
+   * the far side (§6.2).
+   *
+   * A machine that answers *and cannot be listed* — a Windows remote, a shell
+   * that is not POSIX — still counts as reached, because it is: the failure it
+   * reports is about listing, and typing a path there works.
+   */
   const attachRemote = async (): Promise<void> => {
-    if (alias === '' || path.trim() === '') return;
-    // Only dismissed on success: a failure leaves the panel open with the error
-    // above it, so the user can fix a path rather than start again.
-    if (await store.addRemoteHost(alias, path.trim())) {
-      // Remembered on success and never on intent, so a path that does not work
-      // is not the one offered first next time.
-      rememberRemoteWorkspace(alias.trim(), path.trim());
-      onDone();
-    }
+    const target = alias.trim();
+    // Refused here as well as in main, and the copy is deliberate: the renderer
+    // cannot reach `assertSafeAlias`, and a leading `-` is `ssh` running a
+    // command on *this* machine. Main still refuses; what this saves is a
+    // rejected promise the user never asked for (see `attachTrigger.ts`).
+    if (!isPlausibleAlias(target)) return;
+    await store.discoverWorkspaces(target);
+    /*
+     * Read from the store rather than from `store`, which is a *render's*
+     * snapshot: after an `await` its `discovery` is the value this component
+     * last rendered with, which is `null`. The panel therefore never closed, and
+     * every attach looked like a failure. Found end to end — nothing about the
+     * code says which of the two is live.
+     */
+    const answer = useAgbrte.getState().discovery;
+    if (answer === null || answer.alias !== target || answer.phase === 'failed') return;
+    const updated = rememberMachine(target);
+    setMachines(updated);
+    onDone(updated.find((m) => m.id === target));
   };
 
-  const choose = (candidate: string): void => {
-    setPath(candidate);
-    // Folded away again, because it has done its job: the path is in the field,
-    // the next thing to press is Attach, and leaving the picker open would keep
-    // a control on screen whose only purpose was to fill a box that is now full.
-    // Browse reopens it, with the same answer, at no cost.
-    setBrowsing(false);
-    // Counts as a suggestion, not as typing: picking `~/a` on one machine and
-    // then switching machines should not carry that path across.
-    suggested.current = candidate;
-  };
-
-  // Only ever about the machine currently named. `discovery` is one alias at a
-  // time, but the field can change under it between the ask and the answer.
   const search = discovery !== null && discovery.alias === alias.trim() ? discovery : null;
   const looking = search?.phase === 'looking';
-  const found = search?.result ?? null;
-
-  /**
-   * The single sentence worth showing when there is nothing to choose from.
-   *
-   * `null` while a search is running or when it produced a list — those speak
-   * for themselves — and otherwise the one thing a person needs to know: this
-   * machine could not be reached, or answered and cannot be listed, or has
-   * nothing under the roots that were searched.
-   */
-  const quietNote: string | null =
-    search === null || looking
-      ? null
-      : search.phase === 'failed'
-        ? `Could not look on ${search.alias} — ${search.error ?? 'no reason given'}. Type the path, or try again.`
-        : found !== null && found.unavailable !== undefined
-          ? found.unavailable
-          : found !== null && found.candidates.length === 0
-            ? `Nothing found on ${search.alias} under ${found.roots.join(', ')}. Type the path.`
-            : null;
 
   return (
-    /*
-     * A short panel that scrolls only if a window is genuinely too short for it.
-     *
-     * Two structures came and went here, and both were answers to a list that no
-     * longer exists. First `max-h-[calc(100vh-16rem)]`, a number picked to stop
-     * thirty result rows carrying the Attach button off the bottom of the
-     * window; then a scroll region above a pinned action row, when the dropdown
-     * had shrunk the panel to about thirty pixels more than the column would
-     * give it. Folding the picker behind **Browse** removes the pressure rather
-     * than routing around it, and it was re-measured rather than assumed: 333px
-     * of content in 333px at rest and 412px in 412px with the picker open and
-     * twenty-seven results, so nothing scrolls at the ordinary window size in
-     * either state and Attach sits 63px above this element's own bottom edge.
-     *
-     * What is left is one `min-h-0` and one `overflow-y-auto` — the ordinary way
-     * a flex child yields — and it earns its place at a window genuinely too
-     * short for the panel: at 481px the same 412px of content gets a 180px box
-     * and *scrolls*, which is reachable rather than clipped, and clipped with no
-     * scroll is the failure both earlier structures existed to prevent. The
-     * end-to-end test measures all three states against this element's box, so a
-     * regression fails rather than being scrolled past.
-     */
     <div
       className="border-line grid min-h-0 gap-3 overflow-y-auto border-b p-4"
       data-testid="attach-panel"
@@ -318,9 +163,18 @@ export function AttachHost({
       </div>
 
       {mode === 'local' ? (
-        <button className="btn" data-testid="attach-pick-folder" onClick={() => void attachLocal()}>
-          Choose a folder…
-        </button>
+        <>
+          {/* Not a button, because there is nothing to press. The machine the app
+              is running on is present by construction, and offering to "add" it
+              would be offering to agree with a fact (see `machines.ts`). */}
+          <p className="text-muted text-xs" data-testid="attach-local-note">
+            This machine is always available. Choose a folder to work in when you start a
+            session.
+          </p>
+          <button className="btn" data-testid="attach-local-done" onClick={() => onDone()}>
+            Done
+          </button>
+        </>
       ) : (
         <>
           <label className="text-muted grid min-w-0 gap-1 text-xs">
@@ -332,204 +186,71 @@ export function AttachHost({
                 placeholder="user@hostname"
                 value={alias}
                 onChange={(e) => setAlias(e.target.value)}
-                onBlur={askNow}
               />
             ) : (
               <>
                 {/* A list *and* a field: a configured machine is the common case,
                     but a one-off `user@host` must not require editing a config
                     file first. */}
+                <select
+                  className="field"
+                  data-testid="attach-alias-list"
+                  value={sshHosts.some((h) => h.alias === alias) ? alias : ''}
+                  onChange={(e) => setAlias(e.target.value)}
+                >
+                  <option value="">Type one below…</option>
+                  {sshHosts.map((h) => (
+                    <option key={h.alias} value={h.alias}>
+                      {h.alias}
+                    </option>
+                  ))}
+                </select>
                 <input
                   className="field"
                   data-testid="attach-alias"
-                  list="agbrte-ssh-hosts"
-                  placeholder="alias, or user@hostname"
+                  placeholder="user@hostname"
                   value={alias}
                   onChange={(e) => setAlias(e.target.value)}
-                  onBlur={askNow}
                 />
-                <datalist id="agbrte-ssh-hosts">
-                  {sshHosts.map((h) => (
-                    <option key={h.alias} value={h.alias}>
-                      {h.user !== undefined ? `${h.user}@${h.hostName ?? h.alias}` : ''}
-                    </option>
-                  ))}
-                </datalist>
               </>
             )}
-            <small className="text-muted text-[11px]">
-              {sshHosts.length === 0
-                ? 'No ~/.ssh/config here — user@hostname works without one.'
-                : 'From your ~/.ssh/config. Keys, ports and jump hosts come with it.'}
-            </small>
           </label>
 
-          {/*
-            * `min-w-0` on every row that holds a field, and it is not decoration.
-            *
-            * A text input has an intrinsic width of about twenty characters and,
-            * as a flex or grid item, will not go below it — so `[input][Browse]`
-            * sets its own minimum, the grid track grows to match, and a 300px
-            * sidebar answers with a *horizontal* scrollbar next to the vertical
-            * one. `App.tsx`'s nav carries `overflow-x-hidden` because a 1px
-            * rounding at 150% Windows scaling paints a phantom one; a real one is
-            * worse.
-            *
-            * The margin is thin enough to be worth spending a class on: measured
-            * at the default window, Browse ends at 283px of 299, and at 20px text
-            * — where the panel scrolls and the scrollbar takes 15px of width —
-            * 264 of 284. The end-to-end test asserts `scrollWidth <= clientWidth`
-            * in every state, including one squeezed short enough to have that
-            * scrollbar.
-            */}
-          <label className="text-muted grid min-w-0 gap-1 text-xs">
-            Workspace path on that machine
-            {/* Browse beside the field rather than above it: what it opens is a
-                way of filling *this* box, and a control that names its target is
-                worth more than a row of its own. */}
-            <div className="flex min-w-0 gap-2">
-              <input
-                className="field min-w-0 flex-1"
-                data-testid="attach-path"
-                placeholder="/home/you/project"
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void attachRemote();
-                }}
-              />
-              <button
-                className={`btn shrink-0 ${browsing ? 'border-accent' : ''}`}
-                data-testid="attach-browse"
-                aria-expanded={browsing}
-                onClick={() => {
-                  // Asking again costs nothing when the machine has already
-                  // answered — `askNow` returns early — and it covers the case
-                  // the automatic search skipped, so Browse always has either
-                  // something to show or something to say.
-                  if (!browsing) askNow();
-                  setBrowsing((open) => !open);
-                }}
-              >
-                Browse
-              </button>
-            </div>
-          </label>
-
-          {/*
-           * One quiet line when the machine could not be listed, whether or not
-           * anybody has pressed Browse.
-           *
-           * The alternative was to keep it inside the picker, and it is the worse
-           * one: this feature exists for the person who does *not* know the path,
-           * and if the search quietly failed they would sit in front of a Browse
-           * button that opens an empty box for a reason nothing on screen gives.
-           * A failure is not the resting state, so this costs a line only when
-           * something actually went wrong — and it names the machine, because by
-           * the time it arrives the field may say something else.
-           */}
-          {!browsing && quietNote !== null && (
-            <p className="text-muted wrap-anywhere text-[11px]" data-testid="attach-found-note">
-              {quietNote}
+          {search !== null && search.phase === 'failed' && (
+            <p className="text-muted wrap-anywhere text-[11px]" data-testid="attach-error">
+              Could not reach {search.alias} — {search.error ?? 'no reason given'}.
             </p>
-          )}
-
-          {browsing && (
-            <div
-              className="border-line grid min-w-0 gap-2 rounded border p-2"
-              data-testid="attach-found"
-            >
-              {/* Pressing Browse mid-search must not open an empty box: one
-                  bounded command can take twenty seconds against a machine over a
-                  slow link, and this is where its answer will appear. */}
-              {looking && (
-                <p className="text-muted text-[11px]" data-testid="attach-looking">
-                  Looking on {search?.alias ?? alias.trim()}…
-                </p>
-              )}
-
-              {/* `wrap-anywhere` because this is the one string here with no
-                  slashes to break after — ssh puts key fingerprints and base64 in
-                  its refusals. Proven rather than assumed: without it the panel
-                  measured 486px of content in a 299px column. */}
-              {quietNote !== null && (
-                <p className="text-muted wrap-anywhere text-[11px]" data-testid="attach-found-note">
-                  {quietNote}
-                </p>
-              )}
-
-              {found !== null && found.candidates.length > 0 && (
-                <div className="grid min-w-0 gap-2" data-testid="attach-found-list">
-                  {/* Refresh beside the thing it refreshes. It is not the way in
-                      — the search has already run by the time this is on screen —
-                      it is for a machine that was asleep, a key since unlocked,
-                      or a folder made a minute ago. */}
-                  <div className="flex min-w-0 gap-2">
-                    <div className="min-w-0 flex-1">
-                      <WorkspaceSelect candidates={found.candidates} value={path} onChange={choose} />
-                    </div>
-                    <button
-                      className="btn shrink-0"
-                      data-testid="attach-discover"
-                      disabled={looking || alias.trim() === ''}
-                      onClick={() => look(alias.trim())}
-                    >
-                      {looking ? 'Looking…' : 'Refresh'}
-                    </button>
-                  </div>
-
-                  {found.truncated && (
-                    <p className="text-muted text-[11px]">
-                      There are more than these — showing the first {found.candidates.length}.
-                    </p>
-                  )}
-                  {found.partial && (
-                    <p className="text-muted text-[11px]">
-                      The search was cut short, so this list may be missing things.
-                    </p>
-                  )}
-
-                  {/* What was searched, next to the results and not in a log. One
-                      line, and it is what makes a short or empty list legible:
-                      without it an empty dropdown is indistinguishable from a
-                      broken feature. */}
-                  {found.roots.length > 0 && (
-                    <p className="text-muted text-[11px]" data-testid="attach-searched">
-                      Searched {found.roots.join(', ')} — {Math.max(1, found.depth - 1)} level
-                      {found.depth - 1 === 1 ? '' : 's'} down.
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Nothing to choose from, so Refresh is the only control in here
-                  and has to be reachable on its own. */}
-              {(found === null || found.candidates.length === 0) && !looking && (
-                <button
-                  className="btn"
-                  data-testid="attach-discover"
-                  disabled={alias.trim() === ''}
-                  onClick={() => look(alias.trim())}
-                >
-                  Refresh
-                </button>
-              )}
-            </div>
           )}
 
           <button
             className="btn"
             data-testid="attach-remote-go"
-            disabled={busy || alias === '' || path.trim() === ''}
+            disabled={busy || looking || alias.trim() === ''}
             onClick={() => void attachRemote()}
           >
-            {busy ? 'Attaching…' : 'Attach'}
+            {looking ? 'Checking…' : 'Attach'}
           </button>
+
+          {machines.length > 1 && (
+            <div className="grid gap-1" data-testid="attach-machines">
+              <span className="text-muted text-[11px]">Machines you have named</span>
+              {machines
+                .filter((m) => m.kind === 'ssh')
+                .map((m) => (
+                  <span key={m.id} className="text-xs" data-testid="attach-machine">
+                    {m.label}
+                  </span>
+                ))}
+            </div>
+          )}
+
           <small className="text-muted text-[11px]">
-            {/* Said up front because it is true and slow, and a silent wait reads
-                as a hang. */}
-            First time on a machine installs a private Node under <code>~/.agbrte</code> — nothing
-            system-wide, no sudo.
+            {/* Said up front because it is true, slow, and happens *later*: naming
+                a machine installs nothing. The first time a folder is opened on
+                one, a private Node lands under `~/.agbrte` — nothing
+                system-wide, no sudo. */}
+            Naming a machine installs nothing. Opening the first folder on it installs a private
+            Node under <code>~/.agbrte</code> — nothing system-wide, no sudo.
           </small>
         </>
       )}

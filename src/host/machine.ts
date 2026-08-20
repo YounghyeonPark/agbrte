@@ -39,9 +39,26 @@ import { join } from 'node:path';
 import { newMachineId, type MachineId } from '@shared/types/index.js';
 import { PRIVATE_DIR_MODE } from '@main/store/layout.js';
 
-/** Where Agbrte keeps this machine's own things. `~/.agbrte`. */
-export function machineRoot(home: string = homedir()): string {
-  return join(home, '.agbrte');
+/**
+ * Where Agbrte keeps this machine's own things. `~/.agbrte`.
+ *
+ * `AGBRTE_HOME` overrides it, and that is not a new idea: the installer script
+ * has always read the same variable (`AGBRTE_HOME="${AGBRTE_HOME:-$HOME/.agbrte}"`),
+ * so a machine where somebody installed elsewhere already expects it to be
+ * honoured here. Two readers of one variable rather than one convention and one
+ * hardcoded path.
+ *
+ * It is also the seam the test suite needs. Everything in this directory is
+ * *global to a machine* — the host record, the machine id, the list of known
+ * workspaces — so a suite using the real one would have every test share state
+ * with every other and with the developer's own projects. An explicit argument
+ * wins over the variable, for callers that know.
+ */
+export function machineRoot(home?: string): string {
+  if (home !== undefined) return join(home, '.agbrte');
+  const configured = process.env['AGBRTE_HOME'];
+  if (configured !== undefined && configured !== '') return configured;
+  return join(homedir(), '.agbrte');
 }
 
 /** This machine's identity file. Beside `endpoints.json`, never in a workspace. */

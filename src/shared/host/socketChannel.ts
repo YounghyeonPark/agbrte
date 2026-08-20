@@ -230,15 +230,24 @@ export function listen<Out, In>(
 ): Promise<Server> {
   return listenOnce<Out, In>(path, onConnection).catch(async (err: unknown) => {
     const code = (err as NodeJS.ErrnoException | undefined)?.code;
-    if (code !== 'EADDRINUSE' || process.platform === 'win32') throw err;
+    if (code !== 'EADDRINUSE') throw err;
 
-    // Windows is excluded above rather than handled: a named pipe name in use
-    // means a live pipe, not a leftover, so there is nothing to clear.
-    if (await answers(path)) {
+    /*
+     * A named pipe in use is a *live* pipe, so Windows skips the probe.
+     *
+     * It does not skip the sentence, which it used to: the bare `EADDRINUSE`
+     * that came back named a path and explained nothing, on the platform where
+     * this is now the ordinary way to learn that a host is already running. The
+     * probe is what is unavailable there — a pipe leaves no filesystem entry to
+     * be debris — not the diagnosis.
+     */
+    if (process.platform === 'win32' || (await answers(path))) {
       throw new Error(
-        `another Agbrte host is already serving this workspace on ${path}. ` +
-          `Only one host may own a workspace at a time (§6.6 single writer). ` +
-          `If that host belongs to another user on this machine, use your own checkout.`,
+        `another Agbrte host is already running on this machine, listening on ${path}. ` +
+          `One host per machine owns every workspace open on it (§6.6 single writer), ` +
+          `so this one will not start. Use the host that is already there, or stop it ` +
+          `with \`agbrte stop\`. If it belongs to another user on this machine, it is ` +
+          `serving their home directory and not yours — nothing here is shared.`,
       );
     }
 
@@ -257,8 +266,20 @@ export function listen<Out, In>(
   });
 }
 
-/** Is anything actually accepting connections there? */
-function answers(path: string): Promise<boolean> {
+/**
+ * Is anything actually accepting connections there?
+ *
+ * Exported because two questions need it and they are the same question: a bind
+ * conflict asking whether a socket is debris, and a client asking whether the
+ * host named in a workspace's record is still alive. Both must never trust a
+ * file, and both must be answered without a handshake — the second one is asked
+ * about hosts too old to speak this protocol.
+ */
+export function socketAnswers(target: ChannelTarget): Promise<boolean> {
+  return answers(target);
+}
+
+function answers(target: ChannelTarget): Promise<boolean> {
   return new Promise((resolve) => {
     const probe = new Socket();
     const done = (alive: boolean): void => {
@@ -268,7 +289,8 @@ function answers(path: string): Promise<boolean> {
     probe.once('connect', () => done(true));
     probe.once('error', () => done(false));
     probe.setTimeout(1_000, () => done(false));
-    probe.connect(path);
+    if (typeof target === 'string') probe.connect(target);
+    else probe.connect(target.port, target.host ?? '127.0.0.1');
   });
 }
 
@@ -341,23 +363,31 @@ export function connect<Out, In>(
 }
 
 /**
- * The socket path for a workspace, keyed by its `instanceId`.
+ * The socket path for a **machine's** host, keyed by its `machineId`.
  *
- * Keyed by instance rather than by path because §5.2 already makes `instanceId`
- * the identity of one checkout on one machine — which is exactly the scope of
- * one host. Two checkouts of the same repo get different sockets for free, and a
- * moved workspace keeps its own.
+ * It was keyed by `instanceId` — one checkout — which was exactly one host's
+ * scope for as long as a host was one per workspace. It is not any more (§8): a
+ * machine runs one host holding however many folders its sessions named, so the
+ * key is the machine, minted in `~/.agbrte/machine.json`.
  *
- * Neither platform puts the socket inside `.agbrte/`. Windows named pipes
- * live in a global namespace, not the filesystem; and a unix socket path has a
- * hard length limit around 104 bytes, which a deep workspace path plus a
- * filename can exceed — an unusual failure to debug, and easy to avoid.
+ * That change is what makes two hosts on one machine *structurally* impossible
+ * rather than merely discouraged. Before, two folders meant two sockets and
+ * nothing at the OS level objected to a second process; now every host on a
+ * machine computes the same path, so the second one loses the bind and the
+ * handling below asks the only question that matters — is anything actually
+ * there — rather than assuming either answer.
+ *
+ * Neither platform puts the socket inside a workspace. Windows named pipes live
+ * in a global namespace, not the filesystem; and a unix socket path has a hard
+ * length limit around 104 bytes, which a deep workspace path plus a filename can
+ * exceed — an unusual failure to debug, and easy to avoid. `~/.agbrte` would
+ * satisfy the first and not reliably the second, so `TMPDIR` keeps it.
  */
-export function hostSocketPath(instanceId: string): string {
+export function hostSocketPath(machineId: string): string {
   if (process.platform === 'win32') {
-    // The instance id is already unique per checkout, so it needs no hashing —
-    // and keeping it readable makes a stuck pipe diagnosable with `handle.exe`.
-    return `\\\\.\\pipe\\agbrte-${instanceId}`;
+    // The machine id is already unique, so it needs no hashing — and keeping it
+    // readable makes a stuck pipe diagnosable with `handle.exe`.
+    return `\\\\.\\pipe\\agbrte-${machineId}`;
   }
-  return `${process.env['TMPDIR'] ?? '/tmp'}/agbrte-${instanceId}.sock`;
+  return `${process.env['TMPDIR'] ?? '/tmp'}/agbrte-${machineId}.sock`;
 }
