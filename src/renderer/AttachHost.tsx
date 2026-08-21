@@ -163,18 +163,33 @@ export function AttachHost({
     if (answer === null || answer.alias !== target || answer.phase === 'failed') return;
     const updated = rememberMachine(target);
     setMachines(updated);
+
     /*
-     * Stay open, with a folder to choose. The panel is not done: a machine with
-     * no folder open has no host, and closing here is what made **Attach** look
-     * like a failed connection.
+     * One press, all the way to a host.
      *
-     * The field is filled with the folder this person opened on this machine
-     * last, or with the first thing discovery found, so the common case is one
-     * more press. It is a *suggestion* and stays editable — a folder that has
-     * been renamed must degrade to typing, never to a confident wrong attach
-     * (see `remoteWorkspaces.ts`).
+     * The panel used to stop at the machine, which left the sidebar empty and
+     * read as a failed connection; then it stopped at a *folder field*, which
+     * was honest and still two presses for the one thing anybody wants. So the
+     * folder is resolved here and opened in the same act: the folder this person
+     * opened on this machine last, or the first one discovery found.
+     *
+     * The choice is still on screen and still editable — the folder list and the
+     * field stay below, so a machine with several projects can be re-opened
+     * somewhere else without starting over. What changes is only that the common
+     * case, where the answer is the folder you used last, no longer asks.
      */
-    setPath(loadLastWorkspace(target) ?? answer.result?.candidates[0]?.path ?? '');
+    const resolved = loadLastWorkspace(target) ?? answer.result?.candidates[0]?.path ?? '';
+    setPath(resolved);
+    if (resolved !== '') {
+      await open(target, resolved);
+      return;
+    }
+    /*
+     * Nothing to resolve, which is not a failure: a machine that answered and
+     * cannot be *listed* — a Windows remote, a shell that is not POSIX — is
+     * reachable and its path has to be typed. The panel stays open on the field
+     * with the reason beside it.
+     */
   };
 
   /**
@@ -185,16 +200,21 @@ export function AttachHost({
    * sessions already in that folder, which is the whole point of pressing
    * Attach.
    */
-  const openFolder = async (): Promise<void> => {
-    const target = alias.trim();
-    const root = path.trim();
-    if (target === '' || root === '') return;
+  const open = async (target: string, root: string): Promise<void> => {
     const host = await store.attachRemoteHost(target, root);
     if (host === null) return;
     // Remembered on success and never on intent, so a path that does not work
     // is not the one offered first next time.
     rememberRemoteWorkspace(target, root);
     onDone(machines.find((m) => m.id === target));
+  };
+
+  /** The same act from the field below, for a folder the resolution missed. */
+  const openFolder = async (): Promise<void> => {
+    const target = alias.trim();
+    const root = path.trim();
+    if (target === '' || root === '') return;
+    await open(target, root);
   };
 
   const search = discovery !== null && discovery.alias === alias.trim() ? discovery : null;

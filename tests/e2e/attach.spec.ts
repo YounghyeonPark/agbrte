@@ -206,26 +206,14 @@ test.describe('attaching asks for a machine', () => {
       expect(await asked(agbrte)).toBe(1);
 
       /*
-       * And then it stays open, holding the second half.
+       * …and goes all the way to a host in that one press.
        *
-       * It used to close here, which is right about the design — naming a
-       * machine installs nothing, and a host starts because of a workspace — and
-       * was a dead end on screen: the sidebar stayed empty because no host
-       * existed yet, which from the outside is exactly what a failed connection
-       * looks like. So the panel now carries on to the folder, and *that* is
-       * what connects.
+       * Two earlier shapes were wrong in opposite directions. Stopping at the
+       * machine left the sidebar empty, which is what a failed connection looks
+       * like. Stopping at a folder *field* was honest and still two presses for
+       * the only thing anybody wanted. So the folder is resolved — the one used
+       * here last, or the first one discovery found — and opened in the same act.
        */
-      await expect(page.locator('[data-testid=attach-panel]')).toBeVisible();
-      await expect(page.locator('[data-testid=attach-workspace-trigger]')).toBeVisible();
-      // Filled with what discovery found, so the common case is one more press.
-      await expect(page.locator('[data-testid=attach-path]')).toHaveValue(
-        '/home/dev/used-0-build-01',
-      );
-      await fitsSideways(page, 'attach-panel');
-
-      // Opening the folder is the act that produces a host, and it is the one the
-      // panel used to leave undone.
-      await page.click('[data-testid=attach-open]');
       await expect(page.locator('[data-testid=attach-panel]')).toBeHidden();
       expect(await opened(agbrte)).toEqual(['build-01 /home/dev/used-0-build-01']);
     } finally {
@@ -298,13 +286,11 @@ test.describe('creating a session asks for a folder', () => {
       await stubMachines(agbrte);
       const page = agbrte.window;
 
-      // Name the machine first, which is now a separate act. The panel goes on
-      // to offer the folder; this test is about the *other* way in, so it is
-      // dismissed rather than followed.
+      // Name the machine first. That now opens a folder on it too, which this
+      // test does not care about — it is here for the *other* way in, the one
+      // that reaches a second project on a machine already attached.
       await openRemote(page);
       await page.click('[data-testid=attach-remote-go]');
-      await expect(page.locator('[data-testid=attach-folder]')).toBeVisible();
-      await page.click('[data-testid=add-host]');
       await expect(page.locator('[data-testid=attach-panel]')).toBeHidden();
 
       await page.click('[data-testid=new-session-oneshot]');
@@ -322,7 +308,13 @@ test.describe('creating a session asks for a folder', () => {
        * and flattening them would throw the ranking away at the last step.
        */
       const trigger = page.locator('[data-testid=attach-workspace-trigger]');
-      await expect(trigger).toContainText('27 found');
+      /*
+       * Already showing the folder attaching opened, which is the point of
+       * remembering one: this panel is the way to a *second* project on a
+       * machine, and it opens on the first rather than on a placeholder. The
+       * list behind it is unchanged and is what the rest of this asserts.
+       */
+      await expect(trigger).toContainText('/home/dev/used-0-build-01');
       await trigger.click();
       await expect(page.locator('[data-testid=attach-group-workspace]')).toContainText(
         'Used by Agbrte before (8)',
@@ -373,8 +365,11 @@ test.describe('creating a session asks for a folder', () => {
       /*
        * Reached, so remembered: the failure is about *listing*, and typing a
        * path there works. Treating it as unreachable would refuse a machine that
-       * is perfectly usable — so the folder step appears with an empty field and
-       * the note saying why there is nothing to choose from.
+       * is perfectly usable.
+       *
+       * This is also the case the one-press attach cannot finish: there is no
+       * folder to resolve, so rather than guess it stops here, on the field,
+       * with the reason beside it.
        */
       await expect(page.locator('[data-testid=attach-note]')).toContainText(
         'not running a POSIX shell',

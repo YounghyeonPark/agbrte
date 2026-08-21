@@ -482,8 +482,19 @@ if ($spawned.ReturnValue -ne 0) { Write-Error "Win32_Process.Create returned $($
 for ($i = 0; $i -lt ${attempts}; $i++) {
   foreach ($p in @($machineRecord, $record)) {
     if ((Test-Path $p) -and (Get-Item $p).Length -gt 0) {
-      Get-Content $p -Raw
-      exit 0
+      # Probed, not trusted (SS6.4). A record is a hint, and a host that was
+      # killed leaves one behind describing a process that is gone - so taking
+      # the first file that exists is how a launch reports the *previous* host.
+      # Measured: a suite that had just killed two hosts read a leftover pipe
+      # record and reported this build as one without loopback support, which is
+      # a wrong diagnosis about a host that had not finished starting yet.
+      $raw = Get-Content $p -Raw
+      $rec = $null
+      try { $rec = $raw | ConvertFrom-Json } catch { }
+      if ($rec -ne $null -and $rec.pid -and (Get-Process -Id $rec.pid -ErrorAction SilentlyContinue)) {
+        $raw
+        exit 0
+      }
     }
   }
   Start-Sleep -Milliseconds 500

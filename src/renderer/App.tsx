@@ -1164,12 +1164,145 @@ export function App(): JSX.Element {
               )
             ) : (
               <>
-                {/* §13: a heterogeneous roster is gated heterogeneously, and the
-                    UI must never imply otherwise. */}
                 <Artifacts
                   events={events}
                   load={(sha256, mime) => store.loadBlob(sha256, mime)}
                 />
+                {/*
+                  The pane, with the workspace sidebar beside it.
+
+                  A **row**, and that is the load-bearing bit of this layout. The
+                  session column stacks fixed rows around one transcript that is
+                  the only child allowed to give up height (see `SessionHeader`),
+                  so a rail added to that stack would cost the transcript height
+                  on every session whether or not anybody was browsing. Here the
+                  rails cost width and no height at all, and `min-h-0` +
+                  `overflow-hidden` keep a 500-entry directory scrolling inside
+                  itself rather than stretching the row.
+
+                  Left to right: the pane, the tree, the file. The pane is the
+                  only `flex-1` child, so it is the one that gives up width when
+                  a rail opens and the one that gets it back when a rail closes.
+
+                  `lg:min-w-44` is the floor under it, and it is what the viewer
+                  rail's drag runs into rather than a percentage cap on the rail
+                  itself: past 176px the transcript stops being a column of text,
+                  and *that* is the limit worth stating — a cap on the file would
+                  also have applied when the tree was closed and nobody was
+                  reading the transcript at all. The tree is `shrink-0` at a fixed
+                  224 and the viewer shrinks, so when the three minima meet on a
+                  narrow window it is the file that gives way, never the layout.
+
+                  Below `lg` the two rails become overlays and take the column
+                  one at a time; the breakpoint lives entirely in their own class
+                  lists (see `RAIL_OVERLAY`), so nothing here has to know it.
+                */}
+                <div className="flex min-h-0 flex-1 overflow-hidden">
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:min-w-44">
+                    {sessionPane === 'raw' && rawAvailable && rawAgentId !== null ? (
+                      <TerminalView sessionId={active.sessionId} agentId={rawAgentId} />
+                    ) : sessionPane === 'shell' && shellHere ? (
+                      /* Keyed by session so switching sessions is a new terminal in
+                         the new workspace rather than a stale one pointed at the
+                         old — the PTY's `cwd` belongs to a workspace, not to a
+                         window. */
+                      <Shell
+                        key={active.sessionId}
+                        sessionId={active.sessionId}
+                        instanceId={active.instanceId}
+                        program={shellProgram ?? defaultShellProgram}
+                        choices={shellChoices}
+                        onChoose={setShellProgram}
+                        hostLabel={activeHost?.label ?? active.instanceId}
+                      />
+                    ) : (
+                    <Transcript
+                      events={
+                        paneAgent === null
+                          ? events
+                          : /* Filtered rather than re-fetched: the unified timeline is
+                               the truth and a pane is a view of it, so switching back
+                               cannot show something different from what was there. */
+                            events.filter((e) => e.agentId === paneAgent)
+                      }
+                      renderRow={(e) => (
+                        <EventRow key={e.seq} event={e} by={agentLabel(active.agents, e.agentId)} />
+                      )}
+                      /* Motion at the tail while the turn runs, so a long silence
+                         reads as "busy" rather than "hung" (see WorkingDots). */
+                      working={active.state === 'working'}
+                    />
+                    )}
+                  </div>
+                  {filesOpen && (
+                    <FileBrowser
+                      /* Keyed by host: a tree of paths belongs to one workspace,
+                         and reusing the component across a switch would render
+                         one machine's folders under another machine's root. */
+                      key={active.instanceId}
+                      instanceId={active.instanceId}
+                      selected={openFile}
+                      onOpenFile={setOpenFile}
+                      onClose={() => setFilesOpen(false)}
+                    />
+                  )}
+                  {openFile !== null && (
+                    /* Keyed by path as well as by host, so opening a second file
+                       is a fresh read rather than the previous file's text left
+                       on screen under the new name while the request is in
+                       flight. */
+                    <FileViewer
+                      key={`${active.instanceId}:${openFile}`}
+                      instanceId={active.instanceId}
+                      path={openFile}
+                      width={viewerWidth}
+                      onWidth={setViewerWidth}
+                      /* Closing gives the width back to the transcript and
+                         leaves the tree exactly as it was — the two rails
+                         collapse independently, which is the whole reason they
+                         are two pieces of state. */
+                      onClose={() => setOpenFile(null)}
+                    />
+                  )}
+                </div>
+                {pending.map((p) => (
+                  <PermissionPrompt
+                    key={p.requestId}
+                    tool={p.tool}
+                    args={summarize(p.args)}
+                    onDecide={(allow) => void store.respond(p.requestId, allow)}
+                  />
+                ))}
+                {/* Below the permission prompts on purpose. A tool call is
+                    blocking a turn right now; a split proposal is a decision
+                    about what to do next, and the thing already waiting should
+                    be answered first (§4.3). */}
+                {active.pendingSplits.map((p) => (
+                  <SplitPrompt
+                    key={p.proposalId}
+                    proposal={p}
+                    onDecide={(approved) => void store.respondSplit(p.proposalId, approved)}
+                  />
+                ))}
+                {/*
+                  Everything about *this* session, at the end of it (§7).
+                
+                  These rows — the seat and its effort, the group, the pane
+                  chooser, the ports and files — used to sit between the header
+                  and the transcript, which put four rows of settings above the
+                  first line of what was said and pushed the conversation down
+                  the screen on every session. They are read rarely and changed
+                  rarely; the transcript is read constantly and the composer is
+                  where the hands already are, so the controls belong beside the
+                  composer rather than above the reading.
+                
+                  The stacking rule is unchanged and is what makes the move safe:
+                  every row here is `shrink-0` and the pane above is the only
+                  child allowed to give up height, so moving fixed rows from one
+                  end of the column to the other costs the transcript nothing.
+                */}
+                {/* §13: a heterogeneous roster is gated heterogeneously, and the
+                    UI must never imply otherwise. */}
                 <Roster
                   agents={active.agents}
                   selected={paneAgent}
@@ -1177,8 +1310,9 @@ export function App(): JSX.Element {
                   onEffort={(agentId, mode) => store.setReasoning(agentId, mode)}
                 />
                 {/* §17 Q22. Folded by default: a group is a handful of lines in
-                    a session that may run for days, and the transcript is the
-                    only child of this column allowed to give up height. */}
+                    a session that may run for days, and the transcript — above
+                    these rows now — is the only child of this column allowed to
+                    give up height. */}
                 <Group
                   session={active}
                   sessions={sessions}
@@ -1340,122 +1474,6 @@ export function App(): JSX.Element {
                     remote={remoteHere}
                   />
                 )}
-                {/*
-                  The pane, with the workspace sidebar beside it.
-
-                  A **row**, and that is the load-bearing bit of this layout. The
-                  session column stacks fixed rows around one transcript that is
-                  the only child allowed to give up height (see `SessionHeader`),
-                  so a rail added to that stack would cost the transcript height
-                  on every session whether or not anybody was browsing. Here the
-                  rails cost width and no height at all, and `min-h-0` +
-                  `overflow-hidden` keep a 500-entry directory scrolling inside
-                  itself rather than stretching the row.
-
-                  Left to right: the pane, the tree, the file. The pane is the
-                  only `flex-1` child, so it is the one that gives up width when
-                  a rail opens and the one that gets it back when a rail closes.
-
-                  `lg:min-w-44` is the floor under it, and it is what the viewer
-                  rail's drag runs into rather than a percentage cap on the rail
-                  itself: past 176px the transcript stops being a column of text,
-                  and *that* is the limit worth stating — a cap on the file would
-                  also have applied when the tree was closed and nobody was
-                  reading the transcript at all. The tree is `shrink-0` at a fixed
-                  224 and the viewer shrinks, so when the three minima meet on a
-                  narrow window it is the file that gives way, never the layout.
-
-                  Below `lg` the two rails become overlays and take the column
-                  one at a time; the breakpoint lives entirely in their own class
-                  lists (see `RAIL_OVERLAY`), so nothing here has to know it.
-                */}
-                <div className="flex min-h-0 flex-1 overflow-hidden">
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden lg:min-w-44">
-                    {sessionPane === 'raw' && rawAvailable && rawAgentId !== null ? (
-                      <TerminalView sessionId={active.sessionId} agentId={rawAgentId} />
-                    ) : sessionPane === 'shell' && shellHere ? (
-                      /* Keyed by session so switching sessions is a new terminal in
-                         the new workspace rather than a stale one pointed at the
-                         old — the PTY's `cwd` belongs to a workspace, not to a
-                         window. */
-                      <Shell
-                        key={active.sessionId}
-                        sessionId={active.sessionId}
-                        instanceId={active.instanceId}
-                        program={shellProgram ?? defaultShellProgram}
-                        choices={shellChoices}
-                        onChoose={setShellProgram}
-                        hostLabel={activeHost?.label ?? active.instanceId}
-                      />
-                    ) : (
-                    <Transcript
-                      events={
-                        paneAgent === null
-                          ? events
-                          : /* Filtered rather than re-fetched: the unified timeline is
-                               the truth and a pane is a view of it, so switching back
-                               cannot show something different from what was there. */
-                            events.filter((e) => e.agentId === paneAgent)
-                      }
-                      renderRow={(e) => (
-                        <EventRow key={e.seq} event={e} by={agentLabel(active.agents, e.agentId)} />
-                      )}
-                      /* Motion at the tail while the turn runs, so a long silence
-                         reads as "busy" rather than "hung" (see WorkingDots). */
-                      working={active.state === 'working'}
-                    />
-                    )}
-                  </div>
-                  {filesOpen && (
-                    <FileBrowser
-                      /* Keyed by host: a tree of paths belongs to one workspace,
-                         and reusing the component across a switch would render
-                         one machine's folders under another machine's root. */
-                      key={active.instanceId}
-                      instanceId={active.instanceId}
-                      selected={openFile}
-                      onOpenFile={setOpenFile}
-                      onClose={() => setFilesOpen(false)}
-                    />
-                  )}
-                  {openFile !== null && (
-                    /* Keyed by path as well as by host, so opening a second file
-                       is a fresh read rather than the previous file's text left
-                       on screen under the new name while the request is in
-                       flight. */
-                    <FileViewer
-                      key={`${active.instanceId}:${openFile}`}
-                      instanceId={active.instanceId}
-                      path={openFile}
-                      width={viewerWidth}
-                      onWidth={setViewerWidth}
-                      /* Closing gives the width back to the transcript and
-                         leaves the tree exactly as it was — the two rails
-                         collapse independently, which is the whole reason they
-                         are two pieces of state. */
-                      onClose={() => setOpenFile(null)}
-                    />
-                  )}
-                </div>
-                {pending.map((p) => (
-                  <PermissionPrompt
-                    key={p.requestId}
-                    tool={p.tool}
-                    args={summarize(p.args)}
-                    onDecide={(allow) => void store.respond(p.requestId, allow)}
-                  />
-                ))}
-                {/* Below the permission prompts on purpose. A tool call is
-                    blocking a turn right now; a split proposal is a decision
-                    about what to do next, and the thing already waiting should
-                    be answered first (§4.3). */}
-                {active.pendingSplits.map((p) => (
-                  <SplitPrompt
-                    key={p.proposalId}
-                    proposal={p}
-                    onDecide={(approved) => void store.respondSplit(p.proposalId, approved)}
-                  />
-                ))}
                 {/* The newest thing an agent said, for reading aloud (§12.4).
                     Derived here rather than tracked in the store: it is a view
                     of the transcript already in hand, and a second copy of

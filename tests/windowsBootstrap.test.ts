@@ -28,7 +28,7 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { removeTemp } from './support/tempDir.js';
 import { until } from './support/until.js';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
@@ -209,6 +209,26 @@ onWindows('against this machine, for real', () => {
         agent: await readFile('dist/main/agentHost.js'),
       },
       `wintest-${Date.now()}`,
+    );
+
+    /*
+     * Debris in the machine directory, planted on purpose.
+     *
+     * The launch script waits for `host.json` to appear and used to return the
+     * first one it found, so a record left by a host that had been *killed* was
+     * read as this launch's answer. Found by a suite that had just killed two:
+     * the leftover described a named pipe, and a build with loopback support was
+     * reported as one without it. A record is a hint (SS6.4) and the pid in it is
+     * how a reader tells a hint from a fact.
+     *
+     * Pid 0 is never a process one can open, so this is debris by construction
+     * rather than by hoping a number is free.
+     */
+    await mkdir(join(probe.home, '.agbrte'), { recursive: true });
+    await writeFile(
+      join(probe.home, '.agbrte', 'host.json'),
+      JSON.stringify({ pid: 0, socket: String.raw`\\.\pipe\agbrte-nothing-here`, protocol: 1 }),
+      'utf8',
     );
 
     const started = await startWindowsHost(runner, 'self', probe.home, node, workspace, {
