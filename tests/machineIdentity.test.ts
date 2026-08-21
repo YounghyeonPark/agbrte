@@ -53,6 +53,41 @@ describe('the machine id', () => {
     expect(endpointsPath()).toBe(join(machineRoot(), 'endpoints.json'));
   });
 
+  /**
+   * The whole point of the variable, asserted where it was quietly lost.
+   *
+   * `machineRoot` honours `AGBRTE_HOME` only when it is *given no argument* — an
+   * explicit one is a caller who knows which directory they mean. So a signature
+   * that defaults to `homedir()` never reaches that branch, and both of these
+   * did: every reader of the machine id went to `$HOME/.agbrte` no matter where
+   * the installation had been moved.
+   *
+   * It reads as a small thing and is not, because the socket is named from this
+   * id: two installations on one machine, which is the case `AGBRTE_HOME` exists
+   * for, computed the same socket and fought over it. A parallel test run is
+   * simply that case at scale — one file's client reaching another file's host —
+   * and it failed a release on all three platforms while passing serially here.
+   */
+  it('follows AGBRTE_HOME when nobody names a directory', async () => {
+    const previous = process.env['AGBRTE_HOME'];
+    process.env['AGBRTE_HOME'] = join(home, 'moved');
+    try {
+      expect(machineFilePath()).toBe(join(home, 'moved', 'machine.json'));
+      const minted = await machineIdentity();
+      // Read back through the path the variable names, not through the default.
+      const onDisk = JSON.parse(await readFile(machineFilePath(), 'utf8')) as {
+        machineId?: string;
+      };
+      expect(onDisk.machineId).toBe(minted.machineId);
+      // And a caller that *does* name one still wins, which is the reason the
+      // argument takes precedence in the first place.
+      expect(machineFilePath(home)).toBe(join(home, '.agbrte', 'machine.json'));
+    } finally {
+      if (previous === undefined) delete process.env['AGBRTE_HOME'];
+      else process.env['AGBRTE_HOME'] = previous;
+    }
+  });
+
   it('is not derived from the hostname, which is reassigned and duplicated', async () => {
     const other = await mkdtemp(join(tmpdir(), 'agbrte-home2-'));
     try {

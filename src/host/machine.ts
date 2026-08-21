@@ -89,8 +89,22 @@ export function machineRoot(home?: string): string {
   return join(homedir(), '.agbrte');
 }
 
-/** This machine's identity file. Beside `endpoints.json`, never in a workspace. */
-export function machineFilePath(home: string = homedir()): string {
+/**
+ * This machine's identity file. Beside `endpoints.json`, never in a workspace.
+ *
+ * `home?` rather than `home = homedir()`, and the difference is the whole of a
+ * bug. `machineRoot` reads `AGBRTE_HOME` **only when it is given no argument**,
+ * because an explicit one is a caller who knows which machine directory they
+ * mean — so a default of `homedir()` is not a default at all, it is every
+ * caller silently claiming to know, and the variable was ignored by all of them.
+ *
+ * What that cost: the socket is named from the id in this file, so every host on
+ * the machine computed the *same* socket no matter which directory it had been
+ * pointed at. Two installations side by side — the case `AGBRTE_HOME` exists for
+ * — would have shared one, and in a parallel test run they did: files reached
+ * one another's hosts, and a test read a record its own host had never written.
+ */
+export function machineFilePath(home?: string): string {
   return join(machineRoot(home), 'machine.json');
 }
 
@@ -114,7 +128,7 @@ export interface MachineFile {
  * file means turns would go somewhere the user did not configure, while a broken
  * machine file means only that this machine has not been named yet.
  */
-export async function machineIdentity(home: string = homedir()): Promise<MachineFile> {
+export async function machineIdentity(home?: string): Promise<MachineFile> {
   const path = machineFilePath(home);
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as Partial<MachineFile>;

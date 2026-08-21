@@ -22,8 +22,8 @@
  */
 
 import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { machineRoot } from '../../host/machine.js';
 import type { SessionId } from '@shared/types/index.js';
 
 /** The directory a workspace created today gets. */
@@ -126,9 +126,13 @@ export function workspaceDirName(root: string): string {
  * directory is not a workspace and silently relocating its store would make the
  * sessions unfindable by the next honest reader.
  */
-export function assertNotInstallRoot(root: string, home = homedir()): void {
+export function assertNotInstallRoot(root: string, home?: string): void {
   const dir = resolve(join(root, workspaceDirName(root)));
-  if (dir !== resolve(join(home, WORKSPACE_DIR))) return;
+  // `machineRoot` rather than `join(home, …)`: the install directory is wherever
+  // `AGBRTE_HOME` says it is, and a reader that joins `$HOME` itself keeps
+  // pointing at the other installation — which is the trap `machineFilePath`
+  // fell into. Passing `home` through preserves the caller that names one.
+  if (dir !== resolve(machineRoot(home))) return;
   throw new Error(
     `${resolve(root)} cannot be a workspace: its ${WORKSPACE_DIR}/ is this machine's Agbrte install directory (${dir}). Choose a project folder instead.`,
   );
