@@ -14,8 +14,14 @@
  * only do while also deciding what to do on it — and, worse, made a second
  * project on a machine you had already attached look like attaching it again.
  *
- * The workspace path field and the folder browser moved to `NewSession.tsx`,
- * where the question is asked.
+ * The folder half did not disappear, and putting it *only* in `NewSession.tsx`
+ * was a mistake this panel paid for. A machine with no folder open has no host,
+ * so pressing a button called **Attach** left the sidebar reading "No hosts
+ * attached yet" — which is exactly what a connection that failed looks like.
+ * The panel now carries on: the machine answers with the folders on it, opening
+ * one starts the host, and the sidebar shows it with the sessions already in
+ * that folder. `NewSession.tsx` asks the same questions for a second project on
+ * a machine already attached.
  *
  * ## The remote half is deliberately not a connection form
  *
@@ -38,15 +44,18 @@
  * machine" the private runtime exists to avoid.
  *
  * So **Attach** is a question rather than an installation: it asks the machine
- * what workspaces are on it, which needs nothing but a POSIX shell (§6.2) and
- * which is the same call the folder browser will make later. A machine that
- * answers is remembered. One that cannot be reached fails here, with the
- * diagnosis, rather than at the moment somebody was trying to start work.
+ * what workspaces are on it, which needs nothing but a POSIX shell (§6.2). A
+ * machine that answers is remembered. One that cannot be reached fails here,
+ * with the diagnosis, rather than at the moment somebody was trying to start
+ * work. The installation — a private Node under `~/.agbrte` — happens on the
+ * step after it, when a folder is opened, which is the step that has always
+ * been allowed to change the far side and the one the note names.
  */
 
 import { useEffect, useState, type JSX } from 'react';
 import { useAgbrte } from './store.js';
-import { loadLastAlias } from './remoteWorkspaces.js';
+import { loadLastAlias, loadLastWorkspace, rememberRemoteWorkspace } from './remoteWorkspaces.js';
+import { WorkspaceSelect } from './WorkspaceSelect.js';
 import { isPlausibleAlias } from './attachTrigger.js';
 import { loadMachines, rememberMachine, type Machine } from './machines.js';
 import type { RestoringMachine } from '../shared/ipc/contract.js';
@@ -75,6 +84,21 @@ export function AttachHost({
    */
   const [alias, setAlias] = useState(() => loadLastAlias() ?? '');
   const [machines, setMachines] = useState<Machine[]>(() => loadMachines());
+  /**
+   * The folder to open on that machine, once it has answered.
+   *
+   * The panel used to end at the machine: it asked what was on it, wrote the
+   * name down, and closed — which is correct about the *design* (naming a
+   * machine installs nothing, and a host starts because of a workspace) and a
+   * dead end on screen. Nothing appeared in the sidebar, because there was no
+   * host to appear; pressing a button called **Attach** and getting an empty
+   * sidebar is indistinguishable from a connection that failed.
+   *
+   * So the second half of the act lives here now. The machine answers with the
+   * folders it has, one of them is opened, and *that* is what starts the host
+   * and puts it in the sidebar with the sessions already in it.
+   */
+  const [path, setPath] = useState('');
 
   useEffect(() => {
     if (mode === 'remote') void store.loadSshHosts();
@@ -139,7 +163,38 @@ export function AttachHost({
     if (answer === null || answer.alias !== target || answer.phase === 'failed') return;
     const updated = rememberMachine(target);
     setMachines(updated);
-    onDone(updated.find((m) => m.id === target));
+    /*
+     * Stay open, with a folder to choose. The panel is not done: a machine with
+     * no folder open has no host, and closing here is what made **Attach** look
+     * like a failed connection.
+     *
+     * The field is filled with the folder this person opened on this machine
+     * last, or with the first thing discovery found, so the common case is one
+     * more press. It is a *suggestion* and stays editable — a folder that has
+     * been renamed must degrade to typing, never to a confident wrong attach
+     * (see `remoteWorkspaces.ts`).
+     */
+    setPath(loadLastWorkspace(target) ?? answer.result?.candidates[0]?.path ?? '');
+  };
+
+  /**
+   * Open the folder, which is the half that produces a host.
+   *
+   * `attachRemoteHost` deploys if it has to, starts the host, and re-lists what
+   * is on it — so by the time this returns the sidebar has the machine and the
+   * sessions already in that folder, which is the whole point of pressing
+   * Attach.
+   */
+  const openFolder = async (): Promise<void> => {
+    const target = alias.trim();
+    const root = path.trim();
+    if (target === '' || root === '') return;
+    const host = await store.attachRemoteHost(target, root);
+    if (host === null) return;
+    // Remembered on success and never on intent, so a path that does not work
+    // is not the one offered first next time.
+    rememberRemoteWorkspace(target, root);
+    onDone(machines.find((m) => m.id === target));
   };
 
   const search = discovery !== null && discovery.alias === alias.trim() ? discovery : null;
@@ -232,6 +287,51 @@ export function AttachHost({
           >
             {looking ? 'Checking…' : 'Attach'}
           </button>
+
+          {search !== null && search.phase === 'done' && (
+            /* The second half, on screen only once the machine has answered:
+               there is nothing to choose from before that, and a folder field
+               above a machine that may not exist invites typing a path nobody
+               can reach. */
+            <div className="grid min-w-0 gap-2" data-testid="attach-folder">
+              {search.result !== null && search.result.candidates.length > 0 && (
+                /* The list is the *input* to the decision and the field is the
+                   decision, so both are on screen: discovery is bounded and a
+                   workspace it missed still has to be reachable (§6.2). */
+                <WorkspaceSelect
+                  candidates={search.result.candidates}
+                  value={path}
+                  onChange={(chosen) => setPath(chosen)}
+                />
+              )}
+              <label className="text-muted grid min-w-0 gap-1 text-xs">
+                Folder on {search.alias}
+                <input
+                  className="field min-w-0"
+                  data-testid="attach-path"
+                  placeholder="/home/you/project"
+                  value={path}
+                  onChange={(e) => setPath(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void openFolder();
+                  }}
+                />
+              </label>
+              {search.result?.unavailable !== undefined && (
+                <p className="text-muted wrap-anywhere text-[11px]" data-testid="attach-note">
+                  {search.result.unavailable}
+                </p>
+              )}
+              <button
+                className="btn"
+                data-testid="attach-open"
+                disabled={busy || path.trim() === ''}
+                onClick={() => void openFolder()}
+              >
+                {busy ? 'Opening…' : 'Open folder'}
+              </button>
+            </div>
+          )}
 
           {machines.length > 1 && (
             <div className="grid gap-1" data-testid="attach-machines">

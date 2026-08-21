@@ -11,8 +11,15 @@
  * *asked* what is on it (§6.2), which needs nothing but a POSIX shell and runs
  * before any host exists; and the form split, because a host is one per machine
  * now and a session picks its folder when it is created (§8). So this spec drives
- * both halves: **Attach** names a machine and installs nothing, and **New
- * session** asks which machine, which folder, and shows what is already in it.
+ * both halves: **Attach** names a machine, asks it what is on it, and then opens
+ * one of those folders — which is the act that starts a host — and **New
+ * session** asks the same questions for a second project on a machine already
+ * attached.
+ *
+ * The panel used to *stop* at the machine, which was right about the design and
+ * a dead end on screen: pressing a button called Attach left the sidebar empty,
+ * because a machine with no folder open has no host, and an empty sidebar is
+ * indistinguishable from a connection that failed.
  *
  * **Stubbed in main, not in the page.** The discovery handler is replaced on
  * `ipcMain`, so everything under test is the shipping code: the store action, the
@@ -101,21 +108,38 @@ async function stubMachines(
       });
 
       ipcMain.removeHandler('agbrte:hosts.addRemote');
-      ipcMain.handle('agbrte:hosts.addRemote', (_e, alias: string, workspaceRoot: string) => ({
-        instanceId: `stub:${alias}:${workspaceRoot}`,
-        root: workspaceRoot,
-        lineageId: 'stub-lineage',
-        targetKind: 'ssh',
-        label: alias,
-        available: [],
-        endpoints: [],
-        runtimeNotes: [],
-        link: 'connected',
-      }));
+      ipcMain.handle('agbrte:hosts.addRemote', (_e, alias: string, workspaceRoot: string) => {
+        (globalThis as unknown as { __opened: string[] }).__opened ??= [];
+        (globalThis as unknown as { __opened: string[] }).__opened.push(`${alias} ${workspaceRoot}`);
+        return {
+          instanceId: `stub:${alias}:${workspaceRoot}`,
+          root: workspaceRoot,
+          lineageId: 'stub-lineage',
+          targetKind: 'ssh',
+          label: alias,
+          available: [],
+          endpoints: [],
+          runtimeNotes: [],
+          link: 'connected',
+        };
+      });
     },
     { found: FOUND, machines: MACHINES, delays: opts.delays, fail: opts.fail, unavailable: opts.unavailable },
   );
 }
+
+/**
+ * The folders opened, counted in main.
+ *
+ * What the sidebar does with them cannot be asserted here: the stub answers
+ * `hosts.addRemote` but the sidebar is filled from the *real* fleet, which has
+ * no such host and would need an `sshd` to get one. So this proves the half a
+ * page can prove — that pressing Open folder reaches the call that connects,
+ * with the path that was chosen — and `attachedMachines.test.ts` covers what
+ * main does with it.
+ */
+const opened = async (app: LaunchedApp): Promise<string[]> =>
+  app.app.evaluate(() => (globalThis as never as { __opened?: string[] }).__opened ?? []);
 
 /** How many times the machine has been asked, counted in main. */
 const asked = async (app: LaunchedApp): Promise<number> =>
@@ -145,7 +169,7 @@ async function fitsSideways(page: Page, testid: string): Promise<void> {
 }
 
 test.describe('attaching asks for a machine', () => {
-  test('asks for no folder, and installs nothing until one is opened', async () => {
+  test('asks for the folder only after the machine has answered, and then connects', async () => {
     const repo = await makeRepo();
     const agbrte = await launch(repo);
 
@@ -155,14 +179,15 @@ test.describe('attaching asks for a machine', () => {
       await openRemote(page);
 
       /*
-       * The whole panel: a machine and **Attach**. The path field and the folder
-       * browser are gone — asserted by absence, because that is the change and
-       * absence is the only way to keep it from drifting back.
+       * A machine and **Attach**, and nothing about folders yet: there is
+       * nothing to choose from before the machine has answered, and a folder
+       * field above a machine that may not exist invites typing a path nobody
+       * can reach. Asserted by absence, because absence is the only way to keep
+       * it from drifting back up the panel.
        */
       await expect(page.locator('[data-testid=attach-alias]')).toHaveValue('build-01');
       await expect(page.locator('[data-testid=attach-remote-go]')).toBeVisible();
       await expect(page.locator('[data-testid=attach-path]')).toHaveCount(0);
-      await expect(page.locator('[data-testid=attach-browse]')).toHaveCount(0);
       await expect(page.locator('[data-testid=attach-workspace-trigger]')).toHaveCount(0);
 
       // Nothing has been asked of the machine yet: naming one is a decision, and
@@ -178,8 +203,31 @@ test.describe('attaching asks for a machine', () => {
       // check, because a panel that only wrote the name down would report success
       // for a machine nobody had spoken to.
       await page.click('[data-testid=attach-remote-go]');
-      await expect(page.locator('[data-testid=attach-panel]')).toBeHidden();
       expect(await asked(agbrte)).toBe(1);
+
+      /*
+       * And then it stays open, holding the second half.
+       *
+       * It used to close here, which is right about the design — naming a
+       * machine installs nothing, and a host starts because of a workspace — and
+       * was a dead end on screen: the sidebar stayed empty because no host
+       * existed yet, which from the outside is exactly what a failed connection
+       * looks like. So the panel now carries on to the folder, and *that* is
+       * what connects.
+       */
+      await expect(page.locator('[data-testid=attach-panel]')).toBeVisible();
+      await expect(page.locator('[data-testid=attach-workspace-trigger]')).toBeVisible();
+      // Filled with what discovery found, so the common case is one more press.
+      await expect(page.locator('[data-testid=attach-path]')).toHaveValue(
+        '/home/dev/used-0-build-01',
+      );
+      await fitsSideways(page, 'attach-panel');
+
+      // Opening the folder is the act that produces a host, and it is the one the
+      // panel used to leave undone.
+      await page.click('[data-testid=attach-open]');
+      await expect(page.locator('[data-testid=attach-panel]')).toBeHidden();
+      expect(await opened(agbrte)).toEqual(['build-01 /home/dev/used-0-build-01']);
     } finally {
       await agbrte.close();
       await agbrte.window.context().close().catch(() => undefined);
@@ -250,9 +298,13 @@ test.describe('creating a session asks for a folder', () => {
       await stubMachines(agbrte);
       const page = agbrte.window;
 
-      // Name the machine first, which is now a separate act.
+      // Name the machine first, which is now a separate act. The panel goes on
+      // to offer the folder; this test is about the *other* way in, so it is
+      // dismissed rather than followed.
       await openRemote(page);
       await page.click('[data-testid=attach-remote-go]');
+      await expect(page.locator('[data-testid=attach-folder]')).toBeVisible();
+      await page.click('[data-testid=add-host]');
       await expect(page.locator('[data-testid=attach-panel]')).toBeHidden();
 
       await page.click('[data-testid=new-session-oneshot]');
@@ -318,9 +370,18 @@ test.describe('creating a session asks for a folder', () => {
       const page = agbrte.window;
       await openRemote(page);
       await page.click('[data-testid=attach-remote-go]');
-      // Reached, so remembered: the failure is about *listing*, and typing a path
-      // there works. Treating it as unreachable would refuse a machine that is
-      // perfectly usable.
+      /*
+       * Reached, so remembered: the failure is about *listing*, and typing a
+       * path there works. Treating it as unreachable would refuse a machine that
+       * is perfectly usable — so the folder step appears with an empty field and
+       * the note saying why there is nothing to choose from.
+       */
+      await expect(page.locator('[data-testid=attach-note]')).toContainText(
+        'not running a POSIX shell',
+      );
+      await expect(page.locator('[data-testid=attach-path]')).toHaveValue('');
+      await expect(page.locator('[data-testid=attach-workspace-trigger]')).toHaveCount(0);
+      await page.click('[data-testid=add-host]');
       await expect(page.locator('[data-testid=attach-panel]')).toBeHidden();
 
       await page.click('[data-testid=new-session-oneshot]');
