@@ -1094,6 +1094,16 @@ export interface OnDiskSession {
   title: string;
   goal: string;
   /**
+   * The group it was in when the host last wrote its `session.json` (§17 Q22).
+   *
+   * A hint, like every other field here: the log is what says which group a
+   * session is in, and this exists so a sidebar can label a session it has not
+   * opened without folding every log on the machine. Absent means the file does
+   * not say — an older session, or a host that predates the field — which a
+   * reader must not round to "no group".
+   */
+  group?: { groupId: string; name: string };
+  /**
    * Which checkout on that machine holds it (§5.2, §8).
    *
    * A host serves several workspaces, so "on this host" no longer answers

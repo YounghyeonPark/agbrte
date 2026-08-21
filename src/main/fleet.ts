@@ -1881,7 +1881,13 @@ export class Fleet extends EventEmitter {
   }
 
   async listOnDisk(): Promise<
-    Array<{ instanceId: InstanceId; sessionId: string; title: string; goal: string }>
+    Array<{
+      instanceId: InstanceId;
+      sessionId: string;
+      title: string;
+      goal: string;
+      group?: { groupId: string; name: string };
+    }>
   > {
     const perHost = await Promise.all(
       [...this.entries.values()].map(async (entry) =>

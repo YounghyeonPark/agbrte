@@ -18,7 +18,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { until } from './support/until.js';
@@ -188,6 +188,63 @@ describe('grouping sessions on one host', () => {
     await m.groupSessions([a.sessionId, b.sessionId], 'the migration');
     return { a: a.sessionId, b: b.sessionId, aLead, bLead };
   }
+
+  /**
+   * The sidebar's problem: labelling a session nobody has opened.
+   *
+   * Membership lives in the log, and the log is the truth — but the sidebar
+   * lists what is on *disk*, most of it never opened in this window, and
+   * folding every log on the machine to put a word next to a row is a page load
+   * per sidebar. So the group is copied into `session.json` as a hint, the same
+   * way `host.json` is a hint about a host (""" + chr(167) + """6.4), and `listOnDisk` reports it.
+   *
+   * The order is what keeps it honest: the event first, the hint after. A hint
+   * can be stale — another client can regroup a session this one has closed —
+   * and it corrects itself the moment the session is opened, because opening
+   * folds the log and never reads this field.
+   */
+  it('labels a session that has not been opened, from the hint beside its log', async () => {
+    const m = manager();
+    const { a, b } = await two(m);
+
+    const onDisk = await m.listOnDisk();
+    const rowA = onDisk.find((r) => r.sessionId === a);
+    const rowB = onDisk.find((r) => r.sessionId === b);
+    expect(rowA?.group?.name).toBe('the migration');
+    expect(rowB?.group?.groupId).toBe(rowA?.group?.groupId);
+
+    // Leaving takes the label with it, or the sidebar would keep advertising a
+    // group the session is no longer in until somebody opened it to find out.
+    await m.ungroupSession(a);
+    const after = await m.listOnDisk();
+    expect(after.find((r) => r.sessionId === a)?.group).toBeUndefined();
+    expect(after.find((r) => r.sessionId === b)?.group?.name).toBe('the migration');
+  });
+
+  /**
+   * A session written before the hint existed says nothing, rather than "none".
+   *
+   * Absent means *the file does not say*, and rounding that to "no group" is the
+   * same class of mistake as reading an absent `machineId` as a different
+   * machine (""" + chr(167) + """8): both turn "cannot tell" into a claim.
+   */
+  it('says nothing about a session whose file predates the hint', async () => {
+    const m = manager();
+    const { a } = await two(m);
+
+    // The file as an older build wrote it: no `group` key at all, while the log
+    // beside it records the join.
+    const file = join(root, '.agbrte', 'sessions', a, 'session.json');
+    const meta = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    delete meta['group'];
+    await writeFile(file, JSON.stringify(meta), 'utf8');
+
+    const row = (await m.listOnDisk()).find((r) => r.sessionId === a);
+    expect(row).toBeDefined();
+    expect(row?.group).toBeUndefined();
+    // And the truth is untouched: opening it still finds the group in the log.
+    expect(m.get(a).group?.name).toBe('the migration');
+  });
 
   it('gives both sessions one group id, recorded in each log', async () => {
     const m = manager();

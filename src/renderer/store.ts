@@ -63,7 +63,13 @@ export interface AgbrteState {
   refreshInbox(): Promise<void>;
   markInboxRead(): Promise<void>;
   sessions: Session[];
-  onDisk: Array<{ instanceId: string; sessionId: string; title: string; goal: string }>;
+  onDisk: Array<{
+    instanceId: string;
+    sessionId: string;
+    title: string;
+    goal: string;
+    group?: { groupId: string; name: string };
+  }>;
   activeId: string | null;
   active: Session | null;
   events: AgbrteEvent[];

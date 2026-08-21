@@ -2239,6 +2239,11 @@ export class SessionManager extends EventEmitter {
         { type: 'session.joined_group', groupId: group.groupId, name: group.name },
         { ...(actor !== undefined ? { actor } : {}) },
       );
+      // The hint, after the event and never instead of it: a sidebar listing
+      // sessions that are *not open* cannot fold a log to label a row, and
+      // failing a join because a label could not be written would be the tail
+      // wagging the dog (see `writeGroupHint`).
+      await session.store.writeGroupHint(group).catch(() => undefined);
       this.touch(session);
       this.emit('session', session.session);
       changed.push(session.session);
@@ -2259,6 +2264,7 @@ export class SessionManager extends EventEmitter {
       { type: 'session.left_group', groupId: group.groupId },
       { ...(actor !== undefined ? { actor } : {}) },
     );
+    await live.store.writeGroupHint(null).catch(() => undefined);
     this.touch(live);
     this.emit('session', live.session);
     return live.session;
@@ -3787,13 +3793,20 @@ export class SessionManager extends EventEmitter {
    * join a string.
    */
   async listOnDisk(): Promise<
-    Array<{ sessionId: SessionId; title: string; goal: string; instanceId: InstanceId }>
+    Array<{
+      sessionId: SessionId;
+      title: string;
+      goal: string;
+      instanceId: InstanceId;
+      group?: { groupId: string; name: string };
+    }>
   > {
     const found: Array<{
       sessionId: SessionId;
       title: string;
       goal: string;
       instanceId: InstanceId;
+      group?: { groupId: string; name: string };
     }> = [];
     for (const workspace of this.listWorkspaces()) {
       const dir = workspaceLayout(workspace.root).sessionsDir;
@@ -3813,6 +3826,11 @@ export class SessionManager extends EventEmitter {
             title: meta.title,
             goal: meta.goal,
             instanceId: workspace.instanceId,
+            // Only where the file says so. Absent is *this file does not say* —
+            // a session written before the hint existed, or one whose group was
+            // changed by another client — and a reader must not round that to
+            // "no group" (§17 Q22).
+            ...(meta.group !== undefined ? { group: meta.group } : {}),
           });
         } catch {
           // A directory without readable metadata is not a session. Skipping it

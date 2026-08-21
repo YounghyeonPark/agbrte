@@ -975,7 +975,14 @@ export interface AgbrteApi {
     ungroup(sessionId: string): Promise<Session>;
     /** Sessions on disk across every attached host, not yet loaded. */
     listOnDisk(): Promise<
-      Array<{ instanceId: string; sessionId: string; title: string; goal: string }>
+      Array<{
+        instanceId: string;
+        sessionId: string;
+        title: string;
+        goal: string;
+        /** The group the host's `session.json` names, if it names one (§17 Q22). */
+        group?: { groupId: string; name: string };
+      }>
     >;
     /** Load a session from its log — the restart path Phase 1 is judged on. */
     resume(instanceId: string, sessionId: string): Promise<Session>;

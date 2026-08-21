@@ -1524,7 +1524,7 @@ function HostGroup({
 }: {
   host: HostInfo;
   sessions: Session[];
-  unloaded: Array<{ sessionId: string; title: string }>;
+  unloaded: Array<{ sessionId: string; title: string; group?: { groupId: string; name: string } }>;
   activeId: string | null;
   /** False while the dashboard is showing them. See the call site. */
   showLoaded: boolean;
@@ -1772,7 +1772,10 @@ function HostGroup({
             <span className="truncate-line">{s.title}</span>
             {/* Quiet: the sidebar is navigation, and the pane beside it has
                 already said this. See `quietTone`. */}
-            <span className={`${LABEL} ${quietTone(s.state)}`}>{s.state.replace(/_/g, ' ')}</span>
+            <span className={`${LABEL} flex min-w-0 gap-2`}>
+              <span className={quietTone(s.state)}>{s.state.replace(/_/g, ' ')}</span>
+              {s.group !== undefined && <GroupTag name={s.group.name} />}
+            </span>
           </button>
         ))}
 
@@ -1786,11 +1789,43 @@ function HostGroup({
           >
             <span className="truncate-line">{d.title}</span>
             {/* On disk only until opened — which is what proves the log is truth. */}
-            <span className={`text-muted ${LABEL}`}>resume</span>
+            <span className={`${LABEL} flex min-w-0 gap-2`}>
+              <span className="text-muted">resume</span>
+              {/*
+                From `session.json` rather than from the log, because this row is
+                a session nobody has opened and folding every log on the machine
+                to label it would be a page load per sidebar. A hint that is
+                stale corrects itself the moment the session is opened, and one
+                that is absent shows nothing — "the file does not say" is not
+                "no group" (§17 Q22).
+              */}
+              {d.group !== undefined && <GroupTag name={d.group.name} />}
+            </span>
           </button>
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * Which group a session is in, in the sidebar (§17 Q22).
+ *
+ * Named rather than coloured: a group is a set with a name people chose, two
+ * groups may share one, and nothing routes on it — so a swatch would invent a
+ * meaning the model does not have. Truncated with the row, because a long group
+ * name must not be the thing that widens a 300px column.
+ */
+function GroupTag({ name }: { name: string }): JSX.Element {
+  return (
+    <span
+      className="text-accent truncate-line min-w-0"
+      data-testid="session-group"
+      data-group={name}
+      title={`in the group ${name}`}
+    >
+      · {name}
+    </span>
   );
 }
 

@@ -39,6 +39,22 @@ export interface SessionMeta {
   title: string;
   goal: string;
   createdAt: string;
+  /**
+   * The group this session is in, as a **hint** (§17 Q22, §6.4's sense of the word).
+   *
+   * The log is the truth and stays the truth: membership is `session.joined_group`
+   * and `session.left_group`, and a session that is opened learns its group by
+   * folding them. This is a copy for the one reader that cannot fold anything —
+   * the sidebar, listing sessions that are on disk and *not open*, where the
+   * alternative is replaying every log on the machine to label a row.
+   *
+   * Stale is possible and cheap: a group changed by another client leaves this
+   * file behind until the session is opened here, and the label corrects itself
+   * when it is. Absent means *this file does not say*, which is why the sidebar
+   * shows nothing rather than "no group" for a session written before this
+   * field existed.
+   */
+  group?: { groupId: string; name: string };
 }
 
 export interface LoadResult {
@@ -70,6 +86,22 @@ export class SessionStore {
   ) {
     this.blobs = new BlobStore(layout.attachmentsDir);
     this.paths = new PathCodec(workspaceRoot);
+  }
+
+  /**
+   * Update the group in `session.json`, leaving the log alone.
+   *
+   * Called after the event that changed it, so the hint can never claim a
+   * membership the log has not recorded. A failed write is swallowed by the
+   * caller for the same reason: the group is real once the event is appended,
+   * and a sidebar label is not worth failing a join over.
+   */
+  async writeGroupHint(group: { groupId: string; name: string } | null): Promise<void> {
+    const meta = await this.readMeta();
+    if (group === null) delete meta.group;
+    else meta.group = { ...group };
+    await writeFile(this.layout.sessionFile, `${JSON.stringify(meta, null, 2)}
+`, 'utf8');
   }
 
   static async create(
