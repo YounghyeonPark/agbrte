@@ -69,6 +69,8 @@ import {
   takeFrame,
   type ScreenBackend,
 } from '../capture/client.js';
+import { forgetMachine, rememberMachine } from '../attachedMachines.js';
+import type { RestoreState } from '../restoreMachines.js';
 import { PendingFrames } from '../capture/pending.js';
 import { scaleToFit, sizeOf } from '../content/pixels.js';
 import { scaleAnnotations, splitRedactions } from '../content/annotate.js';
@@ -99,6 +101,15 @@ export interface IpcDeps {
   loadConformance: () => Promise<ConformanceReport | null>;
   /** How a push reaches clients. Electron sends to windows; the web sends to a socket. */
   broadcast: (channel: string, payload: unknown) => void;
+  /**
+   * The startup reattach, when there is one (`restoreMachines.ts`).
+   *
+   * Optional and absent everywhere but the desktop app: reaching for the
+   * machines somebody's window was attached to is a policy of *that* process,
+   * and a browser client asking what it is doing gets an empty list rather than
+   * another client's list.
+   */
+  restorer?: { restoring: () => RestoreState[] };
   /**
    * Native folder picker, when there is one.
    *
@@ -402,7 +413,21 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     return deps.pickFolder();
   }
 
-  handle(CH.hostsRemove, (instanceId: string) => fleet.detach(instanceId as InstanceId));
+  handle(CH.hostsRemove, async (instanceId: string) => {
+    /*
+     * Removing a host is the one act that forgets a machine.
+     *
+     * Read before the detach, because afterwards there is no entry left to ask
+     * which destination it was. A local host has no alias and nothing to forget:
+     * the machine the app runs on is attached by construction.
+     */
+    const going = fleet.hosts().find((h) => h.instanceId === instanceId);
+    const alias = going?.target.kind === 'ssh' ? going.target.alias : undefined;
+    await fleet.detach(instanceId as InstanceId);
+    if (alias !== undefined && going !== undefined) {
+      await forgetMachine({ alias, workspaceRoot: going.workspaceRoot }).catch(() => undefined);
+    }
+  });
 
   handle(CH.hostsShutdown, (instanceId: string) => fleet.shutdownHost(instanceId as InstanceId));
   handle(CH.hostsUpdate, (instanceId: string) => fleet.updateHost(instanceId as InstanceId));
@@ -504,16 +529,32 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
      * on.
      */
     assertSafeAlias(alias);
-    return toInfo(
-      await fleet.attach({
-        // `useSystemConfig` is the point: the alias is handed to `ssh` unchanged,
-        // so the user's own config decides everything about the connection.
-        target: { kind: 'ssh', alias, host: alias, useSystemConfig: true },
-        workspaceRoot,
-      }),
-      deps.shippingVersion,
-    );
+    const attached = await fleet.attach({
+      // `useSystemConfig` is the point: the alias is handed to `ssh` unchanged,
+      // so the user's own config decides everything about the connection.
+      target: { kind: 'ssh', alias, host: alias, useSystemConfig: true },
+      workspaceRoot,
+    });
+    /*
+     * Remembered once it worked, and never awaited.
+     *
+     * After the attach, because a destination that could not be reached is not
+     * one this app should dial unprompted at every launch. Not awaited, and its
+     * failure swallowed, because the attach the caller asked for has already
+     * happened - turning "the shortcut list could not be written" into a failed
+     * attach would report the wrong thing about a host that is up.
+     */
+    void rememberMachine({ alias, workspaceRoot }).catch(() => undefined);
+    return toInfo(attached, deps.shippingVersion);
   });
+
+  /**
+   * What the startup reattach is doing, for a panel rather than for a dialog.
+   *
+   * Empty where there is no restorer, which is every client but the window this
+   * app opened.
+   */
+  handle(CH.hostsRestoring, (): RestoreState[] => deps.restorer?.restoring() ?? []);
 
   handle(CH.hostsRuntimes, (instanceId: string): RuntimeInfo[] =>
     fleet.runtimesOn(instanceId as InstanceId).map((r) => ({

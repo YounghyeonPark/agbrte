@@ -49,6 +49,7 @@ import { useAgbrte } from './store.js';
 import { loadLastAlias } from './remoteWorkspaces.js';
 import { isPlausibleAlias } from './attachTrigger.js';
 import { loadMachines, rememberMachine, type Machine } from './machines.js';
+import type { RestoringMachine } from '../shared/ipc/contract.js';
 
 export function AttachHost({
   onDone,
@@ -177,6 +178,7 @@ export function AttachHost({
         </>
       ) : (
         <>
+          <Restoring />
           <label className="text-muted grid min-w-0 gap-1 text-xs">
             Machine
             {sshHosts.length === 0 ? (
@@ -255,5 +257,52 @@ export function AttachHost({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * What the app is doing about the machines it was attached to last time.
+ *
+ * Shown here because this is where somebody comes to attach one: if the app is
+ * already dialling it, the useful thing is to say so rather than to have them
+ * press a button that starts a second dial. An entry that reaches its host
+ * disappears from this list and appears in the sidebar, so what is left is only
+ * what still needs a person.
+ *
+ * Polled while mounted and only while mounted, the way the CLI pane is: the
+ * panel is open for seconds at a time and the states change on a backoff
+ * measured in tens of them.
+ */
+function Restoring(): JSX.Element | null {
+  const [machines, setMachines] = useState<RestoringMachine[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    const read = (): void =>
+      void window.agbrte.hosts
+        .restoring()
+        .then((next) => {
+          if (alive) setMachines(next.filter((m) => m.state !== 'attached'));
+        })
+        .catch(() => undefined);
+    read();
+    const timer = setInterval(read, 2_000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  if (machines.length === 0) return null;
+  return (
+    <ul className="text-muted grid gap-1 text-xs" data-testid="attach-restoring">
+      {machines.map((m) => (
+        <li key={`${m.alias} ${m.workspaceRoot}`}>
+          {m.state === 'trying'
+            ? `Reconnecting to ${m.alias} (attempt ${String(m.attempts)})…`
+            : `Could not reach ${m.alias}: ${m.detail ?? 'no reason given'}`}
+        </li>
+      ))}
+    </ul>
   );
 }

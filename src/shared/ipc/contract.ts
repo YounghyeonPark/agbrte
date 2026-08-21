@@ -59,6 +59,17 @@ import type {
  * `instanceId` is the key the renderer routes by, because §5.2 makes it the
  * identity of one checkout on one machine — which is exactly one host.
  */
+/** One machine the app is reaching for at startup. See `hosts.restoring`. */
+export interface RestoringMachine {
+  alias: string;
+  workspaceRoot: string;
+  /** `trying` while dials are still scheduled; the other three are settled. */
+  state: 'trying' | 'attached' | 'unreachable' | 'refused';
+  attempts: number;
+  /** Why the last attempt failed. Absent once attached. */
+  detail?: string;
+}
+
 export interface HostInfo {
   root: string;
   /** Tracked, follows a clone (§5.2). */
@@ -634,6 +645,16 @@ export interface AgbrteApi {
     discoverWorkspaces(alias: string): Promise<WorkspaceDiscoveryDto>;
     /** Attach a workspace on a configured machine. */
     addRemote(alias: string, workspaceRoot: string): Promise<HostInfo>;
+    /**
+     * What the app is doing about the machines it was attached to last time.
+     *
+     * Quitting disconnects and does not stop (§8), so a remote host is still
+     * running when the window comes back and reattaching is the cheap path
+     * (§6.4) - but a dial can hang for as long as a network lets it, so it
+     * happens in the background and this is how it is read. Empty from any
+     * client that is not the window this app opened.
+     */
+    restoring(): Promise<RestoringMachine[]>;
     /** Stop watching a host. The workspace on disk is untouched. */
     remove(instanceId: string): Promise<void>;
     /**
@@ -1223,6 +1244,8 @@ export const CH = {
   hostsSsh: 'agbrte:hosts.ssh',
   hostsDiscover: 'agbrte:hosts.discover',
   hostsAddRemote: 'agbrte:hosts.addRemote',
+  /** What the startup reattach is doing, per remembered machine. */
+  hostsRestoring: 'agbrte:hosts.restoring',
   sessionsList: 'agbrte:sessions.list',
   sessionsCreate: 'agbrte:sessions.create',
   sessionsListOnDisk: 'agbrte:sessions.listOnDisk',

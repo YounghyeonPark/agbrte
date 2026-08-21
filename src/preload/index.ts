@@ -67,6 +67,7 @@ const api: AgbrteApi = {
     discoverWorkspaces: (alias: string) => ipcRenderer.invoke(CH.hostsDiscover, alias),
     addRemote: (alias: string, workspaceRoot: string) =>
       ipcRenderer.invoke(CH.hostsAddRemote, alias, workspaceRoot),
+    restoring: () => ipcRenderer.invoke(CH.hostsRestoring),
     update: (instanceId: string) => ipcRenderer.invoke(CH.hostsUpdate, instanceId),
     models: (instanceId: string) => ipcRenderer.invoke(CH.hostsModels, instanceId),
     modelCapabilities: (instanceId: string, endpointId: string, modelId: string) =>

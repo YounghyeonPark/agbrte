@@ -14,6 +14,7 @@
  * designed behaviour; the single-workspace shape this replaced was a limitation.
  */
 
+import { MachineRestorer } from './restoreMachines.js';
 import { loadReport } from './conformance.js';
 import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
@@ -112,6 +113,7 @@ installStrayPipeGuard({
 if (process.platform !== 'darwin') Menu.setApplicationMenu(null);
 
 let fleet: Fleet | null = null;
+let restorer: MachineRestorer | undefined;
 let ipc: { dispose: () => void } | null = null;
 let previews: PreviewForwards | null = null;
 
@@ -352,6 +354,8 @@ app.whenReady().then(async () => {
 
   ipc = registerIpc({
     fleet,
+    // Read at call time, like `updates`: the restorer is built after the window.
+    restorer: { restoring: () => restorer?.restoring() ?? [] },
     runtimes: HOST_RUNTIMES,
     previews,
     // Beside the app, so a build ships the report that describes that build.
@@ -390,6 +394,21 @@ app.whenReady().then(async () => {
   }
 
   await createWindow();
+
+  /*
+   * Reach for the machines this app was attached to when it last quit.
+   *
+   * After the window, and never awaited: an `ssh` dial can hang for as long as
+   * the network lets it, and a build box that is switched off must not keep
+   * somebody from opening their local sessions. What it finds appears in the
+   * sidebar the moment it connects, the same way a manual attach does, because
+   * it *is* the same call (`restoreMachines.ts`).
+   */
+  restorer = new MachineRestorer(fleet);
+  void restorer.start().catch((err: unknown) => {
+    process.stderr.write(`could not reattach remembered machines: ${String(err)}
+`);
+  });
 
   /*
    * Look for a new version, download it, and apply it when the person quits.
@@ -439,13 +458,18 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  // Any dial still scheduled. Hosts already attached are untouched.
+  restorer?.dispose();
   // Every `ssh -N` this app started. A forward outliving the app is a port that
   // keeps answering with nothing to explain it.
   previews?.closeAll();
   ipc?.dispose();
   // Disconnect, do **not** stop. A host outliving the app is the feature, not a
   // leak: a session started here keeps running, and the next app to open — on
-  // this machine or another device — reattaches to it. Hosts exit on their own
-  // after an idle spell (§8's parking), which is what stops them accumulating.
+  // this machine or another device — reattaches to it. That sentence was true of
+  // local workspaces and of nothing else until `restoreMachines.ts` existed: a
+  // remote host was reachable, running, and invisible until somebody pressed
+  // Attach. Hosts exit on their own after an idle spell (§8's parking), which is
+  // what stops them accumulating.
   void fleet?.detachAll();
 });
