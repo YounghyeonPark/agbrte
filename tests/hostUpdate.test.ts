@@ -384,15 +384,37 @@ describe('a link cut for real, mid-turn', () => {
     // Same process throughout: the work never stopped, it was only unwatched.
     expect(fleet.hosts()[0]!.pid).toBe(attached.pid);
 
-    // Quiet before comparing: a turn accepted before the last cut can still be
-    // draining, and a race here would read as loss.
+    /*
+     * Quiet before comparing, and quiet on **both** sides.
+     *
+     * A turn accepted before the last cut can still be draining, so the log has
+     * to stop growing first. That was the whole of this wait, and it was half of
+     * the answer: the log is written by the host and the pushes arrive over the
+     * socket, so the file can settle while the last push is still on the wire.
+     * Compared then, a moment of lag reads exactly like loss.
+     *
+     * Measured rather than guessed: this failed once on a loaded macOS runner
+     * with the *last* sequence number missing from the pushed list and every
+     * earlier one present — the signature of lag, where real loss across a
+     * reconnect leaves a hole in the middle.
+     *
+     * The claim is unchanged and still fails when it should: an event that never
+     * arrives runs this wait out, and the diagnosis names both counts instead of
+     * printing two long arrays.
+     */
     let settled: number[] = [];
-    await until(async () => {
-      const now = (await fleet.events(session.sessionId)).map((e) => e.seq);
-      const same = now.length === settled.length;
-      settled = now;
-      return same && now.length > 0;
-    }, 20_000);
+    await until(
+      async () => {
+        const now = (await fleet.events(session.sessionId)).map((e) => e.seq);
+        const stopped = now.length === settled.length && now.length > 0;
+        settled = now;
+        if (!stopped) return false;
+        const from = seen[0];
+        return from !== undefined && seen.length === now.filter((s) => s >= from).length;
+      },
+      20_000,
+      () => `the host wrote ${String(settled.length)} events and pushed ${String(seen.length)}`,
+    );
 
     /*
      * Everything the host wrote from the first event this app saw reached it
