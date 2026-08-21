@@ -81,13 +81,28 @@ export function Transcript({
        * the container and gave the transcript its own scrollbar. Wide content
        * wraps or scrolls inside its own row; the pane never scrolls sideways.
        */
-      className="grid min-h-0 w-full flex-1 [grid-template-columns:minmax(0,1fr)] content-start gap-3 overflow-y-auto overflow-x-hidden px-6 py-4"
+      className="min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden px-6 py-4"
       onScroll={(e) => {
         const el = e.currentTarget;
         atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
       }}
     >
-      {events.map((event) => renderRow(event))}
+      {/*
+        One column, centred, and the same width as the box below it.
+
+        The cap came back, and not as the 72ch measure that was removed: what
+        made that one wrong was that only the *transcript* obeyed it while the
+        state rows, the prompts and the composer ran full width past the column
+        they were meant to frame. All of them share this width now, so the
+        session reads as one conversation rather than as text stretched across a
+        monitor with controls scattered around its edges.
+
+        The scroll lives on the parent and the cap on this child, so the
+        scrollbar stays at the pane's edge instead of appearing halfway across
+        it.
+      */}
+      <div className="mx-auto grid w-full max-w-3xl [grid-template-columns:minmax(0,1fr)] content-start gap-3">
+        {events.map((event) => renderRow(event))}
       {working && (
         /* A whisper at the tail, in the meta-row voice: mid-turn the place the
            next event will appear shows life rather than a frozen last line. */
@@ -98,7 +113,8 @@ export function Transcript({
           </span>
         </div>
       )}
-      <div ref={endRef} />
+        <div ref={endRef} />
+      </div>
     </div>
   );
 }
@@ -450,9 +466,23 @@ export function Composer({
   queued = 0,
   sessionId,
   lastAgentText,
+  meta,
+  tools,
 }: {
   onSend: (text: string, blocks?: ContentBlock[]) => void;
   disabled: boolean;
+  /**
+   * What this seat is, above the message being written to it.
+   *
+   * Passed in rather than imported so this file keeps owning the *box* and
+   * nothing about what a session contains — and rendered inside the border
+   * because that is the point of the border: the model that will answer, the
+   * effort it will spend and the group it can talk to are all facts about the
+   * turn about to be sent, not about the window.
+   */
+  meta?: JSX.Element | null;
+  /** Controls that belong to the turn's surroundings — the pane, its files. */
+  tools?: JSX.Element | null;
   /** Turns waiting behind the running one — possibly sent from another device. */
   queued?: number;
   /** Which session a capture is stored against (§12.1). Absent hides the button. */
@@ -479,9 +509,20 @@ export function Composer({
 
   return (
     <form
-      // `shrink-0`: a fixed row beside the transcript, which is the only child
-      // of the session column allowed to give up height (see SessionHeader).
-      className="border-line relative flex shrink-0 items-end gap-3 border-t px-4 py-3"
+      /*
+       * One box, with everything that acts on it inside it.
+       *
+       * This was a full-width strip: a textarea stretched across the monitor
+       * with `Read aloud`, the microphone, `Screen` and `Send` trailing off to
+       * the right of it, and the session's own controls in separate strips
+       * above. Nothing said which of those belonged to the message being
+       * written. Now the border is the answer — what is inside it is part of
+       * writing a turn, and what is outside is not.
+       *
+       * `shrink-0` for the same reason as every fixed row around the transcript
+       * (see SessionHeader): it must not be the row the column crushes.
+       */
+      className="border-line focus-within:border-accent/60 relative flex shrink-0 flex-col gap-2 rounded-xl border px-3 py-2 transition-colors"
       onSubmit={(e) => {
         e.preventDefault();
         submit();
@@ -494,26 +535,30 @@ export function Composer({
           onClose={() => setPicking(false)}
         />
       )}
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {attachments.map((a, i) => (
-              <AttachmentChip
-                key={a.block.sha256 + String(i)}
-                attachment={a}
-                onRemove={() =>
-                  // Dropped from the turn, not from the store. The blob stays —
-                  // it is content-addressed and already logged as attached, and
-                  // deleting it here would mean a client could unmake a record
-                  // the host wrote.
-                  setAttachments((prev) => prev.filter((_, at) => at !== i))
-                }
-              />
-            ))}
-          </div>
-        )}
+      {meta !== undefined && meta !== null && (
+        <div className="text-muted border-line/60 min-w-0 border-b pb-2">{meta}</div>
+      )}
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {attachments.map((a, i) => (
+            <AttachmentChip
+              key={a.block.sha256 + String(i)}
+              attachment={a}
+              onRemove={() =>
+                // Dropped from the turn, not from the store. The blob stays —
+                // it is content-addressed and already logged as attached, and
+                // deleting it here would mean a client could unmake a record
+                // the host wrote.
+                setAttachments((prev) => prev.filter((_, at) => at !== i))
+              }
+            />
+          ))}
+        </div>
+      )}
+      {/* Borderless inside the box: the box is the field now, and a second
+          outline around the text would draw a frame inside a frame. */}
       <textarea
-        className="field max-h-44 min-h-[42px] w-full resize-y"
+        className="text-ink placeholder:text-muted max-h-44 min-h-[44px] w-full resize-none bg-transparent px-1 py-1 outline-none"
         data-testid="composer-input"
         value={text}
         placeholder={disabled ? 'Working…' : 'Ask the agent to do something'}
@@ -527,46 +572,51 @@ export function Composer({
           }
         }}
       />
-      </div>
-      {sessionId !== undefined && (
-        <Speak {...(lastAgentText !== undefined ? { agentText: lastAgentText } : {})} />
-      )}
-      {sessionId !== undefined && (
-        <Dictate
-          sessionId={sessionId}
-          // Appended rather than replacing: dictating after typing is adding to
-          // a thought, and §12.4 hands the words over for editing regardless.
-          onTranscript={(spoken) =>
-            setText((prev) => (prev.trim() === '' ? spoken : `${prev.trimEnd()} ${spoken}`))
-          }
-        />
-      )}
-      {sessionId !== undefined && (
+      {/* The row inside the box, which is what makes it one thing: everything
+          here acts on the message above it, and `Send` sits at the end of the
+          line the eye already finishes on. */}
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {tools}
+        {sessionId !== undefined && (
+          <Speak {...(lastAgentText !== undefined ? { agentText: lastAgentText } : {})} />
+        )}
+        {sessionId !== undefined && (
+          <Dictate
+            sessionId={sessionId}
+            // Appended rather than replacing: dictating after typing is adding
+            // to a thought, and §12.4 hands the words over for editing anyway.
+            onTranscript={(spoken) =>
+              setText((prev) => (prev.trim() === '' ? spoken : `${prev.trimEnd()} ${spoken}`))
+            }
+          />
+        )}
+        {sessionId !== undefined && (
+          <button
+            className="btn-quiet shrink-0"
+            data-testid="composer-capture"
+            type="button"
+            title="Attach a screen capture"
+            onClick={() => setPicking((p) => !p)}
+          >
+            Screen
+          </button>
+        )}
+        {/* Sending into a silent queue reads as a broken app, and with several
+            clients the backlog may not be yours. */}
+        {queued > 0 && (
+          <span data-testid="queued" className="text-state-paused shrink-0 text-xs">
+            {queued} waiting
+          </span>
+        )}
         <button
-          className="btn-quiet shrink-0 self-center"
-          data-testid="composer-capture"
-          type="button"
-          title="Attach a screen capture"
-          onClick={() => setPicking((p) => !p)}
+          className="btn ml-auto shrink-0"
+          data-testid="composer-send"
+          type="submit"
+          disabled={disabled || (text.trim() === '' && attachments.length === 0)}
         >
-          Screen
+          Send
         </button>
-      )}
-      {/* Sending into a silent queue reads as a broken app, and with several
-          clients the backlog may not be yours. */}
-      {queued > 0 && (
-        <span data-testid="queued" className="text-state-paused shrink-0 self-center text-xs">
-          {queued} waiting
-        </span>
-      )}
-      <button
-        className="btn"
-        data-testid="composer-send"
-        type="submit"
-        disabled={disabled || (text.trim() === '' && attachments.length === 0)}
-      >
-        Send
-      </button>
+      </div>
     </form>
   );
 }

@@ -99,7 +99,13 @@ export function Roster({
       // `shrink-0` for the same reason as every fixed row around the transcript
       // (see SessionHeader): a wrapped flex row is measured one line tall, so
       // without it this was the row the column chose to crush.
-      className="border-line flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2"
+      // No border, no page padding, and one line per seat: this sits *inside*
+      // the composer's box now (see `App` and `Composer`'s `meta`), where a
+      // full-bleed rule would cut that box in half and a three-line stack would
+      // push the message being written down the screen. What it says is
+      // unchanged — the role, the model, the auth and the gate (§13) — only how
+      // tall it is.
+      className="flex shrink-0 flex-wrap items-center gap-2 px-1 py-1"
     >
       {filterable && (
         <button
@@ -126,7 +132,7 @@ export function Roster({
            * events for the button. Splitting them is the only shape that leaves
            * both operable.
            */
-          <div key={agent.agentId} className="grid gap-1">
+          <div key={agent.agentId} className="flex min-w-0 flex-wrap items-center gap-2">
             {/*
               * A button where it selects something, a plain row where it would
               * not. The same content either way — the testid, the model, the
@@ -140,7 +146,7 @@ export function Roster({
                 data-agent={agent.agentId}
                 data-role={agent.role}
                 aria-pressed={isOpen}
-                className={`btn grid gap-1 text-left text-[11px] ${isOpen ? 'border-accent' : ''}`}
+                className={`btn flex flex-wrap items-baseline gap-x-2 text-left text-[11px] ${isOpen ? 'border-accent' : ''}`}
                 onClick={() => onSelect(isOpen ? null : agent.agentId)}
               >
                 <span className="flex items-baseline gap-2">
@@ -149,7 +155,7 @@ export function Roster({
                     {agent.spec.model?.modelId ?? agent.spec.runtimeId}
                   </span>
                 </span>
-                <span className={`${LABEL} flex gap-2`}>
+                <span className={`${LABEL} flex items-baseline gap-2`}>
                   <span className="text-muted">
                     {AUTH[agent.spec.auth.kind] ?? agent.spec.auth.kind}
                   </span>
@@ -164,7 +170,7 @@ export function Roster({
                 data-testid="roster-agent"
                 data-agent={agent.agentId}
                 data-role={agent.role}
-                className="grid gap-1 px-2 py-1 text-left text-[11px]"
+                className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-left text-[11px]"
               >
                 <span className="flex items-baseline gap-2">
                   <span>{agent.role}</span>
@@ -172,7 +178,7 @@ export function Roster({
                     {agent.spec.model?.modelId ?? agent.spec.runtimeId}
                   </span>
                 </span>
-                <span className={`${LABEL} flex gap-2`}>
+                <span className={`${LABEL} flex items-baseline gap-2`}>
                   <span className="text-muted">
                     {AUTH[agent.spec.auth.kind] ?? agent.spec.auth.kind}
                   </span>
@@ -191,7 +197,7 @@ export function Roster({
               * the capability is a rejected request rather than a wasted one.
               */}
             {takesEffort ? (
-              <label className={`${LABEL} flex items-center gap-2 pl-1`}>
+              <label className={`${LABEL} flex items-center gap-2`}>
                 <span className="text-muted">effort</span>
                 <select
                   data-testid="roster-effort"
@@ -209,7 +215,7 @@ export function Roster({
               </label>
             ) : (
               <span
-                className={`${LABEL} text-muted pl-1`}
+                className={`${LABEL} text-muted`}
                 data-testid="roster-effort-unavailable"
               >
                 this model does not take a reasoning effort

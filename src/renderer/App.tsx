@@ -1285,6 +1285,17 @@ export function App(): JSX.Element {
                   />
                 ))}
                 {/*
+                  One column, the width of the transcript above it.
+
+                  The rows and the composer used to run edge to edge while the
+                  conversation sat in the middle of the window, so a maximised
+                  screen showed a line of text with controls stranded at both
+                  margins. Sharing one width is what makes the session read as a
+                  single conversation — the same reason the transcript's cap came
+                  back (see `Transcript`).
+                */}
+                <div className="mx-auto flex w-full max-w-3xl shrink-0 flex-col gap-2 px-6 pb-4">
+                {/*
                   Everything about *this* session, at the end of it (§7).
                 
                   These rows — the seat and its effort, the group, the pane
@@ -1301,26 +1312,6 @@ export function App(): JSX.Element {
                   child allowed to give up height, so moving fixed rows from one
                   end of the column to the other costs the transcript nothing.
                 */}
-                {/* §13: a heterogeneous roster is gated heterogeneously, and the
-                    UI must never imply otherwise. */}
-                <Roster
-                  agents={active.agents}
-                  selected={paneAgent}
-                  onSelect={setFocusedAgent}
-                  onEffort={(agentId, mode) => store.setReasoning(agentId, mode)}
-                />
-                {/* §17 Q22. Folded by default: a group is a handful of lines in
-                    a session that may run for days, and the transcript — above
-                    these rows now — is the only child of this column allowed to
-                    give up height. */}
-                <Group
-                  session={active}
-                  sessions={sessions}
-                  events={events}
-                  onGroup={(sessionId, name) => void store.groupWith(sessionId, name)}
-                  onLeave={() => void store.leaveGroup()}
-                  onOpen={(sessionId) => void store.openSession(sessionId)}
-                />
                 {changingAgent && (
                   /* The same picker the empty session shows, folded in under
                      the seat it replaces. A session holds one agent (§4.2), so
@@ -1361,102 +1352,6 @@ export function App(): JSX.Element {
                     />
                   </div>
                 )}
-                {/* Named choices rather than one button whose label changes:
-                    `raw` and `shell` are easy to confuse and must not be, so
-                    both are visible at once with the difference spelled out in
-                    their titles. `Raw output` appears only where a seat has one
-                    — a toggle to an empty pane teaches people the feature does
-                    nothing. `Terminal` is offered wherever the host can run one,
-                    and says why when it cannot.
-
-                    **Three, and it names only what is in the main pane.** There
-                    was a fourth, `File`, back when opening a file replaced the
-                    transcript; the file now has a rail of its own to the right,
-                    so the mode it needed is gone rather than left as an entry
-                    that switches to a pane nobody moved. This row's whole job is
-                    to answer "what am I looking at" about one box, and it is
-                    only trustworthy while that stays one box.
-
-                    `Files` is not a mode and is set apart with `ml-auto`,
-                    at the *right* end of the row because that is the side its
-                    column opens on — the control and the thing it opens should
-                    not be at opposite ends of the same screen. */}
-                <div className="flex shrink-0 items-center gap-2 px-6 pt-2">
-                  <button
-                    className="btn text-[11px]"
-                    data-testid="show-chat"
-                    title="The transcript — the durable record of this session"
-                    aria-pressed={sessionPane === 'chat'}
-                    onClick={() => setSessionPane('chat')}
-                  >
-                    Chat
-                  </button>
-                  {rawAvailable && (
-                    <button
-                      className="btn text-[11px]"
-                      data-testid="show-terminal"
-                      title="What the CLI printed while the agent drove it — read-only"
-                      aria-pressed={sessionPane === 'raw'}
-                      onClick={() => setSessionPane('raw')}
-                    >
-                      Raw output
-                    </button>
-                  )}
-                  <button
-                    className="btn text-[11px]"
-                    data-testid="show-shell"
-                    title={
-                      shellHere
-                        ? 'An interactive terminal in this workspace — your shell, a CLI you ' +
-                          'drive yourself, or Agbrte attached to this session. The pane says ' +
-                          'which of them is in the transcript and which is not'
-                        : `A terminal on ${activeHost?.label ?? 'this host'} is not available yet — ` +
-                          'terminals run on the machine that owns the workspace, and only a ' +
-                          'local host ships the module for it'
-                    }
-                    aria-pressed={sessionPane === 'shell'}
-                    disabled={!shellHere}
-                    onClick={() => setSessionPane('shell')}
-                  >
-                    Terminal
-                  </button>
-                  {/* At the far end with `Files`, and for the same reason: it
-                      chooses nothing about the main pane, so grouping it with
-                      the three modes would say it was a fourth one. Remote only
-                      — a local dev server is already on localhost, and a button
-                      that does nothing visible teaches people the feature does
-                      nothing (§6.8). */}
-                  {remoteHere && (
-                    <button
-                      className="btn ml-auto text-[11px]"
-                      data-testid="toggle-ports"
-                      title="Forward a port from that machine to this one, and run a dev server there that outlives the turn"
-                      aria-pressed={portsShowing}
-                      onClick={() =>
-                        setPortsOpen((was) => ({
-                          ...was,
-                          [active.sessionId]: was[active.sessionId] !== true,
-                        }))
-                      }
-                    >
-                      Ports
-                    </button>
-                  )}
-                  {/* Not grouped with the three above: grouping it there would
-                      say it is a fourth mode, and it chooses nothing about the
-                      main pane at all. `ml-auto` moved to `Ports` when that
-                      joined it at this end, so the pair stays together and the
-                      modes stay together. */}
-                  <button
-                    className={`btn text-[11px] ${remoteHere ? '' : 'ml-auto'}`}
-                    data-testid="toggle-files"
-                    title="The files in this workspace, listed by the machine that owns it"
-                    aria-pressed={filesOpen}
-                    onClick={() => setFilesOpen((open) => !open)}
-                  >
-                    Files
-                  </button>
-                </div>
                 {portsShowing && (
                   /*
                     Directly under the control that opened it (§6.8).
@@ -1484,7 +1379,132 @@ export function App(): JSX.Element {
                   queued={queued}
                   sessionId={active.sessionId}
                   {...(lastAgentText !== undefined ? { lastAgentText } : {})}
+                  meta={
+                    <>
+                        {/* §13: a heterogeneous roster is gated heterogeneously, and the
+                            UI must never imply otherwise. */}
+                        <Roster
+                          agents={active.agents}
+                          selected={paneAgent}
+                          onSelect={setFocusedAgent}
+                          onEffort={(agentId, mode) => store.setReasoning(agentId, mode)}
+                        />
+                        {/* §17 Q22. Folded by default: a group is a handful of lines in
+                            a session that may run for days, and the transcript — above
+                            these rows now — is the only child of this column allowed to
+                            give up height. */}
+                        <Group
+                          session={active}
+                          sessions={sessions}
+                          events={events}
+                          onGroup={(sessionId, name) => void store.groupWith(sessionId, name)}
+                          onLeave={() => void store.leaveGroup()}
+                          onOpen={(sessionId) => void store.openSession(sessionId)}
+                        />
+                    </>
+                  }
+                  tools={
+                    <>
+                        {/* Named choices rather than one button whose label changes:
+                            `raw` and `shell` are easy to confuse and must not be, so
+                            both are visible at once with the difference spelled out in
+                            their titles. `Raw output` appears only where a seat has one
+                            — a toggle to an empty pane teaches people the feature does
+                            nothing. `Terminal` is offered wherever the host can run one,
+                            and says why when it cannot.
+
+                            **Three, and it names only what is in the main pane.** There
+                            was a fourth, `File`, back when opening a file replaced the
+                            transcript; the file now has a rail of its own to the right,
+                            so the mode it needed is gone rather than left as an entry
+                            that switches to a pane nobody moved. This row's whole job is
+                            to answer "what am I looking at" about one box, and it is
+                            only trustworthy while that stays one box.
+
+                            `Files` is not a mode and is set apart with `ml-auto`,
+                            at the *right* end of the row because that is the side its
+                            column opens on — the control and the thing it opens should
+                            not be at opposite ends of the same screen. */}
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            className="btn text-[11px]"
+                            data-testid="show-chat"
+                            title="The transcript — the durable record of this session"
+                            aria-pressed={sessionPane === 'chat'}
+                            onClick={() => setSessionPane('chat')}
+                          >
+                            Chat
+                          </button>
+                          {rawAvailable && (
+                            <button
+                              className="btn text-[11px]"
+                              data-testid="show-terminal"
+                              title="What the CLI printed while the agent drove it — read-only"
+                              aria-pressed={sessionPane === 'raw'}
+                              onClick={() => setSessionPane('raw')}
+                            >
+                              Raw output
+                            </button>
+                          )}
+                          <button
+                            className="btn text-[11px]"
+                            data-testid="show-shell"
+                            title={
+                              shellHere
+                                ? 'An interactive terminal in this workspace — your shell, a CLI you ' +
+                                  'drive yourself, or Agbrte attached to this session. The pane says ' +
+                                  'which of them is in the transcript and which is not'
+                                : `A terminal on ${activeHost?.label ?? 'this host'} is not available yet — ` +
+                                  'terminals run on the machine that owns the workspace, and only a ' +
+                                  'local host ships the module for it'
+                            }
+                            aria-pressed={sessionPane === 'shell'}
+                            disabled={!shellHere}
+                            onClick={() => setSessionPane('shell')}
+                          >
+                            Terminal
+                          </button>
+                          {/* At the far end with `Files`, and for the same reason: it
+                              chooses nothing about the main pane, so grouping it with
+                              the three modes would say it was a fourth one. Remote only
+                              — a local dev server is already on localhost, and a button
+                              that does nothing visible teaches people the feature does
+                              nothing (§6.8). */}
+                          {remoteHere && (
+                            <button
+                              className="btn ml-auto text-[11px]"
+                              data-testid="toggle-ports"
+                              title="Forward a port from that machine to this one, and run a dev server there that outlives the turn"
+                              aria-pressed={portsShowing}
+                              onClick={() =>
+                                setPortsOpen((was) => ({
+                                  ...was,
+                                  [active.sessionId]: was[active.sessionId] !== true,
+                                }))
+                              }
+                            >
+                              Ports
+                            </button>
+                          )}
+                          {/* Not grouped with the three above: grouping it there would
+                              say it is a fourth mode, and it chooses nothing about the
+                              main pane at all. `ml-auto` moved to `Ports` when that
+                              joined it at this end, so the pair stays together and the
+                              modes stay together. */}
+                          <button
+                            className={`btn text-[11px] ${remoteHere ? '' : 'ml-auto'}`}
+                            data-testid="toggle-files"
+                            title="The files in this workspace, listed by the machine that owns it"
+                            aria-pressed={filesOpen}
+                            onClick={() => setFilesOpen((open) => !open)}
+                          >
+                            Files
+                          </button>
+                        </div>
+                    </>
+                  }
                 />
+                </div>
               </>
             )}
           </>

@@ -121,7 +121,7 @@ export function Group({
   const lines = exchange(events);
 
   return (
-    <details className="border-line shrink-0 border-b px-6 py-2" data-testid="group">
+    <details className="shrink-0 px-1 py-1" data-testid="group">
       <summary className={`${LABEL} text-muted cursor-pointer`}>
         {group === undefined ? 'group — none' : `group — ${group.name}`}
         {lines.length > 0 ? ` · ${lines.length} message${lines.length === 1 ? '' : 's'}` : ''}
