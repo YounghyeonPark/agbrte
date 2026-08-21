@@ -13,8 +13,9 @@
  *     test, and so is the exit code that reports it.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawn } from 'node:child_process';
+import { noConsoleWindow } from './support/noConsoleWindow.js';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -31,6 +32,20 @@ import { openWorkspace } from '@main/store/identity.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { InstanceId } from '@shared/types/index.js';
+
+/*
+ * A budget that reflects what these tests actually do.
+ *
+ * Every case in this file spawns a real process — a shell, a browser, the built
+ * CLI, a detached host — and the 5-second default is a number nobody chose for
+ * that. It is the arrangement that fails worst: green on an idle machine, red on
+ * a loaded CI runner, and no signal about which. A test that fails because a
+ * machine was busy is not reporting anything about the code; only a genuine hang
+ * should reach this.
+ */
+vi.setConfig({ testTimeout: 30_000 });
+
+
 
 let root: string;
 let instanceId: InstanceId;
@@ -265,6 +280,7 @@ describe('asking what is here must not make something be here', () => {
     new Promise((resolve) => {
       const child = spawn(process.execPath, [join(process.cwd(), 'dist/cli/agbrte.js'), ...args], {
         stdio: ['ignore', 'pipe', 'pipe'],
+        ...noConsoleWindow,
       });
       let out = '';
       child.stdout.on('data', (b: Buffer) => (out += b.toString()));

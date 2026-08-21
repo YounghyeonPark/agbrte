@@ -28,6 +28,7 @@ import {
 } from '@main/host/transports.js';
 import type { ExecutionTarget, TargetKind } from '@shared/types/index.js';
 
+
 const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots.splice(0)) {

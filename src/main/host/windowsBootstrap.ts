@@ -299,7 +299,8 @@ export function windowsSshRunner(sshPath = 'ssh'): SshRunner {
               // colon, and `C:\…` would otherwise lose its drive.
               `${alias}:${stagingPathFor(remotePath).replaceAll('\\', '/')}`,
             ],
-            { stdio: ['ignore', 'ignore', 'pipe'] },
+            // No console window for `scp`; see `sshTransport`'s `exec`.
+            { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true },
           );
           let stderr = '';
           child.stderr.on('data', (d) => (stderr += d));
@@ -427,7 +428,8 @@ New-Item -ItemType Directory -Force -Path $ws | Out-Null
 ${workspaceDirScript()}
 # Both records: the machine's own, which a host from v21 writes first, and the
 # workspace's, which is all a host deployed before it writes at all (§8).
-$machineRecord = Join-Path "$env:USERPROFILE\\.agbrte" "host.json"
+$machineHome = Join-Path "$env:USERPROFILE" ".agbrte"
+$machineRecord = Join-Path $machineHome "host.json"
 $record = Join-Path $dir "host.json"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 # The log lives in the **workspace**, not in the profile.
@@ -468,7 +470,11 @@ Set-Content -Path "$log.err" -Value "" -NoNewline
 $exe = "${nodePath}"
 $bundle = "${windowsBundle(home)}"
 $inner = '"' + $exe + '" "' + $bundle + '" "' + $ws + '" > "' + $log + '" 2> "' + $log + '.err"'
-$launch = 'cmd.exe /c set AGBRTE_HOST_CONTROL=loopback&&${lingerCmd}' + $inner
+# Told where its machine directory is rather than left to work it out: the app
+# looks for host.json under %USERPROFILE%\\.agbrte and the host computes its own
+# root, and two beliefs about one path is the disagreement AGBRTE_HOME exists to
+# prevent (see machine.ts). No space before the && or set keeps it in the value.
+$launch = 'cmd.exe /c set AGBRTE_HOME=' + $machineHome + '&&set AGBRTE_HOST_CONTROL=loopback&&${lingerCmd}' + $inner
 $spawned = ([wmiclass]'root\\cimv2:Win32_Process').Create($launch, $ws, $null)
 if ($spawned.ReturnValue -ne 0) { Write-Error "Win32_Process.Create returned $($spawned.ReturnValue)"; exit 1 }
 # The record is written only once the port is accepting, so waiting for it is

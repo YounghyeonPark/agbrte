@@ -40,23 +40,51 @@ import { newMachineId, type MachineId } from '@shared/types/index.js';
 import { PRIVATE_DIR_MODE } from '@main/store/layout.js';
 
 /**
- * Where Agbrte keeps this machine's own things. `~/.agbrte`.
+ * The environment variable that moves this machine's directory.
  *
- * `AGBRTE_HOME` overrides it, and that is not a new idea: the installer script
- * has always read the same variable (`AGBRTE_HOME="${AGBRTE_HOME:-$HOME/.agbrte}"`),
- * so a machine where somebody installed elsewhere already expects it to be
- * honoured here. Two readers of one variable rather than one convention and one
- * hardcoded path.
+ * **A real capability, not a test affordance**, and it predates this file: the
+ * installer script has always read the same name
+ * (`AGBRTE_HOME="${AGBRTE_HOME:-$HOME/.agbrte}"`), so a machine where somebody
+ * installed elsewhere already expects it honoured. What was missing was a single
+ * place that read it, and the consequence of the gap was immediate — the whole
+ * point of a host being one per machine is that everything on that machine
+ * agrees where the machine's directory is, so a second reader that computes
+ * `$HOME/.agbrte` by hand is not a duplicate, it is a *disagreement*.
  *
- * It is also the seam the test suite needs. Everything in this directory is
- * *global to a machine* — the host record, the machine id, the list of known
- * workspaces — so a suite using the real one would have every test share state
- * with every other and with the developer's own projects. An explicit argument
- * wins over the variable, for callers that know.
+ * It exists because "one host per machine" has to mean *one installation*
+ * rather than *one computer*. Three cases need them apart:
+ *
+ *  - **Two builds side by side.** A release and a checkout on one laptop are two
+ *    installations: two bundles, two sets of credentials, two hosts. Without a
+ *    lever they would fight over one socket, and the loser would report that a
+ *    host was already running — correctly, and uselessly.
+ *  - **A shared machine.** `~` is already per user, so this is not what keeps two
+ *    people apart; what it allows is one person running an isolated instance
+ *    without disturbing the one their editor is attached to.
+ *  - **A test suite.** Everything in this directory is global to a machine, so a
+ *    suite using the real one shares a host between every file, spends §5.3
+ *    relocation signals in the developer's own projects, and — the failure that
+ *    made this urgent — hands a test expecting *no host* a perfectly good one
+ *    that another file left running.
+ */
+export const MACHINE_HOME_ENV = 'AGBRTE_HOME';
+
+/**
+ * Where Agbrte keeps this machine's own things. `~/.agbrte` unless moved.
+ *
+ * **Everything that names the machine's directory goes through here** — the
+ * machine id, the host record, the workspace registry, the endpoints file — and
+ * the socket follows, because it is named from the `machineId` this directory
+ * holds. That is what makes `AGBRTE_HOME` move an *installation* rather than one
+ * file: a reader that joined `$HOME` itself would keep pointing at the other one.
+ *
+ * An explicit argument wins over the variable, for callers that know which
+ * machine directory they mean — a host told where it lives, and the remote
+ * bootstrap, which is computing a path on somebody else's computer.
  */
 export function machineRoot(home?: string): string {
   if (home !== undefined) return join(home, '.agbrte');
-  const configured = process.env['AGBRTE_HOME'];
+  const configured = process.env[MACHINE_HOME_ENV];
   if (configured !== undefined && configured !== '') return configured;
   return join(homedir(), '.agbrte');
 }

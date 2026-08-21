@@ -25,8 +25,10 @@
  */
 
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { removeTemp } from './support/tempDir.js';
+import { until } from './support/until.js';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
@@ -96,9 +98,17 @@ afterEach(() => {
 
 afterAll(async () => {
   for (const root of roots.splice(0)) {
-    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    await removeTemp(root);
   }
-});
+  /*
+   * A longer deadline than the 10s default, because what is being removed is a
+   * directory a *deliberately lingering* host still has open — `lingerMs` here is
+   * 60s, so it outlives the test that started it, on purpose. `removeTemp`
+   * retries for a couple of seconds per root against Windows sharing
+   * violations, and under a full suite that overran the default and turned one
+   * failed assertion into a second failure with an unrelated name.
+   */
+}, 120_000);
 
 describe('a command survives every shell between here and there', () => {
   it('carries nothing any of them could mangle', () => {
@@ -233,15 +243,27 @@ onWindows('against this machine, for real', () => {
     expect(events.map((e) => e.type)).toContain('agent.stopped');
     expect(JSON.stringify(events)).toContain('a turn on a Windows host');
 
-    // The token is a credential and the record is where it lives. On Windows
-    // there is no mode to check, so what is asserted is that it exists at all
-    // and is not in the log.
-    const record = JSON.parse(
-      await readFile(join(workspace, '.agbrte', 'host.json'), 'utf8'),
-    ) as { token?: string; port?: number };
+    /*
+     * The token is a credential and the record is where it lives. On Windows
+     * there is no mode to check, so what is asserted is that it exists at all
+     * and is not in the log.
+     *
+     * **Waited for rather than read straight off.** The host opens the workspace
+     * *before* it listens and publishes the pointer *after*, because the pointer
+     * is for the next client to arrive rather than for the one already talking to
+     * it (§8) — so a completed handshake is no promise that the file is on disk
+     * yet. Read once, this raced under a full suite and failed with ENOENT while
+     * the host was perfectly well.
+     */
+    const recordPath = join(workspace, '.agbrte', 'host.json');
+    await until(() => existsSync(recordPath), 20_000, () => `${recordPath} was never written`);
+    const record = JSON.parse(await readFile(recordPath, 'utf8')) as {
+      token?: string;
+      port?: number;
+    };
     expect(record.token).toBe(started.token);
     expect(record.port).toBe(started.port);
-    await expect(stat(join(workspace, '.agbrte', 'host.json'))).resolves.toBeDefined();
+    await expect(stat(recordPath)).resolves.toBeDefined();
 
     const log = await readFile(
       join(workspace, '.agbrte', 'sessions', session.sessionId, 'events.jsonl'),

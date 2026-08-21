@@ -720,7 +720,10 @@ export class Fleet extends EventEmitter {
    */
   private async redial(
     entry: Entry,
-    opts: { reason: string; deadline?: number },
+    opts: {
+      reason: string;
+      deadline?: number;
+    },
   ): Promise<string | null> {
     let cancelled = false;
     entry.stopReconnect = () => {
@@ -966,6 +969,33 @@ export class Fleet extends EventEmitter {
      */
     entry.updating = true;
 
+    /*
+     * Every other workspace open on that machine, marked too (§8).
+     *
+     * A host is one per *machine* and holds several folders, so restarting one
+     * folder's host restarts them all — they share the process, not just the
+     * machine. `onClosing` reads `updating` to tell "the host is going away"
+     * from "the host is going away *because we are restarting it*", and without
+     * this every sibling entry took the first reading and was **forgotten**:
+     * updating one project dropped the others out of the sidebar, mid-turn,
+     * with their sessions perfectly intact and nothing on screen saying so.
+     *
+     * Matched on `machineId`, and an entry that does not report one is left
+     * alone: absence means *cannot tell* (§6.7), and marking an entry that may
+     * be on a different machine would suppress a `forget` that was correct.
+     */
+    const peers =
+      entry.machineId === undefined
+        ? []
+        : [...this.entries.values()].filter(
+            (other) => other !== entry && other.machineId === entry.machineId,
+          );
+    for (const peer of peers) peer.updating = true;
+
+    const releasePeers = (): void => {
+      for (const peer of peers) delete peer.updating;
+    };
+
     let result: { stopped: boolean; reason?: string };
     try {
       result = await entry.connection.requestShutdown();
@@ -974,6 +1004,7 @@ export class Fleet extends EventEmitter {
       // is a dropped link and gets a dropped link's answer: keep the host, keep
       // dialling. Saying "stopped" here would be a guess.
       delete entry.updating;
+      releasePeers();
       void this.reconnect(entry, 'the link dropped while asking the host to restart');
       throw new AttachRefused(
         `could not ask the host for ${entry.workspaceRoot} to restart: ` +
@@ -984,6 +1015,7 @@ export class Fleet extends EventEmitter {
 
     if (!result.stopped) {
       delete entry.updating;
+      releasePeers();
       throw new AttachRefused(
         `the host would not stop${result.reason === undefined ? '' : `: ${result.reason}`}. ` +
           `It keeps running the version it started with until it does.`,
@@ -999,11 +1031,43 @@ export class Fleet extends EventEmitter {
     this.emit('host', snapshot(entry));
     this.emit('link', instanceId, 'reconnecting', 'restarting onto the shipped bundle');
 
+    /*
+     * The siblings go down with it, so they are told and dialled again.
+     *
+     * Marked `reconnecting` before the wait rather than after: they are already
+     * unreachable at this point, and a card claiming `connected` about a process
+     * that has agreed to exit is the one state the link badge exists to prevent.
+     */
+    for (const peer of peers) {
+      peer.unlisten();
+      peer.connection.disconnect();
+      peer.link = 'reconnecting';
+      this.emit('host', snapshot(peer));
+      this.emit('link', peer.instanceId, 'reconnecting', 'the host for this machine is restarting');
+    }
+
     const failure = await this.redial(entry, {
       reason: 'restarted onto the shipped bundle',
       deadline: Date.now() + (this.deps.updateWindowMs ?? UPDATE_WINDOW_MS),
     });
     delete entry.updating;
+
+    /*
+     * Redialled after the one that was asked for, not in parallel with it.
+     *
+     * The replacement host opens the folder it is started with; a sibling's
+     * folder is reopened by the sibling's own connection saying so in `hello`
+     * (§8). Doing that before the host exists would just be a failed dial with a
+     * backoff behind it. No deadline on these: the person pressed a button about
+     * *one* workspace, and the others coming back is the ordinary reconnect the
+     * fleet never gives up on.
+     */
+    for (const peer of peers) {
+      delete peer.updating;
+      if (this.entries.has(peer.instanceId)) {
+        void this.redial(peer, { reason: 'the host for this machine restarted' });
+      }
+    }
 
     if (failure === null) return snapshot(entry);
 

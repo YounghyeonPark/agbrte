@@ -21,6 +21,7 @@ import { CommandUnavailable, type HostConnection } from '@main/host/hostConnecti
 import { openWorkspace } from '@main/store/identity.js';
 import type { SessionId } from '@shared/types/index.js';
 
+
 /**
  * A host bundle built from before §6.7, produced by hand:
  *

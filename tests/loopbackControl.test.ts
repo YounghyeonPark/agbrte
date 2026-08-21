@@ -16,6 +16,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { useOwnMachine } from './support/machineHome.js';
 import { connect as tcpConnect, type Server } from 'node:net';
 import { mkdtemp, rm, stat, readFile } from 'node:fs/promises';
 import { networkInterfaces, tmpdir } from 'node:os';
@@ -32,6 +33,16 @@ import { readHostRecord } from '../src/host/discovery.js';
 import { HostConnection } from '@main/host/hostConnection.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { AgentId, SessionId } from '@shared/types/index.js';
+
+/*
+ * Its own machine directory per test (§8).
+ *
+ * This suite starts real hosts, and a host is one per machine — so without this
+ * every test here would share one with every other test in the run, and a case
+ * asserting that *nothing* is listening would be handed one that a previous case
+ * left lingering. See `support/machineHome.ts`.
+ */
+useOwnMachine();
 
 /**
  * The built agent host, which `startSessionHost` forks.

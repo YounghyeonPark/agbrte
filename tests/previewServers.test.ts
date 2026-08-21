@@ -14,6 +14,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { removeTemp } from './support/tempDir.js';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,7 +30,7 @@ afterEach(async () => {
   // refuses to remove a folder a dying process still has open.
   await new Promise((r) => setTimeout(r, 300));
   for (const root of roots.splice(0)) {
-    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await removeTemp(root);
   }
 });
 
@@ -233,15 +234,16 @@ describe('stopping reaches the process that holds the port', () => {
      * `outer` had died instantly with a `ReferenceError` that was sitting in
      * `servers.log(parent.id)` the entire time, one call away.
      */
-    const parentSaid = (): string => {
+    const parentState = (): string => {
       const record = servers.list('s1').find((s) => s.id === parent.id);
       const said = servers.log(parent.id)?.lines.join('\n').trim() ?? '';
       return [
-        `the grandchild never wrote ${marker}.`,
         `parent pid=${String(record?.pid)} exit=${JSON.stringify(record?.exit)}`,
         said === '' ? 'parent said nothing at all' : `parent said:\n${said}`,
       ].join('\n');
     };
+    const parentSaid = (): string =>
+      `the grandchild never wrote ${marker}.\n${parentState()}`;
 
     /**
      * Liveness is established by *waiting for it*, not by sleeping and hoping.
@@ -260,24 +262,40 @@ describe('stopping reaches the process that holds the port', () => {
     expect(servers.stop(parent.id)).toBe(true);
 
     /**
-     * A sleep is right *here* and nowhere else in this test: the claim is that
-     * nothing happens for a while, and there is no fact to poll for. An absence
-     * only means something if you waited.
+     * The marker is **deleted** rather than merely re-read. "The contents stopped
+     * changing" is a weaker claim than it looks — a writer that is merely
+     * descheduled, or one whose clock has not ticked, satisfies it too, so the
+     * test could pass with the grandchild alive and still on the port. A writer
+     * that is actually running recreates this file within 100 ms; one that is
+     * gone never does. That is the invariant the port cares about: no descendant
+     * of the killed process survived, whatever the mechanism that was supposed
+     * to reach it.
      *
-     * The marker is **deleted** rather than merely re-read. "The contents
-     * stopped changing" is a weaker claim than it looks — a writer that is
-     * merely descheduled, or one whose clock has not ticked, satisfies it too,
-     * so the test could pass with the grandchild alive and still on the port. A
-     * writer that is actually running recreates this file within 100 ms; one
-     * that is gone never does. That is the invariant the port cares about: no
-     * descendant of the killed process survived, whatever the mechanism that was
-     * supposed to reach it.
+     * **Deleted repeatedly, because the kill is a process and not an instant.**
+     * This waited 1.5 s and then deleted once, which read as a hard failure
+     * three runs out of three — and the kill was working the whole time.
+     * Measured from inside `killGroup`: spawning `taskkill`, walking a
+     * four-process tree and terminating it took **1,844 ms** here, so the delete
+     * landed mid-kill and what came back was the byte the grandchild wrote on its
+     * way out. A leftover file, read as a live writer.
+     *
+     * So the deadline is on the *kill landing*, which nothing here promised to be
+     * quick, while the invariant is unchanged and in fact asserted harder: the
+     * absence has to actually hold, not merely be sampled once at a moment this
+     * test picked.
      */
-    await new Promise((r) => setTimeout(r, 1_500));
-    await rm(marker, { force: true, maxRetries: 5, retryDelay: 50 });
-
-    await new Promise((r) => setTimeout(r, 1_000));
-    expect(await stamp(), 'the grandchild outlived the kill and still holds the port').toBe('');
+    await until(
+      async () => {
+        await rm(marker, { force: true, maxRetries: 5, retryDelay: 50 });
+        // Three of the grandchild's write intervals. It gets every chance.
+        await new Promise((r) => setTimeout(r, 300));
+        return (await stamp()) === '';
+      },
+      20_000,
+      () =>
+        `the grandchild kept rewriting ${marker} for 20s after the kill, so it ` +
+        `outlived it and still holds the port.\n${parentState()}`,
+    );
   }, 60_000);
 
   it('stops everything a session started', async () => {

@@ -25,9 +25,20 @@
  */
 
 import { delimiter } from 'node:path';
+import { MACHINE_HOME_ENV } from './machine.js';
 
-/** `~/.agbrte`, from an explicit home so a test can point it anywhere. */
+/**
+ * The machine's directory, from the environment this PATH belongs to.
+ *
+ * Takes an `env` rather than calling `machineRoot()` because the whole point is
+ * that it describes *that* environment — the one about to be handed to a fork —
+ * and not this process's. `AGBRTE_HOME` first, for `machineRoot`'s reason: a
+ * second installation puts its `npm/bin` under *its* root, and reading `$HOME`
+ * here would add the other installation's tools to this one's PATH.
+ */
 function agbrteRoot(env: NodeJS.ProcessEnv): string | null {
+  const configured = env[MACHINE_HOME_ENV];
+  if (configured !== undefined && configured !== '') return configured;
   // `USERPROFILE` for completeness rather than for use: the scripts that create
   // these directories are POSIX-only, so on Windows this finds nothing and
   // correctly adds nothing.

@@ -20,6 +20,14 @@
  * real module on a real Linux host — `esbuild`'d and executed there — and that
  * run is what the fixture below is shaped by.
  *
+ * **A skipped file is a file nobody runs, and that has cost once already.** The
+ * refusal sentence changed when the socket key became `machineId`, and the
+ * assertion here still named the old wording: green on the machine it was
+ * written on, red on all three CI platforms. The wording itself is now asserted
+ * in `machineHost.test.ts`, which runs everywhere — Windows reaches the same
+ * throw through a named pipe already in use. What is left here is the part
+ * Windows genuinely cannot have: a socket file with nothing behind it.
+ *
  * ## The first fixture passed while testing nothing
  *
  * It closed a server's handle in-process and assumed the path survived. It does
@@ -31,6 +39,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
+import { noConsoleWindow } from './support/noConsoleWindow.js';
 import { existsSync } from 'node:fs';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -66,7 +75,10 @@ async function leaveStale(dir: string, path: string): Promise<void> {
       `createServer(() => {}).listen(${JSON.stringify(path)}, () => console.log('ready'));\n`,
     'utf8',
   );
-  const child = spawn(process.execPath, [runner], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const child = spawn(process.execPath, [runner], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    ...noConsoleWindow,
+  });
   await new Promise<void>((r) => child.stdout.once('data', () => r()));
   child.kill('SIGKILL');
   // The kernel does not remove the inode; only a clean close does. Waiting is
@@ -92,10 +104,18 @@ posix('a leftover socket is debris, not an owner', () => {
 
   it('refuses when something is actually there, and says why', async () => {
     /**
-     * §6.6's single writer, which is also §17 Q9's answer: two users sharing a
-     * checkout are two writers, and this design has no merge anywhere. What was
-     * missing was never the rule — it was the sentence. The second host used to
-     * fail with a bind error fifteen seconds downstream of the cause.
+     * §6.6's single writer, which is also §17 Q9's answer. What was missing was
+     * never the rule — it was the sentence: the second host used to fail with a
+     * bind error fifteen seconds downstream of the cause.
+     *
+     * The sentence changed with the socket. It said "already serving this
+     * workspace", which was true while a host was one per workspace and became
+     * false when the key became `machineId` — the incumbent is serving *every*
+     * folder open on this computer, and telling somebody to use a different
+     * checkout would send them to fix the wrong thing. That change shipped with
+     * this assertion unchanged, and it went green here because this whole file
+     * is `describe.skip` on Windows, which is where it was written. Three
+     * platforms found it at once; the machine it was written on could not.
      */
     const dir = await scratch();
     const path = join(dir, 'host.sock');
@@ -103,8 +123,12 @@ posix('a leftover socket is debris, not an owner', () => {
     servers.push(holder);
 
     await expect(listen(path, () => undefined)).rejects.toThrow(
-      /already serving this workspace/i,
+      /already running on this machine/i,
     );
+    // The remedy, by name, and the path so it can be found. A refusal saying
+    // only "in use" is one nobody can act on.
+    await expect(listen(path, () => undefined)).rejects.toThrow(/agbrte stop/);
+    await expect(listen(path, () => undefined)).rejects.toThrow(path);
 
     // The incumbent is untouched. A refusal that took the running host down
     // would be far worse than the deadlock it replaced.

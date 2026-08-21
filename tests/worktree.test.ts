@@ -13,7 +13,7 @@
  * making them take turns; this makes them parallel by giving each its own.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -31,6 +31,20 @@ import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
 import type { AgentId, InstanceId } from '@shared/types/index.js';
+
+/*
+ * Every test in this file shells out to `git`, several of them more than once,
+ * and two of them cut a worktree *and* run turns through a real manager.
+ *
+ * The 5-second default is a number nobody chose for that. Measured on the
+ * machine this was written on, the heaviest case lands within a few hundred
+ * milliseconds of the limit — so it passed most of the time and failed under any
+ * load, which is the worst arrangement available: green locally, red on a
+ * shared CI runner, and no signal about which. A budget generous enough that
+ * only a genuine hang reaches it is the honest shape; a test that fails on a
+ * busy machine is not reporting anything about the code.
+ */
+vi.setConfig({ testTimeout: 30_000 });
 
 const run = promisify(execFile);
 

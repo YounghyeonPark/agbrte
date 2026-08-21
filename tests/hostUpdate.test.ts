@@ -19,6 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useOwnMachine } from './support/machineHome.js';
 import { mkdtemp, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -31,13 +32,23 @@ import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime, type EchoStep } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
-import { processAlive } from '../src/host/discovery.js';
+import { processAlive, readMachineRecord } from '../src/host/discovery.js';
 import { until } from './support/until.js';
 import { createApi } from '@main/ipc/api.js';
 import { CH } from '@shared/ipc/contract.js';
 import type { HostInfo } from '@shared/ipc/contract.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { AgentId, InstanceId, Session, SessionId } from '@shared/types/index.js';
+
+/*
+ * Its own machine directory per test (§8).
+ *
+ * This suite starts real hosts, and a host is one per machine — so without this
+ * every test here would share one with every other test in the run, and a case
+ * asserting that *nothing* is listening would be handed one that a previous case
+ * left lingering. See `support/machineHome.ts`.
+ */
+useOwnMachine();
 
 const HOST_BUNDLE = resolve(import.meta.dirname, '../dist/main/agbrteHost.js');
 const RUNTIMES = [{ id: 'echo', label: 'Echo', version: '1', model: 'none' as const }];
@@ -112,7 +123,7 @@ describe('updating a host, against real processes', () => {
       goal: 'be here afterwards',
     });
 
-    const pids = new Set<number>([attached.pid]);
+    const seen: number[] = [attached.pid];
     const detached: string[] = [];
     fleet.on('detached', (_id: unknown, reason: unknown) => detached.push(reason as string));
 
@@ -125,10 +136,47 @@ describe('updating a host, against real processes', () => {
       expect(host.link, `round ${round}`).toBe('connected');
       expect(fleet.hosts().map((h) => h.instanceId), `round ${round}`).toEqual([instanceId]);
 
-      // A genuinely new process each time, or the update did nothing.
-      expect(pids.has(host.pid), `round ${round}: same pid as a previous host`).toBe(false);
-      pids.add(host.pid);
+      /*
+       * A genuinely new process, or the update did nothing.
+       *
+       * Against the pid it **replaced**, which is the claim `updateHost` makes.
+       * This used to be against every pid ever seen, and that is a claim about
+       * the operating system rather than about this code: thirteen short-lived
+       * processes in a few seconds, and a pid from round three is free to come
+       * back at round eleven. It did, on the machine this was rerun on. The same
+       * fact is already written down in `discovery.ts`, which refuses to use a
+       * live pid as evidence that a host is running for exactly this reason —
+       * the socket answers that question, and a pid is a diagnostic.
+       *
+       * The history is still carried, because it is what makes the failure
+       * readable: "same as the one it replaced" is a bug in the update, and that
+       * is what this now says.
+       */
+      expect(host.pid, `round ${round}: the update returned the host it replaced`).not.toBe(
+        seen[seen.length - 1],
+      );
       expect(processAlive(host.pid), `round ${round}`).toBe(true);
+
+      /*
+       * And the one it replaced is **gone**, checked here rather than at the end.
+       *
+       * The end-of-test version swept every pid the run had ever seen, which is
+       * unsound for the reason above — a reused pid belongs to a stranger and
+       * counts as alive. Asked immediately after the replacement, about the one
+       * process that has just been asked to stop, the window in which a pid could
+       * be reused by something unrelated is milliseconds rather than a minute.
+       *
+       * It is worth asking at all because the failure is real and has happened:
+       * `stop()` once closed a host's clients and left the process running, so a
+       * host reported as replaced was still there holding the workspace.
+       */
+      const replaced = seen[seen.length - 1]!;
+      await until(
+        async () => !processAlive(replaced),
+        15_000,
+        () => `round ${round}: the host it replaced (pid ${replaced}) is still running`,
+      );
+      seen.push(host.pid);
 
       /*
        * And it can be talked to, not merely listed — and it still owns the
@@ -147,15 +195,71 @@ describe('updating a host, against real processes', () => {
     expect(resumed.title).toBe('survives updates');
     expect((await fleet.list()).map((s) => s.sessionId)).toContain(session.sessionId);
 
-    // The old hosts really did go away, rather than being abandoned still
-    // holding the workspace.
-    await until(
-      () => [...pids].filter((pid) => processAlive(pid)).length === 1,
-      15_000,
-      () => `still alive: ${[...pids].filter((pid) => processAlive(pid)).join(', ')}`,
-    );
+    /*
+     * One host serves this machine, and it is the one the fleet is talking to.
+     *
+     * Asked of the *record* rather than of a list of pids, which is what the
+     * socket already guarantees and a pid cannot: a second host on this machine
+     * could not have bound the socket, and §6.4's rule is that the record is a
+     * hint while the socket is the truth — so the useful question is whether the
+     * hint agrees with the process the fleet ended up attached to.
+     */
+    const record = await readMachineRecord();
+    expect(record?.pid, 'the machine record names a different host').toBe(fleet.hosts()[0]?.pid);
     expect(detached, 'the user lost the host at some point').toEqual([]);
   }, 300_000);
+
+  it('keeps the other folders on that machine, because they share the process', async () => {
+    if (!(await built())) throw new Error(`run \`npm run build\` first`);
+
+    /*
+     * A host is one per **machine** and holds several folders (§8), so restarting
+     * one folder's host restarts them all — they share the process, not merely
+     * the computer.
+     *
+     * `onClosing` reads `updating` to tell "the host is going away" from "the
+     * host is going away *because we are restarting it*". Those are the same
+     * event with opposite meanings, and only the entry being updated carried the
+     * flag — so every sibling took the first reading and was **forgotten**.
+     * Updating one project dropped the others out of the sidebar, mid-turn, with
+     * their sessions perfectly intact and nothing on screen saying why.
+     */
+    const first = await makeRoot();
+    const second = await makeRoot();
+    const fleet = realFleet();
+
+    const a = await fleet.attach({ target: { kind: 'local' }, workspaceRoot: first });
+    const b = await fleet.attach({ target: { kind: 'local' }, workspaceRoot: second });
+
+    // One process, two folders — which is the premise, and worth asserting
+    // before the behaviour that depends on it.
+    expect(b.pid).toBe(a.pid);
+    expect(b.machineId).toBe(a.machineId);
+
+    const session = await fleet.createSession(b.instanceId, {
+      title: 'in the other folder',
+      goal: 'still here afterwards',
+    });
+
+    const lost: string[] = [];
+    fleet.on('detached', (id: unknown) => lost.push(id as string));
+
+    await fleet.updateHost(a.instanceId);
+
+    // Neither was dropped, and the sibling comes back on its own rather than
+    // needing a second button.
+    expect(lost, 'a workspace was forgotten because its neighbour was updated').toEqual([]);
+    await until(() => fleet.hosts().every((h) => h.link === 'connected'), 30_000);
+    expect(fleet.hosts().map((h) => h.instanceId).sort()).toEqual(
+      [a.instanceId, b.instanceId].sort(),
+    );
+
+    // And the sibling's folder was reopened by the replacement, so its session
+    // is readable again — an entry listed but unserved would be the same bug
+    // wearing a link badge.
+    const onDisk = await fleet.listOnDisk();
+    expect(onDisk.map((s) => s.sessionId)).toContain(session.sessionId);
+  }, 180_000);
 
   it('leaves nothing attached only if it says so, when the replacement cannot start', async () => {
     if (!(await built())) return;

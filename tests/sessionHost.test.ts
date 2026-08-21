@@ -367,6 +367,37 @@ describe('shutting down', () => {
     await expect(c.requestShutdown()).resolves.toMatchObject({ stopped: true });
   });
 
+  /**
+   * The bug that failed a release on all three platforms while passing here.
+   *
+   * `hosts.update` stops a host and dials again the instant it has the reply. If
+   * the retiring process answers that dial with a welcome, the update reports
+   * success against the very code it set out to replace — and the app adopts a
+   * host whose next act is to exit. The refusal used to hang on `closed`, which
+   * is set in `stop()`, which is deliberately a tick late so the acknowledgement
+   * wins the race; the listener was closed synchronously to cover the gap, but a
+   * listener's close is asynchronous inside libuv, so a saturated machine widens
+   * the gap the close was meant to shut. Which is why it only ever failed under
+   * a full suite.
+   *
+   * The window this cuts is the one real clients are in: the tick between the
+   * reply and the teardown, reached here by awaiting the reply and connecting
+   * before any timer can run.
+   */
+  it('stops welcoming the moment it agrees to stop, not a tick later', async () => {
+    const r = rig();
+    const first = r.connect();
+    await first.ready;
+
+    await expect(first.requestShutdown()).resolves.toMatchObject({ stopped: true });
+
+    // Same tick as that reply — `stop()` is a `setTimeout` away and has not run,
+    // so `closed` is still false and only the agreement stands between this dial
+    // and a welcome.
+    const second = r.connect();
+    await expect(second.ready).rejects.toThrow();
+  });
+
   it('tells clients why it is going, rather than just vanishing', async () => {
     const r = rig();
     const c = r.connect();

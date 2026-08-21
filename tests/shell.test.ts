@@ -51,6 +51,7 @@ import {
 } from '@main/terminal/programs.js';
 import { CLAUDE_CODE_MANIFEST } from '@main/runtime/cli/manifests.js';
 
+
 /** A pty that does exactly what it is told, and records what it was told. */
 class FakePty implements Pty {
   readonly pid = 4242;

@@ -404,6 +404,16 @@ export const bashTool: ToolDefinition = {
         // user's machine, but a command should not be handed API keys it never
         // needed (§13 keeps secrets out of the agent's reach).
         env: { ...process.env, ANTHROPIC_API_KEY: '', OPENAI_API_KEY: '' },
+        /*
+         * And no console window while it runs.
+         *
+         * `shell: true` means `cmd.exe`, and a GUI process spawning `cmd.exe`
+         * without this hands it a console of its own — a black window that
+         * appears and vanishes for every tool call an agent makes. The output
+         * is piped and shown in the transcript, which is where the user is
+         * looking.
+         */
+        windowsHide: true,
       });
 
       let out = '';

@@ -187,6 +187,12 @@ host, the web bridge and the renderer, and downloads a private Node 22 only if t
 machine has none. It works piped: `curl -fsSL <url> | sh`. The target needs a
 POSIX shell, plus curl-or-wget and tar-with-xz only when it has no Node 22+.
 Nothing is written outside `$HOME`, and `rm -rf ~/.agbrte` removes all of it.
+
+`AGBRTE_HOME` moves that directory, and it moves the whole installation with it:
+the machine id, the host record, the list of open workspaces, the credentials,
+and therefore the socket, which is named from the machine id. Set it when you
+want two builds on one computer to stay out of each other's way — a release and
+a checkout are two installations, and without it they fight over one host.
 **Upgrading a running host is `agbrte update`**, which stops it so the next attach
 deploys this build; versions negotiate as a range, so a newer client connects to
 an older host and says which commands that host predates.

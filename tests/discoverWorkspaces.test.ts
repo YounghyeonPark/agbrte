@@ -22,10 +22,11 @@
  */
 
 import { execFileSync, spawnSync } from 'node:child_process';
+import { noConsoleWindow } from './support/noConsoleWindow.js';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   assertSafeAlias,
   discoverRemoteWorkspaces,
@@ -34,6 +35,19 @@ import {
   DISCOVERY_MAX_DEPTH,
 } from '@main/host/discoverWorkspaces.js';
 import type { SshRunner } from '@main/host/sshTransport.js';
+
+/*
+ * A budget that reflects what these tests actually do.
+ *
+ * Every case in this file spawns a real process — a shell, a browser, the built
+ * CLI, a detached host — and the 5-second default is a number nobody chose for
+ * that. It is the arrangement that fails worst: green on an idle machine, red on
+ * a loaded CI runner, and no signal about which. A test that fails because a
+ * machine was busy is not reporting anything about the code; only a genuine hang
+ * should reach this.
+ */
+vi.setConfig({ testTimeout: 30_000 });
+
 
 /** Records what was asked and answers with canned output. */
 function fakeRunner(reply: {
@@ -335,7 +349,10 @@ describe('an alias is the one thing the user types', () => {
 const sh = ((): string | null => {
   for (const candidate of ['sh', '/bin/sh']) {
     try {
-      const probe = spawnSync(candidate, ['-c', 'printf ok'], { encoding: 'utf8' });
+      const probe = spawnSync(candidate, ['-c', 'printf ok'], {
+        encoding: 'utf8',
+        ...noConsoleWindow,
+      });
       if (probe.status === 0 && probe.stdout.includes('ok')) return candidate;
     } catch {
       // Next candidate.
@@ -370,13 +387,14 @@ describe.skipIf(sh === null)('the script, under a real shell', () => {
      */
     const posixHome =
       process.platform === 'win32'
-        ? execFileSync(sh!, ['-c', 'pwd'], { cwd: home, encoding: 'utf8' }).trim()
+        ? execFileSync(sh!, ['-c', 'pwd'], { cwd: home, encoding: 'utf8', ...noConsoleWindow }).trim()
         : home;
 
     const stdout = execFileSync(sh!, ['-c', discoveryScript()], {
       encoding: 'utf8',
       env: { ...process.env, HOME: posixHome },
       maxBuffer: 4 * 1024 * 1024,
+      ...noConsoleWindow,
     });
 
     const { roots, candidates, truncated } = parseDiscovery(stdout);

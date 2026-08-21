@@ -23,6 +23,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useOwnMachine } from './support/machineHome.js';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -47,6 +48,16 @@ import {
   type SessionMessage,
 } from '@shared/host/sessionProtocol.js';
 import type { InstanceId, LineageId } from '@shared/types/index.js';
+
+/*
+ * Its own machine directory per test (§8).
+ *
+ * This suite starts real hosts, and a host is one per machine — so without this
+ * every test here would share one with every other test in the run, and a case
+ * asserting that *nothing* is listening would be handed one that a previous case
+ * left lingering. See `support/machineHome.ts`.
+ */
+useOwnMachine();
 
 const HOST_BUNDLE = resolve(import.meta.dirname, '../dist/main/agbrteHost.js');
 
@@ -389,6 +400,77 @@ describe('the handshake describes a machine holding workspaces', () => {
     expect(again.instanceId).toBe(opened.instanceId);
     expect(await client.listWorkspaces()).toHaveLength(2);
     client.disconnect();
+  });
+});
+
+describe('a client that goes away takes its terminals with it', () => {
+  it('reaps them in every workspace the host holds, not just a default one', async () => {
+    /*
+     * The one place a shell differs from a session or a preview server (§7): it
+     * is a *view*, it has exactly one reader, and with that reader gone it is a
+     * program blocked on a prompt nobody will answer.
+     *
+     * This regressed silently when a host gained several folders. The handler
+     * read `opts.shells` — the single-workspace field a host built directly
+     * around one folder passes — and `hostMain` had stopped setting it, because
+     * a terminal's `cwd` is the whole of what it is for and there is now one
+     * supervisor per workspace. So a real host reaped nothing at all, while
+     * every unit test of `Shells` kept passing: they exercise the supervisor,
+     * and what broke was the wiring above it. Asserted at that seam.
+     */
+    const root = await tempDir('ws');
+    const identity = await openWorkspace(root);
+    const registry = new RuntimeRegistry();
+    registry.register(new EchoRuntime(), { label: 'Echo', model: 'none' });
+    const manager = new SessionManager({
+      registry,
+      workspaceRoot: root,
+      instanceId: identity.instanceId,
+    });
+    managers.push(manager);
+
+    const reaped: string[] = [];
+    /*
+     * Shaped like `Shells` and recording rather than running: what is under test
+     * is *who gets asked*, and a real PTY would answer that question with a
+     * native module and a platform.
+     */
+    const shells = {
+      closeOwned: () => {
+        reaped.push(root);
+        return 0;
+      },
+      closeAll: () => undefined,
+    };
+
+    const server = new SessionHostServer({
+      manager,
+      identity: {
+        machineId: 'machine-1',
+        instanceId: identity.instanceId,
+        lineageId: identity.lineageId,
+        workspaceRoot: root,
+        runtimes: ['echo'],
+      },
+      // Supplied through `workspaces` and *not* through `shells`, which is the
+      // shape `hostMain` uses and the shape the regression was invisible in.
+      workspaces: () => [
+        {
+          info: { instanceId: identity.instanceId, lineageId: identity.lineageId, root },
+          shells: shells as never,
+        },
+      ],
+    });
+
+    const pair = memoryChannelPair<SessionCommand, SessionMessage>();
+    server.accept(pair.host);
+    const client = new HostConnection({ channel: pair.main });
+    await client.ready;
+
+    expect(reaped).toEqual([]);
+    client.disconnect();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(reaped, 'a departing client left its terminals running').toEqual([root]);
   });
 });
 

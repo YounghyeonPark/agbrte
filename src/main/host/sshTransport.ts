@@ -506,6 +506,18 @@ export async function startRemoteHost(
   opts: { lingerMs?: number; readyTimeoutMs?: number } = {},
 ): Promise<RemoteHostRecord> {
   const linger = opts.lingerMs === undefined ? '' : `AGBRTE_HOST_LINGER_MS=${opts.lingerMs} `;
+  /*
+   * Told where its machine directory is, rather than left to work it out (§8).
+   *
+   * The app computes `remoteRoot(home)` from the `$HOME` its probe reported and
+   * then looks for `host.json` there; the host computes `machineRoot()` from its
+   * own environment. Those agree by default and are two beliefs rather than one,
+   * which is precisely the disagreement `AGBRTE_HOME` exists to prevent — and it
+   * is not hypothetical on the far side, where `ssh <alias> '<command>'` runs a
+   * non-interactive non-login shell whose `$HOME` is whatever sshd says it is.
+   * Passing it makes the app's belief the *instruction*.
+   */
+  const machineHome = `AGBRTE_HOME=${shellQuote(remoteRoot(home))} `;
   const log = shellQuote(`${remoteRoot(home)}/host.log`);
   /*
    * Where a started host says it is listening, in the order it writes them.
@@ -537,7 +549,7 @@ export async function startRemoteHost(
   // the caller never learns. Detaching the subshell's fds lets the channel close
   // while the host keeps running.
   const launch =
-    `( ${linger}nohup setsid ${shellQuote(nodePath)} ${shellQuote(remoteBundle(home))} ` +
+    `( ${machineHome}${linger}nohup setsid ${shellQuote(nodePath)} ${shellQuote(remoteBundle(home))} ` +
     `${shellQuote(workspaceRoot)} >${log} 2>&1 < /dev/null & ) >/dev/null 2>&1`;
 
   const command =
@@ -649,6 +661,18 @@ export function systemSshRunner(sshPath = 'ssh'): SshRunner {
     new Promise((resolve) => {
       const child = spawn(sshPath, [...base, alias, command], {
         stdio: ['ignore', 'pipe', 'pipe'],
+        /*
+         * No console window for a console program (§6.2).
+         *
+         * Windows gives a child its own console when the parent has none and the
+         * spawn does not say otherwise, and on Windows 11 that console is a
+         * Windows Terminal window. The packaged app is a GUI process with no
+         * console, so every one of these would have flashed a black window at
+         * somebody who asked for a remote connection and got a light show;
+         * measured at 36 windows across one test run before this. stdio is piped
+         * either way, so there was never anything to look at.
+         */
+        windowsHide: true,
       });
       let stdout = '';
       let stderr = '';
@@ -692,6 +716,8 @@ export function systemSshRunner(sshPath = 'ssh'): SshRunner {
       // and it inherits the same config and credentials as everything else here.
       const child = spawn(sshPath, [...base, alias, `cat > ${shellQuote(remotePath)}`], {
         stdio: ['pipe', 'ignore', 'pipe'],
+        // A console window for an upload nobody can see into. See `exec` above.
+        windowsHide: true,
       });
       let stderr = '';
       child.stderr.on('data', (d) => (stderr += d));
@@ -708,7 +734,9 @@ export function systemSshRunner(sshPath = 'ssh'): SshRunner {
     const child = spawn(
       sshPath,
       [...base, '-N', '-L', `127.0.0.1:${localPort}:${remoteTarget}`, alias],
-      { stdio: ['ignore', 'ignore', 'pipe'] },
+      // A forward outlives the call that made it, so its window would have
+      // sat there for the life of the session. See `exec` above.
+      { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true },
     );
     let stderr = '';
     child.stderr.on('data', (d) => (stderr += d));

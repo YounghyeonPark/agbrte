@@ -221,6 +221,14 @@ export interface SessionHostOptions {
    */
   onStopped?: (reason: string) => void;
   /**
+   * Called synchronously once a stop has been agreed, before it happens.
+   *
+   * For closing the door only: whoever owns the listener stops accepting here,
+   * so a client that dials on the strength of `{stopped:true}` finds nothing
+   * rather than being welcomed by a host on its way out.
+   */
+  onAgreedToStop?: () => void;
+  /**
    * This host's own control port, when it listens on one (§6.2's loopback mode).
    *
    * A function because the server is constructed before the listener binds, and
@@ -316,6 +324,19 @@ export class SessionHostServer {
   private readonly opened = new Map<string, HostWorkspace>();
   private lingerTimer: NodeJS.Timeout | null = null;
   private closed = false;
+  /**
+   * Set the instant a stop is *agreed*, which is a tick before `closed`.
+   *
+   * `stop()` runs on the next turn of the loop so the acknowledgement wins the
+   * race (see the `shutdown` handler), and the listener is closed synchronously
+   * — but closing a listener is itself asynchronous down in libuv, and a busy
+   * loop is exactly when it takes longest. A client that dials in that gap is
+   * accepted by the kernel and dispatched here with `closed` still false, and
+   * gets a full welcome from the process it just retired: `hosts.update` then
+   * reports success against the code it set out to replace. This is the same
+   * refusal as `closed`, moved to the moment the answer was promised.
+   */
+  private leaving = false;
 
   constructor(private readonly opts: SessionHostOptions) {
     const { manager } = opts;
@@ -376,15 +397,18 @@ export class SessionHostServer {
      * meeting. Closed at once instead, so the client sees "nothing is there" —
      * the one state every discovery path already knows how to handle.
      *
-     * Measured rather than assumed on the bundled host, where it turns out to be
-     * belt and braces: `hostMain` closes its listener in the same tick, so a
-     * connect at +1ms is accepted by the kernel and never dispatched here at
-     * all. It stays because that ordering is `hostMain`'s and not this class's —
-     * an embedder that keeps its listener open a moment longer (`agbrte serve`,
-     * a loopback control port) would otherwise hand out welcomes from a stopped
-     * server, and nothing in this file would notice.
+     * `leaving` rather than only `closed`, because `closed` is a tick too late
+     * and one measurement said so: with `hostMain` closing its listener in the
+     * same tick as the reply, an isolated run never reaches here — and a run
+     * under a saturated machine did, welcomed the replacement's dial, and made
+     * `hosts.update` report success against the host it had just retired. A
+     * listener's close is asynchronous inside libuv, so a loaded loop widens the
+     * very gap the close was meant to shut. This refusal does not depend on the
+     * loop getting there, nor on the embedder's ordering — `agbrte serve` or a
+     * loopback control port keeping its listener open a moment longer is served
+     * the same answer.
      */
-    if (this.closed) {
+    if (this.closed || this.leaving) {
       channel.close();
       return;
     }
@@ -430,6 +454,20 @@ export class SessionHostServer {
        * exactly one reader, and with that reader gone it is a program blocked on
        * a prompt nobody will answer, printing into a buffer nobody will read.
        */
+      /*
+       * Across every workspace, not just `opts.shells`.
+       *
+       * That field is the *single-workspace* shape a host built directly around
+       * one folder passes (`agbrte serve`, and every test). `hostMain` supplies
+       * a supervisor per workspace instead — `cwd` is the whole of what one is
+       * for — and left this line reading a field it no longer sets, so a client
+       * disconnecting from a real host reaped nothing at all. Every terminal it
+       * had open stayed: a shell blocked on a prompt with its reader gone, which
+       * is the one thing this handler exists to prevent.
+       */
+      for (const workspace of this.heldWorkspaces()) {
+        workspace.shells?.closeOwned(client.shellOwner);
+      }
       this.opts.shells?.closeOwned(client.shellOwner);
       // A departing client is not a reason to stop. It owns nothing.
       this.armLinger();
@@ -612,6 +650,21 @@ export class SessionHostServer {
       }
 
       client.channel.post({ t: 'ok', id: command.id, value: { stopped: true } });
+      /*
+       * The door shuts in this tick; the teardown can take its time.
+       *
+       * A client restarting this host dials again the moment it has this reply,
+       * and until this host stops answering it is handed a whole handshake by
+       * the process that just agreed to go — so the update reports success
+       * against the code it set out to replace. Deferring the *whole* stop made
+       * that window as wide as this process was busy, which is why it failed
+       * under a loaded test suite and passed alone. Two things shut it, because
+       * the listener alone was not enough: `leaving` refuses a dial in this
+       * process, synchronously, and `onAgreedToStop` closes the listener so
+       * there is nothing to refuse.
+       */
+      this.leaving = true;
+      this.opts.onAgreedToStop?.();
       // After the reply has been posted, so the acknowledgement wins the race.
       setTimeout(() => this.stop('shutdown requested'), 0);
       return;
@@ -1243,6 +1296,7 @@ export class SessionHostServer {
     // sweep: a host that stops must not leave a shell behind, and depending on
     // a callback that fires per client makes "all of them" a property of the
     // loop below rather than something this line states.
+    for (const workspace of this.heldWorkspaces()) workspace.shells?.closeAll();
     this.opts.shells?.closeAll();
     this.broadcast({ t: 'push.closing', reason });
     for (const client of this.clients) client.channel.close();

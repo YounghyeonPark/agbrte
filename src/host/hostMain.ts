@@ -18,7 +18,7 @@
  */
 
 import { closeSync, openSync, readSync } from 'node:fs';
-import { fork, type ChildProcess } from 'node:child_process';
+import { fork, type ChildProcess, type ForkOptions } from 'node:child_process';
 import type { ModelNeed } from '@main/runtime/registry.js';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,6 +44,27 @@ import { refuseIfHeldElsewhere } from './legacyHost.js';
 import { readKnownWorkspaces, writeKnownWorkspaces } from './workspaces.js';
 import { addEndpoint } from './endpoints.js';
 import { addManagedToolsToPath } from './managedTools.js';
+
+/**
+ * No console window for anything this host starts (§6.2).
+ *
+ * The host is spawned `detached`, and on Windows that means it has **no console
+ * of its own** — so when it starts a child that is a console program, Windows
+ * gives that child a brand new console, and on Windows 11 the thing that draws
+ * one is a Windows Terminal window. One per agent host: a test run that starts
+ * nineteen hosts opened nineteen windows over whatever the developer was doing,
+ * and a user whose session forks an agent got one too.
+ *
+ * Counted rather than reasoned about, after two wrong theories: 19 windows from
+ * `hostUpdate.test.ts`, 7 from `detachedHost`, 3 from `machineHost`, 0 from
+ * every suite that starts no host. Putting the flag on the *host's own* spawn
+ * cannot help — `CREATE_NO_WINDOW` is ignored when `DETACHED_PROCESS` is set —
+ * so it belongs here, on what the detached process starts.
+ *
+ * Typed wider than `ForkOptions` because @types/node leaves `windowsHide` off
+ * it, while `fork` forwards its options to `spawn`, which honours it.
+ */
+const noConsoleWindow: ForkOptions & { windowsHide: boolean } = { windowsHide: true };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -216,6 +237,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
           // the terminal the app was launched from.
           stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
           env: { ...process.env, AGBRTE_WORKSPACE_ROOT: workspaceRoot },
+          ...noConsoleWindow,
         }),
       ),
     }),
@@ -470,9 +492,25 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
   }
 
   const stop = async (): Promise<void> => {
-    // Before the listener closes: a preview server outliving the host that
-    // started it is a port answering with nothing to explain it, and nothing
-    // left that knows how to stop it.
+    /*
+     * The listener goes first, before anything slow.
+     *
+     * A host answers `{stopped:true}` and then runs this on the next tick, so
+     * everything in between is a window where it still *accepts* — and a client
+     * restarting it dials in that window and is handed a whole handshake by the
+     * process it just retired. It then reports the update a success against the
+     * old code: on a machine whose bundle had gone missing, `updateHost`
+     * resolved where it had to refuse. Closing here makes the socket answer
+     * `ECONNREFUSED`, which the connect probe already reads as "nothing there",
+     * so the replacement is spawned or the failure is named.
+     *
+     * This used to sit below the teardown, under a comment about a preview
+     * server outliving its host. That reason is real and is about the *process*
+     * finishing its work — not about the door staying open while it does.
+     */
+    listener.close();
+    // A preview server outliving the host that started it is a port answering
+    // with nothing to explain it, and nothing left that knows how to stop it.
     for (const workspace of held.values()) {
       workspace.servers?.stopAll();
       // And every terminal, for the stronger reason: a shell survives its reader
@@ -481,7 +519,6 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     }
     server.stop('host stopping');
     supervisor.dispose();
-    listener.close();
     // Every pointer as well as the machine's own record. A pointer left behind
     // is what sends the next client to a socket nobody answers — and worse, on
     // the released build, is indistinguishable from a host that is alive.
@@ -554,6 +591,17 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     // Whatever the reason — the idle timer, or a client asking — the process
     // goes. A host that stops serving but keeps its socket is worse than one
     // that never stopped: the next client finds it and believes it is live.
+    /*
+     * Stop accepting the instant a stop is agreed (§6.3).
+     *
+     * `stop()` below closes the listener too, but it runs on the next tick and
+     * a loaded process can take much longer than that to reach it — which is
+     * exactly when a client restarting this host dials and is welcomed by the
+     * process it just retired. Closing here is idempotent with the close in
+     * `stop()`, and cheap: it refuses new connections and touches nothing that
+     * is already running.
+     */
+    onAgreedToStop: () => listener.close(),
     onStopped: (reason) => {
       if (opts.onStopped !== undefined) {
         void stop().then(() => opts.onStopped?.(reason));
@@ -562,6 +610,49 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       void stop().then(() => process.exit(0));
     },
   });
+
+  /*
+   * Every record, written the moment there is something true to say.
+   *
+   * The order used to be "listen, then record", on the rule that a record
+   * pointing at a socket nobody answers sends every client down the stale path.
+   * That rule is about a record left by a *dead* host, and §6.4 already answers
+   * it a better way: the record is a hint and every reader probes the socket, so
+   * a record that is briefly early costs a client one failed probe and a retry.
+   *
+   * A record that is briefly **late** costs more, and that is the asymmetry.
+   * The workspace pointer exists so a client from before v21 finds this host
+   * instead of starting its own (§8), and in the window between the socket
+   * opening and the pointer landing that client sees an empty folder and spawns
+   * a second writer onto one log. Narrow, and the one failure §5.1 does not
+   * survive. It also made a test flaky, which is how it was noticed: a client
+   * can connect the instant the socket accepts, and reading the pointer then
+   * found nothing.
+   *
+   * So the records go out as early as each transport allows. A socket path is
+   * known before the bind, so those are written first and cleared if the bind
+   * fails. A loopback port is not known until it is bound, so that one keeps the
+   * old order and keeps the old window — stated rather than hidden, and it is
+   * the transport a released client cannot reach anyway (§6.2).
+   */
+  const writeRecords = async (): Promise<void> => {
+    await writeMachineRecord(
+      {
+        pid: process.pid,
+        socket,
+        startedAt: new Date().toISOString(),
+        instanceId: identity.instanceId,
+        machineId: machine.machineId,
+        ...(port !== undefined ? { port } : {}),
+        ...(token !== undefined ? { token } : {}),
+      },
+      home,
+    );
+    // The machine's own first, because that is the one a current client looks
+    // for; the per-workspace pointers after it, for the released client that
+    // knows only how to look in a folder.
+    for (const workspace of held.values()) await publish(workspace);
+  };
 
   /**
    * Authentication happens below `accept`, whichever transport is used.
@@ -580,35 +671,24 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     );
     listener = bound.server;
     port = bound.port;
+    listening = true;
+    await writeRecords();
   } else {
-    listener = await listen<SessionMessage, SessionCommand>(socket, (channel) =>
-      server.accept(channel),
-    );
+    // Before the bind, so no client can arrive ahead of the pointer that tells
+    // an older one not to start its own host here. Cleared if the bind fails, so
+    // a host that never came up leaves nothing claiming it did.
+    listening = true;
+    await writeRecords();
+    try {
+      listener = await listen<SessionMessage, SessionCommand>(socket, (channel) =>
+        server.accept(channel),
+      );
+    } catch (err) {
+      await clearMachineRecord(home);
+      await Promise.all([...held.values()].map((w) => clearHostRecord(w.info.root)));
+      throw err;
+    }
   }
-
-  listening = true;
-
-  /*
-   * Written only once we are actually listening. A record pointing at a socket
-   * nobody answers sends every client down the stale path for no reason (§6.4).
-   *
-   * The machine's own record first, because that is the one a current client
-   * looks for; the per-workspace pointers after it, for the released client that
-   * knows only how to look in a folder.
-   */
-  await writeMachineRecord(
-    {
-      pid: process.pid,
-      socket,
-      startedAt: new Date().toISOString(),
-      instanceId: identity.instanceId,
-      machineId: machine.machineId,
-      ...(port !== undefined ? { port } : {}),
-      ...(token !== undefined ? { token } : {}),
-    },
-    home,
-  );
-  for (const workspace of held.values()) await publish(workspace);
 
   return { socket, ...(port !== undefined ? { port } : {}), stop };
 }

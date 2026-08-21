@@ -26,8 +26,9 @@
  * npm's global prefix behaves the same on a machine that is not this one.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { noConsoleWindow } from './support/noConsoleWindow.js';
 import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,6 +47,19 @@ import {
 } from '@main/host/provision.js';
 import { managedToolDirs, addManagedToolsToPath } from '../src/host/managedTools.js';
 import type { RemoteProbe } from '@main/host/sshTransport.js';
+
+/*
+ * A budget that reflects what these tests actually do.
+ *
+ * Every case in this file spawns a real process — a shell, a browser, the built
+ * CLI, a detached host — and the 5-second default is a number nobody chose for
+ * that. It is the arrangement that fails worst: green on an idle machine, red on
+ * a loaded CI runner, and no signal about which. A test that fails because a
+ * machine was busy is not reporting anything about the code; only a genuine hang
+ * should reach this.
+ */
+vi.setConfig({ testTimeout: 30_000 });
+
 
 function probe(over: Partial<RemoteProbe> = {}): RemoteProbe {
   return {
@@ -274,7 +288,10 @@ describe('what a freshly installed CLI needs to be found', () => {
 const sh = ((): string | null => {
   for (const candidate of ['sh', '/bin/sh']) {
     try {
-      const probeRun = spawnSync(candidate, ['-c', 'printf ok'], { encoding: 'utf8' });
+      const probeRun = spawnSync(candidate, ['-c', 'printf ok'], {
+        encoding: 'utf8',
+        ...noConsoleWindow,
+      });
       if (probeRun.status !== 0 || !probeRun.stdout.includes('ok')) continue;
       /*
        * Resolved to an absolute path, which is not tidiness.
@@ -292,6 +309,7 @@ const sh = ((): string | null => {
       if (process.platform !== 'win32') return candidate;
       const abs = spawnSync(candidate, ['-c', 'cygpath -w "$(command -v sh)"'], {
         encoding: 'utf8',
+        ...noConsoleWindow,
       });
       return abs.status === 0 && abs.stdout.trim() !== '' ? abs.stdout.trim() : candidate;
     } catch {
@@ -304,7 +322,7 @@ const sh = ((): string | null => {
 /** The path a POSIX shell on this platform calls a directory. */
 function posixPath(dir: string): string {
   return process.platform === 'win32'
-    ? execFileSync(sh!, ['-c', 'pwd'], { cwd: dir, encoding: 'utf8' }).trim()
+    ? execFileSync(sh!, ['-c', 'pwd'], { cwd: dir, encoding: 'utf8', ...noConsoleWindow }).trim()
     : dir;
 }
 
@@ -354,6 +372,7 @@ function runScript(
     encoding: 'utf8',
     env: { ...clean, ...env, PATH: `${bin}:/usr/bin:/bin` },
     maxBuffer: 8 * 1024 * 1024,
+    ...noConsoleWindow,
   });
   return { code: result.status ?? -1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
@@ -520,9 +539,14 @@ describe.skipIf(sh === null)('the Ollama script, under a real shell', () => {
     );
     await chmod(join(stage, 'bin', 'ollama'), 0o755);
     const tarball = join(home, 'ollama-darwin.tgz');
-    execFileSync(sh!, ['-c', `cd "${posixPath(stage)}" && tar -czf "${posixPath(home)}/ollama-darwin.tgz" bin`]);
+    execFileSync(
+      sh!,
+      ['-c', `cd "${posixPath(stage)}" && tar -czf "${posixPath(home)}/ollama-darwin.tgz" bin`],
+      noConsoleWindow,
+    );
     const digest = execFileSync(sh!, ['-c', `sha256sum "${posixPath(home)}/ollama-darwin.tgz"`], {
       encoding: 'utf8',
+      ...noConsoleWindow,
     })
       .trim()
       .split(/\s+/)[0]!;
@@ -567,7 +591,8 @@ describe.skipIf(sh === null)('the Ollama script, under a real shell', () => {
   }, 60_000);
 });
 
-const hasZstd = spawnSync('zstd', ['--version'], { encoding: 'utf8' }).status === 0;
+const hasZstd =
+  spawnSync('zstd', ['--version'], { encoding: 'utf8', ...noConsoleWindow }).status === 0;
 
 describe.skipIf(sh === null || hasZstd)('a machine that cannot read the archive', () => {
   it('says which package to install rather than failing inside tar', async () => {

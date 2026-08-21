@@ -12,6 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useOwnMachine } from './support/machineHome.js';
 import { mkdtemp, readFile, rm, rename, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -26,6 +27,16 @@ import { machineIdentity } from '../src/host/machine.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { hostSocketPath } from '@shared/host/socketChannel.js';
 import type { HostConnection } from '@main/host/hostConnection.js';
+
+/*
+ * Its own machine directory per test (§8).
+ *
+ * This suite starts real hosts, and a host is one per machine — so without this
+ * every test here would share one with every other test in the run, and a case
+ * asserting that *nothing* is listening would be handed one that a previous case
+ * left lingering. See `support/machineHome.ts`.
+ */
+useOwnMachine();
 
 const HOST_BUNDLE = resolve(import.meta.dirname, '../dist/main/agbrteHost.js');
 

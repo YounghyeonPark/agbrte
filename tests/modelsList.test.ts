@@ -19,6 +19,7 @@ import { join, resolve } from 'node:path';
 import { connectOrSpawnHost } from '@main/host/connectOrSpawn.js';
 import type { HostConnection } from '@main/host/hostConnection.js';
 
+
 const HOST_BUNDLE = resolve(import.meta.dirname, '../dist/main/agbrteHost.js');
 
 let root: string;

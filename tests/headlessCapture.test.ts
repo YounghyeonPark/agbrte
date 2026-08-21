@@ -14,7 +14,7 @@
  * would check the flags and assume the picture.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -27,6 +27,19 @@ import { decodePng, isPng } from '@main/content/png.js';
 import { screenshotTool, type ToolContext } from '@main/tools/index.js';
 import { WorkspaceLeases } from '@main/tools/leases.js';
 import type { AgentId, ImageBlock } from '@shared/types/index.js';
+
+/*
+ * A budget that reflects what these tests actually do.
+ *
+ * Every case in this file spawns a real process — a shell, a browser, the built
+ * CLI, a detached host — and the 5-second default is a number nobody chose for
+ * that. It is the arrangement that fails worst: green on an idle machine, red on
+ * a loaded CI runner, and no signal about which. A test that fails because a
+ * machine was busy is not reporting anything about the code; only a genuine hang
+ * should reach this.
+ */
+vi.setConfig({ testTimeout: 30_000 });
+
 
 const browser = await findBrowser();
 

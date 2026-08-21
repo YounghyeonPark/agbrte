@@ -39,27 +39,35 @@ import { join } from 'node:path';
 process.env['AGBRTE_HOST_LINGER_MS'] ??= '2000';
 
 /**
- * Give the suite its own machine directory.
+ * Give every test **file** its own machine directory.
  *
- * `~/.agbrte` holds what is true of a *machine*: its host record, its machine
- * id, and the list of workspaces its host has been asked to serve (§8). All
- * three are global by design, which makes them global to the suite too — a host
- * started by one test would find, and reopen, every temporary workspace every
- * other test had ever created, and would spend §5.3 relocation signals in the
- * developer's own projects on the way past.
+ * `~/.agbrte` holds what is true of a *machine*: its id, its host record, its
+ * workspace registry (§8). A host is one per machine and its socket is named
+ * from the id in that directory, so two processes sharing the directory share
+ * the host — which is the design, and which makes the real one unusable here.
  *
- * `AGBRTE_HOME` is the variable the installer script already reads, so this is
- * the existing seam rather than one invented for tests — and it is set here, in
- * `process.env`, for the same reason the linger is: the mechanism is
+ * **This was per *run*, and that was the bug.** With `--no-file-parallelism`
+ * vitest still reuses a worker process, so `??=` kept the first value for every
+ * file after it: one machine directory, one host, shared by the whole suite. A
+ * test asserting that nothing is listening was handed a host another file had
+ * left lingering, and three tests failed on all three CI platforms while the
+ * developer's machine — which had a host up from ordinary use, so the same
+ * contention was invisible — passed 1620 of 1620.
+ *
+ * So it is assigned rather than defaulted, once per file, and the ownership flag
+ * is what keeps that from trampling a developer who pinned one from the shell to
+ * chase a bug. A suite that starts *several* hosts wants finer than this and
+ * says so: `useOwnMachine()` gives one per test.
+ *
+ * Set in `process.env` for the same reason the linger is: the mechanism is
  * inheritance. `connectOrSpawnHost` copies this process's environment into the
- * detached host it spawns, so one assignment reaches every host any test starts
- * by any route.
- *
- * `??=` so a developer chasing a machine-directory bug can pin it from the
- * shell, and one directory per run rather than per file because a machine host
- * is shared by construction — that is the thing under test.
+ * detached host it spawns, and the CLI copies it again for a host it starts.
  */
-process.env['AGBRTE_HOME'] ??= join(
-  tmpdir(),
-  `agbrte-suite-${process.pid}-${Math.random().toString(36).slice(2, 8)}`,
-);
+const OWNED = 'AGBRTE_HOME_FROM_SUITE';
+if (process.env['AGBRTE_HOME'] === undefined || process.env[OWNED] === '1') {
+  process.env['AGBRTE_HOME'] = join(
+    tmpdir(),
+    `agbrte-file-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  process.env[OWNED] = '1';
+}
