@@ -93,6 +93,19 @@ export interface ProjectedAgent {
 export interface SessionProjection {
   sessionId: SessionId;
   state: SessionState;
+  /**
+   * What it is called, as the log says (§5.1).
+   *
+   * `session.json` holds a title too and is what a sidebar reads without opening
+   * anything — but that file is a *hint*, and this is the record. A session that
+   * is opened takes its name from here, so a rename survives a hint that was
+   * never written, a folder copied without it, or a file edited by hand.
+   *
+   * Optional because a checkpoint written before renaming existed has no title
+   * in it, and the answer there is the one that has always worked: fall back to
+   * the metadata file.
+   */
+  title?: string;
   agents: ProjectedAgent[];
   /** Highest seq folded in. The resume point for an incremental fold. */
   lastSeq: number;

@@ -607,6 +607,9 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   );
 
   handle(CH.sessionsUngroup, (sessionId: string) => fleet.ungroup(sessionId as SessionId));
+  handle(CH.sessionsRename, (sessionId: string, title: string) =>
+    fleet.renameSession(sessionId as SessionId, title),
+  );
 
   handle(CH.sessionsListOnDisk, () => fleet.listOnDisk());
 

@@ -87,6 +87,12 @@ export function reduceEvents(
     switch (ev.type) {
       case 'session.created':
         p.state = 'planning';
+        p.title = ev.title;
+        break;
+
+      // Last one wins, which is the whole of renaming.
+      case 'session.renamed':
+        p.title = ev.title;
         break;
 
       case 'session.state': {

@@ -75,6 +75,16 @@ export interface EventEnvelope {
 
 export type EventBody =
   | { type: 'session.created'; goal: string; title: string }
+  /**
+   * Renamed by a person.
+   *
+   * In the log rather than only in `session.json`, for the reason every other
+   * fact is: a folder carried to another machine has to arrive with its sessions
+   * intact (§5.3), and a title that lived only in a sidecar would be the one
+   * thing about a session that a copy could lose. It is also an *edit somebody
+   * made*, and the log is where this system records those.
+   */
+  | { type: 'session.renamed'; title: string }
   | { type: 'session.state'; from: SessionState; to: SessionState; reason?: string }
   | { type: 'user.turn'; content: ContentBlock[] }
   | { type: 'agent.text'; text: string }

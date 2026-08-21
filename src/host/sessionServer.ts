@@ -919,6 +919,16 @@ export class SessionHostServer {
             client.actor,
           );
 
+        case 'session.rename':
+          // A write: a name is what every other client sees this session called,
+          // and a read-only client changing it would be editing their screen.
+          this.requireWrite(client, 'rename a session');
+          return manager.renameSession(
+            command.sessionId as SessionId,
+            command.title,
+            client.actor,
+          );
+
         case 'session.ungroup':
           // A write for the mirror-image reason: it closes that channel, and
           // one client silencing another's group is not a read.

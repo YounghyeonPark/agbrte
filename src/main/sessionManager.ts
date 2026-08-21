@@ -257,6 +257,15 @@ function clonePolicy(policy: ToolPolicy): ToolPolicy {
  */
 const RAW_MIRROR_MS = 250;
 
+/**
+ * How long a session's name may be.
+ *
+ * Long enough for a sentence somebody means, short enough that one row cannot
+ * push every other off a 300px sidebar. Enforced where the rename happens
+ * rather than in the form, because a form is one of several clients.
+ */
+const MAX_TITLE_CHARS = 120;
+
 interface LiveSession {
   session: Session;
   store: SessionStore;
@@ -2251,6 +2260,39 @@ export class SessionManager extends EventEmitter {
     return changed;
   }
 
+  /**
+   * Rename a session (§5.1).
+   *
+   * A title is a person's own handle on a piece of work: the sidebar is a list
+   * of them, and one that cannot be corrected is a list of whatever the folder
+   * happened to be called the day it started. So it is an ordinary edit — logged
+   * like every other, and reflected in the hint the sidebar reads.
+   *
+   * Trimmed and bounded, and an empty title is refused rather than accepted as
+   * blank: a row with no name is unreachable by search and indistinguishable
+   * from its neighbours. Renaming to the same thing is a no-op, so a form that
+   * saves on blur does not fill a log with events that changed nothing.
+   */
+  async renameSession(sessionId: SessionId, title: string, actor?: Actor): Promise<Session> {
+    const live = this.live(sessionId);
+    const wanted = title.trim().slice(0, MAX_TITLE_CHARS);
+    if (wanted === '') throw new Error('a session needs a name');
+    if (wanted === live.session.title) return live.session;
+
+    live.session.title = wanted;
+    await live.store.append(
+      { type: 'session.renamed', title: wanted },
+      { ...(actor !== undefined ? { actor } : {}) },
+    );
+    // The hint after the event, the same way a group is written: `session.json`
+    // is what a sidebar reads without opening anything, and it must never claim
+    // a name the log has not recorded.
+    await live.store.writeTitleHint(wanted).catch(() => undefined);
+    this.touch(live);
+    this.emit('session', live.session);
+    return live.session;
+  }
+
   /** Leave a group. A group nobody can leave is a trap, not a feature. */
   async ungroupSession(sessionId: SessionId, actor?: Actor): Promise<Session> {
     const live = this.live(sessionId);
@@ -3923,7 +3965,10 @@ export class SessionManager extends EventEmitter {
       sessionId,
       instanceId: workspace.instanceId,
       target,
-      title: meta.title,
+      // The log first, the sidecar second: `session.json` is a hint that a
+      // rename keeps up to date, and the record is what a copied folder or a
+      // failed hint write still has.
+      title: projection.title ?? meta.title,
       goal: meta.goal,
       state: projection.state,
       agents: [],

@@ -971,6 +971,11 @@ export interface AgbrteApi {
      * `groupId` absent starts a new group; present adds to an existing one.
      */
     group(sessionIds: string[], name: string, groupId?: string): Promise<Session[]>;
+    /**
+     * Rename it. A title is a person's handle on a piece of work, and one that
+     * cannot be corrected is whatever the folder was called that morning.
+     */
+    rename(sessionId: string, title: string): Promise<Session>;
     /** Take a session out of its group. Leaving must be as easy as joining. */
     ungroup(sessionId: string): Promise<Session>;
     /** Sessions on disk across every attached host, not yet loaded. */
@@ -1247,6 +1252,7 @@ export const CH = {
   sessionsRespondSplit: 'agbrte:sessions.respondSplit',
   sessionsGroup: 'agbrte:sessions.group',
   sessionsUngroup: 'agbrte:sessions.ungroup',
+  sessionsRename: 'agbrte:sessions.rename',
   inboxMarkRead: 'agbrte:inbox.markRead',
   hostsSsh: 'agbrte:hosts.ssh',
   hostsDiscover: 'agbrte:hosts.discover',

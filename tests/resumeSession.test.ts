@@ -10,7 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionManager } from '@main/sessionManager.js';
@@ -232,6 +232,70 @@ describe('listOnDisk', () => {
     const found = await manager().listOnDisk();
     expect(found).toHaveLength(1);
     expect(found[0]?.sessionId).toBe(good.sessionId as SessionId);
+  });
+});
+
+/**
+ * Renaming, and the two places a name lives (DESIGN.md §5.1).
+ *
+ * A title starts as whatever the folder was called that morning, so being able
+ * to correct it is the difference between a sidebar and a list of guesses. It
+ * lands in *both* places on purpose: the log, because an edit somebody made is
+ * what the log is for and a folder carried elsewhere has to arrive with it
+ * (§5.3), and `session.json`, because that is the file a sidebar reads without
+ * opening anything.
+ *
+ * The order is the event first. A hint can never claim a name the log has not
+ * recorded, and a resume prefers the log — which is what makes a failed hint
+ * write cost nothing but a stale row until the session is opened.
+ */
+describe('renaming a session', () => {
+  it('survives a restart, from the log rather than from the sidecar', async () => {
+    const first = manager();
+    const created = await first.createSession({ title: 'untitled work', goal: 'g' });
+    await first.renameSession(created.sessionId, 'the parser rewrite');
+
+    // The name a person gave it is what comes back, not the one it was born with.
+    const later = manager();
+    const resumed = await later.resumeSession(created.sessionId);
+    expect(resumed.title).toBe('the parser rewrite');
+
+    // And the sidebar's answer, which never opens anything, agrees.
+    const row = (await later.listOnDisk()).find((r) => r.sessionId === created.sessionId);
+    expect(row?.title).toBe('the parser rewrite');
+  });
+
+  it('takes the log over a sidecar that disagrees', async () => {
+    const m = manager();
+    const created = await m.createSession({ title: 'first', goal: 'g' });
+    await m.renameSession(created.sessionId, 'second');
+
+    /*
+     * A hint that never landed: the write is deliberately allowed to fail, so
+     * this is the state after one did — or after a folder was copied without it,
+     * or somebody edited the file. The log is the record; the file is a hint.
+     */
+    const meta = join(workspaceLayout(root).sessionsDir, created.sessionId, 'session.json');
+    const parsed = JSON.parse(await readFile(meta, 'utf8')) as Record<string, unknown>;
+    parsed['title'] = 'stale';
+    await writeFile(meta, JSON.stringify(parsed), 'utf8');
+
+    expect((await manager().resumeSession(created.sessionId)).title).toBe('second');
+  });
+
+  it('refuses an empty name and ignores one that changes nothing', async () => {
+    const m = manager();
+    const created = await m.createSession({ title: 'keep me', goal: 'g' });
+
+    // A row with no name is unreachable by search and identical to its
+    // neighbours, so this is refused rather than accepted as blank.
+    await expect(m.renameSession(created.sessionId, '   ')).rejects.toThrow(/needs a name/i);
+
+    // And renaming to what it is already called writes nothing: a form that
+    // saves on blur must not fill a log with events that changed nothing.
+    const before = (await m.events(created.sessionId)).length;
+    await m.renameSession(created.sessionId, 'keep me');
+    expect((await m.events(created.sessionId)).length).toBe(before);
   });
 });
 

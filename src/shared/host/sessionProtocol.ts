@@ -447,6 +447,16 @@ export interface PreparedChild {
  * exposure, and the only one in that table where a detached overnight run keeps
  * going with the laptop shut. It is offered as that, in those words.
  *
+ * ## v22 adds `session.rename`, which is the ordinary case
+ *
+ * One command, so `COMMAND_SINCE` answers for it and a v21 host simply reports
+ * that it cannot rename — the sidebar's edit is refused with the host's own
+ * sentence rather than failing as a broken call. Nothing else moves: a title has
+ * always been in `session.json` and is now also in the log, which an older host
+ * neither writes nor reads, and neither does an older *client* reading a log a
+ * newer host wrote — an event type it does not know is skipped by the fold, so
+ * it sees the name the metadata file gives, which is the name it saw before.
+ *
  * ## v21 moves the host from a workspace to a machine, and that is a shape change
  *
  * Every bump so far has been additive — a command appeared, or a field did — and
@@ -481,7 +491,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 21;
+export const SESSION_PROTOCOL_VERSION = 22;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -554,6 +564,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   // command appeared, and a gap in it is what makes the next raise unreadable.
   'workspace.list': 21,
   'workspace.open': 21,
+  'session.rename': 22,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -900,6 +911,10 @@ export type SessionCommand =
       groupId?: string;
     }
   | { t: 'session.ungroup'; id: RequestId; sessionId: string }
+  /**
+   * Rename a session. A write: it changes what every client sees it called.
+   */
+  | { t: 'session.rename'; id: RequestId; sessionId: string; title: string }
   /** Commit a spawn on the parent once the child exists elsewhere (§4.3). */
   | {
       t: 'session.recordChild';

@@ -43,7 +43,6 @@ import { hostSocketPath, listen } from '@shared/host/socketChannel.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
 import {
   MIN_CLIENT_PROTOCOL,
-  SESSION_PROTOCOL_VERSION,
   type SessionCommand,
   type SessionMessage,
 } from '@shared/host/sessionProtocol.js';
@@ -547,7 +546,17 @@ describe('a client from before the shape changed', () => {
       id: 'c1',
       role: 'read-write',
       client: 'old-app',
-      protocol: SESSION_PROTOCOL_VERSION - 1,
+      /*
+       * Below the *minimum*, not one below the current version.
+       *
+       * Those were the same number while v21 was the newest, and this test
+       * quietly meant "the newest minus one" until v22 added a command and made
+       * that a client the host is happy to serve — so it waited five seconds for
+       * a refusal that was never coming. `MIN_CLIENT_PROTOCOL - 1` is what the
+       * sentence above actually says, and it stays true through every bump that
+       * does not move the floor.
+       */
+      protocol: MIN_CLIENT_PROTOCOL - 1,
     });
 
     const error = await refused;

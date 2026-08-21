@@ -1869,6 +1869,27 @@ export class Fleet extends EventEmitter {
     return entry.connection.groupSessions(sessionIds, name, groupId);
   }
 
+  /**
+   * Rename a session, on whichever host owns it.
+   *
+   * Refused by name where the host is too old rather than failing as a broken
+   * call: `session.rename` arrived at v22 and a host deployed before it is
+   * otherwise perfectly well (§6.7).
+   */
+  async renameSession(sessionId: SessionId, title: string): Promise<Session> {
+    const entry = this.ownerOf(sessionId);
+    if (!entry.connection.supports('session.rename')) {
+      throw new AttachRefused(
+        `the host for ${labelOf(entry)} is too old to rename a session. Update it and try again.`,
+      );
+    }
+    // Through `onSession`, because the sessions most worth renaming are the
+    // ones nobody has opened — a folder full of last month's work — and a host
+    // that has never read one answers `unknown session`. That helper turns the
+    // answer into a load and retries.
+    return this.onSession(sessionId, (connection) => connection.renameSession(sessionId, title));
+  }
+
   /** Take one session out of its group. Routed to whoever owns it. */
   async ungroup(sessionId: SessionId): Promise<Session> {
     const entry = this.ownerOf(sessionId);
@@ -1891,13 +1912,25 @@ export class Fleet extends EventEmitter {
   > {
     const perHost = await Promise.all(
       [...this.entries.values()].map(async (entry) =>
-        (await entry.connection.listOnDisk()).map((s) => ({
+        (await entry.connection.listOnDisk()).map((s) => {
+          /*
+           * Learned here as well as from loaded sessions and events.
+           *
+           * `owners` is how a command finds the host to send to, and it used to
+           * be filled only by sessions a host had *opened* — so a row in the
+           * sidebar that nobody had clicked was unroutable, and anything acting
+           * on it (renaming, for one) answered "no attached host owns that
+           * session" about a session sitting in a folder this very host serves.
+           */
+          this.owners.set(s.sessionId as SessionId, entry.instanceId);
+          return {
           // The host's answer wins where it gives one: a host serving several
           // workspaces knows which of them a row came from, and the entry's own
           // id is only right for a host that has exactly one.
-          ...s,
-          instanceId: (s.instanceId as InstanceId | undefined) ?? entry.instanceId,
-        })),
+            ...s,
+            instanceId: (s.instanceId as InstanceId | undefined) ?? entry.instanceId,
+          };
+        }),
       ),
     );
     return perHost.flat();

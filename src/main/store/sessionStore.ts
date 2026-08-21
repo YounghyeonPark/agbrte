@@ -88,6 +88,14 @@ export class SessionStore {
     this.paths = new PathCodec(workspaceRoot);
   }
 
+  /** Update the title in `session.json`. A hint, exactly like the group below. */
+  async writeTitleHint(title: string): Promise<void> {
+    const meta = await this.readMeta();
+    meta.title = title;
+    await writeFile(this.layout.sessionFile, `${JSON.stringify(meta, null, 2)}
+`, 'utf8');
+  }
+
   /**
    * Update the group in `session.json`, leaving the log alone.
    *

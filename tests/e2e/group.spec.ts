@@ -21,6 +21,86 @@ import { rm } from 'node:fs/promises';
 import { launch, makeRepo } from './harness.js';
 import { addAgent, createSession, openSession } from './actions.js';
 
+test.describe('renaming a session from the sidebar', () => {
+  test('renames the one that is open and the one that is not', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+    const page = agbrte.window;
+
+    try {
+      await createSession(page, 'untitled work');
+      await addAgent(page, 'echo');
+
+      /*
+       * Its own control, hidden until the row is hovered.
+       *
+       * Double-click was the first shape and it did not survive contact: a row
+       * is a button that opens the session, and the two clicks a double-click
+       * is made of opened the very session being renamed — which for a row that
+       * is only on disk means starting a host to rename it.
+       */
+      const row = page.locator('[data-testid=session][data-title="untitled work"]').locator('..');
+      await row.hover();
+      await row.locator('[data-testid=session-rename-start]').click();
+      await page.fill('[data-testid=session-rename]', 'the parser rewrite');
+      await page.keyboard.press('Enter');
+      await expect(
+        page.locator('[data-testid=session][data-title="the parser rewrite"]'),
+      ).toBeVisible();
+
+      /*
+       * And the case that makes this worth having: a session nobody has opened.
+       *
+       * A folder full of last month's work is exactly the list somebody wants to
+       * tidy, and opening each row to do it would start a host per row. The
+       * second session here is created and then left alone; the app is restarted
+       * so it comes back as a row on disk rather than a loaded one.
+       */
+      const host = page.locator('[data-testid=host]').first();
+      await host.locator('[data-testid=new-session]').click();
+      await host.locator('[data-testid=new-title]').fill('also untitled');
+      await host.locator('[data-testid=new-submit]').click();
+      await expect(page.locator('[data-testid=session-title]')).toHaveText('also untitled');
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
+    }
+  });
+
+  test('renames a session this window never opened', async () => {
+    const repo = await makeRepo();
+    const first = await launch(repo);
+    try {
+      await createSession(first.window, 'made earlier');
+      await addAgent(first.window, 'echo');
+    } finally {
+      await first.close();
+    }
+
+    // A second window over the same folder: the session is on disk and nothing
+    // here has opened it, which is the state most of a sidebar is in.
+    const agbrte = await launch(repo);
+    const page = agbrte.window;
+    try {
+      const row = page
+        .locator('[data-testid=session][data-title="made earlier"]')
+        .locator('..');
+      await expect(row).toBeVisible({ timeout: 25_000 });
+      await row.hover();
+      await row.locator('[data-testid=session-rename-start]').click();
+      await page.fill('[data-testid=session-rename]', 'renamed without opening');
+      await page.keyboard.press('Enter');
+
+      await expect(
+        page.locator('[data-testid=session][data-title="renamed without opening"]'),
+      ).toBeVisible();
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
+    }
+  });
+});
+
 test.describe('a session says which group it is in', () => {
   test('labels both sessions in the sidebar, and stops when one leaves', async () => {
     const repo = await makeRepo();

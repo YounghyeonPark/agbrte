@@ -89,7 +89,7 @@ test('a packaged app starts its own CLI on the session in the pane', async () =>
     await createSession(window, 'Packaged');
     // A seat with no vendor binary, which is the case the CLI option exists for.
     await addAgent(window, 'echo');
-    await window.click('[data-testid=show-shell]');
+    await window.click('[data-testid=show-shell][data-choice="agbrte"]');
 
     const pane = window.locator('[data-testid=pty-terminal]');
     await expect(pane.locator('[data-testid=pty-running]')).toHaveText('Agbrte CLI', {

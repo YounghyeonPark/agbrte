@@ -675,6 +675,11 @@ export class HostConnection extends EventEmitter {
    * sent. The caller names the missing feature at the point of use, which is
    * what `COMMAND_SINCE` is for.
    */
+  renameSession(sessionId: SessionId, title: string): Promise<Session> {
+    this.require('session.rename');
+    return this.call({ t: 'session.rename', sessionId, title });
+  }
+
   groupSessions(sessionIds: SessionId[], name: string, groupId?: string): Promise<Session[]> {
     this.require('session.group');
     return this.call({

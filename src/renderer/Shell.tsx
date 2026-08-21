@@ -109,25 +109,24 @@ export function Shell({
   sessionId,
   instanceId,
   program,
-  choices,
-  onChoose,
   /** Shown in the label so a person knows which machine they are typing on. */
   hostLabel,
 }: {
   sessionId: string;
   instanceId: string;
-  /** What to start. A selector the host resolves — never a name from here. */
-  program: ShellProgram;
   /**
-   * Everything this host said it could start, decided by the parent.
+   * What to start. A selector the host resolves — never a name from here.
    *
-   * Passed in rather than fetched here: the list is `HostInfo.available`
-   * filtered to the CLI runtimes, which is the *same* list the agent picker
-   * draws from, and a second fetch would be a second answer to a question that
-   * already has one on screen.
+   * Chosen *outside* this pane. It used to be chosen inside: one `Terminal`
+   * button opened the pane and the pane then offered three programs, so getting
+   * to the CLI you meant took two decisions with a terminal starting in between
+   * — and the first decision, "a terminal", is a category rather than anything
+   * anybody wants. The row beside the composer has one button per program now,
+   * which leaves this pane doing one thing: running what it was given, and
+   * saying which of them it is (see `ShellChoice`, still the shape that list is
+   * built from).
    */
-  choices: ShellChoice[];
-  onChoose: (program: ShellProgram) => void;
+  program: ShellProgram;
   hostLabel: string;
 }): JSX.Element {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -355,34 +354,6 @@ export function Shell({
           </span>
         )}
       </div>
-
-      {/* The switcher, only where there is something to switch to. One button
-          per choice rather than a dropdown: there are at most a handful, and the
-          question "what is this pane running" is answered by the same control
-          that changes it. Choosing is a *new* terminal — a PTY cannot change the
-          program inside it, and pretending otherwise by keeping the scrollback
-          would show one program's output under another's name. */}
-      {choices.length > 1 && (
-        <div
-          data-testid="pty-choices"
-          className="border-line flex shrink-0 flex-wrap gap-2 border-b px-6 py-1.5"
-        >
-          {choices.map((choice) => (
-            <button
-              key={choice.key}
-              type="button"
-              className="btn text-[11px]"
-              data-testid="pty-choice"
-              data-choice={choice.key}
-              title={choice.hint}
-              aria-pressed={choice.key === wanted}
-              onClick={() => onChoose(choice.program)}
-            >
-              {choice.label}
-            </button>
-          ))}
-        </div>
-      )}
 
       {error !== null && (
         <p data-testid="pty-error" className="text-state-fail px-6 py-3 text-xs">

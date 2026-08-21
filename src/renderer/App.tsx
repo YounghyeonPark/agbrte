@@ -685,11 +685,9 @@ export function App(): JSX.Element {
    *
    * A session with a Claude Code seat is a session where somebody has already
    * said which tool this work uses, so opening the pane on a shell prompt asks
-   * the question again and answers it wrongly. Where there is no seat the first
-   * detected CLI is still a better opening than a prompt — the pane exists to
-   * *be* the CLI's interface — and the shell stays one click away, last in the
-   * list, because it is what somebody needs when the CLI is the broken thing:
-   * a PATH to fix, a `git status` to read, a `claude` that will not start.
+   * the question again and answers it wrongly. The shell stays one click away
+   * because it is what somebody needs when the CLI is the broken thing: a PATH
+   * to fix, a `git status` to read, a `claude` that will not start.
    *
    * ## And why a seat with no vendor CLI gets ours
    *
@@ -702,50 +700,65 @@ export function App(): JSX.Element {
    * because "drive this session from a keyboard" is a thing somebody may want
    * whatever the seat happens to be.
    *
-   * It is listed above the shell and below the vendor CLIs, which is the order
-   * of how much of *this session* each one is: the seat's own tool, then the
-   * session itself, then the machine.
+   * So the row offers exactly two things, in the order of how much of *this
+   * session* each one is: the session's own interface — the seat's CLI, or ours
+   * where the seat has none — and then the machine's shell.
    */
   const clisHere = (activeHost?.available ?? []).filter((id) => id.startsWith('cli:'));
   const seatCli =
     active?.agents
       .map((a) => a.spec.runtimeId)
       .find((id) => id.startsWith('cli:') && clisHere.includes(id)) ?? null;
-  /** A seat exists and it is not one of the vendor CLIs this host detected. */
-  const seatWithoutCli = seatCli === null && (active?.agents.length ?? 0) > 0;
-  const defaultShellProgram: ShellProgram = ((): ShellProgram => {
-    if (seatCli !== null) return { kind: 'cli', cliId: seatCli.slice(4) };
-    // The seat is a harness, an echo, a local model — something with no
-    // interactive binary anywhere on the machine. Ours is the only thing that
-    // can open on it, so it opens on it.
-    if (seatWithoutCli) return { kind: 'agbrte' };
-    const preferred = clisHere[0];
-    return preferred === undefined ? { kind: 'shell' } : { kind: 'cli', cliId: preferred.slice(4) };
-  })();
+
+  /*
+   * Two buttons: **this agent's CLI**, and the shell.
+   *
+   * It was one per detected CLI plus ours, which is a list of everything the
+   * machine happens to have rather than an answer to what somebody wants. A
+   * session has one seat (§4.2) and that seat has one interface: a Claude Code
+   * seat's is Claude Code, and a seat on a local model has none of its own — so
+   * ours stands in, attached to this session, which is what it was built for.
+   * Either way that is *one* button, and which of them it is says something true
+   * about the session rather than about the machine's PATH.
+   *
+   * The other installed CLIs did not disappear so much as stop being offered
+   * here: they are not this session's tool, and starting one from a session's
+   * own row implied a relationship it does not have. The shell is one click
+   * away and can start anything by hand — which is the sentence its own hint has
+   * always carried.
+   */
+  const agentCli: ShellChoice =
+    seatCli !== null
+      ? {
+          key: seatCli,
+          label: terminalLabel(seatCli),
+          program: { kind: 'cli' as const, cliId: seatCli.slice(4) },
+          hint:
+            `${runtimeLabel(seatCli)}, the tool this session's seat uses — run it yourself, ` +
+            'interactively. Nothing here enters the session log',
+        }
+      : {
+          key: 'agbrte',
+          label: 'Agbrte CLI',
+          program: { kind: 'agbrte' as const },
+          // The one hint that promises the opposite of the other's, because this
+          // is a client of this session rather than a program beside it.
+          hint:
+            'Agbrte’s own interface, attached to this session — send turns, answer permission ' +
+            'prompts, watch the transcript. Unlike a vendor CLI it is a real client: what you ' +
+            'send here appears in the chat pane and in the session log',
+        };
+  /*
+   * And the default is that same button.
+   *
+   * There used to be a separate ladder — the seat's CLI, else ours, else the
+   * first detected CLI, else a prompt — computed beside a list of buttons that
+   * could disagree with it. One definition instead: whatever this session's CLI
+   * is, is both what the row offers first and what the pane opens on.
+   */
+  const defaultShellProgram: ShellProgram = agentCli.program;
   const shellChoices: ShellChoice[] = [
-    ...clisHere.map((id) => ({
-      key: id,
-      label: runtimeLabel(id),
-      program: { kind: 'cli' as const, cliId: id.slice(4) },
-      hint:
-        id === seatCli
-          ? `${runtimeLabel(id)}, the tool this session's seat uses — run it yourself, ` +
-            'interactively. Nothing here enters the session log'
-          : `${runtimeLabel(id)}, installed on ${activeHost?.label ?? 'this host'} — run it ` +
-            'yourself, interactively. Nothing here enters the session log',
-    })),
-    {
-      key: 'agbrte',
-      label: 'Agbrte CLI',
-      program: { kind: 'agbrte' as const },
-      // The one hint that promises the opposite of the other two, because this
-      // is the one program in the pane that is a client of this session rather
-      // than a program running beside it.
-      hint:
-        'Agbrte’s own interface, attached to this session — send turns, answer permission ' +
-        'prompts, watch the transcript. Unlike the others it is a real client: what you send ' +
-        'here appears in the chat pane and in the session log',
-    },
+    agentCli,
     {
       key: 'shell',
       label: 'Shell',
@@ -1211,8 +1224,6 @@ export function App(): JSX.Element {
                         sessionId={active.sessionId}
                         instanceId={active.instanceId}
                         program={shellProgram ?? defaultShellProgram}
-                        choices={shellChoices}
-                        onChoose={setShellProgram}
                         hostLabel={activeHost?.label ?? active.instanceId}
                       />
                     ) : (
@@ -1446,24 +1457,57 @@ export function App(): JSX.Element {
                               Raw output
                             </button>
                           )}
-                          <button
-                            className="btn text-[11px]"
-                            data-testid="show-shell"
-                            title={
-                              shellHere
-                                ? 'An interactive terminal in this workspace — your shell, a CLI you ' +
-                                  'drive yourself, or Agbrte attached to this session. The pane says ' +
-                                  'which of them is in the transcript and which is not'
-                                : `A terminal on ${activeHost?.label ?? 'this host'} is not available yet — ` +
-                                  'terminals run on the machine that owns the workspace, and only a ' +
-                                  'local host ships the module for it'
-                            }
-                            aria-pressed={sessionPane === 'shell'}
-                            disabled={!shellHere}
-                            onClick={() => setSessionPane('shell')}
-                          >
-                            Terminal
-                          </button>
+                          {/*
+                            One button per program, not one button and then a
+                            choice.
+
+                            `Terminal` opened a pane that then asked which of
+                            three things to run, so reaching the CLI you meant
+                            was two decisions and a wait in between — and the
+                            first of them, "terminal", is not a thing anybody
+                            wants. It is the *category*. What people want is
+                            Claude Code, or their shell, or Agbrte attached to
+                            this session, and each of those is now a button that
+                            starts it.
+
+                            Disabled rather than hidden where the host cannot run
+                            one, with the reason in the title: a control that
+                            vanishes teaches people the feature does not exist
+                            (§6.8's rule, applied to a row rather than to a port).
+                          */}
+                          {shellChoices.map((choice) => (
+                            <button
+                              key={choice.key}
+                              className="btn text-[11px]"
+                              data-testid="show-shell"
+                              data-choice={choice.key}
+                              title={
+                                shellHere
+                                  ? choice.hint
+                                  : `A terminal on ${activeHost?.label ?? 'this host'} is not available yet — ` +
+                                    'terminals run on the machine that owns the workspace, and only a ' +
+                                    'local host ships the module for it'
+                              }
+                              aria-pressed={
+                                sessionPane === 'shell' &&
+                                (shellProgram ?? defaultShellProgram).kind === choice.program.kind &&
+                                (choice.program.kind !== 'cli' ||
+                                  (shellProgram ?? defaultShellProgram).kind !== 'cli' ||
+                                  ((shellProgram ?? defaultShellProgram) as { cliId: string })
+                                    .cliId === choice.program.cliId)
+                              }
+                              disabled={!shellHere}
+                              onClick={() => {
+                                // Both, and in this order: choosing a program
+                                // while the transcript is showing has to *open*
+                                // the pane, or the press does nothing visible.
+                                setShellProgram(choice.program);
+                                setSessionPane('shell');
+                              }}
+                            >
+                              {choice.label}
+                            </button>
+                          ))}
                           {/* At the far end with `Files`, and for the same reason: it
                               chooses nothing about the main pane, so grouping it with
                               the three modes would say it was a fourth one. Remote only
@@ -1760,34 +1804,40 @@ function HostGroup({
 
       <div className="grid gap-1">
         {(showLoaded ? sessions : []).map((s) => (
-          <button
+          <SessionRow
             key={s.sessionId}
             data-testid="session"
             data-title={s.title}
-            className={`grid gap-1 rounded-[2px] border px-3 py-2 text-left ${
+            className={`grid w-full gap-1 rounded-[2px] border px-3 py-2 text-left ${
               s.sessionId === activeId ? 'bg-raised border-line' : 'hover:border-line border-transparent'
             }`}
-            onClick={() => void store.openSession(s.sessionId, host.instanceId)}
+            title={s.title}
+            onOpen={() => void store.openSession(s.sessionId, host.instanceId)}
+            onRename={(title) => void store.renameSession(s.sessionId, title)}
           >
-            <span className="truncate-line">{s.title}</span>
             {/* Quiet: the sidebar is navigation, and the pane beside it has
                 already said this. See `quietTone`. */}
             <span className={`${LABEL} flex min-w-0 gap-2`}>
               <span className={quietTone(s.state)}>{s.state.replace(/_/g, ' ')}</span>
               {s.group !== undefined && <GroupTag name={s.group.name} />}
             </span>
-          </button>
+          </SessionRow>
         ))}
 
         {unloaded.map((d) => (
-          <button
+          /* Renamed without being opened, which is the case that makes this
+             worth having: a folder full of sessions from last month is exactly
+             the list somebody wants to tidy, and opening each one to do it
+             would start a host per row. */
+          <SessionRow
             key={d.sessionId}
             data-testid="session"
             data-title={d.title}
-            className="hover:border-line grid gap-1 rounded-[2px] border border-transparent px-3 py-2 text-left"
-            onClick={() => void store.openSession(d.sessionId, host.instanceId)}
+            className="hover:border-line grid w-full gap-1 rounded-[2px] border border-transparent px-3 py-2 text-left"
+            title={d.title}
+            onOpen={() => void store.openSession(d.sessionId, host.instanceId)}
+            onRename={(title) => void store.renameSession(d.sessionId, title)}
           >
-            <span className="truncate-line">{d.title}</span>
             {/* On disk only until opened — which is what proves the log is truth. */}
             <span className={`${LABEL} flex min-w-0 gap-2`}>
               <span className="text-muted">resume</span>
@@ -1801,10 +1851,103 @@ function HostGroup({
               */}
               {d.group !== undefined && <GroupTag name={d.group.name} />}
             </span>
-          </button>
+          </SessionRow>
         ))}
       </div>
     </section>
+  );
+}
+
+/**
+ * A session's name in the sidebar, and the way to change it.
+ *
+ * **Not a double-click, and the first attempt is why.** A row is a `<button>`
+ * that opens the session, and a double-click delivers two ordinary clicks
+ * before it — so the gesture opened the very session it was meant to rename,
+ * which for a row that is only *on disk* means starting a host to rename a
+ * folder's worth of last month's work. Cancelling the open on a timer would put
+ * a delay on every session anybody opens to save the rare rename a click.
+ *
+ * So it is its own control, and it lives *beside* the row rather than inside
+ * it: a button inside a button is invalid, and a field inside one is not
+ * typeable (the trap `Roster.tsx` hit with a `<select>`). Hidden until the row
+ * is hovered or something in it has focus, so the list stays a list of names
+ * and the control is still reachable from a keyboard.
+ *
+ * Enter saves, Escape cancels, blur saves: leaving a field is "done" in every
+ * list that works this way, and losing what was typed because somebody clicked
+ * elsewhere is the outcome worth ruling out. An empty name cancels rather than
+ * erroring — the host would refuse it, and a banner about a blank field is
+ * noise about something nobody meant.
+ */
+function SessionRow({
+  title,
+  onRename,
+  onOpen,
+  children,
+  ...rest
+}: {
+  title: string;
+  onRename: (title: string) => void;
+  onOpen: () => void;
+  children: React.ReactNode;
+  className?: string;
+  'data-testid'?: string;
+  'data-title'?: string;
+}): JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+
+  const save = (): void => {
+    setEditing(false);
+    const wanted = draft.trim();
+    if (wanted !== '' && wanted !== title) onRename(wanted);
+  };
+
+  return (
+    <div className="group/row relative min-w-0">
+      <button {...rest} onClick={onOpen}>
+        {editing ? (
+          <input
+            className="field min-w-0 px-1 py-0 text-sm"
+            data-testid="session-rename"
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            // The row opens on click and this field is inside it, so a click to
+            // place the cursor would otherwise open the session being renamed.
+            onClick={(e) => e.stopPropagation()}
+            onBlur={save}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') save();
+              if (e.key === 'Escape') setEditing(false);
+            }}
+          />
+        ) : (
+          <span className="truncate-line" data-testid="session-name">
+            {title}
+          </span>
+        )}
+        {children}
+      </button>
+      {!editing && (
+        <button
+          type="button"
+          className="btn-quiet absolute top-1 right-1 px-1 py-0 text-[11px] opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100"
+          data-testid="session-rename-start"
+          title={`Rename ${title}`}
+          aria-label={`Rename ${title}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setDraft(title);
+            setEditing(true);
+          }}
+        >
+          rename
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -1992,6 +2135,25 @@ async function saveTranscript(session: Session): Promise<void> {
  * trade. Anything unlisted falls back to its id, which is what was shown before
  * this map existed — so a runtime a host invents is offered, not hidden.
  */
+/**
+ * The same tools, named for a button rather than for a picker.
+ *
+ * `RUNTIME_LABELS` says what a runtime *is* — "Claude Code (installed CLI)" —
+ * which is the right answer in a list of runtimes to choose a seat from, and
+ * three words too many in a row of buttons beside the composer. The suffix
+ * there is doing the work of a sentence nobody needs twice: the button's title
+ * already says it is the tool installed on this machine, run by you, outside the
+ * transcript.
+ */
+const TERMINAL_LABELS: Readonly<Record<string, string>> = {
+  'cli:claude-code': 'Claude Code',
+  'cli:gemini-cli': 'Gemini CLI',
+};
+
+function terminalLabel(id: string): string {
+  return TERMINAL_LABELS[id] ?? runtimeLabel(id);
+}
+
 const RUNTIME_LABELS: Readonly<Record<string, string>> = {
   'agbrte-harness': 'Agbrte harness',
   echo: 'Echo (no model)',

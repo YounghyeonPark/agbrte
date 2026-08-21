@@ -222,6 +222,7 @@ const api: AgbrteApi = {
     respondSplit: call(CH.sessionsRespondSplit),
     group: call(CH.sessionsGroup),
     ungroup: call(CH.sessionsUngroup),
+    rename: call(CH.sessionsRename),
     setReasoning: call(CH.sessionsSetReasoning),
     blob: call(CH.sessionsBlob),
     listOnDisk: call(CH.sessionsListOnDisk),

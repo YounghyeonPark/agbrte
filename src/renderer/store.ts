@@ -210,6 +210,13 @@ export interface AgbrteState {
   groupWith(sessionId: string, name: string): Promise<void>;
   /** Take the open session out of its group. */
   leaveGroup(): Promise<void>;
+  /**
+   * Rename a session, from wherever it is listed.
+   *
+   * Takes the id rather than acting on the active session: the sidebar renames
+   * rows that are *not* open, which is most of them.
+   */
+  renameSession(sessionId: string, title: string): Promise<void>;
   applyBatch(batch: EventBatch): void;
   applySession(session: Session): void;
   applyPermission(request: PermissionRequest): void;
@@ -667,6 +674,29 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
       await agbrte().sessions.ungroup(sessionId);
       set({ sessions: await agbrte().sessions.list() });
       applySnapshot(set, get, await agbrte().sessions.snapshot(sessionId));
+    });
+  },
+
+  async renameSession(sessionId, title) {
+    await guard(set, async () => {
+      const renamed = await agbrte().sessions.rename(sessionId, title);
+      /*
+       * Both lists, because a row can be in either.
+       *
+       * A loaded session is in `sessions` and an unopened one is in `onDisk`,
+       * and the sidebar draws from both — so patching one and re-listing later
+       * would leave the row a person just renamed showing its old name until
+       * something else refreshed it. Patched in place rather than re-fetched:
+       * the host has already answered with the session it wrote.
+       */
+      set({
+        sessions: get().sessions.map((s) =>
+          s.sessionId === sessionId ? { ...s, title: renamed.title } : s,
+        ),
+        onDisk: get().onDisk.map((d) =>
+          d.sessionId === sessionId ? { ...d, title: renamed.title } : d,
+        ),
+      });
     });
   },
 

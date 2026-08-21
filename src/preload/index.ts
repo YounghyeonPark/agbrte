@@ -159,6 +159,8 @@ const api: AgbrteApi = {
     group: (sessionIds: string[], name: string, groupId?: string) =>
       ipcRenderer.invoke(CH.sessionsGroup, sessionIds, name, groupId),
     ungroup: (sessionId: string) => ipcRenderer.invoke(CH.sessionsUngroup, sessionId),
+    rename: (sessionId: string, title: string) =>
+      ipcRenderer.invoke(CH.sessionsRename, sessionId, title),
     listOnDisk: () => ipcRenderer.invoke(CH.sessionsListOnDisk),
     resume: (instanceId: string, sessionId: string) =>
       ipcRenderer.invoke(CH.sessionsResume, instanceId, sessionId),

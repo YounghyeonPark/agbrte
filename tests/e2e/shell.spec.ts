@@ -18,7 +18,7 @@
  * The shell case runs everywhere: every machine has a login shell. The CLI case
  * needs Claude Code installed on the machine running the suite, so it is
  * **skipped by what the app itself detected** rather than by a probe of its own
- * — `[data-testid=pty-choice]` is drawn from `HostInfo.available`, which is the
+ * — `[data-testid=show-shell]` is drawn from `HostInfo.available`, which is the
  * host's answer, so a skip here means "this host has no CLI" and never "the test
  * asked the wrong question".
  */
@@ -69,21 +69,29 @@ test.describe('your own terminal', () => {
     try {
       await createSession(agbrte.window, 'CLI terminal');
       await addAgent(agbrte.window, 'echo');
-      await agbrte.window.click('[data-testid=show-shell]');
-
-      const pane = agbrte.window.locator('[data-testid=pty-terminal]');
-      await expect(pane).toBeVisible();
-
-      // The app's own answer about this machine, not a second detection here:
-      // the button exists exactly when `HostInfo.available` carries the runtime,
-      // so a skip means "this host has no Claude Code" and never "the test asked
-      // the wrong question".
-      const claude = agbrte.window.locator('[data-testid=pty-choice][data-choice="cli:claude-code"]');
+      /*
+       * One press, from the row beside the composer.
+       *
+       * There used to be two: `Terminal`, then a switcher inside the pane it
+       * opened. The row has a button per program now, so the thing a person
+       * wants — this CLI — is the thing they click.
+       *
+       * The app's own answer about this machine, not a second detection here:
+       * the button exists exactly when `HostInfo.available` carries the runtime,
+       * so a skip means "this host has no Claude Code" and never "the test asked
+       * the wrong question".
+       */
+      const claude = agbrte.window.locator(
+        '[data-testid=show-shell][data-choice="cli:claude-code"]',
+      );
       test.skip(
         (await claude.count()) === 0,
         'this host did not detect Claude Code, so there is no CLI pane to open',
       );
       await claude.click();
+
+      const pane = agbrte.window.locator('[data-testid=pty-terminal]');
+      await expect(pane).toBeVisible();
 
       // The label says what is running. It is not decoration: a pane of
       // monospace output inside a session view reads as part of the session
@@ -169,7 +177,7 @@ test.describe('your own terminal', () => {
       // which is what makes the pane's third choice the only one that can open
       // on the session at all.
       await addAgent(agbrte.window, 'echo');
-      await agbrte.window.click('[data-testid=show-shell]');
+      await agbrte.window.click('[data-testid=show-shell][data-choice="agbrte"]');
 
       const pane = agbrte.window.locator('[data-testid=pty-terminal]');
       await expect(pane).toBeVisible();
@@ -304,24 +312,17 @@ test.describe('your own terminal', () => {
       await createSession(agbrte.window, 'Shell session');
       await addAgent(agbrte.window, 'echo');
 
-      // Three named panes, not one toggle with a changing label: `Raw output`
-      // and `Terminal` are easy to confuse and must not be.
-      await agbrte.window.click('[data-testid=show-shell]');
-
       const pane = agbrte.window.locator('[data-testid=pty-terminal]');
-      await expect(pane).toBeVisible();
 
       /*
        * The shell is always offered, and is last: it is what somebody needs when
        * the CLI is the broken thing — a PATH to fix, a `git status` to read.
        *
-       * The switcher itself only appears where there is more than one choice, so
-       * on a machine with no CLI installed the shell is already what opened and
-       * there is nothing to click. Both are the same end state, which is why the
-       * assertion below is unconditional and only the click is not.
+       * Its own button in the row, like every other program: nothing about
+       * reaching your shell should depend on what else this machine happens to
+       * have installed.
        */
-      const toShell = agbrte.window.locator('[data-testid=pty-choice][data-choice="shell"]');
-      if ((await toShell.count()) > 0) await toShell.click();
+      await agbrte.window.click('[data-testid=show-shell][data-choice="shell"]');
       await expect(pane.locator('[data-testid=pty-running]')).toHaveText('Your shell');
       await expect(pane).toContainText('nothing here enters the transcript');
 
@@ -383,7 +384,7 @@ test.describe('your own terminal', () => {
     try {
       await createSession(agbrte.window, 'Refusal');
       await addAgent(agbrte.window, 'echo');
-      await agbrte.window.click('[data-testid=show-shell]');
+      await agbrte.window.click('[data-testid=show-shell][data-choice="shell"]');
       await expect(agbrte.window.locator('[data-testid=pty-where]')).toBeVisible({
         timeout: 30_000,
       });
@@ -456,7 +457,7 @@ test.describe('your own terminal', () => {
       await createSession(agbrte.window, 'Shell lifetime');
       await addAgent(agbrte.window, 'echo');
 
-      await agbrte.window.click('[data-testid=show-shell]');
+      await agbrte.window.click('[data-testid=show-shell][data-choice="shell"]');
       await expect(agbrte.window.locator('[data-testid=pty-where]')).toBeVisible({
         timeout: 30_000,
       });
@@ -469,7 +470,7 @@ test.describe('your own terminal', () => {
       await expect(agbrte.window.locator('[data-testid=pty-terminal]')).toHaveCount(0);
       await expect(agbrte.window.locator('[data-testid=composer-input]')).toBeVisible();
 
-      await agbrte.window.click('[data-testid=show-shell]');
+      await agbrte.window.click('[data-testid=show-shell][data-choice="shell"]');
       await expect(agbrte.window.locator('[data-testid=pty-where]')).toBeVisible({
         timeout: 30_000,
       });
