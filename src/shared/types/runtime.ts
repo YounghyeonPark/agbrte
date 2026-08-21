@@ -596,6 +596,17 @@ export interface RawTail {
   lines: string[];
   /** Lines dropped off the front, so a shortened tail says it was shortened. */
   dropped: number;
+  /**
+   * How many leading lines were printed by an *earlier* run of this session.
+   *
+   * A reopened session restores what its seats printed before the restart
+   * (§3.12), so the pane no longer goes blank while the chat beside it comes
+   * back whole. Without this the join is invisible and two runs read as one:
+   * the same CLI banner twice looks like a bug rather than a restart. Optional
+   * and additive — a host that does not send it is one whose tail is all from
+   * this run, which is what its absence means.
+   */
+  restored?: number;
 }
 
 export interface AgentHandle {

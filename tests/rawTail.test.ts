@@ -215,6 +215,84 @@ describe('the tail belongs to the session, not to the turn', () => {
   });
 });
 
+describe('and it survives the process that printed it', () => {
+  /**
+   * The half that made the two panes unequal.
+   *
+   * The chat comes back from the log on every reopen; the raw pane came back
+   * blank, because the ring died with the process that filled it. Nothing about
+   * that was visible while a session stayed open, which is why it lasted: it is
+   * a property of restarts, and only of the pane nobody had a test reopening.
+   */
+  it('comes back after the session is reopened from disk', async () => {
+    const first = cliManager([run('hello')]);
+    const { sessionId, agentId } = await seat(first);
+    await first.send(sessionId, agentId, TEXT('go'));
+
+    const printed = first.rawLog(sessionId, agentId);
+    expect(printed?.lines).toContain('npm notice a new version of claude is available');
+    // The mirror is coalesced, so give the beat a chance to land. Nothing waits
+    // on it in production either — see `mirrorRaw`.
+    await new Promise((r) => setTimeout(r, 400));
+    first.dispose();
+
+    // A different manager over the same workspace: a restarted host, a second
+    // window, the app reopened tomorrow.
+    const second = cliManager([run('hello')]);
+    await second.resumeSession(sessionId);
+
+    const restored = second.rawLog(sessionId, agentId);
+    expect(restored?.lines).toEqual(printed?.lines);
+    expect(restored?.dropped).toBe(printed?.dropped);
+    second.dispose();
+  });
+
+  /**
+   * And the next run continues the pane rather than replacing it.
+   *
+   * A restored tail is the *opening* of this run's window: what the seat prints
+   * next goes underneath, the way it would have if nothing had restarted.
+   */
+  it('keeps the earlier run above what this one prints', async () => {
+    const first = cliManager([run('before')]);
+    const { sessionId, agentId } = await seat(first);
+    await first.send(sessionId, agentId, TEXT('go'));
+    await new Promise((r) => setTimeout(r, 400));
+    first.dispose();
+
+    const second = cliManager([run('after')]);
+    await second.resumeSession(sessionId);
+    await second.send(sessionId, agentId, TEXT('again'));
+
+    const tail = second.rawLog(sessionId, agentId);
+    const text = tail?.lines.join('\n') ?? '';
+    expect(text).toContain('"text":"before"');
+    expect(text).toContain('"text":"after"');
+    expect(text.indexOf('"text":"before"')).toBeLessThan(text.indexOf('"text":"after"'));
+    second.dispose();
+  });
+
+  /**
+   * A seat that never printed still has no raw side after a reopen.
+   *
+   * `rawLog` answering `null` is what hides the pane's toggle, and a restore
+   * that invented an empty tail for every agent would offer a pane that can
+   * only ever be blank — which is the thing the lazy ring was written to avoid.
+   */
+  it('does not invent a raw side for a seat that never printed', async () => {
+    const first = cliManager([run('hi')]);
+    // Admitted and never sent to, so the seat exists in the log with nothing
+    // behind it — the state the lazy ring reports as "no raw side".
+    const { sessionId, agentId } = await seat(first);
+    first.dispose();
+
+    const second = cliManager([run('hi')]);
+    await second.resumeSession(sessionId);
+    expect(second.rawLog(sessionId, agentId)).toBeNull();
+    second.dispose();
+  });
+});
+
 describe('across the agent-host process boundary', () => {
   /**
    * The failure the first bug hid behind.

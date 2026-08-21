@@ -17,8 +17,11 @@
  * `sessions.rawLog`.
  *
  * Bounded the way the preview server log is (§6.8), with one addition it needs
- * and that one does not: a preview log dies with its process, while this now
- * lives as long as the session does, so a line cap alone is not a memory bound.
+ * and that one does not: a preview log dies with its process, while this lives
+ * as long as the session does — and now outlives it, mirrored to disk so the
+ * pane survives a restart (`store/rawTailFile.ts`) — so a line cap alone is not
+ * a memory bound. The bound is also what makes the mirror safe: a snapshot of
+ * something that cannot exceed a quarter of a megabyte needs no compaction.
  * A single CLI line can be a megabyte of tool output, and 2,000 of those is not
  * a "tail". Three limits, therefore — per line, in total, and in count — and
  * `dropped` keeps a truncated tail honest about being truncated.
@@ -48,6 +51,8 @@ export class RawTailBuffer {
   private readonly lines: string[] = [];
   private dropped = 0;
   private chars = 0;
+  /** How many of `lines` came from an earlier run. Shrinks as they are evicted. */
+  private restored = 0;
 
   constructor(
     private readonly maxLines: number = RAW_TAIL_LINES,
@@ -71,12 +76,45 @@ export class RawTailBuffer {
       const gone = this.lines.shift() as string;
       this.chars -= gone.length;
       this.dropped += 1;
+      // The mark moves with the lines it counts: once an earlier run's output
+      // has scrolled out of the ring, there is no join left to draw.
+      if (this.restored > 0) this.restored -= 1;
     }
   }
 
   /** A copy, so a caller cannot reach back into the ring. */
   tail(): RawTail {
-    return { lines: [...this.lines], dropped: this.dropped };
+    return {
+      lines: [...this.lines],
+      dropped: this.dropped,
+      ...(this.restored > 0 ? { restored: this.restored } : {}),
+    };
+  }
+
+  /**
+   * Seed from what this seat printed on an earlier run (§3.12).
+   *
+   * The counterpart to `tail()`, and the reason the pane survives a restart:
+   * these are the bytes the process really printed, read back from the file
+   * beside the log, not a transcript re-rendered into something that looks like
+   * terminal output. `dropped` comes back with them, because it is the pane's
+   * cursor over the whole stream and a restored tail that reset it to zero
+   * would claim the seat had never overflowed.
+   *
+   * Refused on a buffer that has already collected something. Restoring is an
+   * opening move — the alternative, merging into a live ring, would interleave
+   * two runs' output with no mark saying where one ended.
+   */
+  restore(tail: RawTail): void {
+    if (!this.isEmpty) throw new Error('a raw tail can only be restored before anything is pushed');
+    this.dropped = tail.dropped;
+    // Through `push`, so a file written by a build with looser limits than this
+    // one cannot smuggle a line past them: the caps are this process's.
+    for (const line of tail.lines) this.push(line);
+    // `push` counts its own evictions, which would double-count what the file
+    // already recorded as dropped.
+    this.dropped = tail.dropped + Math.max(0, tail.lines.length - this.lines.length);
+    this.restored = this.lines.length;
   }
 
   /** Whether anything has ever been reported here. */

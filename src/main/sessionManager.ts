@@ -79,6 +79,7 @@ import { compactionSizes, rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
 import { RawTailBuffer } from './rawTail.js';
+import { loadRawTails, saveRawTail } from './store/rawTailFile.js';
 import { TurnSlots } from './concurrency.js';
 import { entriesFrom, merge, ReadMarker } from './inbox.js';
 import { fitContent } from './content/fit.js';
@@ -245,6 +246,16 @@ function totalCost(session: Session): number | 'unknown' {
 function clonePolicy(policy: ToolPolicy): ToolPolicy {
   return { defaultAction: policy.defaultAction, rules: policy.rules.map((r) => ({ ...r })) };
 }
+
+/**
+ * How long a seat's raw output may sit unmirrored (§3.12).
+ *
+ * A quarter-second, which is a beat rather than a policy: long enough that a
+ * chatty CLI rewrites the snapshot a few times a second instead of a few
+ * hundred, short enough that "the pane survives a restart" is true of a restart
+ * that happens while something is printing.
+ */
+const RAW_MIRROR_MS = 250;
 
 interface LiveSession {
   session: Session;
@@ -500,6 +511,8 @@ export class SessionManager extends EventEmitter {
   private readonly queues = new Map<AgentId, QueuedTurn[]>();
   /** Agents with a runner already draining, so a turn is never started twice. */
   private readonly draining = new Set<AgentId>();
+  /** Seats with a raw-tail mirror already scheduled. See `mirrorRaw`. */
+  private readonly rawFlushes = new Map<AgentId, NodeJS.Timeout>();
   private readonly now: () => Date;
 
   private readonly sweeper: NodeJS.Timeout;
@@ -685,6 +698,11 @@ export class SessionManager extends EventEmitter {
   /** Stop the stall sweeper. Sessions are unaffected; they live in the log. */
   dispose(): void {
     clearInterval(this.sweeper);
+    // Pending mirrors are dropped rather than flushed: `dispose` is synchronous
+    // because a process is trying to exit, and the file is a snapshot that the
+    // next line rewrites whole. What is lost is the last beat of output.
+    for (const timer of this.rawFlushes.values()) clearTimeout(timer);
+    this.rawFlushes.clear();
     // MCP servers are child processes of *this* process and die with the
     // manager either way; killing them here just makes it orderly. The
     // sessions themselves are untouched — they live in the log (§17 Q20).
@@ -1376,9 +1394,12 @@ export class SessionManager extends EventEmitter {
    * finished turn, a crashed worker, and however many processes a
    * deny-ask-resume took.
    *
-   * A live window, not a record. It is not rebuilt when a session is reopened
-   * from disk, because the log is the durable transcript and nothing printed
-   * this into a terminal on this run.
+   * A window on what was printed, not a second transcript. It *is* restored when
+   * a session is reopened, from the mirror written beside the log by the run
+   * that filled it (`store/rawTailFile.ts`) — the same bytes, not the log
+   * re-rendered to look like terminal output. The log remains the durable
+   * record: resume, the gate and every projection read it and none of them read
+   * this.
    */
   rawLog(sessionId: SessionId, agentId: AgentId): RawTail | null {
     const live = this.live(sessionId);
@@ -1404,6 +1425,69 @@ export class SessionManager extends EventEmitter {
       live.rawTails.set(agentId, tail);
     }
     tail.push(line);
+    this.mirrorRaw(live, agentId);
+  }
+
+  /**
+   * Mirror a seat's ring to disk, at most once a beat.
+   *
+   * Coalesced rather than written per line, because a CLI mid-tool-call prints
+   * hundreds a second and the file is a *snapshot* — writing each one would
+   * rewrite the whole quarter-megabyte tail to record one line of it. The
+   * window is small enough that what a crash costs is the last blink of output,
+   * against a pane that was empty on every restart before.
+   *
+   * Trailing, and never awaited by a turn: a slow disk must not become
+   * backpressure on an agent, so a failed write is dropped. The next line
+   * schedules another, and the file is a snapshot, so one lost write is
+   * repaired by the next rather than leaving a gap.
+   */
+  private mirrorRaw(live: LiveSession, agentId: AgentId): void {
+    if (this.rawFlushes.has(agentId)) return;
+    const timer = setTimeout(() => {
+      this.rawFlushes.delete(agentId);
+      void this.flushRaw(live, agentId);
+    }, RAW_MIRROR_MS);
+    // So a pending mirror never holds a process open — the tail is a
+    // convenience and nothing may wait on it.
+    timer.unref?.();
+    this.rawFlushes.set(agentId, timer);
+  }
+
+  /**
+   * Bring back what this session's seats printed on an earlier run.
+   *
+   * Read once, at reopen, and never merged into a ring that has started
+   * collecting — a restored tail is the *beginning* of this run's pane, with
+   * the previous run's output above whatever the next turn prints. Failure is
+   * silent for the same reason the mirror's is: a session must open whether or
+   * not the pane beside it can be filled.
+   */
+  private async restoreRawTails(live: LiveSession): Promise<void> {
+    let mirrored: Map<string, RawTail>;
+    try {
+      mirrored = await loadRawTails(this.rootOf(live), live.session.sessionId);
+    } catch {
+      return;
+    }
+    for (const [agentId, tail] of mirrored) {
+      if (live.rawTails.has(agentId as AgentId)) continue;
+      const buffer = new RawTailBuffer();
+      buffer.restore(tail);
+      live.rawTails.set(agentId as AgentId, buffer);
+    }
+  }
+
+  /** Write one seat's ring now, if it has anything to say. */
+  private async flushRaw(live: LiveSession, agentId: AgentId): Promise<void> {
+    const tail = live.rawTails.get(agentId);
+    if (tail === undefined || tail.isEmpty) return;
+    try {
+      await saveRawTail(this.rootOf(live), live.session.sessionId, agentId, tail.tail());
+    } catch {
+      // See `mirrorRaw`: the next line repairs it, and a turn must not fail
+      // because a tail could not be mirrored.
+    }
   }
 
   /**
@@ -3867,10 +3951,20 @@ export class SessionManager extends EventEmitter {
       handles: new Map(),
       specs: new Map(),
       aborts: new Map(),
-      // Empty on purpose, and it is not a loss: the raw tail is a live window on
-      // a running process (§3.12), never a second transcript. A resumed session
-      // has no process yet, and inventing one from the log would put bytes in a
-      // terminal pane that nothing ever printed there.
+      /*
+       * Filled below from what those seats really printed (§3.12).
+       *
+       * This used to be empty on the rule that inventing terminal output from
+       * the log would put bytes on screen that nothing ever printed there — a
+       * good rule, and still kept: nothing here is re-rendered from the
+       * transcript. What is restored is the mirror of the ring itself, written
+       * beside the log by the run that filled it, so the pane shows the same
+       * bytes it was showing before the restart instead of going blank while
+       * the chat beside it comes back whole.
+       *
+       * Populated after `sessions.set`, because reading it is I/O and this
+       * object has to exist first.
+       */
       rawTails: new Map(),
       // Deliberately empty: an MCP server's env held credentials the log does
       // not carry (§17 Q20), so a restart cannot honestly reconnect. The
@@ -3891,6 +3985,7 @@ export class SessionManager extends EventEmitter {
       }
     }
     this.sessions.set(sessionId, live);
+    await this.restoreRawTails(live);
 
     for (const projected of projection.agents) {
       const spec: AgentSpec = {

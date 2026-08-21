@@ -94,7 +94,26 @@ export function TerminalView({
             // would misread as "the CLI never said that".
             <p className="text-muted">[{tail.dropped.toLocaleString()} earlier lines dropped]</p>
           )}
-          <pre className="wrap-anywhere whitespace-pre-wrap">{tail.lines.join('\n')}</pre>
+          {(tail.restored ?? 0) > 0 ? (
+            // The join, drawn once: everything above it was printed by an
+            // earlier run of this session and read back from disk, everything
+            // below by the process running now. Without the rule the two read
+            // as one stream, and a CLI's start-up banner appearing twice looks
+            // like a fault rather than a restart.
+            <>
+              <pre className="wrap-anywhere whitespace-pre-wrap">
+                {tail.lines.slice(0, tail.restored).join('\n')}
+              </pre>
+              <p className="text-muted my-2 border-t border-current/20 pt-2">
+                [above: an earlier run of this session]
+              </p>
+              <pre className="wrap-anywhere whitespace-pre-wrap">
+                {tail.lines.slice(tail.restored).join('\n')}
+              </pre>
+            </>
+          ) : (
+            <pre className="wrap-anywhere whitespace-pre-wrap">{tail.lines.join('\n')}</pre>
+          )}
         </>
       )}
       <div ref={endRef} />
