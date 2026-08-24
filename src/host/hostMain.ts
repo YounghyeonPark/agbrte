@@ -539,10 +539,6 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       workspaceRoot,
       runtimes: available,
       ...(runtimeNotes.length > 0 ? { runtimeNotes } : {}),
-      // Asked of the module, not inferred from the platform: a remote with the
-      // prebuild deployed can open one, and a cross-built local artifact without
-      // it cannot (§7).
-      shells: shellsAvailable(),
       endpoints,
       ...(identity.origin === 'relocated' && identity.movedFrom !== undefined
         ? { movedFrom: identity.movedFrom }
@@ -550,6 +546,15 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       ...(unavailableReason !== undefined ? { unavailableReason } : {}),
       ...(bundleVersion === null ? {} : { bundleVersion }),
     },
+    /*
+     * Asked of the module, not inferred from the platform, and asked *live*.
+     *
+     * A remote with the prebuild deployed can open a terminal and a cross-built
+     * local artifact without it cannot, so the platform says nothing useful. Per
+     * handshake because the module can arrive while this host is running — which
+     * is exactly what a deploy to a machine with a host already up does.
+     */
+    canOpenShells: () => shellsAvailable(),
     // Live, not from the handshake: `ollama pull` happens while this runs.
     models: () => supervisor.models(),
     // The expensive question, asked per model rather than per list (§3.3).

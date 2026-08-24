@@ -113,8 +113,6 @@ export interface HostSelfDescription {
   movedFrom?: string;
   runtimes: string[];
   runtimeNotes?: Array<{ id: string; label: string; reason: string }>;
-  /** Whether this machine can open a terminal. See `HostIdentity.shells`. */
-  shells?: boolean;
   endpoints?: HostIdentity['endpoints'];
   unavailableReason?: string;
   bundleVersion?: string;
@@ -180,6 +178,19 @@ export interface SessionHostOptions {
    * which a client would show as "this machine has no models".
    */
   models?: () => Promise<EndpointModels[]>;
+  /**
+   * Whether this machine can open a terminal, asked live (§7).
+   *
+   * A function and not a field on the identity, for the same reason `models` is
+   * one: the answer changes under a running host. A remote is given the pty
+   * module while its host is already serving, and a value captured at startup
+   * would keep saying "no terminal here" until somebody restarted it — which is
+   * a thing nobody would think to do, because the deploy said it had succeeded.
+   *
+   * Named apart from `shells`, which is the terminal *service* an embedder
+   * passes in: this answers whether one could be opened, not what opens them.
+   */
+  canOpenShells?: () => boolean;
   /**
    * What one model can actually do (§3.3), for a client about to choose it.
    *
@@ -605,9 +616,7 @@ export class SessionHostServer {
           ...(this.opts.identity.runtimeNotes !== undefined
             ? { runtimeNotes: this.opts.identity.runtimeNotes }
             : {}),
-          ...(this.opts.identity.shells !== undefined
-            ? { shells: this.opts.identity.shells }
-            : {}),
+          ...(this.opts.canOpenShells !== undefined ? { shells: this.opts.canOpenShells() } : {}),
           ...(this.opts.identity.endpoints !== undefined
             ? { endpoints: this.opts.identity.endpoints }
             : {}),

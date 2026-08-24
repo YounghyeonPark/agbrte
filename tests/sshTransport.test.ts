@@ -227,8 +227,23 @@ describe('the terminal module a remote needs', () => {
     );
   });
 
-  it('installs both packages where `createRequire` will find them, and proves it loads', async () => {
+  it('does nothing at all when the far side can already load it', async () => {
+    // The common case, and the reason this is safe to call on every attach: a
+    // machine that has the module answers one `require` and is left alone.
     const runner = fakeRunner();
+    const probe = { home: '/home/ci', arch: 'x86_64', platform: 'Linux', nodePath: null, bundleVersion: null };
+
+    const outcome = await installRemotePty(runner, 'box', probe as never);
+
+    expect(outcome.installed).toBe(true);
+    expect(runner.commands).toHaveLength(1);
+    expect(runner.commands.join('')).not.toContain('curl');
+  });
+
+  it('installs both packages where `createRequire` will find them, and proves it loads', async () => {
+    // A machine without it: the check fails, the download runs, and the last
+    // step of the same script proves the result loads.
+    const runner = fakeRunner([{ match: /^cd .*require\('@lydell/, code: 1, stderr: 'Cannot find module' }]);
     const probe = { home: '/home/ci', arch: 'x86_64', platform: 'Linux', nodePath: null, bundleVersion: null };
 
     const outcome = await installRemotePty(runner, 'box', probe as never);
@@ -247,7 +262,10 @@ describe('the terminal module a remote needs', () => {
   });
 
   it('reports a failure instead of throwing, because a host is more than its terminal', async () => {
-    const runner = fakeRunner([{ match: /curl/, code: 6, stderr: 'could not resolve host' }]);
+    const runner = fakeRunner([
+      { match: /^cd .*require\('@lydell/, code: 1, stderr: 'Cannot find module' },
+      { match: /curl/, code: 6, stderr: 'could not resolve host' },
+    ]);
     const probe = { home: '/home/ci', arch: 'x86_64', platform: 'Linux', nodePath: null, bundleVersion: null };
 
     const outcome = await installRemotePty(runner, 'box', probe as never);

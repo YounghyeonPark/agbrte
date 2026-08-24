@@ -141,23 +141,28 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
     // a slow link.
     report('deploying the host');
     await uploadHostBundle(runner, opts.alias, probe.home, opts.bundles, opts.bundleVersion);
-    /*
-     * And the pty module, in the same breath as the bundles.
-     *
-     * Deployed here rather than on demand because opening a terminal is not a
-     * moment anybody wants to spend downloading: it is a click, and the wait
-     * belongs to the attach that was already installing things. Guarded by the
-     * same version stamp, so it happens once per build rather than per attach.
-     *
-     * Failure is reported and not thrown. A machine with no route to the
-     * registry keeps every other thing a host does — the pane says what is
-     * missing when somebody reaches for it (§7).
-     */
-    report('deploying the terminal module');
-    const pty = await installRemotePty(runner, opts.alias, probe);
-    if (!pty.installed) {
-      report(`no terminal on this machine: ${pty.detail ?? 'the pty module could not be installed'}`);
-    }
+  }
+
+  /*
+   * The pty module, on every attach and not behind the bundle stamp.
+   *
+   * It was inside the branch above, which only runs when the deployed bundle is
+   * a different version — so a machine that already carried this build never
+   * received the module, and the terminal stayed dark on precisely the remotes
+   * somebody had attached before. `installRemotePty` asks the far side whether
+   * it can load it and returns immediately when it can, so the common case is
+   * one `require` over ssh rather than a download.
+   *
+   * Deployed at attach rather than when a terminal is opened because that is a
+   * click, and the wait belongs to the step that was already installing things.
+   *
+   * Failure is reported and not thrown. A machine with no route to the registry
+   * keeps every other thing a host does — the pane says what is missing when
+   * somebody reaches for it (§7).
+   */
+  const pty = await installRemotePty(runner, opts.alias, probe, report);
+  if (!pty.installed) {
+    report(`no terminal on this machine: ${pty.detail ?? 'the pty module could not be installed'}`);
   }
 
   let record = await readRemoteHostRecord(runner, opts.alias, opts.workspaceRoot, probe.home);

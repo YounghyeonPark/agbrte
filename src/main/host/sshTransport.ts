@@ -515,7 +515,27 @@ export async function installRemotePty(
   runner: Pick<SshRunner, 'exec'>,
   alias: string,
   probe: RemoteProbe,
+  /** Called only when there is something to wait for — see the check below. */
+  report: (step: string) => void = () => undefined,
 ): Promise<{ installed: boolean; detail?: string }> {
+  /*
+   * Asked before fetched, because this is called on **every** attach.
+   *
+   * It used to sit inside the "deploy the bundles" branch, which is guarded by
+   * a version stamp — so a machine that already carried this build never got the
+   * module, and the terminal stayed dark on exactly the remotes that had been
+   * attached before. The download belongs behind a check about *the module*, not
+   * behind one about the bundles.
+   *
+   * One `require` over ssh when it is present, which is the common case.
+   */
+  const present = await runner.exec(
+    alias,
+    `cd ${shellQuote(remoteRoot(probe.home))} && ${shellQuote(remoteNodeBin(probe.home))} -e "require('@lydell/node-pty')"`,
+  );
+  if (present.code === 0) return { installed: true };
+
+  report('deploying the terminal module');
   const platformPkg = ptyPackageFor(probe.platform, probe.arch);
   // Each path quoted whole rather than a quoted prefix with a bare tail: both
   // are valid shell and only one is readable in a log somebody is debugging.

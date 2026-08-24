@@ -219,20 +219,30 @@ interface Running<Owner> {
  */
 let cached: PtySpawner | undefined;
 /**
- * Why the load failed, kept so the second attempt says what the first did.
+ * Why the load failed last time, kept for the message and **not** as an answer.
  *
- * The obvious shape — cache `null` for "it failed" and raise a generic sentence
- * afterwards — makes the *first* terminal somebody opens report the real reason
- * and every one after it report a guess. That is the wrong way round: the second
- * attempt is the one somebody makes after reading the message and changing
- * something.
+ * Two things are wanted here and they pull apart. A second attempt must not
+ * report a generic sentence when the first reported a real one — the second
+ * attempt is the one somebody makes after reading the message. But it must also
+ * not report the *old* one: the reason they made it is that they changed
+ * something, and on a remote that something is this module arriving after the
+ * host had already started and concluded it was absent.
+ *
+ * So the load is retried and this is overwritten. What is remembered is the
+ * wording, never the verdict.
  */
 let loadFailure: string | undefined;
 
 /**
  * Whether this machine can open a terminal at all (§7).
  *
- * Asked once, at startup, so a host can *say* it on its handshake instead of a
+ * Asked per handshake rather than once at startup, because the answer changes
+ * under a running host: a remote is given this module while its host is already
+ * serving, and a value captured at start would say "no terminal here" until
+ * somebody restarted it. The load is cached on success, so a host that has one
+ * pays for the check once.
+ *
+ * Asked at all so a host can *say* it on its handshake instead of a
  * client inferring it. The inference it replaces was `targetKind === 'local'`,
  * which was true of the world it was written in — a remote host was two `.js`
  * files with no `node_modules` — and became a lie the moment the pty module was
@@ -254,7 +264,6 @@ export function shellsAvailable(): boolean {
 }
 
 function loadSpawner(): PtySpawner {
-  if (loadFailure !== undefined) throw new ShellUnavailable(loadFailure);
   if (cached !== undefined) return cached;
 
   try {
