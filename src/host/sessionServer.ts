@@ -190,7 +190,7 @@ export interface SessionHostOptions {
    * Named apart from `shells`, which is the terminal *service* an embedder
    * passes in: this answers whether one could be opened, not what opens them.
    */
-  canOpenShells?: () => boolean;
+  canOpenShells?: () => { available: boolean; reason?: string };
   /**
    * What one model can actually do (§3.3), for a client about to choose it.
    *
@@ -616,7 +616,15 @@ export class SessionHostServer {
           ...(this.opts.identity.runtimeNotes !== undefined
             ? { runtimeNotes: this.opts.identity.runtimeNotes }
             : {}),
-          ...(this.opts.canOpenShells !== undefined ? { shells: this.opts.canOpenShells() } : {}),
+          ...(this.opts.canOpenShells === undefined
+            ? {}
+            : (() => {
+                const answer = this.opts.canOpenShells();
+                return {
+                  shells: answer.available,
+                  ...(answer.reason !== undefined ? { shellsReason: answer.reason } : {}),
+                };
+              })()),
           ...(this.opts.identity.endpoints !== undefined
             ? { endpoints: this.opts.identity.endpoints }
             : {}),

@@ -266,6 +266,7 @@ function toInfo(host: AttachedHost, shipping?: string): HostInfo {
     runtimeNotes: host.runtimeNotes,
     ...(host.bundleVersion !== undefined ? { bundleVersion: host.bundleVersion } : {}),
     ...(host.shells !== undefined ? { shells: host.shells } : {}),
+    ...(host.shellsReason !== undefined ? { shellsReason: host.shellsReason } : {}),
     ...(host.movedFrom !== undefined ? { movedFrom: host.movedFrom } : {}),
     link: host.link,
     ...(host.unavailableReason !== undefined

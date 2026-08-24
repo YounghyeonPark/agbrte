@@ -30,7 +30,7 @@ import { openWorkspace, peekIdentity } from '@main/store/identity.js';
 import { listen, hostSocketPath } from '@shared/host/socketChannel.js';
 import { listenLoopback, newControlToken } from '@shared/host/loopback.js';
 import { PreviewServers } from '@main/preview/servers.js';
-import { Shells, shellsAvailable } from '@main/terminal/shell.js';
+import { Shells, shellsStatus } from '@main/terminal/shell.js';
 import { TerminalPrograms } from '@main/terminal/programs.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { HostCommand, HostMessage, MainSideChannel } from '@shared/host/protocol.js';
@@ -554,7 +554,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
      * handshake because the module can arrive while this host is running — which
      * is exactly what a deploy to a machine with a host already up does.
      */
-    canOpenShells: () => shellsAvailable(),
+    canOpenShells: () => shellsStatus(),
     // Live, not from the handshake: `ollama pull` happens while this runs.
     models: () => supervisor.models(),
     // The expensive question, asked per model rather than per list (§3.3).

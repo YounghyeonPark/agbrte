@@ -182,6 +182,16 @@ export interface HostIdentity {
    */
   shells?: boolean;
   /**
+   * Why not, when `shells` is false (§6.8).
+   *
+   * A control that is off and will not say what is missing is the thing that
+   * rule forbids. The sentence comes from the module loader — "Cannot find
+   * module", an ELF header from the wrong architecture — and it used to reach
+   * only the host's own stderr, which on a remote machine is a file nobody has
+   * open.
+   */
+  shellsReason?: string;
+  /**
    * Models this host can reach, with no credentials attached.
    *
    * One host can reach several — a local server and a hosted API, two GPUs with

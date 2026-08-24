@@ -160,6 +160,8 @@ export interface HostInfo {
    * falls back to the inference that described such a host correctly.
    */
   shells?: boolean;
+  /** Why not, when `shells` is false — the module loader's own sentence (§6.8). */
+  shellsReason?: string;
   /** Why nothing can run here. Sessions still load and read. */
   unavailableReason?: string;
   /**

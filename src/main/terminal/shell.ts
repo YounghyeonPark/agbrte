@@ -255,11 +255,24 @@ let loadFailure: string | undefined;
  * nothing.
  */
 export function shellsAvailable(): boolean {
+  return shellsStatus().available;
+}
+
+/**
+ * The same question, with the sentence that answers *why not*.
+ *
+ * A disabled button that will not say what is missing is the shape this rule
+ * exists to prevent (§6.8): "no terminal here" is a fact, and "the prebuild for
+ * this architecture is not in the package that was fetched" is something a
+ * person can act on. The reason lives in the module loader and reached only the
+ * host's own stderr, which on a remote machine is a file nobody has open.
+ */
+export function shellsStatus(): { available: boolean; reason?: string } {
   try {
     loadSpawner();
-    return true;
-  } catch {
-    return false;
+    return { available: true };
+  } catch (err) {
+    return { available: false, reason: err instanceof Error ? err.message : String(err) };
   }
 }
 

@@ -1490,9 +1490,16 @@ export function App(): JSX.Element {
                               title={
                                 shellHere
                                   ? choice.hint
-                                  : `A terminal on ${activeHost?.label ?? 'this host'} is not available yet — ` +
-                                    'terminals run on the machine that owns the workspace, and only a ' +
-                                    'local host ships the module for it'
+                                  : /* The host's own sentence where it gave one:
+                                       "no terminal here" is a fact and "the
+                                       prebuild for this architecture is not in
+                                       the package" is something a person can act
+                                       on (§6.8). The fallback is for a host too
+                                       old to say anything at all. */
+                                    `A terminal on ${activeHost?.label ?? 'this host'} is not available: ` +
+                                    (activeHost?.shellsReason ??
+                                      'terminals run on the machine that owns the workspace, and that ' +
+                                        'one has no pty module')
                               }
                               aria-pressed={
                                 sessionPane === 'shell' &&

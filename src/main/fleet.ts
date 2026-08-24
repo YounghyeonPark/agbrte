@@ -283,6 +283,8 @@ export interface AttachedHost {
    * *no*. See `HostIdentity.shells`, and the fallback where this is read.
    */
   shells?: boolean;
+  /** Why not, when the host said no. See `HostIdentity.shellsReason`. */
+  shellsReason?: string;
   /**
    * Where this workspace was, when the host found it somewhere else (§5.3).
    *
@@ -569,6 +571,8 @@ export class Fleet extends EventEmitter {
     }));
     entry.runtimeNotes = (identity.runtimeNotes ?? []).map((n) => ({ ...n }));
     if (identity.shells !== undefined) entry.shells = identity.shells;
+    if (identity.shellsReason === undefined) delete entry.shellsReason;
+    else entry.shellsReason = identity.shellsReason;
 
     if (identity.bundleVersion === undefined) delete entry.bundleVersion;
     else entry.bundleVersion = identity.bundleVersion;
@@ -2244,6 +2248,7 @@ function snapshot(entry: Entry): AttachedHost {
     endpoints: entry.endpoints.map((e) => ({ ...e })),
     runtimeNotes: entry.runtimeNotes.map((n) => ({ ...n })),
     ...(entry.shells !== undefined ? { shells: entry.shells } : {}),
+    ...(entry.shellsReason !== undefined ? { shellsReason: entry.shellsReason } : {}),
     /*
      * Copied, which it was not.
      *
