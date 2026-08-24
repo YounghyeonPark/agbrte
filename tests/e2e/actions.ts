@@ -31,6 +31,21 @@ export async function createSession(
   const group = hostGroup(page, host);
   await group.locator('[data-testid=new-session]').click();
   await group.locator('[data-testid=new-title]').fill(title);
+  /*
+   * In the workspace this host has open, which is what this helper has always
+   * meant.
+   *
+   * The form now fills a folder name from the title, because one session, one
+   * folder is the rule (§8) — so leaving it alone would make every call here
+   * attach a *second* workspace and change what a hundred assertions are about.
+   * Cleared explicitly rather than implicitly: the tests that care about the new
+   * folder say so, in `group.spec.ts`.
+   */
+  const folderField = group.locator('[data-testid=new-folder]');
+  // Present only in a build that has the field: `packaged.spec.ts` drives an
+  // artifact from `release/`, which may have been built before it existed, and
+  // waiting for it there fails a test about something else entirely.
+  if ((await folderField.count()) > 0) await folderField.fill('');
   if (mcp !== undefined) await fillMcpServers(group, mcp);
   await group.locator('[data-testid=new-submit]').click();
   await expect(page.locator('[data-testid=picker]')).toBeVisible();

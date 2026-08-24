@@ -153,7 +153,9 @@ test.describe('the shell', () => {
       // Proves main → preload → renderer all agreed on the host, which is the
       // whole IPC path in one assertion.
       const group = hostGroup(agbrte.window);
-      await expect(group).toHaveAttribute('data-label', repo.split(/[\\/]/).pop()!);
+      // The machine, not the folder: a row is one host and a host is one per
+      // machine (§8). Which folder a session is in is said on the session.
+      await expect(group).toHaveAttribute('data-label', 'This machine');
       await expect(group.locator('[data-testid=host-badge]')).toContainText('local');
 
       await createSession(agbrte.window, 'Shell check');
@@ -242,6 +244,9 @@ test.describe('the shell', () => {
       const group = hostGroup(agbrte.window);
       await group.locator('[data-testid=new-session]').click();
       await group.locator('[data-testid=new-title]').fill('Second run');
+      // In this workspace: what this test is about is the *agent* choice being
+      // remembered, and a folder of its own would make it a different host.
+      await group.locator('[data-testid=new-folder]').fill('');
       await group.locator('[data-testid=new-submit]').click();
       // The switch has to land before the pane is trusted: for a beat after
       // submit the *first* session's composer is still on screen, and a message
@@ -357,8 +362,8 @@ test.describe('the shell', () => {
   });
 });
 
-test.describe('several hosts at once', () => {
-  test('shows sessions from two hosts, grouped and independent', async () => {
+test.describe('two workspaces on one machine', () => {
+  test('lists both folders under the one machine, and keeps them separate', async () => {
     const repoA = await makeRepo();
     const repoB = await makeRepo();
     const labelA = repoA.split(/[\\/]/).pop()!;
@@ -369,31 +374,62 @@ test.describe('several hosts at once', () => {
       // §8's caps are per host and §10 badges every card, so watching more than
       // one place at once is the designed shape. Until the fleet landed, main
       // disposed the previous host on every workspace change.
-      expect((await attachedHosts(agbrte.window)).sort()).toEqual([labelA, labelB].sort());
+      /*
+       * One row, because a host is one process per machine (§8).
+       *
+       * This asserted two, which is what the sidebar drew while it was built
+       * around the fleet's entries — one per *workspace*. Two folders on one
+       * machine then looked like two machines with the same name, and what that
+       * produced in real use was somebody reading an empty row and concluding
+       * their sessions were gone.
+       */
+      expect(await attachedHosts(agbrte.window)).toEqual(['This machine']);
 
-      await createSession(agbrte.window, 'work on A', labelA);
+      await createSession(agbrte.window, 'work on A');
       await addAgent(agbrte.window, 'echo');
       await send(agbrte.window, 'a message for A');
       await expect(agbrte.window.locator('[data-testid=row-agent]')).toBeVisible();
 
-      await createSession(agbrte.window, 'work on B', labelB);
-      await addAgent(agbrte.window, 'echo');
+      /*
+       * By hand, and into the *other* folder.
+       *
+       * Two things changed with the machine row and this line met both: the
+       * picker no longer appears for a second session on a machine whose agent
+       * choice is remembered, and "which workspace" is now a question the form
+       * asks rather than one the row answered.
+       */
+      const group = hostGroup(agbrte.window);
+      await group.locator('[data-testid=new-session]').click();
+      await group.locator('[data-testid=new-title]').fill('work on B');
+      await group.locator('[data-testid=new-folder]').fill('');
+      await group.locator('[data-testid=new-workspace]').selectOption({ label: labelB });
+      await group.locator('[data-testid=new-submit]').click();
+      await expect(agbrte.window.locator('[data-testid=session-title]')).toHaveText('work on B');
+      /*
+       * A seat for it, because the remembered choice is per *workspace*.
+       *
+       * The machine is one row, but the agent default is a fact about a folder —
+       * so a session in a folder nobody has worked in yet still meets the picker,
+       * which is the honest thing for it to do.
+       */
+      if ((await agbrte.window.locator('[data-testid=picker]').count()) > 0) {
+        await addAgent(agbrte.window, 'echo');
+      }
       await send(agbrte.window, 'a message for B');
       await expect(agbrte.window.locator('[data-testid=row-agent]')).toBeVisible();
 
-      // Each session sits under its own host, so "where does this run" is
-      // answerable without opening it.
-      await expect(
-        hostGroup(agbrte.window, labelA).locator('[data-testid=session]'),
-      ).toHaveCount(1);
-      await expect(
-        hostGroup(agbrte.window, labelB).locator('[data-testid=session]'),
-      ).toHaveCount(1);
-      await expect(agbrte.window.locator('[data-testid=active-host]')).toContainText(labelB);
+      // Both under the machine, and each says which folder it is in — the
+      // question the row used to answer and cannot any more, having become the
+      // machine rather than the checkout.
+      await expect(agbrte.window.locator('[data-testid=session]')).toHaveCount(2);
+      const folders = await agbrte.window
+        .locator('[data-testid=session-folder]')
+        .evaluateAll((nodes) => nodes.map((n) => n.textContent ?? ''));
+      expect(folders.sort()).toEqual([labelA, labelB].sort());
 
       // The transcripts are genuinely separate: two hosts, two logs, one writer
       // each (§5.1).
-      await openSession(agbrte.window, 'work on A', labelA);
+      await openSession(agbrte.window, 'work on A');
       await expect(agbrte.window.locator('[data-testid=row-user]')).toContainText('a message for A');
       await expect(agbrte.window.locator('[data-testid=row-user]')).toHaveCount(1);
 
@@ -415,26 +451,40 @@ test.describe('several hosts at once', () => {
     }
   });
 
-  test('detaching one host leaves the other running', async () => {
+  test('detaching the machine lets go of every folder on it', async () => {
     const repoA = await makeRepo();
     const repoB = await makeRepo();
-    const labelA = repoA.split(/[\\/]/).pop()!;
-    const labelB = repoB.split(/[\\/]/).pop()!;
 
     const agbrte = await launch(repoA, repoB);
     try {
-      await createSession(agbrte.window, 'stays', labelB);
+      await createSession(agbrte.window, 'stays');
       await addAgent(agbrte.window, 'echo');
 
-      await hostGroup(agbrte.window, labelA).locator('[data-testid=remove-host]').click();
+      /*
+       * Detaching a *machine* lets go of every folder it holds.
+       *
+       * The row is the machine (§8), so letting go of one checkout and leaving
+       * the row behind is not what pressing × on it means. Detach is still
+       * "stop watching" rather than "delete": the host keeps running, and the
+       * session that was open keeps its transcript — which is what the send
+       * below is asking.
+       */
+      await hostGroup(agbrte.window).locator('[data-testid=remove-host]').click();
+      await expect(agbrte.window.locator('[data-testid=host]')).toHaveCount(0);
 
-      await expect(agbrte.window.locator('[data-testid=host]')).toHaveCount(1);
-      expect(await attachedHosts(agbrte.window)).toEqual([labelB]);
-
-      // Detach is "stop watching", not "delete", and it must not disturb the
-      // host next to it.
-      await send(agbrte.window, 'still working');
-      await expect(agbrte.window.locator('[data-testid=row-user]')).toContainText('still working');
+      // And nothing was deleted: opening the folder again finds the session
+      // where it was left, which is the whole difference between detaching and
+      // destroying (§5.4).
+      await agbrte.window.click('[data-testid=new-session-oneshot]');
+      await agbrte.window.fill('[data-testid=new-session-path]', repoA);
+      await agbrte.window.fill('[data-testid=new-session-folder]', '');
+      await agbrte.window.click('[data-testid=new-session-open]');
+      // The panel lists what is already in the folder it just opened, which is
+      // where a session that was detached rather than deleted turns up.
+      await expect(agbrte.window.locator('[data-testid=new-session-existing]')).toContainText(
+        'stays',
+        { timeout: 30_000 },
+      );
     } finally {
       await agbrte.close();
       await rm(repoA, { recursive: true, force: true });

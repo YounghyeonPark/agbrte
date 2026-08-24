@@ -122,8 +122,8 @@ export function NewSession({
    * with the *local* separator would produce a path that machine cannot open.
    */
   const target = ((): string => {
-    const base = path.trim().replace(/[\/]+$/, '');
-    const name = folder.trim().replace(/^[\/]+/, '');
+    const base = path.trim().replace(/[\\/]+$/, '');
+    const name = folder.trim().replace(/^[\\/]+/, '');
     if (name === '') return base;
     return `${base}${base.includes(String.fromCharCode(92)) ? String.fromCharCode(92) : '/'}${name}`;
   })();

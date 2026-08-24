@@ -59,6 +59,20 @@ test.describe('a session gets a folder of its own', () => {
       const host = page.locator('[data-testid=host]').first();
       await host.locator('[data-testid=new-session]').click();
       await host.locator('[data-testid=new-title]').fill('its own place');
+
+      /*
+       * Filled by typing the title, which is the part that matters.
+       *
+       * An *optional* folder field left the default where it had always been —
+       * another session in whatever folder this host has open — so a machine
+       * attached to `~/Desktop` kept putting sessions on somebody's desktop and
+       * the field read as a feature nobody needed. A rule that is offered is not
+       * a rule.
+       */
+      await expect(host.locator('[data-testid=new-folder]')).toHaveValue('its-own-place');
+
+      // Overwritten here only because this suite's workspaces are siblings in
+      // `os.tmpdir()`, which every run on this machine shares.
       await host.locator('[data-testid=new-folder]').fill(folder);
 
       // A sibling of the open folder, not a child: nesting one workspace inside
@@ -70,19 +84,55 @@ test.describe('a session gets a folder of its own', () => {
 
       await host.locator('[data-testid=new-submit]').click();
 
-      // A second host row, because a workspace is what a host serves and this is
-      // a different folder — served by the same process (§8).
-      await expect(page.locator('[data-testid=host]')).toHaveCount(2);
-      // Scoped to *that* host: a title is not unique across a machine, and the
-      // question here is which workspace the session landed in.
-      const made2 = page.locator(`[data-testid=host][data-label="${folder}"]`);
-      await expect(made2.locator('[data-testid=session][data-title="its own place"]')).toBeVisible();
+      /*
+       * Still one row, because a row is a **machine** (§8) — and now two folders
+       * under it, which is what the header counts and what each session says.
+       *
+       * This asserted a second row, from the shape the sidebar had while it was
+       * drawn per workspace: a folder of one's own then looked like a second
+       * machine with the same name, which is exactly the confusion that made the
+       * grouping change.
+       */
+      await expect(page.locator('[data-testid=host]')).toHaveCount(1);
+      await expect(page.locator('[data-testid=host]')).toContainText('2 folders');
+      const row = page.locator('[data-testid=session][data-title="its own place"]');
+      await expect(row).toBeVisible();
+      // The folder is said on the session, which is the only place it can be
+      // said once the row is the machine.
+      await expect(row.locator('[data-testid=session-folder]')).toHaveText(folder);
     } finally {
       await agbrte.close();
       await rm(repo, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
       if (made !== null) {
         await rm(made, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
       }
+    }
+  });
+
+  test('still puts one in this workspace when the folder is cleared', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+    const page = agbrte.window;
+
+    try {
+      await createSession(page, 'first');
+      await addAgent(page, 'echo');
+
+      const host = page.locator('[data-testid=host]').first();
+      await host.locator('[data-testid=new-session]').click();
+      await host.locator('[data-testid=new-title]').fill('alongside');
+      // Emptying the field is how somebody says "in this workspace", which is a
+      // real thing to want: several sessions on one project is ordinary.
+      await host.locator('[data-testid=new-folder]').fill('');
+      await expect(host.locator('[data-testid=new-folder-target]')).toContainText(repo);
+      await host.locator('[data-testid=new-submit]').click();
+
+      // One host, two sessions — no folder was made.
+      await expect(page.locator('[data-testid=host]')).toHaveCount(1);
+      await expect(page.locator('[data-testid=session][data-title="alongside"]')).toBeVisible();
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
     }
   });
 });
@@ -125,6 +175,7 @@ test.describe('renaming a session from the sidebar', () => {
       const host = page.locator('[data-testid=host]').first();
       await host.locator('[data-testid=new-session]').click();
       await host.locator('[data-testid=new-title]').fill('also untitled');
+      await host.locator('[data-testid=new-folder]').fill('');
       await host.locator('[data-testid=new-submit]').click();
       await expect(page.locator('[data-testid=session-title]')).toHaveText('also untitled');
     } finally {
@@ -183,6 +234,9 @@ test.describe('a session says which group it is in', () => {
       const host = page.locator('[data-testid=host]').first();
       await host.locator('[data-testid=new-session]').click();
       await host.locator('[data-testid=new-title]').fill('the API work');
+      // In this workspace: a group is about two sessions reaching each other,
+      // and putting the second one in a folder of its own is a different test.
+      await host.locator('[data-testid=new-folder]').fill('');
       await host.locator('[data-testid=new-submit]').click();
       await expect(page.locator('[data-testid=session-title]')).toHaveText('the API work');
 

@@ -234,6 +234,10 @@ function labelFor(host: AttachedHost): string {
   };
   // For a remote the machine is the useful identifier — and the alias over the
   // hostname, because the alias is what the user chose and what they would type.
+  // *Which folder* is a separate question, and the sidebar answers it from
+  // `root` rather than by crowding it in here: this string also ends up in
+  // sentences about the machine ("a terminal on cbk_ws_one is not available"),
+  // where a folder would be noise.
   return target.alias ?? target.host ?? target.distro ?? basename(host.workspaceRoot);
 }
 

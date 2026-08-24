@@ -25,6 +25,7 @@ test('shows what the chosen runtime has actually been proven to do', async ({ pa
     const group = page.locator('[data-testid=host]').first();
     await group.locator('[data-testid=new-session]').click({ timeout: 25_000 });
     await group.locator('[data-testid=new-title]').fill('choosing a runtime');
+    await group.locator('[data-testid=new-folder]').fill('');
     await group.locator('[data-testid=new-submit]').click();
     await expect(page.locator('[data-testid=picker]')).toBeVisible();
 

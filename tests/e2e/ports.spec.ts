@@ -197,6 +197,9 @@ test.describe('ports are there when asked for', () => {
       const group = hostGroup(page);
       await group.locator('[data-testid=new-session]').click();
       await group.locator('[data-testid=new-title]').fill('the other one');
+      // The same workspace on purpose: this is about two sessions on one host
+      // and which of them a forwarded port belongs to.
+      await group.locator('[data-testid=new-folder]').fill('');
       await group.locator('[data-testid=new-submit]').click();
       await expect(page.locator('[data-testid=composer-input]')).toBeVisible({ timeout: 30_000 });
 

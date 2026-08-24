@@ -921,14 +921,16 @@ export function App(): JSX.Element {
           {hosts.length === 0 && (
             <p className="text-muted p-2 text-xs">No hosts attached yet.</p>
           )}
-          {hosts.map((host) => (
+          {byMachine(hosts).map((machine) => (
             <HostGroup
-              key={host.instanceId}
-              host={host}
-              sessions={sessions.filter((s) => s.instanceId === host.instanceId)}
+              key={machine.key}
+              machine={machine}
+              sessions={sessions.filter((s) =>
+                machine.workspaces.some((w) => w.instanceId === s.instanceId),
+              )}
               unloaded={onDisk.filter(
                 (d) =>
-                  d.instanceId === host.instanceId &&
+                  machine.workspaces.some((w) => w.instanceId === d.instanceId) &&
                   !sessions.some((s) => s.sessionId === d.sessionId),
               )}
               activeId={active?.sessionId ?? null}
@@ -1583,24 +1585,71 @@ export function App(): JSX.Element {
 
 /** One host and its sessions, with §10's target badge. */
 function HostGroup({
-  host,
+  machine,
   sessions,
   unloaded,
   activeId,
   showLoaded,
 }: {
-  host: HostInfo;
+  machine: MachineRow;
   sessions: Session[];
-  unloaded: Array<{ sessionId: string; title: string; group?: { groupId: string; name: string } }>;
+  unloaded: Array<{
+    sessionId: string;
+    title: string;
+    instanceId: string;
+    group?: { groupId: string; name: string };
+  }>;
   activeId: string | null;
   /** False while the dashboard is showing them. See the call site. */
   showLoaded: boolean;
 }): JSX.Element {
   const store = useAgbrte();
+  /**
+   * The workspace this row's *acts* go to.
+   *
+   * Stopping, updating and opening a terminal are things done to a **host**,
+   * and a host is one process per machine (§8) — so any of its workspaces
+   * routes to the same place and the first one is as good as any. Kept as a
+   * named thing rather than inlined, because "which workspace" is exactly the
+   * question this row stopped asking when it became a machine.
+   */
+  const host = machine.workspaces[0]!;
+  /** Shown per session only where there is something to tell apart. */
+  const manyFolders = machine.workspaces.length > 1;
+  const folderOf = (instanceId: string): string | null => {
+    if (!manyFolders) return null;
+    const found = machine.workspaces.find((w) => w.instanceId === instanceId);
+    return found === undefined ? null : folderName(found.root);
+  };
   const [adding, setAdding] = useState(false);
+  /**
+   * Which of the machine's folders a session without one of its own goes into.
+   *
+   * A row is a machine and a machine can hold several workspaces (§8), so "in
+   * this workspace" stopped being answerable by the row itself. Defaulted to the
+   * first and shown only where there is a choice, because a select with one
+   * option is a question with one answer.
+   */
+  const [intoWorkspace, setIntoWorkspace] = useState('');
   const [title, setTitle] = useState('');
-  /** A folder of this session's own, made beside the one this host has open. */
+  /**
+   * A folder of this session's own, made beside the one this host has open.
+   *
+   * **Filled from the title rather than left empty**, because a rule that is
+   * offered is not a rule. One session, one folder (§8) — and an optional
+   * field meant the default was still "another session in whatever folder this
+   * host has open", so a machine attached to `~/Desktop` kept putting sessions
+   * on top of somebody's desktop and the field looked like a feature nobody
+   * needed. Reported twice from a real server, which is twice more than it
+   * should have taken.
+   *
+   * Editable and clearable: emptying it is how you say "in this workspace",
+   * which is a real thing to want when several sessions work on one project.
+   * `touched` keeps typing a name from being overwritten by the next keystroke
+   * in the title.
+   */
   const [folder, setFolder] = useState('');
+  const [folderTouched, setFolderTouched] = useState(false);
   const [templates, setTemplates] = useState<SessionTemplateDto[]>([]);
   /*
    * The MCP servers this session is being given (§17 Q20).
@@ -1633,10 +1682,10 @@ function HostGroup({
    * the app runs on Windows.
    */
   const newFolderTarget = ((): string => {
-    const name = folder.trim().replace(/^[\/]+/, '');
+    const name = folder.trim().replace(/^[\\/]+/, '');
     if (name === '') return '';
     const sep = host.root.includes(String.fromCharCode(92)) ? String.fromCharCode(92) : '/';
-    const parent = host.root.replace(/[\/]+$/, '').split(sep).slice(0, -1).join(sep);
+    const parent = host.root.replace(/[\\/]+$/, '').split(sep).slice(0, -1).join(sep);
     return `${parent === '' ? host.root : parent}${sep}${name}`;
   })();
 
@@ -1668,12 +1717,16 @@ function HostGroup({
         await store.createSession(opened.instanceId, title.trim(), title.trim(), configs);
       })();
       setFolder('');
+      setFolderTouched(false);
       setTitle('');
       setMcpDrafts([]);
       setAdding(false);
       return;
     }
-    void store.createSession(host.instanceId, title.trim(), title.trim(), configs);
+    const into =
+      machine.workspaces.find((w) => w.instanceId === intoWorkspace)?.instanceId ??
+      host.instanceId;
+    void store.createSession(into, title.trim(), title.trim(), configs);
     setTitle('');
     /*
      * Cleared before the create resolves, deliberately.
@@ -1688,7 +1741,13 @@ function HostGroup({
   };
 
   return (
-    <section data-testid="host" data-instance={host.instanceId} data-label={host.label}>
+    /*
+     * `data-label` is the machine now, and `data-instance` is the workspace its
+     * acts route to — which is the first one it holds (§8). A test looking for
+     * "the section for this folder" was looking for the wrong thing the moment
+     * a machine could hold two.
+     */
+    <section data-testid="host" data-instance={host.instanceId} data-label={machine.label}>
       <div className="mb-1 flex items-center justify-between gap-2 px-2">
         <div className="flex min-w-0 items-baseline gap-2">
           {/* The badge answers "where is this running" at a glance (§10). */}
@@ -1704,12 +1763,29 @@ function HostGroup({
                things — this host is current, or it is too old to say — and which
                one it is decides what somebody does next. */
             title={
-              `${host.root}${host.targetKind === 'local' ? '' : ` on ${host.label}`}` +
-              `
-running: ${host.bundleVersion ?? 'a build too old to say'}`
+              `${machine.workspaces.map((w) => w.root).join('\n')}` +
+              `\nrunning: ${host.bundleVersion ?? 'a build too old to say'}`
             }
           >
-            {host.label}
+            {/*
+              The folder first, the machine after it (§8).
+              
+              A row used to show the machine alone, which was right while a host
+              was one per machine. One machine can hold several workspaces now,
+              so every row on a build box read `cbk_ws_one` — two folders, two
+              identical rows, and no way to tell which was which. Reported as
+              "the remote sessions are gone" about a row that was a *different*
+              folder, with the one holding the sessions no longer attached.
+              
+              Folder first because it is what differs between rows; machine
+              second because it is what differs between groups of them. A local
+              host shows the folder alone — "this machine" is what the badge
+              beside it already says.
+            */}
+            {machine.label}
+            {manyFolders && (
+              <span className="text-muted"> · {machine.workspaces.length} folders</span>
+            )}
           </span>
         </div>
         <div className="flex shrink-0 gap-1">
@@ -1729,6 +1805,17 @@ running: ${host.bundleVersion ?? 'a build too old to say'}`
                 // Keeping a token in renderer state for as long as the window is
                 // open, on the chance the form is reopened, is the wrong trade.
                 if (open) setMcpDrafts([]);
+                /*
+                 * And each opening starts over on the folder.
+                 *
+                 * `folderTouched` stops the title from overwriting a name
+                 * somebody typed, and it is per *form* rather than per session —
+                 * so clearing the field once, to put one session in the open
+                 * workspace, silently withdrew the offer for every session after
+                 * it. A decision about one session must not become a setting.
+                 */
+                setFolder('');
+                setFolderTouched(false);
                 return !open;
               })
             }
@@ -1770,7 +1857,12 @@ running: ${host.bundleVersion ?? 'a build too old to say'}`
             className="btn px-2 py-1 text-xs"
             data-testid="remove-host"
             title="Detach this host — the run keeps going"
-            onClick={() => void store.removeHost(host.instanceId)}
+            onClick={() => {
+              // Every folder it holds, because the row is the machine now (§8):
+              // letting go of one checkout and leaving the row behind is not
+              // what "stop watching this machine" means.
+              for (const workspace of machine.workspaces) void store.removeHost(workspace.instanceId);
+            }}
           >
             ×
           </button>
@@ -1825,24 +1917,48 @@ running: ${host.bundleVersion ?? 'a build too old to say'}`
             autoFocus
             placeholder="Session title"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              setTitle(e.target.value);
+              if (!folderTouched) setFolder(folderSlug(e.target.value));
+            }}
           />
+          {manyFolders && newFolderTarget === '' && (
+            /* Only where there is a choice: this machine holds more than one
+               folder, and "in this workspace" no longer names itself. */
+            <select
+              className="field text-xs"
+              data-testid="new-workspace"
+              value={intoWorkspace === '' ? host.instanceId : intoWorkspace}
+              onChange={(e) => setIntoWorkspace(e.target.value)}
+            >
+              {machine.workspaces.map((w) => (
+                <option key={w.instanceId} value={w.instanceId}>
+                  {folderName(w.root)}
+                </option>
+              ))}
+            </select>
+          )}
           {/* Optional, and empty means what this form has always done: another
-              session in the folder already open. A name means a folder of its
+              session in a folder already open. A name means a folder of its
               own, shown before it is created because a directory appearing on a
               machine is a change to it. */}
           <input
             className="field"
             data-testid="new-folder"
-            placeholder="New folder for it (optional)"
+            placeholder="New folder for it"
             value={folder}
-            onChange={(e) => setFolder(e.target.value)}
+            onChange={(e) => {
+              setFolderTouched(true);
+              setFolder(e.target.value);
+            }}
           />
-          {newFolderTarget !== '' && (
-            <span className="text-muted wrap-anywhere text-[11px]" data-testid="new-folder-target">
-              will create {newFolderTarget}
-            </span>
-          )}
+          <span className="text-muted wrap-anywhere text-[11px]" data-testid="new-folder-target">
+            {newFolderTarget === ''
+              ? `in ${
+                  machine.workspaces.find((w) => w.instanceId === intoWorkspace)?.root ?? host.root
+                }`
+              : `will create ${newFolderTarget}`}
+          </span>
           {/* §17 Q20: what this session may reach, decided by the person making
               it, going straight into its own log. Above the button because it is
               part of the same decision, and folded because most sessions attach
@@ -1911,6 +2027,7 @@ running: ${host.bundleVersion ?? 'a build too old to say'}`
                 already said this. See `quietTone`. */}
             <span className={`${LABEL} flex min-w-0 gap-2`}>
               <span className={quietTone(s.state)}>{s.state.replace(/_/g, ' ')}</span>
+              <FolderTag name={folderOf(s.instanceId)} />
               {s.group !== undefined && <GroupTag name={s.group.name} />}
             </span>
           </SessionRow>
@@ -1933,6 +2050,7 @@ running: ${host.bundleVersion ?? 'a build too old to say'}`
             {/* On disk only until opened — which is what proves the log is truth. */}
             <span className={`${LABEL} flex min-w-0 gap-2`}>
               <span className="text-muted">resume</span>
+              <FolderTag name={folderOf(d.instanceId)} />
               {/*
                 From `session.json` rather than from the log, because this row is
                 a session nobody has opened and folding every log on the machine
@@ -1948,6 +2066,79 @@ running: ${host.bundleVersion ?? 'a build too old to say'}`
       </div>
     </section>
   );
+}
+
+/**
+ * One row per **machine**, not per workspace (§8).
+ *
+ * A host is one process per machine and has been since v21 — but the sidebar
+ * still drew one section per *workspace*, because that is what the fleet's
+ * entries are: a binding of one checkout on one host. Two folders on one build
+ * box therefore appeared as two sections with the same name, the same buttons
+ * and different contents, and "my remote sessions are gone" turned out to be a
+ * person looking at the other one. Reported from a real server.
+ *
+ * So the machine is the row and the workspace is a property of the sessions
+ * under it. What that buys beyond clarity: **Stop** and **Update** are machine
+ * acts and now say so once instead of per folder, and detaching means letting
+ * go of the machine rather than of one of its checkouts.
+ *
+ * Grouped by `machineId`, which the host mints and reports (§5.2). A host too
+ * old to send one gets a row of its own keyed by its target: absence means
+ * *cannot tell*, and merging two hosts that never claimed to be the same machine
+ * would be inventing the fact this grouping depends on.
+ */
+export interface MachineRow {
+  key: string;
+  /** What to call it: the alias for a remote, and the machine itself for local. */
+  label: string;
+  targetKind: string;
+  /** Every workspace open on it, in the order they were attached. */
+  workspaces: HostInfo[];
+}
+
+export function byMachine(hosts: HostInfo[]): MachineRow[] {
+  const rows = new Map<string, MachineRow>();
+  for (const host of hosts) {
+    const key = host.machineId ?? `${host.targetKind}:${host.label}:${host.instanceId}`;
+    const existing = rows.get(key);
+    if (existing === undefined) {
+      rows.set(key, {
+        key,
+        label: host.targetKind === 'local' ? 'This machine' : host.label,
+        targetKind: host.targetKind,
+        workspaces: [host],
+      });
+    } else {
+      existing.workspaces.push(host);
+    }
+  }
+  return [...rows.values()];
+}
+
+/** The last segment of a path, whichever separator it uses. */
+function folderName(path: string): string {
+  return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
+}
+
+/**
+ * A folder name from a session title.
+ *
+ * Lowercase words joined by hyphens, and nothing else: this becomes a directory
+ * on somebody's machine — possibly across ssh — so what a person typed as prose
+ * has to survive a shell, a path separator and a filesystem that may not accept
+ * what theirs does. Built from an allow-list rather than by removing what is
+ * dangerous, which is the same rule template names follow (§17 Q12): a deny-list
+ * is a promise to have thought of everything.
+ *
+ * Bounded, because a title can be a sentence and a path component cannot.
+ */
+function folderSlug(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
 }
 
 /**
@@ -2040,6 +2231,22 @@ function SessionRow({
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * Which folder a session is in, where one machine holds several (§8).
+ *
+ * Absent where it would say the same thing on every row: a machine with one
+ * workspace open has nothing to tell apart, and a label repeated down a column
+ * is noise that makes the column harder to read rather than easier.
+ */
+function FolderTag({ name }: { name: string | null }): JSX.Element | null {
+  if (name === null) return null;
+  return (
+    <span className="truncate-line text-muted min-w-0" data-testid="session-folder" title={name}>
+      {name}
+    </span>
   );
 }
 
