@@ -73,6 +73,21 @@ export function NewSession({
   const [machines] = useState<Machine[]>(() => loadMachines());
   const [machineId, setMachineId] = useState<string>(() => machines[0]?.id ?? 'local');
   const [path, setPath] = useState('');
+  /**
+   * A folder made for this session, under the one browsed to (§8).
+   *
+   * One session, one folder is the rule, and nothing in the form said so: the
+   * field took a path, the list offered every directory a machine had, and the
+   * result was sessions sitting on top of `~/Desktop` — a workspace holding
+   * somebody's whole desktop, `.agbrte` and all. Reported from a real server.
+   *
+   * Empty means "open what is in the field", which is still right for a project
+   * that already exists. A name here means "make me a folder for this", and the
+   * path that gets opened is shown before anything is created — because a folder
+   * appearing on a remote machine is a change to it, and the rule is that those
+   * are visible before they happen (§6.4).
+   */
+  const [folder, setFolder] = useState('');
   const [opened, setOpened] = useState<HostInfo | null>(null);
   const [title, setTitle] = useState('');
 
@@ -99,9 +114,23 @@ export function NewSession({
     if (chosen !== null) setPath(chosen);
   };
 
+  /**
+   * Where this session's work will live.
+   *
+   * A separator picked from the path rather than from this machine: the field
+   * may name a folder on a Linux box while the app runs on Windows, and joining
+   * with the *local* separator would produce a path that machine cannot open.
+   */
+  const target = ((): string => {
+    const base = path.trim().replace(/[\/]+$/, '');
+    const name = folder.trim().replace(/^[\/]+/, '');
+    if (name === '') return base;
+    return `${base}${base.includes(String.fromCharCode(92)) ? String.fromCharCode(92) : '/'}${name}`;
+  })();
+
   /** Open the folder, which is what makes its sessions readable. */
   const openFolder = async (): Promise<void> => {
-    const root = path.trim();
+    const root = target;
     if (root === '') return;
     const host =
       machine.kind === 'local'
@@ -178,6 +207,12 @@ export function NewSession({
                   Browse
                 </button>
               </div>
+              <NewFolderField
+                value={folder}
+                onChange={setFolder}
+                target={target}
+                onSubmit={() => void openFolder()}
+              />
             </label>
           ) : (
             <>
@@ -211,6 +246,12 @@ export function NewSession({
                   }}
                 />
               </label>
+              <NewFolderField
+                value={folder}
+                onChange={setFolder}
+                target={target}
+                onSubmit={() => void openFolder()}
+              />
               {search?.phase === 'looking' && (
                 <p className="text-muted text-[11px]" data-testid="new-session-looking">
                   Looking on {machine.label}…
@@ -236,10 +277,10 @@ export function NewSession({
           <button
             className="btn"
             data-testid="new-session-open"
-            disabled={busy || path.trim() === ''}
+            disabled={busy || target === ''}
             onClick={() => void openFolder()}
           >
-            {busy ? 'Opening…' : 'Open folder'}
+            {busy ? 'Opening…' : folder.trim() === '' ? 'Open folder' : 'Create and open'}
           </button>
         </>
       ) : (
@@ -299,5 +340,55 @@ export function NewSession({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * A folder of this session's own, under the one browsed to (§8).
+ *
+ * One session, one folder is the rule this form never stated. What it asked for
+ * was *a path*, and the list beside it offered every directory a machine had —
+ * so the easy answer was whatever was already there, and a session ended up
+ * holding somebody's entire `~/Desktop`, `.agbrte` and all.
+ *
+ * Optional rather than forced: a project that already exists is a folder you
+ * open, not one you make, and that is most of the work anybody does here. What
+ * this adds is that starting something *new* no longer means finding a place for
+ * it in a file manager first.
+ *
+ * The resolved path is shown before anything happens, because creating a
+ * directory on a machine — especially one across an ssh connection — is a change
+ * to it, and a change made on somebody's behalf has to be legible first.
+ */
+function NewFolderField({
+  value,
+  onChange,
+  target,
+  onSubmit,
+}: {
+  value: string;
+  onChange: (name: string) => void;
+  target: string;
+  onSubmit: () => void;
+}): JSX.Element {
+  return (
+    <label className="text-muted grid min-w-0 gap-1 text-xs">
+      New folder for this session <span className="opacity-60">(optional)</span>
+      <input
+        className="field min-w-0"
+        data-testid="new-session-folder"
+        placeholder="the-parser-rewrite"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onSubmit();
+        }}
+      />
+      {value.trim() !== '' && (
+        <span className="wrap-anywhere text-[11px]" data-testid="new-session-target">
+          will create {target}
+        </span>
+      )}
+    </label>
   );
 }

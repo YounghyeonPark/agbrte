@@ -165,20 +165,27 @@ export function AttachHost({
     setMachines(updated);
 
     /*
-     * One press, all the way to a host.
+     * One press all the way to a host — but only where the folder is not a guess.
      *
      * The panel used to stop at the machine, which left the sidebar empty and
      * read as a failed connection; then it stopped at a *folder field*, which
      * was honest and still two presses for the one thing anybody wants. So the
-     * folder is resolved here and opened in the same act: the folder this person
-     * opened on this machine last, or the first one discovery found.
+     * folder is resolved here and opened in the same act.
      *
-     * The choice is still on screen and still editable — the folder list and the
-     * field stay below, so a machine with several projects can be re-opened
-     * somewhere else without starting over. What changes is only that the common
-     * case, where the answer is the folder you used last, no longer asks.
+     * **Resolved from proof, not from a ranking.** The first version took the
+     * first thing discovery found, and discovery ranks *every* directory one
+     * level down — so attaching a machine silently opened `~/Desktop` as a
+     * workspace and put a session on top of somebody's entire desktop. Reported
+     * from a real server, and it is the difference between a shortcut and a
+     * decision made on your behalf.
+     *
+     * Two things count as proof: a folder this person opened here before, and a
+     * candidate that already *is* an Agbrte workspace. Anything else leaves the
+     * list and the field on screen, which is the panel asking rather than
+     * guessing.
      */
-    const resolved = loadLastWorkspace(target) ?? answer.result?.candidates[0]?.path ?? '';
+    const known = answer.result?.candidates.find((c) => c.kind === 'workspace');
+    const resolved = loadLastWorkspace(target) ?? known?.path ?? '';
     setPath(resolved);
     if (resolved !== '') {
       await open(target, resolved);

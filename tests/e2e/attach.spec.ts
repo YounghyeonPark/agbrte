@@ -81,10 +81,16 @@ const MACHINES = ['build-01', 'slow-01', 'quick-02'];
  */
 async function stubMachines(
   app: LaunchedApp,
-  opts: { delays?: Record<string, number>; fail?: string; unavailable?: string } = {},
+  opts: {
+    delays?: Record<string, number>;
+    fail?: string;
+    unavailable?: string;
+    /** A machine with directories but no Agbrte workspace among them. */
+    onlyPlain?: boolean;
+  } = {},
 ): Promise<void> {
   await app.app.evaluate(
-    async ({ ipcMain }, { found, machines, delays, fail, unavailable }) => {
+    async ({ ipcMain }, { found, machines, delays, fail, unavailable, onlyPlain }) => {
       const scope = globalThis as unknown as { __asked: number };
       scope.__asked = 0;
 
@@ -103,7 +109,9 @@ async function stubMachines(
         return {
           alias,
           ...found,
-          candidates: found.candidates.map((c) => ({ ...c, path: `${c.path}-${alias}` })),
+          candidates: found.candidates
+            .filter((c) => onlyPlain !== true || c.kind === 'folder')
+            .map((c) => ({ ...c, path: `${c.path}-${alias}` })),
         };
       });
 
@@ -124,7 +132,14 @@ async function stubMachines(
         };
       });
     },
-    { found: FOUND, machines: MACHINES, delays: opts.delays, fail: opts.fail, unavailable: opts.unavailable },
+    {
+      found: FOUND,
+      machines: MACHINES,
+      delays: opts.delays,
+      fail: opts.fail,
+      unavailable: opts.unavailable,
+      onlyPlain: opts.onlyPlain,
+    },
   );
 }
 
@@ -222,6 +237,37 @@ test.describe('attaching asks for a machine', () => {
     }
   });
 
+  test('does not open a folder it only guessed at', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      // Directories, and not one of them an Agbrte workspace: the shape of a
+      // home directory anywhere.
+      await stubMachines(agbrte, { onlyPlain: true });
+      const page = agbrte.window;
+      await openRemote(page);
+      await page.click('[data-testid=attach-remote-go]');
+
+      /*
+       * The panel asks instead of choosing.
+       *
+       * One-press attach used to take the first thing discovery ranked, and
+       * discovery ranks *every* directory one level down — so attaching a
+       * machine silently opened `~/Desktop` and put a session on top of
+       * somebody's entire desktop. Reported from a real server. A folder counts
+       * as resolved when it is one this person opened here before or one that
+       * already is a workspace; a ranking is not proof.
+       */
+      await expect(page.locator('[data-testid=attach-panel]')).toBeVisible();
+      await expect(page.locator('[data-testid=attach-path]')).toHaveValue('');
+      expect(await opened(agbrte)).toEqual([]);
+    } finally {
+      await agbrte.close();
+      await agbrte.window.context().close().catch(() => undefined);
+    }
+  });
+
   test('a machine that cannot be reached is named, and not remembered', async () => {
     const repo = await makeRepo();
     const agbrte = await launch(repo);
@@ -278,6 +324,44 @@ test.describe('attaching asks for a machine', () => {
 });
 
 test.describe('creating a session asks for a folder', () => {
+  test('makes a folder of its own when asked for one', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      const page = agbrte.window;
+      await page.click('[data-testid=new-session-oneshot]');
+      await expect(page.locator('[data-testid=new-session-panel]')).toBeVisible();
+
+      /*
+       * One session, one folder — the rule this form never stated.
+       *
+       * It asked for *a path*, and the browser beside it offered every directory
+       * on the machine, so the easy answer was whatever already existed: a real
+       * session ended up holding somebody's entire `~/Desktop`, `.agbrte` and
+       * all. Starting something new should not mean finding a place for it in a
+       * file manager first.
+       */
+      await page.fill('[data-testid=new-session-path]', repo);
+      await page.fill('[data-testid=new-session-folder]', 'the-parser-rewrite');
+
+      // Shown before it happens: creating a directory is a change to a machine,
+      // and one made on somebody's behalf has to be legible first.
+      await expect(page.locator('[data-testid=new-session-target]')).toContainText(
+        'the-parser-rewrite',
+      );
+
+      await page.click('[data-testid=new-session-open]');
+      // The workspace that opened is the new folder, not the one browsed to.
+      await expect(page.locator('[data-testid=new-session-opened]')).toContainText(
+        'the-parser-rewrite',
+      );
+    } finally {
+      await agbrte.close();
+      await agbrte.window.context().close().catch(() => undefined);
+    }
+  });
+
   test('offers what is on the machine, and the field still takes anything', async () => {
     const repo = await makeRepo();
     const agbrte = await launch(repo);
