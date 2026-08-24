@@ -2377,7 +2377,24 @@ function SessionHeader({
           {/* Which host, in the header too: with several attached, the sidebar
               grouping alone is easy to lose track of once you have scrolled. */}
           {host !== null && <span data-testid="active-host">{host.label} · </span>}
-          {session.goal}
+          {/*
+            The **folder**, which is what everything in this pane runs in.
+
+            This line used to read `<machine> · <goal>`, and the goal is the
+            title for every session the form makes — so a session called `xxxx`
+            printed `cbk_ws_one · xxxx` under a machine holding two folders, in
+            the exact shape of `machine · folder`. It was read that way three
+            times, and each time the complaint was that the terminal opened
+            "the wrong folder": the terminal was opening the session's folder,
+            and this line was the thing claiming otherwise.
+
+            A session belongs to one folder (§8) and every button below —
+            terminal, files, ports — acts in it, so it belongs in the one line
+            that says where this pane is.
+          */}
+          {host !== null && <span data-testid="active-folder">{folderName(host.root)}</span>}
+          {/* Only when it says something the title did not. */}
+          {session.goal !== '' && session.goal !== session.title && ` · ${session.goal}`}
         </p>
       </div>
       </div>

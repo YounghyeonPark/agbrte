@@ -331,6 +331,20 @@ test.describe('your own terminal', () => {
       await expect(where).toContainText(repo.split(/[\\/]/).pop()!);
 
       /*
+       * The header names the same folder the terminal opened in.
+       *
+       * Asserted together, because the bug was the disagreement rather than
+       * either line: the header read `<machine> · <goal>`, the goal is the
+       * title, and a session titled after something other than its folder
+       * printed a line in the exact shape of `machine · folder` naming a folder
+       * it was not in. The terminal was right and was reported as wrong, three
+       * times.
+       */
+      await expect(agbrte.window.locator('[data-testid=active-folder]')).toHaveText(
+        repo.split(/[\\/]/).pop()!,
+      );
+
+      /*
        * Typed rather than injected, and typed into the emulator.
        *
        * `page.keyboard.type` puts real key events on the canvas xterm is
