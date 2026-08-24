@@ -142,6 +142,16 @@ export interface HostInfo {
    */
   runtimeNotes: Array<{ id: string; label: string; reason: string }>;
   /**
+   * What the host says it is running (§6.3).
+   *
+   * Sent so a person can *see* it rather than infer it from whether an Update
+   * button is there. Absence of that button has two meanings — this host is
+   * current, or it is too old to say — and the difference matters exactly when
+   * something is not working: a remote reporting no terminal is a different
+   * problem depending on which bundle is answering.
+   */
+  bundleVersion?: string;
+  /**
    * Whether this host can open a terminal (§7).
    *
    * From the host rather than inferred from `targetKind`: a remote with the pty

@@ -1637,7 +1637,14 @@ function HostGroup({
           </span>
           <span
             className="truncate-line text-xs"
-            title={`${host.root}${host.targetKind === 'local' ? '' : ` on ${host.label}`}`}
+            /* The bundle too, because "no Update button" says two different
+               things — this host is current, or it is too old to say — and which
+               one it is decides what somebody does next. */
+            title={
+              `${host.root}${host.targetKind === 'local' ? '' : ` on ${host.label}`}` +
+              `
+running: ${host.bundleVersion ?? 'a build too old to say'}`
+            }
           >
             {host.label}
           </span>
