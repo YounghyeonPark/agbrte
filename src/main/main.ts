@@ -19,6 +19,8 @@ import { loadReport } from './conformance.js';
 import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { delimiter, dirname, join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { installStrayPipeGuard } from './strayPipeRead.js';
 import { registerIpc } from './ipc/register.js';
 import { PUSH } from '@shared/ipc/contract.js';
@@ -154,6 +156,41 @@ const HOST_RUNTIMES: FleetRuntime[] = [
  * host it starts is detached and outlives this window, which is the whole point:
  * closing the app is not a reason to stop work.
  */
+/**
+ * What is deployed, identified by its **contents** rather than by a version.
+ *
+ * The stamp exists to answer one question — is the bundle on that machine the
+ * one this app ships — and a version string answers it only when somebody bumps
+ * the version. In development nobody does: every build says `0.0.15`, so a
+ * remote attached yesterday keeps yesterday's host forever, and the feature you
+ * just wrote is running nowhere. That is not a development inconvenience: the
+ * *same* trap catches a released build rebuilt from a patch, and it caught this
+ * one — a remote reporting no terminal because the host serving it predated the
+ * field that says so.
+ *
+ * The version stays in front so the string is still readable in a log and in
+ * the "out of date" badge; the hash behind it is what makes the comparison mean
+ * anything. Computed once and cached, because it describes files that cannot
+ * change while this process runs.
+ */
+let stamp: Promise<string> | undefined;
+function bundleStamp(): Promise<string> {
+  stamp ??= (async () => {
+    const digest = createHash('sha256');
+    for (const file of ['agbrteHost.js', 'agentHost.js', '../cli/agbrte.js']) {
+      try {
+        digest.update(await readFile(join(HERE, file)));
+      } catch {
+        // A bundle that is not there is part of what this build is: hashing the
+        // name keeps the stamp stable and different from a build that has it.
+        digest.update(file);
+      }
+    }
+    return `${APP_VERSION}+${digest.digest('hex').slice(0, 12)}`;
+  })();
+  return stamp;
+}
+
 function buildFleet(): Fleet {
   return new Fleet({
     runtimes: HOST_RUNTIMES,
@@ -176,9 +213,10 @@ function buildFleet(): Fleet {
             // happened to have and never ours.
             cli: join(HERE, '../cli/agbrte.js'),
           },
-          // The app's own version, so a rebuilt app redeploys and an unchanged
-          // one does not pay for an upload it does not need.
-          bundleVersion: APP_VERSION,
+          // The bundle's own fingerprint, so a rebuilt app redeploys and an
+          // unchanged one does not pay for an upload it does not need. See
+          // `bundleStamp`: the version alone could not tell those apart.
+          bundleVersion: await bundleStamp(),
           onProgress: (step) => process.stderr.write(`[${alias}] ${step}
 `),
         });
@@ -369,9 +407,11 @@ app.whenReady().then(async () => {
     // Read at call time: the updater is built after the first window appears,
     // which is later than this. See `IpcDeps.updates`.
     updates: () => updates,
-    // The same number `connectRemoteHost` stamps onto a bundle it deploys, so
-    // a host reporting a different one is reporting older code.
-    shippingVersion: APP_VERSION,
+    // The same string `connectRemoteHost` stamps onto a bundle it deploys, so a
+    // host reporting a different one is reporting older code — and the same
+    // *kind* of string, or the badge would compare a fingerprint against a
+    // version and light up on every host (see `bundleStamp`).
+    shippingVersion: await bundleStamp(),
     // What the About page shows. License and homepage restate package.json,
     // which the renderer cannot read; the version is asked of Electron, which
     // reads the same file — one source with two readers, not two sources.
