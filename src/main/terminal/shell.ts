@@ -229,6 +229,30 @@ let cached: PtySpawner | undefined;
  */
 let loadFailure: string | undefined;
 
+/**
+ * Whether this machine can open a terminal at all (§7).
+ *
+ * Asked once, at startup, so a host can *say* it on its handshake instead of a
+ * client inferring it. The inference it replaces was `targetKind === 'local'`,
+ * which was true of the world it was written in — a remote host was two `.js`
+ * files with no `node_modules` — and became a lie the moment the pty module was
+ * deployed with them. It was also wrong the other way: an arm64 build that ships
+ * without the prebuild is a *local* host that cannot open one.
+ *
+ * A load rather than a file check, because "the module is on disk" and "the
+ * module runs here" are different claims and only the second one matters. The
+ * result is cached by `loadSpawner` either way, so this costs the first terminal
+ * nothing.
+ */
+export function shellsAvailable(): boolean {
+  try {
+    loadSpawner();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function loadSpawner(): PtySpawner {
   if (loadFailure !== undefined) throw new ShellUnavailable(loadFailure);
   if (cached !== undefined) return cached;

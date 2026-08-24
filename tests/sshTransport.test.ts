@@ -15,10 +15,15 @@ import { describe, expect, it } from 'vitest';
 import {
   describeSshFailure,
   diagnoseSshFailure,
+  installRemotePty,
   nodeTarballUrl,
   probeRemote,
+  ptyPackageFor,
+  ptyTarballUrl,
   remoteAgentBundle,
   remoteBundle,
+  remoteCliBundle,
+  remoteModulesDir,
   remoteNodeBin,
   remoteRoot,
   shellQuote,
@@ -164,6 +169,93 @@ describe('deploying', () => {
       // Last, because the probe reads its stamp as "both are deployed".
       '/home/ci/.agbrte/agbrteHost.js',
     ]);
+  });
+
+  it('ships our own CLI too, which is what the terminal pane looks for', async () => {
+    const runner = fakeRunner();
+    await uploadHostBundle(
+      runner,
+      'box',
+      '/home/ci',
+      { host: 'package.json', agent: 'package.json', cli: 'package.json' },
+      'v1',
+    );
+
+    /*
+     * Beside the host bundle, because that is where `programs.ts` looks — and
+     * without it a remote could offer a vendor CLI it happened to have and never
+     * the one program in that pane that is a *client* of the session.
+     *
+     * Before the stamp, like the agent host: the stamp means "everything this
+     * version ships is here".
+     */
+    expect(runner.uploads).toEqual([
+      '/home/ci/.agbrte/agentHost.js',
+      remoteCliBundle('/home/ci'),
+      '/home/ci/.agbrte/agbrteHost.js',
+    ]);
+  });
+
+  it('deploys what it has when there is no CLI to send', async () => {
+    const runner = fakeRunner();
+    await uploadHostBundle(runner, 'box', '/home/ci', { host: 'package.json', agent: 'package.json' }, 'v1');
+    expect(runner.uploads).not.toContain(remoteCliBundle('/home/ci'));
+  });
+});
+
+describe('the terminal module a remote needs', () => {
+  /**
+   * Why this is fetched on the far side rather than sent from here.
+   *
+   * A prebuild is per platform *and* architecture, and the app only has the one
+   * npm installed for the machine it is running on — a Windows laptop deploying
+   * to a Linux build box has no Linux binary to send. So it is downloaded where
+   * it is needed, which is the same act as the private Node: pinned version,
+   * TLS, the project's own registry, into `~/.agbrte` and nowhere else.
+   */
+  it('names the package npm publishes for that machine', () => {
+    expect(ptyPackageFor('Linux', 'x86_64')).toBe('node-pty-linux-x64');
+    expect(ptyPackageFor('Linux', 'aarch64')).toBe('node-pty-linux-arm64');
+    expect(ptyPackageFor('Darwin', 'arm64')).toBe('node-pty-darwin-arm64');
+  });
+
+  it('pins a version, so a host runs the module this build expects', () => {
+    // The host bundle calls `require('@lydell/node-pty')` and gets whatever is
+    // beside it: an unpinned fetch is a remote running code nobody here loaded.
+    expect(ptyTarballUrl('node-pty-linux-x64')).toMatch(
+      /^https:\/\/registry\.npmjs\.org\/@lydell\/node-pty-linux-x64\/-\/node-pty-linux-x64-\d/,
+    );
+  });
+
+  it('installs both packages where `createRequire` will find them, and proves it loads', async () => {
+    const runner = fakeRunner();
+    const probe = { home: '/home/ci', arch: 'x86_64', platform: 'Linux', nodePath: null, bundleVersion: null };
+
+    const outcome = await installRemotePty(runner, 'box', probe as never);
+
+    expect(outcome.installed).toBe(true);
+    const script = runner.commands.join('\n');
+    // Both, because the main package is a shim that requires the platform one.
+    expect(script).toContain('@lydell/node-pty/-/node-pty-');
+    expect(script).toContain('@lydell/node-pty-linux-x64/-/');
+    // Under the host's own directory, which is where Node walks up to from the
+    // deployed bundle — the same path the local machine resolves.
+    expect(script).toContain(`${remoteModulesDir('/home/ci')}/@lydell/node-pty`);
+    // An extracted tree is not a loadable module, and the difference otherwise
+    // shows up later as a terminal that will not open.
+    expect(script).toContain("require('@lydell/node-pty')");
+  });
+
+  it('reports a failure instead of throwing, because a host is more than its terminal', async () => {
+    const runner = fakeRunner([{ match: /curl/, code: 6, stderr: 'could not resolve host' }]);
+    const probe = { home: '/home/ci', arch: 'x86_64', platform: 'Linux', nodePath: null, bundleVersion: null };
+
+    const outcome = await installRemotePty(runner, 'box', probe as never);
+
+    // A machine with no route to the registry keeps every other thing a host
+    // does; the pane says what is missing when somebody reaches for it (§7).
+    expect(outcome.installed).toBe(false);
+    expect(outcome.detail).toContain('could not resolve host');
   });
 });
 

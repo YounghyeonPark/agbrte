@@ -647,15 +647,21 @@ export function App(): JSX.Element {
   /**
    * Whether this host can give you a terminal.
    *
-   * Read off the host record rather than probed, because the answer is a fact
-   * about *where the workspace is* and the record already carries it. v1 runs a
-   * PTY on local hosts only: a remote host is a pair of bundled `.js` files
-   * copied to `~/.agbrte` with no `node_modules` beside them, so the module
-   * that opens a pty is genuinely not on that machine. The protocol is not the
-   * limitation and the refusal says so — the button stays, disabled, naming the
-   * host, rather than vanishing and looking like a feature that does not exist.
+   * **The host's own answer**, because only the host knows. This used to be
+   * `targetKind === 'local'`, which was true of the world it was written in — a
+   * remote was two bundled `.js` files with no `node_modules` beside them, so
+   * the module that opens a pty was genuinely not there. It stopped being true
+   * when the pty module started being deployed with them, and it was wrong the
+   * other way round all along: a cross-built arm64 artifact ships without the
+   * prebuild, so a *local* host can be one that cannot open a terminal.
+   *
+   * The fallback is the same inference, used only where the host is too old to
+   * say — which describes that host correctly, since a host that predates the
+   * field also predates the deployment. The button stays either way, disabled
+   * and naming the host, rather than vanishing and looking like a feature that
+   * does not exist.
    */
-  const shellHere = activeHost?.targetKind === 'local';
+  const shellHere = activeHost?.shells ?? activeHost?.targetKind === 'local';
   /**
    * Whether this session's workspace is on another machine (§6.8).
    *

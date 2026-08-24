@@ -30,7 +30,7 @@ import { openWorkspace, peekIdentity } from '@main/store/identity.js';
 import { listen, hostSocketPath } from '@shared/host/socketChannel.js';
 import { listenLoopback, newControlToken } from '@shared/host/loopback.js';
 import { PreviewServers } from '@main/preview/servers.js';
-import { Shells } from '@main/terminal/shell.js';
+import { Shells, shellsAvailable } from '@main/terminal/shell.js';
 import { TerminalPrograms } from '@main/terminal/programs.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import type { HostCommand, HostMessage, MainSideChannel } from '@shared/host/protocol.js';
@@ -539,6 +539,10 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       workspaceRoot,
       runtimes: available,
       ...(runtimeNotes.length > 0 ? { runtimeNotes } : {}),
+      // Asked of the module, not inferred from the platform: a remote with the
+      // prebuild deployed can open one, and a cross-built local artifact without
+      // it cannot (§7).
+      shells: shellsAvailable(),
       endpoints,
       ...(identity.origin === 'relocated' && identity.movedFrom !== undefined
         ? { movedFrom: identity.movedFrom }

@@ -16,6 +16,7 @@ import {
   describeSshFailure,
   freeLoopbackPort,
   installRemoteNode,
+  installRemotePty,
   probeRemote,
   readRemoteHostRecord,
   remoteNodeBin,
@@ -46,7 +47,12 @@ export interface RemoteConnectOptions {
   /** Absolute path on the remote. */
   workspaceRoot: string;
   /** The built bundles to deploy: the session host and the agent host it forks. */
-  bundles: { host: string; agent: string };
+  bundles: {
+    host: string;
+    agent: string;
+    /** Agbrte's own CLI, for the terminal pane. Optional: an embedder may have none. */
+    cli?: string;
+  };
   /** Stamped on the deployed bundle so a later attach knows what is there. */
   bundleVersion: string;
   /**
@@ -135,6 +141,23 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
     // a slow link.
     report('deploying the host');
     await uploadHostBundle(runner, opts.alias, probe.home, opts.bundles, opts.bundleVersion);
+    /*
+     * And the pty module, in the same breath as the bundles.
+     *
+     * Deployed here rather than on demand because opening a terminal is not a
+     * moment anybody wants to spend downloading: it is a click, and the wait
+     * belongs to the attach that was already installing things. Guarded by the
+     * same version stamp, so it happens once per build rather than per attach.
+     *
+     * Failure is reported and not thrown. A machine with no route to the
+     * registry keeps every other thing a host does — the pane says what is
+     * missing when somebody reaches for it (§7).
+     */
+    report('deploying the terminal module');
+    const pty = await installRemotePty(runner, opts.alias, probe);
+    if (!pty.installed) {
+      report(`no terminal on this machine: ${pty.detail ?? 'the pty module could not be installed'}`);
+    }
   }
 
   let record = await readRemoteHostRecord(runner, opts.alias, opts.workspaceRoot, probe.home);

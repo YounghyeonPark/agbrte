@@ -141,6 +141,15 @@ export interface HostInfo {
    * say* rather than *everything was found* — so nothing is claimed either way.
    */
   runtimeNotes: Array<{ id: string; label: string; reason: string }>;
+  /**
+   * Whether this host can open a terminal (§7).
+   *
+   * From the host rather than inferred from `targetKind`: a remote with the pty
+   * module deployed can open one, and a cross-built local artifact without the
+   * prebuild cannot. Absent means the host is too old to say, and the reader
+   * falls back to the inference that described such a host correctly.
+   */
+  shells?: boolean;
   /** Why nothing can run here. Sessions still load and read. */
   unavailableReason?: string;
   /**

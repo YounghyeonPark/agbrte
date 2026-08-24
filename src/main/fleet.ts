@@ -277,6 +277,13 @@ export interface AttachedHost {
    */
   runtimeNotes: Array<{ id: string; label: string; reason: string }>;
   /**
+   * Whether this host can open a terminal, as the host itself answered.
+   *
+   * `undefined` from a host older than v23, which means *it cannot say* — not
+   * *no*. See `HostIdentity.shells`, and the fallback where this is read.
+   */
+  shells?: boolean;
+  /**
    * Where this workspace was, when the host found it somewhere else (§5.3).
    *
    * Naturally transient: the host records the new location once, so the next
@@ -561,6 +568,7 @@ export class Fleet extends EventEmitter {
       authenticated: e.authenticated,
     }));
     entry.runtimeNotes = (identity.runtimeNotes ?? []).map((n) => ({ ...n }));
+    if (identity.shells !== undefined) entry.shells = identity.shells;
 
     if (identity.bundleVersion === undefined) delete entry.bundleVersion;
     else entry.bundleVersion = identity.bundleVersion;
@@ -2235,6 +2243,7 @@ function snapshot(entry: Entry): AttachedHost {
     available: [...entry.available],
     endpoints: entry.endpoints.map((e) => ({ ...e })),
     runtimeNotes: entry.runtimeNotes.map((n) => ({ ...n })),
+    ...(entry.shells !== undefined ? { shells: entry.shells } : {}),
     /*
      * Copied, which it was not.
      *

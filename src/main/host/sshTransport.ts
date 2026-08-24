@@ -94,6 +94,23 @@ export function remoteAgentBundle(home: string): string {
 export function remoteNodeBin(home: string): string {
   return `${remoteNodeDir(home)}/bin/node`;
 }
+/**
+ * Agbrte's own CLI, deployed beside the host (§7).
+ *
+ * A third file, and the reason it is worth one: the terminal pane can run *our*
+ * CLI attached to the session, which is the only program in that pane that is a
+ * client rather than something running next to the work — and `programs.ts`
+ * looks for it beside the bundle that starts it. On a remote there was nothing
+ * beside the bundle, so a machine could run a vendor CLI it happened to have and
+ * not the one we ship.
+ */
+export function remoteCliBundle(home: string): string {
+  return `${remoteRoot(home)}/agbrte.js`;
+}
+/** Where a deployed `node_modules` goes, so `createRequire` finds it (§6.2). */
+export function remoteModulesDir(home: string): string {
+  return `${remoteRoot(home)}/node_modules`;
+}
 
 /** Node shipped to a remote that has none. Pinned so a host is reproducible. */
 export const REMOTE_NODE_VERSION = 'v22.11.0';
@@ -443,6 +460,86 @@ export async function installRemoteNode(
 }
 
 /**
+ * The pty module this build expects, pinned.
+ *
+ * Read from the app's own dependency rather than written twice: the host bundle
+ * calls `require('@lydell/node-pty')` and gets whatever is beside it, so a
+ * remote holding a different version is a remote running code this build has
+ * never loaded.
+ */
+export const REMOTE_PTY_VERSION = '1.2.0-beta.15';
+
+/** The platform package npm publishes for one machine. */
+export function ptyPackageFor(platform: string, arch: string): string {
+  const os = platform.toLowerCase() === 'darwin' ? 'darwin' : 'linux';
+  const cpu = arch === 'aarch64' || arch === 'arm64' ? 'arm64' : 'x64';
+  return `node-pty-${os}-${cpu}`;
+}
+
+/** Where npm serves a scoped package's tarball. */
+export function ptyTarballUrl(name: string, version = REMOTE_PTY_VERSION): string {
+  return `https://registry.npmjs.org/@lydell/${name}/-/${name}-${version}.tgz`;
+}
+
+/**
+ * Put the pty module under `~/.agbrte/node_modules`, so a remote can open a
+ * terminal (§7).
+ *
+ * ## Why this is a download and not an upload
+ *
+ * A prebuild is per platform *and* architecture, and the app only ever has the
+ * one npm installed for the machine it is running on — a Windows laptop
+ * deploying to a Linux build box has no Linux binary to send. Fetching it where
+ * it is needed is the same act as the private Node three functions up: a pinned
+ * version, over TLS, from the project's own registry, into `~/.agbrte` and
+ * nowhere else. It adds a second host to trust and no new *kind* of trust, which
+ * is the honest way to state it.
+ *
+ * ## Why it lands in `node_modules` rather than somewhere of our choosing
+ *
+ * `shell.ts` loads it with `createRequire(import.meta.url)` from the deployed
+ * bundle, so Node walks up from `~/.agbrte/` and finds `~/.agbrte/node_modules`.
+ * Putting it there means the remote and the local machine load it the same way,
+ * and nothing in the host has to know it was deployed.
+ *
+ * Both packages, because the main one is a shim that requires the platform one
+ * by name. `--strip-components=1` drops npm's `package/` prefix.
+ *
+ * **Failure is not fatal to a deploy.** A machine with no route to the registry,
+ * or an architecture with no prebuild, is a machine that cannot open a terminal
+ * — which the host reports and the UI says (§6.8's rule: name what is missing,
+ * do not hide the control). Everything else about that host works, and refusing
+ * to attach would trade a session for a pane.
+ */
+export async function installRemotePty(
+  runner: Pick<SshRunner, 'exec'>,
+  alias: string,
+  probe: RemoteProbe,
+): Promise<{ installed: boolean; detail?: string }> {
+  const platformPkg = ptyPackageFor(probe.platform, probe.arch);
+  // Each path quoted whole rather than a quoted prefix with a bare tail: both
+  // are valid shell and only one is readable in a log somebody is debugging.
+  const mainDir = shellQuote(`${remoteModulesDir(probe.home)}/@lydell/node-pty`);
+  const platformDir = shellQuote(`${remoteModulesDir(probe.home)}/@lydell/${platformPkg}`);
+  const script = [
+    `mkdir -p ${mainDir} ${platformDir}`,
+    `cd "$(mktemp -d)"`,
+    `curl -fsSL "${ptyTarballUrl('node-pty')}" -o main.tgz`,
+    `curl -fsSL "${ptyTarballUrl(platformPkg)}" -o platform.tgz`,
+    `tar -xzf main.tgz -C ${mainDir} --strip-components=1`,
+    `tar -xzf platform.tgz -C ${platformDir} --strip-components=1`,
+    `rm -f main.tgz platform.tgz`,
+    // Proved rather than assumed: an extracted tree is not a loadable module,
+    // and the difference shows up later as a terminal that will not open.
+    `cd ${shellQuote(remoteRoot(probe.home))} && ${shellQuote(remoteNodeBin(probe.home))} -e "require('@lydell/node-pty')"`,
+  ].join(' && ');
+
+  const result = await runner.exec(alias, script);
+  if (result.code === 0) return { installed: true };
+  return { installed: false, detail: result.stderr.trim().slice(0, 400) };
+}
+
+/**
  * Copy both bundles, stamping the session host so a later probe knows what is
  * deployed.
  *
@@ -453,12 +550,13 @@ export async function uploadHostBundle(
   runner: SshRunner,
   alias: string,
   home: string,
-  bundles: { host: string; agent: string },
+  bundles: { host: string; agent: string; cli?: string },
   version: string,
 ): Promise<void> {
-  const [hostBytes, agentBytes] = await Promise.all([
+  const [hostBytes, agentBytes, cliBytes] = await Promise.all([
     readFile(bundles.host),
     readFile(bundles.agent),
+    bundles.cli === undefined ? Promise.resolve(null) : readFile(bundles.cli),
   ]);
   // The stamp is a comment on the first line, which is why the probe can read
   // the deployed version with `sed` instead of running the bundle.
@@ -474,6 +572,10 @@ export async function uploadHostBundle(
     `mkdir -p ${shellQuote(remoteRoot(home))} && chmod 700 ${shellQuote(remoteRoot(home))}`,
   );
   await runner.upload(alias, remoteAgentBundle(home), agentBytes);
+  // Optional so a caller that has no CLI to send — a test, an older embedder —
+  // deploys what it has rather than failing. Before the stamp, like the agent
+  // host: the stamp means "everything this version ships is here".
+  if (cliBytes !== null) await runner.upload(alias, remoteCliBundle(home), cliBytes);
   // The session host is written last: the probe reads its stamp as "both are
   // deployed", so writing it first would make a half-deployment look complete.
   await runner.upload(alias, remoteBundle(home), stamped);

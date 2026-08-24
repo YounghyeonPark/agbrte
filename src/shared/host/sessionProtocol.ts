@@ -167,6 +167,21 @@ export interface HostIdentity {
    */
   runtimeNotes?: Array<{ id: string; label: string; reason: string }>;
   /**
+   * Whether this host can open a terminal (§7).
+   *
+   * Said by the host because only the host knows. A client used to infer it from
+   * the target — local yes, remote no — which was true while a remote was two
+   * `.js` files with no `node_modules` beside them, and stopped being true the
+   * moment the pty module was deployed with them. The inference was also wrong
+   * in the other direction: a cross-built arm64 artifact ships without the
+   * prebuild, so a *local* host can be one that cannot open a terminal.
+   *
+   * Absent from a host older than v23, and a client reading the absence learns
+   * that this host cannot say — falling back to the old inference, which is what
+   * that host's behaviour actually was.
+   */
+  shells?: boolean;
+  /**
    * Models this host can reach, with no credentials attached.
    *
    * One host can reach several — a local server and a hosted API, two GPUs with
@@ -447,6 +462,13 @@ export interface PreparedChild {
  * exposure, and the only one in that table where a detached overnight run keeps
  * going with the laptop shut. It is offered as that, in those words.
  *
+ * ## v23 says whether a terminal can be opened, which is v16's case
+ *
+ * `HostIdentity.shells` is a field, so a host older than v23 sends none and a
+ * client reading the absence learns that this host cannot say — and falls back
+ * to the inference it used to make unconditionally, which described that host
+ * correctly. Nothing strands, and nothing new is refused.
+ *
  * ## v22 adds `session.rename`, which is the ordinary case
  *
  * One command, so `COMMAND_SINCE` answers for it and a v21 host simply reports
@@ -491,7 +513,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 22;
+export const SESSION_PROTOCOL_VERSION = 23;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).

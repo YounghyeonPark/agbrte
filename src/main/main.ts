@@ -169,6 +169,12 @@ function buildFleet(): Fleet {
           bundles: {
             host: join(HERE, 'agbrteHost.js'),
             agent: join(HERE, 'agentHost.js'),
+            // The third file, and what it buys is the terminal pane's one
+            // program that is a *client* of the session rather than something
+            // running beside it (`programs.ts`). It is found next to the host
+            // bundle, so a remote that had two files could offer a vendor CLI it
+            // happened to have and never ours.
+            cli: join(HERE, '../cli/agbrte.js'),
           },
           // The app's own version, so a rebuilt app redeploys and an unchanged
           // one does not pay for an upload it does not need.

@@ -264,6 +264,7 @@ function toInfo(host: AttachedHost, shipping?: string): HostInfo {
     available: host.available,
     endpoints: host.endpoints,
     runtimeNotes: host.runtimeNotes,
+    ...(host.shells !== undefined ? { shells: host.shells } : {}),
     ...(host.movedFrom !== undefined ? { movedFrom: host.movedFrom } : {}),
     link: host.link,
     ...(host.unavailableReason !== undefined

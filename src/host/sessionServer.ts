@@ -113,6 +113,8 @@ export interface HostSelfDescription {
   movedFrom?: string;
   runtimes: string[];
   runtimeNotes?: Array<{ id: string; label: string; reason: string }>;
+  /** Whether this machine can open a terminal. See `HostIdentity.shells`. */
+  shells?: boolean;
   endpoints?: HostIdentity['endpoints'];
   unavailableReason?: string;
   bundleVersion?: string;
@@ -602,6 +604,9 @@ export class SessionHostServer {
           runtimes: this.opts.identity.runtimes,
           ...(this.opts.identity.runtimeNotes !== undefined
             ? { runtimeNotes: this.opts.identity.runtimeNotes }
+            : {}),
+          ...(this.opts.identity.shells !== undefined
+            ? { shells: this.opts.identity.shells }
             : {}),
           ...(this.opts.identity.endpoints !== undefined
             ? { endpoints: this.opts.identity.endpoints }

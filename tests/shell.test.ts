@@ -32,6 +32,7 @@ import {
   DEFAULT_COLS,
   MAX_PENDING_BYTES,
   Shells,
+  shellsAvailable,
   TRUNCATION_MARKER,
   type Pty,
   type PtySpawner,
@@ -744,6 +745,31 @@ describe('the user’s terminal', () => {
     expect(h.spawns[0]?.cols).toBe(1);
     h.shells.resize(owner, handle.shellId, Number.NaN, 999_999);
     expect(h.ptys[0]?.sizes).toEqual([[DEFAULT_COLS, 1000]]);
+  });
+});
+
+describe('whether this machine can open a terminal at all', () => {
+  /**
+   * The question a host answers on its handshake, so no client has to guess.
+   *
+   * What it replaces was `targetKind === 'local'`, which described the world it
+   * was written in — a remote host was two bundled `.js` files with no
+   * `node_modules` beside them — and was wrong in both directions afterwards: a
+   * remote with the pty module deployed can open a terminal, and a cross-built
+   * arm64 artifact ships without the prebuild, so a *local* host may not.
+   */
+  it('answers for this process rather than for its platform', () => {
+    const { createRequire } = require('node:module') as typeof import('node:module');
+    let loadable = true;
+    try {
+      createRequire(import.meta.url).resolve('@lydell/node-pty');
+    } catch {
+      loadable = false;
+    }
+
+    // Not hardcoded to `true`: the point is that the answer tracks the module,
+    // which is exactly what a machine with no prebuild needs it to do.
+    expect(shellsAvailable()).toBe(loadable);
   });
 });
 
