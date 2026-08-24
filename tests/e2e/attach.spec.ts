@@ -87,10 +87,19 @@ async function stubMachines(
     unavailable?: string;
     /** A machine with directories but no Agbrte workspace among them. */
     onlyPlain?: boolean;
+    /**
+     * Also answer `hosts.list` with what this stub has opened.
+     *
+     * Off by default, and deliberately: every other test here wants the *real*
+     * local host in the sidebar, and replacing the list would hide it. On for
+     * the one case that is about the app knowing it is already on a machine —
+     * which it learns from that list and nowhere else.
+     */
+    listStubbed?: boolean;
   } = {},
 ): Promise<void> {
   await app.app.evaluate(
-    async ({ ipcMain }, { found, machines, delays, fail, unavailable, onlyPlain }) => {
+    async ({ ipcMain }, { found, machines, delays, fail, unavailable, onlyPlain, listStubbed }) => {
       const scope = globalThis as unknown as { __asked: number };
       scope.__asked = 0;
 
@@ -115,11 +124,18 @@ async function stubMachines(
         };
       });
 
+      const scopeHosts = globalThis as unknown as { __hosts: unknown[] };
+      scopeHosts.__hosts = [];
+      if (listStubbed === true) {
+        ipcMain.removeHandler('agbrte:hosts.list');
+        ipcMain.handle('agbrte:hosts.list', () => scopeHosts.__hosts);
+      }
+
       ipcMain.removeHandler('agbrte:hosts.addRemote');
       ipcMain.handle('agbrte:hosts.addRemote', (_e, alias: string, workspaceRoot: string) => {
         (globalThis as unknown as { __opened: string[] }).__opened ??= [];
         (globalThis as unknown as { __opened: string[] }).__opened.push(`${alias} ${workspaceRoot}`);
-        return {
+        const info = {
           instanceId: `stub:${alias}:${workspaceRoot}`,
           root: workspaceRoot,
           lineageId: 'stub-lineage',
@@ -130,6 +146,8 @@ async function stubMachines(
           runtimeNotes: [],
           link: 'connected',
         };
+        scopeHosts.__hosts.push(info);
+        return info;
       });
     },
     {
@@ -139,6 +157,7 @@ async function stubMachines(
       fail: opts.fail,
       unavailable: opts.unavailable,
       onlyPlain: opts.onlyPlain,
+      listStubbed: opts.listStubbed,
     },
   );
 }
@@ -231,6 +250,38 @@ test.describe('attaching asks for a machine', () => {
        */
       await expect(page.locator('[data-testid=attach-panel]')).toBeHidden();
       expect(await opened(agbrte)).toEqual(['build-01 /home/dev/used-0-build-01']);
+    } finally {
+      await agbrte.close();
+      await agbrte.window.context().close().catch(() => undefined);
+    }
+  });
+
+  test('offers the folders instead of reopening one, once you are on the machine', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      await stubMachines(agbrte, { listStubbed: true });
+      const page = agbrte.window;
+
+      // First press: straight to a host, which is what the shortcut is for.
+      await openRemote(page);
+      await page.click('[data-testid=attach-remote-go]');
+      await expect(page.locator('[data-testid=attach-panel]')).toBeHidden();
+      expect(await opened(agbrte)).toHaveLength(1);
+
+      /*
+       * Second press on the same machine: the list, not the same folder again.
+       *
+       * Reopening it is a press that cannot change anything — and it is exactly
+       * the press somebody makes when they want a *different* folder on a
+       * machine they are already on, which left nowhere to say so.
+       */
+      await openRemote(page);
+      await page.click('[data-testid=attach-remote-go]');
+      await expect(page.locator('[data-testid=attach-panel]')).toBeVisible();
+      await expect(page.locator('[data-testid=attach-workspace-trigger]')).toBeVisible();
+      expect(await opened(agbrte)).toHaveLength(1);
     } finally {
       await agbrte.close();
       await agbrte.window.context().close().catch(() => undefined);

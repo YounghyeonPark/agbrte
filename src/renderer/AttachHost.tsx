@@ -187,7 +187,22 @@ export function AttachHost({
     const known = answer.result?.candidates.find((c) => c.kind === 'workspace');
     const resolved = loadLastWorkspace(target) ?? known?.path ?? '';
     setPath(resolved);
-    if (resolved !== '') {
+    /*
+     * The shortcut is for getting *connected*, so it stops once you are.
+     *
+     * Pressing this on a machine that already has a folder open used to reopen
+     * the same one and close — which is a press that cannot do anything, and
+     * worse, it is the press somebody makes when they want a *different* folder
+     * on a machine they are already on. There was then nowhere to say so.
+     *
+     * So: one press all the way to a host when there is no host yet, and the
+     * folder list when there is. What the button means either way is "get me
+     * onto this machine", which is already true in the second case.
+     */
+    const alreadyOn = store.hosts.some(
+      (h) => h.targetKind !== 'local' && h.label === target,
+    );
+    if (resolved !== '' && !alreadyOn) {
       await open(target, resolved);
       return;
     }
