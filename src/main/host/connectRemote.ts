@@ -191,7 +191,15 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
     report(`no terminal on this machine: ${pty.detail ?? 'the pty module could not be installed'}`);
   }
 
-  let record = await readRemoteHostRecord(runner, opts.alias, opts.workspaceRoot, probe.home);
+  // The remote's Node, because the answer is proved by connecting to the socket
+  // and a shell cannot do that. See `FIND_HOST_SCRIPT`.
+  let record = await readRemoteHostRecord(
+    runner,
+    opts.alias,
+    opts.workspaceRoot,
+    probe.home,
+    nodePath,
+  );
 
   /**
    * A version difference is **not** a reason to refuse, and this used to think

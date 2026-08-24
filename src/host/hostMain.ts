@@ -27,7 +27,7 @@ import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { HostSupervisor } from '@main/host/supervisor.js';
 import { openWorkspace, peekIdentity } from '@main/store/identity.js';
-import { listen, hostSocketPath } from '@shared/host/socketChannel.js';
+import { listen, hostSocketPath, socketAnswers, hostAlreadyRunning } from '@shared/host/socketChannel.js';
 import { listenLoopback, newControlToken } from '@shared/host/loopback.js';
 import { PreviewServers } from '@main/preview/servers.js';
 import { Shells, shellsStatus } from '@main/terminal/shell.js';
@@ -39,7 +39,12 @@ import { decideRole, loadAccessPolicy } from './accessPolicy.js';
 import { localIdentity } from './identity.js';
 import { machineIdentity } from './machine.js';
 import type { AccessRole } from '@shared/types/index.js';
-import { clearHostRecord, clearMachineRecord, writeHostRecord, writeMachineRecord } from './discovery.js';
+import {
+  clearOwnHostRecord,
+  clearOwnMachineRecord,
+  writeHostRecord,
+  writeMachineRecord,
+} from './discovery.js';
 import { refuseIfHeldElsewhere } from './legacyHost.js';
 import { readKnownWorkspaces, writeKnownWorkspaces } from './workspaces.js';
 import { addEndpoint } from './endpoints.js';
@@ -433,7 +438,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       entry.servers?.stopAll();
       entry.shells?.closeAll();
       held.delete(oldKey);
-      await clearHostRecord(entry.info.root).catch(() => undefined);
+      await clearOwnHostRecord(entry.info.root, process.pid).catch(() => undefined);
     }
 
     // Read before it is served, so a malformed policy refuses the workspace
@@ -522,8 +527,8 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     // Every pointer as well as the machine's own record. A pointer left behind
     // is what sends the next client to a socket nobody answers — and worse, on
     // the released build, is indistinguishable from a host that is alive.
-    await clearMachineRecord(home);
-    await Promise.all([...held.values()].map((w) => clearHostRecord(w.info.root)));
+    await clearOwnMachineRecord(process.pid, home);
+    await Promise.all([...held.values()].map((w) => clearOwnHostRecord(w.info.root, process.pid)));
   };
 
   server = new SessionHostServer({
@@ -683,6 +688,24 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     listening = true;
     await writeRecords();
   } else {
+    /*
+     * Asked before a single byte is written, because the records on this machine
+     * belong to whichever host is *listening* (§8).
+     *
+     * `listen` refuses a taken socket already, and refusing there was too late:
+     * by then this host had overwritten `~/.agbrte/host.json` with its own pid
+     * for a process that will never accept a connection — and on the loopback
+     * transport that record carries the bearer token, so the clobber alone hands
+     * every client a key to a door that is not there.
+     *
+     * Not a substitute for the guarded cleanup below. Two hosts starting in the
+     * same millisecond both see nothing here and one of them still loses; this
+     * removes the *ordinary* case, which is the one a person meets — attaching a
+     * second folder on a machine whose host is already up and whose record has
+     * gone missing.
+     */
+    if (await socketAnswers(socket)) throw new Error(hostAlreadyRunning(socket));
+
     // Before the bind, so no client can arrive ahead of the pointer that tells
     // an older one not to start its own host here. Cleared if the bind fails, so
     // a host that never came up leaves nothing claiming it did.
@@ -693,8 +716,11 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
         server.accept(channel),
       );
     } catch (err) {
-      await clearMachineRecord(home);
-      await Promise.all([...held.values()].map((w) => clearHostRecord(w.info.root)));
+      // Ours, and only ours. Losing the race means another host owns these files
+      // now, and removing them is how a machine ends up live with nothing on disk
+      // saying so — see `clearIfOurs`.
+      await clearOwnMachineRecord(process.pid, home);
+      await Promise.all([...held.values()].map((w) => clearOwnHostRecord(w.info.root, process.pid)));
       throw err;
     }
   }

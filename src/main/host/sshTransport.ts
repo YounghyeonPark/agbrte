@@ -707,11 +707,25 @@ export async function startRemoteHost(
   }
 }
 
+/**
+ * Where a remote host is listening, and whatever else could be learned.
+ *
+ * `socket` is the only field required, and that is a statement about how a host
+ * is found rather than a convenience. The rest comes from a record **file**, and
+ * a machine can be serving perfectly well with no readable record on it — see
+ * `FIND_HOST_SCRIPT`, which will then find the host by its socket alone. Typing
+ * `pid` as always-present would have meant inventing one at exactly the moment
+ * the truth is "a host answered and did not say".
+ *
+ * Nothing on the attach path reads anything but `socket`: the handshake is where
+ * a client learns the pid, the protocol and the workspace, and it learns them
+ * from the host rather than from a file the host wrote at some earlier time.
+ */
 export interface RemoteHostRecord {
-  pid: number;
   socket: string;
-  protocol: number;
-  instanceId: string;
+  pid?: number;
+  protocol?: number;
+  instanceId?: string;
   /**
    * Which machine's host wrote it (§8).
    *
@@ -722,30 +736,96 @@ export interface RemoteHostRecord {
   machineId?: string;
 }
 
-/** Read the host's own record of where it is listening. */
+/**
+ * Find the machine's live host, run by the remote's own Node.
+ *
+ * ## A record is a hint; a socket answering is a fact
+ *
+ * This was `cat host.json`, and a file is the wrong kind of evidence for the
+ * question being asked. Both ways of being wrong were reachable, and both left
+ * a machine that could not be attached to at all:
+ *
+ *   * **A record that lies.** A host killed with `kill -9`, or gone with the
+ *     machine it ran on, leaves the file behind. The app read it, forwarded to a
+ *     socket nobody answers, and failed — every time, for good, because a record
+ *     that exists is a reason not to start a host.
+ *   * **A live host with no record.** `~/.agbrte/host.json` can be missing while
+ *     a host is listening — a lost bind race used to delete it (see
+ *     `clearIfOurs`), and anything that empties `/tmp`-adjacent state can too.
+ *     The app then started a second host, which the first one's socket refuses,
+ *     and reported that refusal to a person who never asked to start anything.
+ *
+ * So: read every record this machine could have written, and return the first
+ * one whose socket **accepts a connection**. The candidates are the machine's
+ * own record, the requested folder's pointer, and the pointer in every folder
+ * `workspaces.json` says this machine has served — which is what makes attaching
+ * a *new* folder work on a machine whose machine-record has gone missing, the
+ * case that produced this.
+ *
+ * ## And when there is no record anywhere
+ *
+ * One more candidate, tried last: the socket path a host on this machine
+ * *would* choose. It is not a guess — `hostSocketPath` derives it from
+ * `machine.json`, which is the machine's identity and not a record, so nothing
+ * that clears records clears it. This is the state the bug actually left
+ * machines in: a host holding four folders lost the bind race, and the cleanup
+ * it ran on the way out deleted the machine record **and every pointer**,
+ * because it had restored all four workspaces before it tried to bind. Nothing
+ * on disk then said where the host was, while it went on answering.
+ *
+ * Safe to try precisely because the answer is proved by connecting. A derived
+ * path that nothing is listening on costs one failed `connect` and produces the
+ * same "no host here" as before, which is the correct answer for a machine that
+ * has none.
+ *
+ * Run as one script on the far side rather than as five round trips, and on the
+ * Node this attach has already guaranteed. A `sh` cannot connect to a unix
+ * socket; the alternative — believing the file and finding out during the
+ * handshake — is what the two failures above already are.
+ *
+ * POSIX only. A Windows remote has `readWindowsHostRecord`, whose record carries
+ * a loopback port and a bearer token instead of a socket path, and which has the
+ * same weakness for the same reason (§17 Q22).
+ */
+export const FIND_HOST_SCRIPT = [
+  'const fs=require("fs"),path=require("path"),net=require("net");',
+  'const home=process.argv[1],ws=process.argv[2];',
+  `const dirs=${JSON.stringify([WORKSPACE_DIR, LEGACY_WORKSPACE_DIR])};`,
+  'const files=[path.join(home,"host.json")];',
+  'for(const d of dirs)files.push(path.join(ws,d,"host.json"));',
+  'try{const reg=JSON.parse(fs.readFileSync(path.join(home,"workspaces.json"),"utf8"));',
+  'for(const w of reg.workspaces||[])if(w&&typeof w.root==="string")',
+  'for(const d of dirs)files.push(path.join(w.root,d,"host.json"))}catch(e){}',
+  'const read=(p)=>{try{const r=JSON.parse(fs.readFileSync(p,"utf8"));',
+  'return typeof r.socket==="string"&&typeof r.pid==="number"?r:null}catch(e){return null}};',
+  // Last, and derived rather than read: the path a host on this machine would
+  // listen on. Mirrors `hostSocketPath`'s POSIX branch — a Windows remote has
+  // its own bootstrap and never runs this.
+  'const derived=()=>{try{const m=JSON.parse(fs.readFileSync(path.join(home,"machine.json"),"utf8"));',
+  'return typeof m.machineId==="string"?{socket:(process.env.TMPDIR||"/tmp")+"/agbrte-"+m.machineId+".sock",',
+  'machineId:m.machineId}:null}catch(e){return null}};',
+  'const answers=(s)=>new Promise((done)=>{const c=net.connect(s);',
+  'const end=(v)=>{c.destroy();done(v)};c.once("connect",()=>end(true));',
+  'c.once("error",()=>end(false));c.setTimeout(2000,()=>end(false))});',
+  '(async()=>{const seen={};const found=[];',
+  'for(const f of files){const rec=read(f);if(rec)found.push(rec)}',
+  'const last=derived();if(last)found.push(last);',
+  'for(const rec of found){if(seen[rec.socket])continue;seen[rec.socket]=1;',
+  'if(await answers(rec.socket)){process.stdout.write(JSON.stringify(rec));break}}})();',
+].join('');
+
+/** Where this machine's host is listening, or null if none of them answers. */
 export async function readRemoteHostRecord(
   runner: SshRunner,
   alias: string,
   workspaceRoot: string,
   home: string,
+  nodePath: string,
 ): Promise<RemoteHostRecord | null> {
-  /*
-   * The machine's record first, then the workspace's under either name.
-   *
-   * The order is the priority: `~/.agbrte/host.json` is written by the host that
-   * serves this machine now, and a record under the workspace is either its
-   * pointer (same socket, so the same answer) or an older per-workspace host's.
-   * Reading the machine's first means a machine that has both answers with the
-   * one that is current.
-   */
   const result = await runner.exec(
     alias,
-    [
-      `cat ${shellQuote(`${remoteRoot(home)}/host.json`)} 2>/dev/null`,
-      ...[WORKSPACE_DIR, LEGACY_WORKSPACE_DIR].map(
-        (d) => `cat ${shellQuote(`${workspaceRoot}/${d}/host.json`)} 2>/dev/null`,
-      ),
-    ].join(' || '),
+    `${shellQuote(nodePath)} -e ${shellQuote(FIND_HOST_SCRIPT)} ` +
+      `${shellQuote(remoteRoot(home))} ${shellQuote(workspaceRoot)}`,
   );
   if (result.code !== 0 || result.stdout.trim() === '') return null;
   try {

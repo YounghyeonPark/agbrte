@@ -242,13 +242,7 @@ export function listen<Out, In>(
      * be debris — not the diagnosis.
      */
     if (process.platform === 'win32' || (await answers(path))) {
-      throw new Error(
-        `another Agbrte host is already running on this machine, listening on ${path}. ` +
-          `One host per machine owns every workspace open on it (§6.6 single writer), ` +
-          `so this one will not start. Use the host that is already there, or stop it ` +
-          `with \`agbrte stop\`. If it belongs to another user on this machine, it is ` +
-          `serving their home directory and not yours — nothing here is shared.`,
-      );
+      throw new Error(hostAlreadyRunning(path));
     }
 
     try {
@@ -277,6 +271,24 @@ export function listen<Out, In>(
  */
 export function socketAnswers(target: ChannelTarget): Promise<boolean> {
   return answers(target);
+}
+
+/**
+ * What a machine's second host is told, in one place.
+ *
+ * Exported because `listen` is no longer the only thing that says it: a host
+ * asks whether the socket answers *before* it writes any record, so the refusal
+ * has two sites and must not have two wordings — a person comparing a log line
+ * with what the app showed them is entitled to the same sentence.
+ */
+export function hostAlreadyRunning(path: string): string {
+  return (
+    `another Agbrte host is already running on this machine, listening on ${path}. ` +
+    `One host per machine owns every workspace open on it (§6.6 single writer), ` +
+    `so this one will not start. Use the host that is already there, or stop it ` +
+    `with \`agbrte stop\`. If it belongs to another user on this machine, it is ` +
+    `serving their home directory and not yours — nothing here is shared.`
+  );
 }
 
 function answers(target: ChannelTarget): Promise<boolean> {

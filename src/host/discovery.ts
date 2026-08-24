@@ -200,6 +200,42 @@ export async function clearMachineRecord(home?: string): Promise<void> {
 }
 
 /**
+ * Remove a record **only if it still names this process**.
+ *
+ * The unconditional pair above is right for one caller and one situation:
+ * `connectOrSpawn` has just proved that nothing answers the socket, so whatever
+ * the file says describes a process that is gone and clearing it removes a lie.
+ *
+ * Every other clear is a host tidying up after itself, and there the difference
+ * is the whole of a bug that cost a machine its remote sessions. A host that
+ * loses the bind race — the socket was taken while it was starting — wrote the
+ * machine record before binding and then deleted it on the way out, and the
+ * record it deleted belonged to **the host that won**. From then on that
+ * machine had a live host and nothing on disk saying so: every later attach read
+ * no record, concluded there was no host, tried to start one, lost the same race
+ * and deleted the same record again. Self-perpetuating, and unrecoverable from
+ * the app — the person has to ssh in.
+ *
+ * `pid` is the whole check. It is not a liveness test (`processAlive` says so
+ * for its own reasons) and does not need to be: the question here is *whose
+ * record is this*, and a record naming another process is not this host's to
+ * remove whatever state that process is in.
+ */
+async function clearIfOurs(path: string, pid: number): Promise<void> {
+  const record = await readRecordAt(path);
+  if (record === null || record.pid !== pid) return;
+  await rm(path, { force: true });
+}
+
+export async function clearOwnHostRecord(workspaceRoot: string, pid: number): Promise<void> {
+  await clearIfOurs(hostRecordPath(workspaceRoot), pid);
+}
+
+export async function clearOwnMachineRecord(pid: number, home?: string): Promise<void> {
+  await clearIfOurs(machineRecordPath(home), pid);
+}
+
+/**
  * Whether a pid is a live process.
  *
  * `kill(pid, 0)` tests for existence without signalling. Only used for

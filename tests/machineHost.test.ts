@@ -23,6 +23,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { spawn } from 'node:child_process';
 import { useOwnMachine } from './support/machineHome.js';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -198,6 +199,63 @@ describe('a machine runs one host for every folder on it', () => {
     // act on — and on Windows this is the ordinary way to learn a host is up,
     // because a named pipe cannot be probed and cannot be debris.
     await expect(listen(socket, () => undefined)).rejects.toThrow(socket);
+  }, 60_000);
+
+  /**
+   * The loser of the race must leave the winner's records alone.
+   *
+   * This is the bug that made a remote machine unattachable, and it needs a real
+   * second **process** rather than a second `listen`: the damage was not in the
+   * refusal, it was in the tidying up afterwards. A host wrote
+   * `~/.agbrte/host.json` before binding and deleted it on the way out, and by
+   * then the record was the *other* host's. What the machine was left with is
+   * the state no client can recover from — a host listening, and nothing on
+   * disk saying where — so the next attach started a host, lost the same race,
+   * and deleted the same record again.
+   *
+   * Asserted on the record rather than on the exit code, because a failed second
+   * host is the *expected* outcome and always was. The question is what it took
+   * with it.
+   */
+  it('leaves the running host’s records alone when it loses the bind', async () => {
+    if (!(await built())) throw new Error('run `npm run build` first');
+
+    const workspace = await tempDir('ws-winner');
+    const connection = await connectOrSpawnHost({
+      workspaceRoot: workspace,
+      hostEntry: HOST_BUNDLE,
+      execPath: process.execPath,
+      startupTimeoutMs: 20_000,
+    });
+    open.push(connection);
+    await connection.ready;
+
+    const before = await readMachineRecord();
+    expect(before?.pid).toBeGreaterThan(0);
+
+    // A second host, started for a *different* folder on the same machine —
+    // which is exactly what attaching a new folder used to do when the record
+    // was missing, and what any second app instance does if it races.
+    const other = await tempDir('ws-loser');
+    const loser = spawn(process.execPath, [HOST_BUNDLE, other], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: process.env,
+      windowsHide: true,
+    });
+    let said = '';
+    loser.stderr.on('data', (d) => (said += String(d)));
+    const code = await new Promise<number | null>((done) => loser.on('exit', done));
+
+    expect(code).not.toBe(0);
+    expect(said).toMatch(/another Agbrte host is already running/);
+
+    // Untouched, and still naming the host that is actually there.
+    const after = await readMachineRecord();
+    expect(after?.pid).toBe(before?.pid);
+    expect(after?.socket).toBe(before?.socket);
+    // And the pointer in the folder that host serves, which is the other half of
+    // what a client reads.
+    await expect(access(join(workspace, '.agbrte', 'host.json'))).resolves.toBeUndefined();
   }, 60_000);
 });
 
