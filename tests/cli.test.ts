@@ -18,6 +18,7 @@ import { spawn } from 'node:child_process';
 import { noConsoleWindow } from './support/noConsoleWindow.js';
 import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { removeTemp } from './support/tempDir.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionHostServer } from '../src/host/sessionServer.js';
@@ -59,7 +60,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true });
+  // Retried: a detached host outlives the test by design and finishes writing
+  // after it — the raw tail is mirrored on a beat (§3.12) — so a plain `rm`
+  // races it and answers `ENOTEMPTY`. Bit CI, not this machine.
+  await removeTemp(root);
 });
 
 const QUIET: EchoStep[] = [

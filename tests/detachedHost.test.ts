@@ -14,6 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useOwnMachine } from './support/machineHome.js';
 import { mkdtemp, readFile, rm, rename, access } from 'node:fs/promises';
+import { removeTemp } from './support/tempDir.js';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { connectOrSpawnHost } from '@main/host/connectOrSpawn.js';
@@ -64,7 +65,10 @@ afterEach(async () => {
   for (const connection of open) await stopHost(connection);
   for (const extra of roots) await rm(extra, { recursive: true, force: true });
   roots = [];
-  await rm(root, { recursive: true, force: true });
+  // Retried: a detached host outlives the test by design and finishes writing
+  // after it — the raw tail is mirrored on a beat (§3.12) — so a plain `rm`
+  // races it and answers `ENOTEMPTY`. Bit CI, not this machine.
+  await removeTemp(root);
 });
 
 async function built(): Promise<boolean> {

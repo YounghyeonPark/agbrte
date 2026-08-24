@@ -23,7 +23,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp } from 'node:fs/promises';
+import { removeTemp } from './support/tempDir.js';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +59,18 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(root, { recursive: true, force: true });
+  /*
+   * Managers first, then the folder.
+   *
+   * The raw tail is mirrored beside the log on a 250ms beat (§3.12), so a
+   * manager still holding a scheduled write puts a file into a directory being
+   * removed — `ENOTEMPTY` from `rmdir`, in the cleanup of a test whose
+   * assertions all passed. `dispose` cancels those, and `removeTemp` retries for
+   * whatever was already in flight. Both, because one of them is about *this*
+   * suite's managers and the other about any process it started.
+   */
+  for (const manager of managers.splice(0)) manager.dispose();
+  await removeTemp(root);
 });
 
 /** A spawn whose runs are supplied by the test — one array of lines per run. */
@@ -96,13 +108,18 @@ function run(text: string): string[] {
 
 const TEXT = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 
+/** Every manager a test made, so the teardown can stop their timers. */
+const managers: SessionManager[] = [];
+
 function cliManager(runs: string[][], stderr = ''): SessionManager {
   const registry = new RuntimeRegistry();
   registry.register(
     new CliStdioRuntime({ manifest: CLAUDE_CODE_MANIFEST, spawnFn: scriptedSpawn(runs, stderr) }),
     { label: 'Claude Code', model: 'optional' },
   );
-  return new SessionManager({ registry, workspaceRoot: root, instanceId });
+  const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
+  managers.push(manager);
+  return manager;
 }
 
 async function seat(

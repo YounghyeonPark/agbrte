@@ -20,7 +20,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { useOwnMachine } from './support/machineHome.js';
-import { mkdtemp, rm, access } from 'node:fs/promises';
+import { mkdtemp, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Fleet } from '@main/fleet.js';
@@ -34,6 +34,7 @@ import { openWorkspace } from '@main/store/identity.js';
 import { memoryChannelPair } from '@shared/host/memoryChannel.js';
 import { processAlive, readMachineRecord } from '../src/host/discovery.js';
 import { until } from './support/until.js';
+import { removeTemp } from './support/tempDir.js';
 import { createApi } from '@main/ipc/api.js';
 import { CH } from '@shared/ipc/contract.js';
 import type { HostInfo } from '@shared/ipc/contract.js';
@@ -85,7 +86,20 @@ afterEach(async () => {
     }
     await fleet.detachAll();
   }
-  for (const root of roots) await rm(root, { recursive: true, force: true });
+  /*
+   * Retried, because a host agreeing to stop is not a host that has stopped.
+   *
+   * `shutdownHost` above is answered *before* the teardown runs (§6.3: the
+   * acknowledgement wins the race deliberately), so for a moment after it the
+   * process is still there and still finishing what it was doing — the raw tail
+   * it mirrors beside the log is written on a 250ms beat, and a file landing in
+   * a directory being removed is `ENOTEMPTY` from `rmdir`.
+   *
+   * Failed on CI and not here, which is the ordinary shape of this: the same
+   * window, a slower machine. `removeTemp` is the same retry every other suite
+   * uses for the same reason.
+   */
+  for (const root of roots) await removeTemp(root);
 });
 
 /** A fleet that starts and reaches genuine detached host processes. */
