@@ -18,8 +18,74 @@
 
 import { expect, test } from '@playwright/test';
 import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { launch, makeRepo } from './harness.js';
 import { addAgent, createSession, openSession } from './actions.js';
+
+test.describe('a session gets a folder of its own', () => {
+  test('makes one beside the folder this host has open', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+    const page = agbrte.window;
+    /** The sibling this test creates, removed with the workspace it sat beside. */
+    let made: string | null = null;
+
+    try {
+      await createSession(page, 'in the workspace');
+      await addAgent(page, 'echo');
+
+      /*
+       * From the host row, which is where most sessions are made.
+       *
+       * One session, one folder (§8) held everywhere except here: this form
+       * only ever created a session *in the workspace already open*, because
+       * that is what a host row is about. A real session therefore ended up on
+       * top of somebody's `~/Desktop` — the folder the machine had been attached
+       * to — with no way to ask for anything else without leaving the panel.
+       */
+      /*
+       * A name of this run's own.
+       *
+       * The folder is a *sibling* of the workspace, and this suite's workspaces
+       * live in `os.tmpdir()` — so a fixed name is one directory shared by every
+       * run on this machine, which is exactly what the first version of this
+       * test did: three repeats produced three, four, then five sessions in it.
+       * Real use has the same shape and is fine, because a person's projects
+       * directory is theirs; a test's parent is everybody's.
+       */
+      const folder = `parser-rewrite-${Date.now().toString(36)}`;
+      made = join(repo, '..', folder);
+
+      const host = page.locator('[data-testid=host]').first();
+      await host.locator('[data-testid=new-session]').click();
+      await host.locator('[data-testid=new-title]').fill('its own place');
+      await host.locator('[data-testid=new-folder]').fill(folder);
+
+      // A sibling of the open folder, not a child: nesting one workspace inside
+      // another puts a session's store inside somebody's project.
+      await expect(host.locator('[data-testid=new-folder-target]')).toContainText(folder);
+      await expect(host.locator('[data-testid=new-folder-target]')).not.toContainText(
+        `${repo.split(/[\/]/).pop()!}/${folder}`,
+      );
+
+      await host.locator('[data-testid=new-submit]').click();
+
+      // A second host row, because a workspace is what a host serves and this is
+      // a different folder — served by the same process (§8).
+      await expect(page.locator('[data-testid=host]')).toHaveCount(2);
+      // Scoped to *that* host: a title is not unique across a machine, and the
+      // question here is which workspace the session landed in.
+      const made2 = page.locator(`[data-testid=host][data-label="${folder}"]`);
+      await expect(made2.locator('[data-testid=session][data-title="its own place"]')).toBeVisible();
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
+      if (made !== null) {
+        await rm(made, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
+      }
+    }
+  });
+});
 
 test.describe('renaming a session from the sidebar', () => {
   test('renames the one that is open and the one that is not', async () => {

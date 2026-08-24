@@ -711,8 +711,18 @@ export function App(): JSX.Element {
    * where the seat has none — and then the machine's shell.
    */
   const clisHere = (activeHost?.available ?? []).filter((id) => id.startsWith('cli:'));
+  /*
+   * The seat that is *running*, not every seat this session ever had.
+   *
+   * A session holds one agent (§4.2) and changing the model retires the old one,
+   * which stays in the roster so the transcript's older rows keep a name. This
+   * read every entry, so a session moved from Claude Code to a local model went
+   * on offering a Claude Code button — the retired seat, still answering for a
+   * tool the live one does not use. Reported from a real session.
+   */
   const seatCli =
     active?.agents
+      .filter((a) => a.status !== 'retired')
       .map((a) => a.spec.runtimeId)
       .find((id) => id.startsWith('cli:') && clisHere.includes(id)) ?? null;
 
@@ -1589,6 +1599,8 @@ function HostGroup({
   const store = useAgbrte();
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState('');
+  /** A folder of this session's own, made beside the one this host has open. */
+  const [folder, setFolder] = useState('');
   const [templates, setTemplates] = useState<SessionTemplateDto[]>([]);
   /*
    * The MCP servers this session is being given (§17 Q20).
@@ -1611,13 +1623,57 @@ function HostGroup({
   /** The first unsendable MCP row, shown under the fields rather than swallowed. */
   const mcpProblem = firstProblem(mcpDrafts);
 
+  /**
+   * Where this session's work goes, when it is asked for a folder of its own.
+   *
+   * A **sibling** of the folder this host has open, not a child: a workspace
+   * inside a workspace nests one `.agbrte` in another and puts a session's store
+   * inside somebody's project. The separator comes from the path rather than
+   * from this machine, since the field may name a folder on a Linux box while
+   * the app runs on Windows.
+   */
+  const newFolderTarget = ((): string => {
+    const name = folder.trim().replace(/^[\/]+/, '');
+    if (name === '') return '';
+    const sep = host.root.includes(String.fromCharCode(92)) ? String.fromCharCode(92) : '/';
+    const parent = host.root.replace(/[\/]+$/, '').split(sep).slice(0, -1).join(sep);
+    return `${parent === '' ? host.root : parent}${sep}${name}`;
+  })();
+
   const submit = (): void => {
     if (title.trim() === '') return;
     // Refused here as well as by the host: the host's refusal is the boundary,
     // and this one keeps a typo from costing a round trip and a session that
     // was never made.
     if (mcpProblem !== null) return;
-    void store.createSession(host.instanceId, title.trim(), title.trim(), toConfigs(mcpDrafts));
+    const configs = toConfigs(mcpDrafts);
+    if (newFolderTarget !== '') {
+      /*
+       * One session, one folder (§8), from the button that says "another one".
+       *
+       * This form only ever made a session *in the workspace already open*,
+       * because that is what a host row is about — and it is where most sessions
+       * get made, so the rule was easy to keep everywhere except the place it
+       * mattered. Opening a folder is what makes a workspace, so asking for one
+       * here means attaching it first; the session is then created in the host
+       * that answers for it, which may be this same process serving a second
+       * folder (§8).
+       */
+      void (async () => {
+        const opened =
+          host.targetKind === 'local'
+            ? await store.attachLocalHost(newFolderTarget)
+            : await store.attachRemoteHost(host.label, newFolderTarget);
+        if (opened === null) return;
+        await store.createSession(opened.instanceId, title.trim(), title.trim(), configs);
+      })();
+      setFolder('');
+      setTitle('');
+      setMcpDrafts([]);
+      setAdding(false);
+      return;
+    }
+    void store.createSession(host.instanceId, title.trim(), title.trim(), configs);
     setTitle('');
     /*
      * Cleared before the create resolves, deliberately.
@@ -1771,6 +1827,22 @@ running: ${host.bundleVersion ?? 'a build too old to say'}`
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
+          {/* Optional, and empty means what this form has always done: another
+              session in the folder already open. A name means a folder of its
+              own, shown before it is created because a directory appearing on a
+              machine is a change to it. */}
+          <input
+            className="field"
+            data-testid="new-folder"
+            placeholder="New folder for it (optional)"
+            value={folder}
+            onChange={(e) => setFolder(e.target.value)}
+          />
+          {newFolderTarget !== '' && (
+            <span className="text-muted wrap-anywhere text-[11px]" data-testid="new-folder-target">
+              will create {newFolderTarget}
+            </span>
+          )}
           {/* §17 Q20: what this session may reach, decided by the person making
               it, going straight into its own log. Above the button because it is
               part of the same decision, and folded because most sessions attach
