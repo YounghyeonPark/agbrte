@@ -49,6 +49,13 @@ interface HostOptions {
   script?: EchoStep[];
   /** Simulates the forked agent host failing to start. */
   agentHostBroken?: boolean;
+  /**
+   * What the host answers about opening a terminal (§7).
+   *
+   * Left out to simulate a host too old to answer at all, which is a third
+   * state: *cannot say* is not *no*, and the two are refused differently.
+   */
+  shells?: { available: boolean; reason?: string };
 }
 
 /**
@@ -93,6 +100,10 @@ function makeFleet(opts: HostOptions = {}): Fleet {
               ? { unavailableReason: 'agent host failed to start' }
               : {}),
           },
+          // Answered the way a real host answers it: by asking the module, which
+          // a test stands in for. Absent means "this host is too old to say",
+          // which is a third state and not a `false`.
+          ...(opts.shells === undefined ? {} : { canOpenShells: () => opts.shells! }),
         });
         hosts.set(workspaceRoot, server);
       }
@@ -425,6 +436,70 @@ describe('detaching', () => {
     // The fleet must notice rather than keep routing into a dead connection.
     await fleet.detach(host.instanceId);
     await expect(detached).resolves.toBeDefined();
+  });
+});
+
+describe('opening a terminal', () => {
+  /**
+   * The gate that outlived its reason.
+   *
+   * This refused every remote outright, because a remote host was two bundled
+   * `.js` files with no `node_modules` beside them — the PTY binary was simply
+   * not on that machine. The module is deployed with the bundle now, and the
+   * gate stayed: a machine that had it answered `shells: true`, the button came
+   * alive, and pressing it produced a sentence explaining that remotes have no
+   * PTY module. Nothing here had a test, which is why.
+   */
+  /** A workspace on somebody else's machine, served by this test's host. */
+  const remote = (workspaceRoot: string) => ({
+    target: { kind: 'ssh' as const, host: 'build-01', alias: 'build-01', useSystemConfig: true },
+    workspaceRoot,
+  });
+
+  it('asks the host rather than looking at where it is', async () => {
+    const root = await makeRoot();
+    const fleet = makeFleet({ shells: { available: true } });
+    // Remote on purpose: the gate this replaces refused every non-local host,
+    // so a local target could not catch it coming back.
+    const host = await fleet.attach(remote(root));
+    const session = await fleet.createSession(host.instanceId, { title: 's', goal: 'g' });
+
+    // Reaches the host instead of being refused here. What happens after that is
+    // the host's business — the point is that the decision belongs to whoever
+    // knows whether the module is there.
+    await expect(
+      fleet.openShell(host.instanceId, session.sessionId, { program: { kind: 'shell' } }),
+    ).rejects.not.toThrow(/is not available/);
+  });
+
+  it('refuses a host too old to say, and says that is what happened', async () => {
+    const root = await makeRoot();
+    // No `shells` at all: a host from before the field existed, which for a
+    // remote is also a host from before the module was deployed beside it.
+    const fleet = makeFleet();
+    const host = await fleet.attach(remote(root));
+    const session = await fleet.createSession(host.instanceId, { title: 's', goal: 'g' });
+
+    // *Cannot say* is not *no*, and the remedy is different: restart it onto the
+    // current bundle rather than go looking for a missing module.
+    await expect(
+      fleet.openShell(host.instanceId, session.sessionId, { program: { kind: 'shell' } }),
+    ).rejects.toThrow(/older than this app/);
+  });
+
+  it('repeats the host’s own reason when it says no', async () => {
+    const root = await makeRoot();
+    const fleet = makeFleet({
+      shells: { available: false, reason: "Cannot find module '@lydell/node-pty'" },
+    });
+    const host = await fleet.attach(remote(root));
+    const session = await fleet.createSession(host.instanceId, { title: 's', goal: 'g' });
+
+    // The loader's sentence, not one composed here: "no terminal" is a fact and
+    // "the module is missing" is something a person can act on (§6.8).
+    await expect(
+      fleet.openShell(host.instanceId, session.sessionId, { program: { kind: 'shell' } }),
+    ).rejects.toThrow(/Cannot find module/);
   });
 });
 

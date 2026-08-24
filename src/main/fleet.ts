@@ -1388,15 +1388,21 @@ export class Fleet extends EventEmitter {
    * on `Fleet` rather than beside `send` because the only thing the fleet does
    * for it is route — which is the same job it does for a preview server.
    *
-   * ## Refused by name on a remote host, and why that is a deployment fact
+   * ## Refused by what the host says, not by where it is
    *
-   * A remote host is *two bundled `.js` files* copied to `~/.agbrte` by
-   * `uploadHostBundle`, with no `node_modules` beside them — so the PTY binary
-   * simply is not on that machine, and the honest failure is a sentence rather
-   * than a `MODULE_NOT_FOUND` from four processes away. The **protocol** is
-   * already locality-blind (`shell.*` carries a `shellId`, bytes and a size, and
-   * nothing else), so lifting this means shipping the module with the bundle,
-   * not redesigning anything.
+   * This used to refuse every remote outright, and the reason was a deployment
+   * fact rather than a design one: a remote host was two bundled `.js` files
+   * with no `node_modules` beside them, so the PTY binary was not on that
+   * machine. The comment here said lifting it meant shipping the module with
+   * the bundle and redesigning nothing — which is what happened, and this gate
+   * was left behind. A machine with the module deployed answered `shells: true`,
+   * the button came alive, and pressing it produced a sentence explaining that
+   * remotes have no PTY module.
+   *
+   * So the question is asked of the host (§7). A host that cannot open one says
+   * so on its handshake and says why, and that sentence is better than anything
+   * this layer could compose — it comes from the module loader. A host too old
+   * to say is refused the way it always was, which described it correctly.
    *
    * Refused here rather than left to the host for the same reason `attach`
    * refuses an unimplemented locality before dialling: a refusal that names the
@@ -1409,11 +1415,19 @@ export class Fleet extends EventEmitter {
     opts?: { program?: ShellProgram; cols?: number; rows?: number },
   ): Promise<ShellHandle> {
     const entry = this.host(instanceId);
-    if (entry.target.kind !== 'local') {
+    if (entry.shells === false) {
       throw new Error(
-        `a terminal on ${describeTarget(entry.target)} is not available yet — the host bundle deployed ` +
-          'to a remote machine has no PTY module beside it. Open a terminal on this machine, ' +
-          `or reach ${describeTarget(entry.target)} with your own ssh.`,
+        `a terminal on ${describeTarget(entry.target)} is not available: ` +
+          (entry.shellsReason ?? 'that machine has no pty module'),
+      );
+    }
+    if (entry.shells === undefined && entry.target.kind !== 'local') {
+      // Cannot say, which for a remote means a host from before the module was
+      // deployed with the bundle — and for that host the old sentence is true.
+      throw new Error(
+        `a terminal on ${describeTarget(entry.target)} is not available yet — the host there is ` +
+          'older than this app and has no pty module beside it. Restart it to pick up the ' +
+          'current bundle, or reach that machine with your own ssh.',
       );
     }
     if (!entry.connection.supports('shell.open')) {
