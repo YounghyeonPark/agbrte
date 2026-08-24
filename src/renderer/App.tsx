@@ -1631,6 +1631,16 @@ function HostGroup({
    * option is a question with one answer.
    */
   const [intoWorkspace, setIntoWorkspace] = useState('');
+  /**
+   * The workspace this form acts in: the one selected, else the row's first.
+   *
+   * Derived once rather than at each use, because it had drifted — `submit`
+   * honoured the select and the template buttons under it did not, so applying a
+   * template put its sessions in the machine's first folder however carefully
+   * the folder above had been chosen.
+   */
+  const into =
+    machine.workspaces.find((w) => w.instanceId === intoWorkspace)?.instanceId ?? host.instanceId;
   const [title, setTitle] = useState('');
   /**
    * A folder of this session's own, made beside the one this host has open.
@@ -1723,9 +1733,6 @@ function HostGroup({
       setAdding(false);
       return;
     }
-    const into =
-      machine.workspaces.find((w) => w.instanceId === intoWorkspace)?.instanceId ??
-      host.instanceId;
     void store.createSession(into, title.trim(), title.trim(), configs);
     setTitle('');
     /*
@@ -1991,7 +1998,7 @@ function HostGroup({
                   onClick={() => {
                     void window.agbrte.templates
                       .apply({
-                        instanceId: host.instanceId,
+                        instanceId: into,
                         templateId: t.id,
                         ...(title.trim() === '' ? {} : { title: title.trim() }),
                       })
@@ -2020,7 +2027,16 @@ function HostGroup({
               s.sessionId === activeId ? 'bg-raised border-line' : 'hover:border-line border-transparent'
             }`}
             title={s.title}
-            onOpen={() => void store.openSession(s.sessionId, host.instanceId)}
+            /* Its **own** workspace, not the machine's first.
+               A row is a machine and a machine holds several folders (§8), so
+               `host.instanceId` — the first of them — is the wrong host to
+               resume on for every row that came from a different folder. It read
+               as correct because the folder tag beside it already used
+               `s.instanceId`, and because the host resolves a session to the
+               workspace holding it whoever asks: the record came back right
+               while `owners` recorded the wrong folder, which is what routes
+               everything afterwards. */
+            onOpen={() => void store.openSession(s.sessionId, s.instanceId)}
             onRename={(title) => void store.renameSession(s.sessionId, title)}
           >
             {/* Quiet: the sidebar is navigation, and the pane beside it has
@@ -2044,7 +2060,11 @@ function HostGroup({
             data-title={d.title}
             className="hover:border-line grid w-full gap-1 rounded-[2px] border border-transparent px-3 py-2 text-left"
             title={d.title}
-            onOpen={() => void store.openSession(d.sessionId, host.instanceId)}
+            /* The row's own folder, as above — and here it is the only answer
+               there is: an unopened session is found by `listOnDisk`, which each
+               connection answers for its own workspace, so the row already
+               carries the folder it was read from. */
+            onOpen={() => void store.openSession(d.sessionId, d.instanceId)}
             onRename={(title) => void store.renameSession(d.sessionId, title)}
           >
             {/* On disk only until opened — which is what proves the log is truth. */}

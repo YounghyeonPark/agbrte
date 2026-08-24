@@ -10,6 +10,32 @@
  * — the normal case once you have used a machine once — is one probe, one
  * record read, and a forward. Nothing is uploaded or installed unless it has to
  * be.
+ *
+ * ## The connection names the folder it wants
+ *
+ * `hello` carries `workspace`, exactly as `connectOrSpawnHost` does on this
+ * machine, and both constructions below pass it. It reads like a detail and it
+ * is the whole attach: a host is one per machine and holds several folders
+ * (§8), so the folder a connection gets is the one it *asks* for — `bindFor`
+ * resolves a held path, opens one that is not held, and binds to **nothing**
+ * when a client names nothing and there is more than one to choose from.
+ *
+ * Omitting it was silent in the only shape a machine has on its first day. One
+ * folder open, and `bindFor(undefined)` answers with the host's single
+ * workspace — the right folder by luck, for every attach until a second one is
+ * opened. From then on the two failures a person actually sees:
+ *
+ *   * a **new session folder** was created on the remote (`startRemoteHost`
+ *     runs `mkdir -p`) and the session landed in whichever folder the host
+ *     already had — the sidebar said one thing and the terminal opened another;
+ *   * once two folders were held, the connection bound to none, so every
+ *     workspace-scoped command — `session.listOnDisk` first — was refused with
+ *     "attached to the machine and not to a workspace". A machine row with no
+ *     sessions under it, on a machine full of them.
+ *
+ * Neither is reachable locally, which is why it survived: the local path has
+ * passed `workspace` since v21 and every remote test attaches exactly one
+ * folder, the case where the omission cannot be seen.
  */
 
 import {
@@ -214,6 +240,8 @@ export async function connectRemoteHost(opts: RemoteConnectOptions): Promise<Rem
     const connection = new HostConnection({
       channel,
       client: opts.client ?? `agbrte-app@${opts.alias}`,
+      // The folder this connection is asking for. See the header.
+      workspace: opts.workspaceRoot,
       onClose: () => forward.close(),
     });
     return { connection, close: () => forward.close() };
@@ -291,6 +319,8 @@ async function connectWindowsHost(
     const connection = new HostConnection({
       channel,
       client: opts.client ?? `agbrte-app@${opts.alias}`,
+      // The folder this connection is asking for. See the header.
+      workspace: opts.workspaceRoot,
       onClose: () => forward.close(),
     });
     return { connection, close: () => forward.close() };
