@@ -605,3 +605,101 @@ describe('reasoning support', () => {
     expect(lastChatBody()).not.toHaveProperty('reasoning_effort');
   });
 });
+
+/**
+ * A reply that arrived empty and was billed anyway.
+ *
+ * Ollama answers `finish_reason: "stop"` with no content, no tool calls and
+ * hundreds of completion tokens, about one turn in nine through its
+ * OpenAI-compatible endpoint. Measured by replaying this adapter's own captured
+ * request against `qwen2.5:7b`: 7/57 non-streaming, 4/40 streaming — so
+ * streaming, the obvious fix, is not one — against 3/159 on the same server's
+ * native API. Nothing here can repair the server; what an adapter can do is ask
+ * again, and then say so rather than reporting a turn that did nothing as a
+ * model with nothing to say.
+ */
+describe('a reply that spent tokens and said nothing', () => {
+  /** Answers `empties` empty-but-billed replies, then whatever follows. */
+  function stubEmptyThen(empties: number, then: unknown): void {
+    let seen = 0;
+    globalThis.fetch = vi.fn(async (input: unknown, init?: { body?: string }) => {
+      const url = String(input);
+      calls.push({ url, body: init?.body ? (JSON.parse(init.body) as Record<string, unknown>) : null });
+      const empty = {
+        choices: [{ finish_reason: 'stop', message: { content: '' } }],
+        usage: { prompt_tokens: 1086, completion_tokens: 899 },
+      };
+      const answer = seen++ < empties ? empty : then;
+      return new Response(JSON.stringify(answer), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+  }
+
+  it('asks again, and returns the answer that arrives', async () => {
+    stubEmptyThen(1, chat({ content: 'the second time it spoke' }));
+    const res = await new OpenAiCompatibleProvider().invoke(request(), signal());
+
+    expect(res.content).toEqual([{ type: 'text', text: 'the second time it spoke' }]);
+    expect(res.stop).toEqual({ kind: 'end_turn' });
+    expect(calls.filter((c) => c.url.includes('/chat/completions'))).toHaveLength(2);
+  });
+
+  it('gives up after two retries and names the failure', async () => {
+    // `transport` rather than `end_turn`, and the difference is the whole point:
+    // `stopDisposition` reads the first as "retry" and the second as "done", so
+    // a silent `end_turn` tells a supervisor the work finished.
+    stubEmptyThen(99, chat({ content: 'never reached' }));
+    const res = await new OpenAiCompatibleProvider().invoke(request(), signal());
+
+    expect(res.stop).toEqual({ kind: 'transport' });
+    expect(calls.filter((c) => c.url.includes('/chat/completions'))).toHaveLength(3);
+  });
+
+  it('leaves a model that spent nothing alone', async () => {
+    /*
+     * An empty reply with no output tokens is a model declining to speak, which
+     * is an answer. Retrying it would charge twice for the same silence — and on
+     * a metered endpoint, three times per turn for a model that is simply terse.
+     */
+    stubFetch({
+      '/chat/completions': {
+        choices: [{ finish_reason: 'stop', message: { content: '' } }],
+        usage: { prompt_tokens: 11, completion_tokens: 0 },
+      },
+    });
+    const res = await new OpenAiCompatibleProvider().invoke(request(), signal());
+
+    expect(res.stop).toEqual({ kind: 'end_turn' });
+    expect(calls.filter((c) => c.url.includes('/chat/completions'))).toHaveLength(1);
+  });
+
+  it('treats a reply that is only reasoning as having spoken', async () => {
+    // Strange, but it is the model's own output arriving intact.
+    stubEmptyThen(0, {
+      choices: [{ finish_reason: 'stop', message: { content: '', reasoning: 'thinking about it' } }],
+      usage: { prompt_tokens: 11, completion_tokens: 40 },
+    });
+    const res = await new OpenAiCompatibleProvider().invoke(request(), signal());
+
+    expect(res.reasoning).toBe('thinking about it');
+    expect(calls.filter((c) => c.url.includes('/chat/completions'))).toHaveLength(1);
+  });
+
+  it('stops retrying the moment the turn is interrupted', async () => {
+    // Somebody pressed stop. Spending two more requests to discover the same
+    // empty reply ignores the only party whose answer is already known.
+    const controller = new AbortController();
+    stubEmptyThen(99, chat({ content: 'never reached' }));
+    const first = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (...args: unknown[]) => {
+      controller.abort();
+      return (first as (...a: unknown[]) => Promise<Response>)(...args);
+    }) as typeof fetch;
+
+    const res = await new OpenAiCompatibleProvider().invoke(request(), { signal: controller.signal });
+    expect(res.stop).toEqual({ kind: 'transport' });
+    expect(calls.filter((c) => c.url.includes('/chat/completions'))).toHaveLength(1);
+  });
+});

@@ -31,6 +31,37 @@ export const OPENAI_COMPATIBLE_PROVIDER_ID = 'openai-compatible';
 const DEFAULT_BASE_URL = 'http://127.0.0.1:11434/v1';
 const PROBE_TIMEOUT_MS = 120_000;
 
+/**
+ * Extra attempts for a reply that arrived empty *and* billed. See `invoke`.
+ *
+ * Two, not more. The failure is per-sample and independent, so at the measured
+ * one-in-nine this takes it to one in seven hundred; a third attempt buys three
+ * more zeros nobody will notice and triples the worst-case latency of a turn
+ * that is already slow.
+ */
+const EMPTY_REPLY_RETRIES = 2;
+
+/**
+ * A reply with nothing in it that nonetheless cost output tokens.
+ *
+ * The `outputTokens > 0` half is what separates a defect from an answer. A model
+ * that declines to speak spends nothing and has said something by saying
+ * nothing; a server that billed for six hundred tokens and returned neither text
+ * nor a tool call has lost them.
+ *
+ * Reasoning counts as having spoken. A reply that is only working-out is
+ * strange, but it is *the model's* output arriving intact, and asking again
+ * would charge twice for it.
+ */
+function spentButSaidNothing(result: ProviderResult): boolean {
+  return (
+    result.content.length === 0 &&
+    result.toolCalls.length === 0 &&
+    result.reasoning === undefined &&
+    result.usage.outputTokens > 0
+  );
+}
+
 interface ChatChoice {
   finish_reason?: string;
   message?: {
@@ -338,64 +369,60 @@ export class OpenAiCompatibleProvider implements ModelProvider {
         : {}),
     };
 
-    const res = await this.fetchJson<ChatResponse>(
-      req.endpoint,
-      '/chat/completions',
-      body,
-      undefined,
-      opts.signal,
-    );
-
-    const choice = res.choices?.[0];
-    const message = choice?.message;
-
-    const toolCalls: NormalizedToolCall[] = (message?.tool_calls ?? []).flatMap((call, i) => {
-      const name = call.function?.name;
-      if (typeof name !== 'string') return [];
-      let args: unknown = {};
-      try {
-        args = call.function?.arguments ? JSON.parse(call.function.arguments) : {};
-      } catch {
-        // Malformed arguments are a normalized stop reason, not a crash — the
-        // harness repair-prompts on it (§3.9).
-        return [{ id: call.id ?? `call-${i}`, name, args: { __malformed: call.function?.arguments } }];
-      }
-      // Ids are ours; vendor ids are mapped rather than trusted (§3.5).
-      return [{ id: call.id ?? `call-${i}`, name, args }];
-    });
-
-    const text = typeof message?.content === 'string' ? message.content : '';
-    const content: ContentBlock[] = text.length > 0 ? [{ type: 'text', text }] : [];
-
     /*
-     * `reasoning`, and `reasoning_content` as the other spelling in the wild.
+     * An empty reply is asked again, and then reported rather than swallowed.
      *
-     * Measured against Ollama's OpenAI-compatible endpoint with `qwen3:0.6b`:
-     * the field comes back as `reasoning`. vLLM and several gateways use
-     * `reasoning_content` for the same thing, and reading both costs one `??`.
+     * Ollama returns `finish_reason: "stop"`, no `content`, no `tool_calls` —
+     * **and hundreds of completion tokens billed**. The model generated; the
+     * reply carried none of it. Measured against `qwen2.5:7b` by replaying this
+     * adapter's own captured request:
+     *
+     *     /v1/chat/completions   stream:false   7 empty / 57
+     *     /v1/chat/completions   stream:true    4 empty / 40
+     *     /api/chat (native)     stream:false   2 empty / 69
+     *     /api/chat (native)     stream:true    1 empty / 90
+     *
+     * So it is the OpenAI-compatibility layer, and **streaming does not help** —
+     * which is worth writing down, because streaming was the obvious fix and
+     * forty runs said no. Ruled out with the request otherwise byte-identical:
+     * not `tool_choice`, not `max_tokens`, not the context window (32k
+     * available, ~2k used), and not length — 1,222-token replies arrived intact
+     * while 537-token ones vanished.
+     *
+     * Nothing here can fix the server, so this does the two things an adapter
+     * can. **Ask again**, because the failure is per-sample and independent: at
+     * one turn in nine, two retries take it to one in seven hundred. And when it
+     * survives that, **say so**: `transport` rather than a silent `end_turn`,
+     * because a turn that spends tokens and produces nothing is not a model with
+     * nothing to say. That distinction is what §3.5 means about a capability gap
+     * being reported rather than becoming folklore — this one cost a day, an
+     * agent in a group waiting on a teammate that had silently done nothing.
+     *
+     * Bounded at three attempts total, and only for a reply that is empty *and*
+     * billed: an empty reply with no tokens spent is a model declining to speak,
+     * which is an answer and must not be charged for twice.
      */
-    const thought =
-      typeof message?.reasoning === 'string'
-        ? message.reasoning
-        : typeof message?.reasoning_content === 'string'
-          ? message.reasoning_content
-          : undefined;
+    const ask = async (): Promise<ProviderResult> =>
+      normalize(
+        await this.fetchJson<ChatResponse>(
+          req.endpoint,
+          '/chat/completions',
+          body,
+          undefined,
+          opts.signal,
+        ),
+      );
 
-    return {
-      content,
-      toolCalls,
-      ...(thought !== undefined && thought.length > 0 ? { reasoning: thought } : {}),
-      stop: mapFinishReason(choice?.finish_reason, toolCalls.length > 0),
-      usage: {
-        inputTokens: res.usage?.prompt_tokens ?? 0,
-        outputTokens: res.usage?.completion_tokens ?? 0,
-        ...(res.usage?.prompt_tokens_details?.cached_tokens !== undefined
-          ? { cacheReadTokens: res.usage.prompt_tokens_details.cached_tokens }
-          : {}),
-      },
-      raw: res,
-    };
+    let result = await ask();
+    for (let attempt = 0; attempt < EMPTY_REPLY_RETRIES; attempt += 1) {
+      // An interrupt mid-retry is the person's answer, not the server's.
+      if (!spentButSaidNothing(result) || opts.signal.aborted) break;
+      result = await ask();
+    }
+
+    return spentButSaidNothing(result) ? { ...result, stop: { kind: 'transport' } } : result;
   }
+
 
   /** Ollama exposes the real context length; other servers may not. */
   /**
@@ -465,6 +492,65 @@ export class OpenAiCompatibleProvider implements ModelProvider {
     }
     return (await res.json()) as T;
   }
+}
+
+/**
+ * One wire reply, in the shape the rest of the app reads.
+ *
+ * Module-level and pure, because `invoke` now calls it more than once — an empty
+ * reply is asked again — and a normalization that lived inside the request would
+ * have had to be copied to do that.
+ */
+function normalize(res: ChatResponse): ProviderResult {
+  const choice = res.choices?.[0];
+  const message = choice?.message;
+
+  const toolCalls: NormalizedToolCall[] = (message?.tool_calls ?? []).flatMap((call, i) => {
+    const name = call.function?.name;
+    if (typeof name !== 'string') return [];
+    let args: unknown = {};
+    try {
+      args = call.function?.arguments ? JSON.parse(call.function.arguments) : {};
+    } catch {
+      // Malformed arguments are a normalized stop reason, not a crash — the
+      // harness repair-prompts on it (§3.9).
+      return [{ id: call.id ?? `call-${i}`, name, args: { __malformed: call.function?.arguments } }];
+    }
+    // Ids are ours; vendor ids are mapped rather than trusted (§3.5).
+    return [{ id: call.id ?? `call-${i}`, name, args }];
+  });
+
+  const text = typeof message?.content === 'string' ? message.content : '';
+  const content: ContentBlock[] = text.length > 0 ? [{ type: 'text', text }] : [];
+
+  /*
+   * `reasoning`, and `reasoning_content` as the other spelling in the wild.
+   *
+   * Measured against Ollama's OpenAI-compatible endpoint with `qwen3:0.6b`:
+   * the field comes back as `reasoning`. vLLM and several gateways use
+   * `reasoning_content` for the same thing, and reading both costs one `??`.
+   */
+  const thought =
+    typeof message?.reasoning === 'string'
+      ? message.reasoning
+      : typeof message?.reasoning_content === 'string'
+        ? message.reasoning_content
+        : undefined;
+
+  return {
+    content,
+    toolCalls,
+    ...(thought !== undefined && thought.length > 0 ? { reasoning: thought } : {}),
+    stop: mapFinishReason(choice?.finish_reason, toolCalls.length > 0),
+    usage: {
+      inputTokens: res.usage?.prompt_tokens ?? 0,
+      outputTokens: res.usage?.completion_tokens ?? 0,
+      ...(res.usage?.prompt_tokens_details?.cached_tokens !== undefined
+        ? { cacheReadTokens: res.usage.prompt_tokens_details.cached_tokens }
+        : {}),
+    },
+    raw: res,
+  };
 }
 
 /**
