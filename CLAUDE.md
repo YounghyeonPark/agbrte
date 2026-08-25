@@ -1,6 +1,7 @@
 # Working in this repo
 
-[README.md](README.md) says what Agbrte is and what is not proven yet.
+[README.md](README.md) introduces Agbrte and links the rest; [docs/](docs/) holds
+what used to be in it, and [docs/status.md](docs/status.md) is what is not proven yet.
 [DESIGN.md](DESIGN.md) is the authority — 2,000 lines, numbered `§`, and worth
 citing by section in code comments the way the existing ones do. This file is
 neither: it is what a session needs to *work* here without rediscovering it.
