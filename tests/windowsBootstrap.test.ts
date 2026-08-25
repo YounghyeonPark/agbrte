@@ -31,19 +31,20 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   installWindowsNode,
   parseProbe,
   probeWindows,
   psCommand,
+  readWindowsHostRecord,
   startWindowsHost,
   uploadWindowsBundles,
   windowsNodeExe,
   windowsNodeUrl,
   windowsSshRunner,
 } from '@main/host/windowsBootstrap.js';
-import { connectLoopback } from '@shared/host/loopback.js';
+import { connectLoopback, listenLoopback, newControlToken } from '@shared/host/loopback.js';
 import { HostConnection } from '@main/host/hostConnection.js';
 import { connectRemoteHost } from '@main/host/connectRemote.js';
 import { freeLoopbackPort, systemSshRunner, type SshRunner } from '@main/host/sshTransport.js';
@@ -293,6 +294,188 @@ onWindows('against this machine, for real', () => {
 
     await connection.requestShutdown().catch(() => undefined);
   }, 300_000);
+});
+
+/**
+ * Finding a host that is already there, or finding out there is not one.
+ *
+ * These run against a real PowerShell and real loopback sockets, and they are
+ * where the *POSIX* fix for this — "a record is a hint; a socket answering is a
+ * fact" — finally gets asserted on the Windows side. It was not, which is how
+ * `readWindowsHostRecord` went on returning a record it had never spoken to for
+ * two releases after the same bug was found and fixed for `FIND_HOST_SCRIPT`.
+ *
+ * A temporary home throughout, never `homedir()`: the machine record is a real
+ * file at a real path, and a test that writes debris into the developer's own
+ * profile breaks the next attach they make by hand.
+ */
+onWindows('finding a host that is already there', () => {
+  /** A machine directory and a workspace, both fresh, neither in the profile. */
+  async function scratch(): Promise<{ home: string; machineDir: string; workspace: string }> {
+    const home = await mkdtemp(join(tmpdir(), 'agbrte-winfind-'));
+    roots.push(home);
+    const machineDir = join(home, '.agbrte');
+    await mkdir(machineDir, { recursive: true });
+    const workspace = await mkdtemp(join(tmpdir(), 'agbrte-winfind-ws-'));
+    roots.push(workspace);
+    await mkdir(join(workspace, '.agbrte'), { recursive: true });
+    return { home, machineDir, workspace };
+  }
+
+  /** A control port that answers the handshake, and the record describing it. */
+  async function liveHost(): Promise<{ record: Record<string, unknown>; close: () => void }> {
+    const token = newControlToken();
+    const listener = await listenLoopback(token, (channel) => channel.close());
+    closers.push(() => listener.server.close());
+    return {
+      record: { pid: process.pid, port: listener.port, token, protocol: 1, instanceId: 'live' },
+      close: () => listener.server.close(),
+    };
+  }
+
+  it('refuses a record nothing answers, so a rebooted machine can be attached again', async () => {
+    const { machineDir, workspace, home } = await scratch();
+
+    /*
+     * The exact debris a reboot leaves: a well-formed record, written by a host
+     * that really was listening on that port, describing a process that is gone.
+     * `freeLoopbackPort` opens a port and closes it, so this is a port the OS
+     * has just told us nobody holds — debris by construction rather than by
+     * hoping a number is free.
+     */
+    const dead = await freeLoopbackPort();
+    await writeFile(
+      join(machineDir, 'host.json'),
+      JSON.stringify({ pid: 0, port: dead, token: 'a'.repeat(64), protocol: 1, instanceId: 'x' }),
+      'utf8',
+    );
+
+    const found = await readWindowsHostRecord(localWindowsRunner(), 'self', workspace, home);
+    // Null is what makes the attach *recover*: `connectWindowsHost` starts a host
+    // when there is no record, and used to be handed this one and forward into
+    // nothing, permanently.
+    expect(found, 'a record nobody answers was taken for a host').toBeNull();
+  }, 120_000);
+
+  it('takes one that completes the handshake', async () => {
+    const { machineDir, workspace, home } = await scratch();
+    const live = await liveHost();
+    await writeFile(join(machineDir, 'host.json'), JSON.stringify(live.record), 'utf8');
+
+    const found = await readWindowsHostRecord(localWindowsRunner(), 'self', workspace, home);
+    expect(found?.port).toBe(live.record['port']);
+    expect(found?.token).toBe(live.record['token']);
+  }, 120_000);
+
+  it('does not let a stale machine record hide a live one in the folder', async () => {
+    const { machineDir, workspace, home } = await scratch();
+
+    // Read first and dead, which is the ordering that produced this: the
+    // workspace's pointer used to be consulted only when this *file was absent*.
+    const dead = await freeLoopbackPort();
+    await writeFile(
+      join(machineDir, 'host.json'),
+      JSON.stringify({ pid: 0, port: dead, token: 'b'.repeat(64), protocol: 1, instanceId: 'x' }),
+      'utf8',
+    );
+
+    const live = await liveHost();
+    await writeFile(join(workspace, '.agbrte', 'host.json'), JSON.stringify(live.record), 'utf8');
+
+    const found = await readWindowsHostRecord(localWindowsRunner(), 'self', workspace, home);
+    expect(found?.port, 'the stale profile record shadowed the live one').toBe(live.record['port']);
+  }, 120_000);
+
+  it('finds a host through the registry when no record names it', async () => {
+    // The state a lost bind race leaves: the machine record and this folder's
+    // pointer are both gone, and the host is answering for a folder it restored
+    // earlier. Attaching a *new* folder has to work anyway, which is the whole
+    // reason the POSIX script sweeps `workspaces.json`.
+    const { machineDir, workspace, home } = await scratch();
+    const served = await mkdtemp(join(tmpdir(), 'agbrte-winfind-served-'));
+    roots.push(served);
+    await mkdir(join(served, '.agbrte'), { recursive: true });
+
+    const live = await liveHost();
+    await writeFile(join(served, '.agbrte', 'host.json'), JSON.stringify(live.record), 'utf8');
+    await writeFile(
+      join(machineDir, 'workspaces.json'),
+      JSON.stringify({ workspaces: [{ root: served }] }),
+      'utf8',
+    );
+
+    const found = await readWindowsHostRecord(localWindowsRunner(), 'self', workspace, home);
+    expect(found?.port, 'the registry was never swept').toBe(live.record['port']);
+  }, 120_000);
+
+  /**
+   * The same two questions, asked of a **real host process** rather than of a
+   * listener this file stood up.
+   *
+   * The tests above use `listenLoopback` directly, which proves the handshake is
+   * spoken correctly and proves nothing about the thing that actually writes
+   * these records. This one runs the shipped bundle, with its own machine
+   * directory, on §6.2's loopback channel — so the record being read is one a
+   * host wrote, at the path a host chooses, describing a port a host opened.
+   *
+   * Then it kills it the way the failure happens: abruptly. `child.kill()` on
+   * Windows is `TerminateProcess`, there is no signal handler to run, and the
+   * record stays on disk describing a process that is gone. That is the state a
+   * remote is in after a reboot or an OOM kill, and it is the state in which
+   * every attach used to fail for good.
+   *
+   * `AGBRTE_HOME` throughout, per §8 — without it this host would write its
+   * machine record into the developer's own profile and the suite's parallel
+   * files would fight over one socket.
+   */
+  it('finds a real host, and stops finding it the moment that host is killed', async () => {
+    const { home, machineDir, workspace } = await scratch();
+    const bundle = resolve(import.meta.dirname, '../dist/main/agbrteHost.js');
+    expect(existsSync(bundle), `no host bundle at ${bundle} — run npm run build`).toBe(true);
+
+    const host = spawn(process.execPath, [bundle, workspace], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: {
+        ...process.env,
+        AGBRTE_HOME: machineDir,
+        // The line that makes it a *Windows remote's* host rather than this
+        // machine's: a named pipe cannot be forwarded, so §6.2's channel is the
+        // only one an attach could reach.
+        AGBRTE_HOST_CONTROL: 'loopback',
+        AGBRTE_HOST_LINGER_MS: '120000',
+      },
+      windowsHide: true,
+    });
+    let said = '';
+    host.stderr.on('data', (d) => (said += String(d)));
+    closers.push(() => host.kill());
+
+    const recordPath = join(machineDir, 'host.json');
+    await until(() => existsSync(recordPath), 30_000, () => `no record was written: ${said}`);
+
+    const found = await readWindowsHostRecord(localWindowsRunner(), 'self', workspace, home);
+    expect(found?.port, `a live host was not found: ${said}`).toBeGreaterThan(0);
+    // The token came back, because the app needs it to open the forward — and it
+    // is the host's own, not one this test invented.
+    expect(found?.token).toMatch(/^[0-9a-f]{64}$/);
+
+    host.kill();
+    await new Promise((done) => host.once('exit', done));
+
+    // The corpse's record, still exactly where it was. Asserted rather than
+    // assumed: if the host had cleaned up on the way out there would be nothing
+    // here to be fooled by, and this test would be proving something else.
+    expect(existsSync(recordPath), 'the killed host tidied up, so nothing lies').toBe(true);
+
+    const gone = await readWindowsHostRecord(localWindowsRunner(), 'self', workspace, home);
+    expect(gone, "a dead host was still being reported as this machine's").toBeNull();
+  }, 120_000);
+
+  it('says nothing when there is nothing, rather than failing', async () => {
+    const { workspace, home } = await scratch();
+    const found = await readWindowsHostRecord(localWindowsRunner(), 'self', workspace, home);
+    expect(found).toBeNull();
+  }, 120_000);
 });
 
 /**

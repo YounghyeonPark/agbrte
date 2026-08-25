@@ -306,7 +306,10 @@ async function connectWindowsHost(
     );
   }
 
-  let record = await readWindowsHostRecord(runner, opts.alias, opts.workspaceRoot);
+  // `probe.home`, not `$env:USERPROFILE` computed on the far side: the machine
+  // directory is one path and two beliefs about it is what `AGBRTE_HOME` exists
+  // to prevent (§8) — `startWindowsHost` tells the host this same value.
+  let record = await readWindowsHostRecord(runner, opts.alias, opts.workspaceRoot, probe.home);
   if (record === null) {
     report('starting the host');
     record = await startWindowsHost(runner, opts.alias, probe.home, nodePath, opts.workspaceRoot, {

@@ -368,7 +368,7 @@ export interface WindowsHostRecord {
 }
 
 /**
- * Read the host's own record of where it is listening, if one is already there.
+ * Find this machine's live host, proved by an answer rather than by a file.
  *
  * The POSIX counterpart of this is what makes reattaching cheap — §6.4's normal
  * case, once you have used a machine once, is one probe, one record read and a
@@ -376,25 +376,121 @@ export interface WindowsHostRecord {
  * Windows machine would launch a *second* host against the same workspace, two
  * processes appending to one event log.
  *
- * `-Raw` because the default `Get-Content` splits into lines and `JSON.parse`
- * would receive an array's worth of them joined by nothing.
+ * ## A record is a hint; an answer is a fact (§6.4)
+ *
+ * This was `Get-Content host.json` and nothing else, which is precisely what the
+ * POSIX side stopped doing — see `FIND_HOST_SCRIPT`, which reads every record
+ * this machine could have written and returns the first whose socket *accepts a
+ * connection*. That fix landed there and not here, which is this project's
+ * recurring shape: the remote path forgets what the other path already learned,
+ * and no test sees it because no test leaves a lying record behind.
+ *
+ * Both ways of being wrong are reachable on Windows, and each leaves a machine
+ * that cannot be attached to **at all**:
+ *
+ *   * **A record that lies.** A host killed, or gone with the machine it ran on,
+ *     leaves `host.json` where it stood. This returned it, `connectWindowsHost`
+ *     forwarded to a port nobody answers, and the attach failed — every time,
+ *     for good, because a record that exists is a reason not to start a host.
+ *     One reboot of the remote is enough to produce it, and nothing short of
+ *     deleting the file by hand got the machine back.
+ *   * **A stale record shadowing a live one.** The workspace's pointer was
+ *     consulted only when the machine record's *file was absent*, so a leftover
+ *     in the profile hid a host that was answering for the folder being asked
+ *     for.
+ *
+ * ## Why the proof is the token handshake and not a bare connect
+ *
+ * The POSIX script connects to a unix socket and stops there, and that is
+ * enough: the path is Agbrte's own, so whatever accepts on it is Agbrte's. A
+ * loopback **port number** carries no such claim. After a reboot the port in a
+ * stale record belongs to whatever asked for one first, so "something accepted"
+ * would adopt a print spooler as this machine's host and forward the session
+ * protocol into it.
+ *
+ * So the proof is §6.2's own handshake: present the token out of the record and
+ * require `auth-ok` back. Nothing but the host that record describes can produce
+ * that line. The probe then hangs up, which the host sees as a client that
+ * connected and left — the ordinary thing, and the same thing the POSIX probe's
+ * bare connect looks like from the other end.
+ *
+ * `Get-Process -Id $rec.pid` was the cheap candidate and is not sufficient:
+ * Windows recycles pids hard, so a pid written before a reboot has a fair chance
+ * of naming *something*, and passing on that would forward to the dead port
+ * anyway. It is not wrong, only worthless — the connection is the same round
+ * trip and answers the question that was actually asked.
+ *
+ * The token never reaches a command line (§13). What crosses ssh is this script,
+ * which contains `$rec.token`; the value is read on the far side out of the file
+ * it already lives in. It does come *back* in the record, over the same ssh
+ * channel it always did, because the app needs it to open the forward.
+ *
+ * `-Raw` because the default `Get-Content` splits into lines and
+ * `ConvertFrom-Json` would receive an array's worth of them joined by nothing.
  */
 export async function readWindowsHostRecord(
   runner: SshRunner,
   alias: string,
   workspaceRoot: string,
+  home: string,
 ): Promise<WindowsHostRecord | null> {
   const result = await runner.exec(
     alias,
     psCommand(`
 $ws = "${workspaceRoot}"
 ${workspaceDirScript()}
-# The machine's own record first (§8), then the workspace's. A host deployed
-# before v21 wrote only the second; one deployed after writes both and the
-# first is the current answer.
-$p = Join-Path "$env:USERPROFILE\\.agbrte" "host.json"
-if (-not (Test-Path $p)) { $p = Join-Path $dir "host.json" }
-if (Test-Path $p) { try { Get-Content $p -Raw -ErrorAction Stop } catch { } }
+$machineHome = "${windowsRoot(home)}"
+# Every record this machine could have written, in the order §8 says to believe
+# them: the machine's own, then the folder being asked for, then every folder
+# the registry says this machine has served. The last of those is what lets a
+# *new* folder find a host whose machine record has gone missing — the state a
+# lost bind race leaves behind, and the reason the POSIX script sweeps the
+# registry too. Both directory names, since a workspace made before the rename
+# keeps the old one (§5.1).
+$candidates = New-Object System.Collections.ArrayList
+[void]$candidates.Add((Join-Path $machineHome "host.json"))
+[void]$candidates.Add((Join-Path $dir "host.json"))
+try {
+  $reg = ConvertFrom-Json (Get-Content (Join-Path $machineHome "workspaces.json") -Raw -ErrorAction Stop)
+  foreach ($w in $reg.workspaces) {
+    if ($w.root) {
+      [void]$candidates.Add((Join-Path $w.root "${WORKSPACE_DIR}\\host.json"))
+      [void]$candidates.Add((Join-Path $w.root "${LEGACY_WORKSPACE_DIR}\\host.json"))
+    }
+  }
+} catch { }
+# The handshake from loopback.ts, spoken by hand. A wrong or stale token gets a
+# close with no reply, which is a caught exception here and a false — exactly
+# the answer wanted, since a host that will not admit us is not one this attach
+# can use either.
+function Test-Answers($rec) {
+  $client = $null
+  try {
+    $client = New-Object Net.Sockets.TcpClient('127.0.0.1', [int]$rec.port)
+    $stream = $client.GetStream()
+    $stream.ReadTimeout = 2000
+    $auth = [Text.Encoding]::UTF8.GetBytes('{"t":"auth","token":"' + $rec.token + '"}' + [char]10)
+    $stream.Write($auth, 0, $auth.Length)
+    $stream.Flush()
+    $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::UTF8)
+    return ($reader.ReadLine() -like '*auth-ok*')
+  } catch { return $false } finally { if ($client -ne $null) { $client.Close() } }
+}
+$seen = @{}
+foreach ($p in $candidates) {
+  if ($seen.ContainsKey($p)) { continue }
+  $seen[$p] = $true
+  $raw = $null
+  if (Test-Path $p) { try { $raw = Get-Content $p -Raw -ErrorAction Stop } catch { } }
+  if (-not $raw) { continue }
+  $rec = $null
+  try { $rec = ConvertFrom-Json $raw } catch { }
+  # A record with no port is a host on a named pipe, which cannot be forwarded
+  # and so cannot be this attach's answer however alive it is.
+  if (-not $rec -or -not $rec.port -or -not $rec.token) { continue }
+  if (Test-Answers $rec) { $raw; exit 0 }
+}
+exit 0
 `.trim()),
   );
   if (result.code !== 0 || result.stdout.trim() === '') return null;
