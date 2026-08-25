@@ -1692,11 +1692,30 @@ function HostGroup({
    * the app runs on Windows.
    */
   const newFolderTarget = ((): string => {
-    const name = folder.trim().replace(/^[\\/]+/, '');
-    if (name === '') return '';
+    const typed = folder.trim();
+    if (typed === '') return '';
+    /*
+     * A full path is taken as written.
+     *
+     * The default puts the folder beside the one this host has open, which is
+     * the right default and was the only answer available: a leading `/` was
+     * *stripped*, so somebody typing `/srv/work/xabs` got
+     * `/home/them/srv/work/xabs` — their path, silently relocated under a
+     * directory they had not named. The line under the field always showed
+     * where it would land, which is how this stayed survivable, but showing a
+     * surprising answer is not the same as taking the one that was given.
+     *
+     * Both separators, and a Windows drive or UNC prefix, because the field may
+     * be naming a folder on a Linux box while this window runs on Windows — the
+     * path belongs to the machine in the row, not to this one. A relative name
+     * with separators in it (`projects/xabs`) keeps working and still lands
+     * beside the open folder, which is the useful reading of a relative path.
+     */
+    const absolute = /^([/\\]|[A-Za-z]:[/\\]|\\\\)/.test(typed);
+    if (absolute) return typed;
     const sep = host.root.includes(String.fromCharCode(92)) ? String.fromCharCode(92) : '/';
     const parent = host.root.replace(/[\\/]+$/, '').split(sep).slice(0, -1).join(sep);
-    return `${parent === '' ? host.root : parent}${sep}${name}`;
+    return `${parent === '' ? host.root : parent}${sep}${typed}`;
   })();
 
   const submit = (): void => {
@@ -1918,8 +1937,21 @@ function HostGroup({
             submit();
           }}
         >
+          {/*
+            Labelled, both of them, and the reason is the screenshot that asked
+            for this: two identical boxes, one under the other, both reading
+            `xabs` because the second is filled *from* the first. The placeholder
+            that said which was which is gone the moment either has text — so
+            the field somebody wants to change looks like a copy of the field
+            above it, and "let me change the folder name" is what you ask about
+            a box you cannot tell is a box for the folder name.
+          */}
+          <label className={`${LABEL} text-muted`} htmlFor="new-title">
+            title
+          </label>
           <input
             className="field"
+            id="new-title"
             data-testid="new-title"
             autoFocus
             placeholder="Session title"
@@ -1949,8 +1981,12 @@ function HostGroup({
               session in a folder already open. A name means a folder of its
               own, shown before it is created because a directory appearing on a
               machine is a change to it. */}
+          <label className={`${LABEL} text-muted`} htmlFor="new-folder">
+            folder for it
+          </label>
           <input
             className="field"
+            id="new-folder"
             data-testid="new-folder"
             placeholder="New folder for it"
             value={folder}

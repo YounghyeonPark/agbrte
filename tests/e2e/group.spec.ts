@@ -135,6 +135,47 @@ test.describe('a session gets a folder of its own', () => {
       await rm(repo, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
     }
   });
+
+  /**
+   * The field says where, and a full path is where.
+   *
+   * The default — beside the folder this host has open — is right, and it used
+   * to be the only answer available: a leading separator was stripped, so a
+   * typed absolute path came back rooted under a directory nobody had named.
+   * Nothing was created here, so the assertion is on the line under the field,
+   * which is the promise the form makes before anything happens on a machine.
+   *
+   * Both fields are labelled now, and that is the other half of what this is
+   * about: filled from the title, the folder box was a second copy of the box
+   * above it with nothing saying it was the folder.
+   */
+  test('takes a full path as written, and says which box is which', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+    const page = agbrte.window;
+
+    try {
+      const host = page.locator('[data-testid=host]').first();
+      await host.locator('[data-testid=new-session]').click();
+      await host.locator('[data-testid=new-title]').fill('somewhere else');
+
+      // Which box is the folder, in the form itself.
+      await expect(host.getByText('folder for it', { exact: false })).toBeVisible();
+
+      // Auto-filled from the title, and then changed — the thing the form is
+      // for. Not submitted: no directory is created by this test.
+      await expect(host.locator('[data-testid=new-folder]')).toHaveValue('somewhere-else');
+      const full = process.platform === 'win32' ? 'D:\\srv\\picked' : '/srv/picked';
+      await host.locator('[data-testid=new-folder]').fill(full);
+
+      await expect(host.locator('[data-testid=new-folder-target]')).toHaveText(
+        `will create ${full}`,
+      );
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
+    }
+  });
 });
 
 test.describe('renaming a session from the sidebar', () => {
