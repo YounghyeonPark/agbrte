@@ -54,6 +54,8 @@ import {
   type PermissionRequest,
   type RawTail,
   type RuntimeContext,
+  type McpServerConfig,
+  type McpServerStatus,
   type Session,
   type SessionBudget,
   type SessionState,
@@ -265,6 +267,28 @@ const RAW_MIRROR_MS = 250;
  * rather than in the form, because a form is one of several clients.
  */
 const MAX_TITLE_CHARS = 120;
+
+/**
+ * The one rule for an MCP server id (§17 Q20).
+ *
+ * Allow-listed rather than sanitized, like a template name: the id is spliced
+ * into `mcp__<id>__<tool>`, which is what a policy rule matches on and what a
+ * transcript names — so a character that means something to a matcher would be
+ * a rule that quietly covers more or less than it reads as covering.
+ *
+ * One function because there are two callers now. `createSession` checks the
+ * whole request before anything exists, and `attachMcp` checks the one server
+ * it was handed; the rule they enforce has to be the same rule or a name
+ * refused at creation could be smuggled in afterwards.
+ */
+function assertMcpId(id: string): void {
+  if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(id)) {
+    throw new Error(
+      `MCP server id "${id}" — lowercase letters, digits, - and _ only, ` +
+        `because the id becomes part of tool names policy rules match on`,
+    );
+  }
+}
 
 interface LiveSession {
   session: Session;
@@ -752,12 +776,7 @@ export class SessionManager extends EventEmitter {
      * directory behind is a refusal that made something.
      */
     for (const server of input.mcpServers ?? []) {
-      if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(server.id)) {
-        throw new Error(
-          `MCP server id "${server.id}" — lowercase letters, digits, - and _ only, ` +
-            `because the id becomes part of tool names policy rules match on`,
-        );
-      }
+      assertMcpId(server.id);
       if ((input.mcpServers ?? []).filter((s) => s.id === server.id).length > 1) {
         throw new Error(`two MCP servers named "${server.id}" — ids must be unique in a session`);
       }
@@ -925,31 +944,7 @@ export class SessionManager extends EventEmitter {
 
     const mcpConnections = new Map<string, McpConnection>();
     for (const server of input.mcpServers ?? []) {
-      session.mcp ??= [];
-      try {
-        const connection = await McpConnection.connect(server);
-        mcpConnections.set(server.id, connection);
-        const toolNames = connection.tools.map((t) => `mcp__${server.id}__${t.name}`);
-        await store.append(
-          {
-            type: 'mcp.attached',
-            serverId: server.id,
-            command: server.command,
-            ...(server.args !== undefined ? { args: server.args } : {}),
-            ...(server.env !== undefined ? { envKeys: Object.keys(server.env) } : {}),
-            toolNames,
-          },
-          { ...(actor !== undefined ? { actor } : {}) },
-        );
-        session.mcp.push({ id: server.id, tools: toolNames });
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err);
-        await store.append(
-          { type: 'mcp.failed', serverId: server.id, reason },
-          { ...(actor !== undefined ? { actor } : {}) },
-        );
-        session.mcp.push({ id: server.id, tools: [], error: reason });
-      }
+      await this.connectMcp(store, session, mcpConnections, server, actor);
     }
 
     /*
@@ -2291,6 +2286,106 @@ export class SessionManager extends EventEmitter {
     this.touch(live);
     this.emit('session', live.session);
     return live.session;
+  }
+
+  /**
+   * Attach an MCP server to a session that already exists (§17 Q20).
+   *
+   * ## Why this can exist now, when `McpServers.tsx` said it could not
+   *
+   * That file recorded the reason there was no such control: a live connection
+   * appearing mid-turn, and a tool list changing under a model that has already
+   * been told what it has. Both have one answer, and it is the answer the roster
+   * and the group peers already use — **the spec is built per turn**
+   * (`sessionToolsFor` runs in `specFor`), so nothing changes under a running
+   * model and the new tools are there from the next turn. Attaching during a
+   * turn is therefore allowed and simply does not affect that turn.
+   *
+   * ## The gap this closes is a restart
+   *
+   * A resumed session comes back with `mcp: new Map()` on purpose — the env
+   * values were credentials the log deliberately does not carry, so a restart
+   * *cannot* honestly reconnect. Until now that was permanent: the transcript
+   * said what the session used to reach and nothing could put it back. Q20's
+   * rule is that a server is named "when the person is present", and a person
+   * asking for it again after a restart is exactly that.
+   *
+   * Refused for a duplicate id rather than replacing: the id is spliced into
+   * tool names a policy matches on, so silently swapping what `mcp__search__*`
+   * means underneath a session's own rules is the one outcome nobody could
+   * audit. The reply carries the failure instead of throwing it (§3.5) — a
+   * server that would not start is a `mcp.failed` line in the transcript, in the
+   * place its tools would have been.
+   */
+  async attachMcp(
+    sessionId: SessionId,
+    server: McpServerConfig,
+    actor?: Actor,
+  ): Promise<McpServerStatus> {
+    const live = this.live(sessionId);
+    assertMcpId(server.id);
+    if (live.mcp.has(server.id)) {
+      throw new Error(
+        `this session already has an MCP server called "${server.id}" — its tools are ` +
+          `mcp__${server.id}__*, and two servers cannot share that name. Use a different one.`,
+      );
+    }
+
+    const status = await this.connectMcp(live.store, live.session, live.mcp, server, actor);
+    this.touch(live);
+    this.emit('session', live.session);
+    return status;
+  }
+
+  /**
+   * Start one server, record what happened, and hand back what attached.
+   *
+   * Shared by `createSession` and `attachMcp` so the two cannot drift, which is
+   * the whole reason it is a function: they must produce the same event, the
+   * same namespacing and the same failure handling, and the second one exists
+   * precisely because the first was the only way to do this.
+   *
+   * The event records `envKeys` and never `env` (§13). That asymmetry is the
+   * reason a restart cannot reconnect, and it is deliberate: a log travels — to
+   * a follower, an export, a support thread — and a credential in it would
+   * travel too.
+   */
+  private async connectMcp(
+    store: SessionStore,
+    session: Session,
+    into: Map<string, McpConnection>,
+    server: McpServerConfig,
+    actor?: Actor,
+  ): Promise<McpServerStatus> {
+    session.mcp ??= [];
+    try {
+      const connection = await McpConnection.connect(server);
+      into.set(server.id, connection);
+      const toolNames = connection.tools.map((t) => `mcp__${server.id}__${t.name}`);
+      await store.append(
+        {
+          type: 'mcp.attached',
+          serverId: server.id,
+          command: server.command,
+          ...(server.args !== undefined ? { args: server.args } : {}),
+          ...(server.env !== undefined ? { envKeys: Object.keys(server.env) } : {}),
+          toolNames,
+        },
+        { ...(actor !== undefined ? { actor } : {}) },
+      );
+      const status: McpServerStatus = { id: server.id, tools: toolNames };
+      session.mcp.push(status);
+      return status;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      await store.append(
+        { type: 'mcp.failed', serverId: server.id, reason },
+        { ...(actor !== undefined ? { actor } : {}) },
+      );
+      const status: McpServerStatus = { id: server.id, tools: [], error: reason };
+      session.mcp.push(status);
+      return status;
+    }
   }
 
   /** Leave a group. A group nobody can leave is a trap, not a feature. */

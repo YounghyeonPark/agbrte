@@ -51,6 +51,7 @@ import type {
   ReasoningRequest,
   AgentId,
   InstanceId,
+  McpServerConfig,
   AgbrteEvent,
   PermissionDecision,
   PermissionRequest,
@@ -614,6 +615,12 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   );
 
   handle(CH.sessionsUngroup, (sessionId: string) => fleet.ungroup(sessionId as SessionId));
+  // The config carries `env`, which is credentials: handed straight to the
+  // fleet, never destructured, logged or echoed back (§13).
+  handle(CH.sessionsAttachMcp, (sessionId: string, config: McpServerConfig) =>
+    fleet.attachMcp(sessionId as SessionId, config),
+  );
+
   handle(CH.sessionsRename, (sessionId: string, title: string) =>
     fleet.renameSession(sessionId as SessionId, title),
   );

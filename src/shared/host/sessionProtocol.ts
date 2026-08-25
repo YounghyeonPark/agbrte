@@ -36,6 +36,7 @@ import type {
   AccessRole,
   AgentRecord,
   ContentBlock,
+  McpServerConfig,
   ExecutionTarget,
   InstanceId,
   LineageId,
@@ -472,6 +473,22 @@ export interface PreparedChild {
  * exposure, and the only one in that table where a detached overnight run keeps
  * going with the laptop shut. It is offered as that, in those words.
  *
+ * ## v24 adds `session.attachMcp`, which is the ordinary case
+ *
+ * One command, so `COMMAND_SINCE` answers for it and a v23 host reports that it
+ * cannot attach a server to a session that already exists — which is exactly
+ * what that host does. The creation form still carries `mcpServers`, as it has
+ * since Q20, so nothing that worked stops working; the newer gesture is refused
+ * by name on the older machine.
+ *
+ * The command carries an `McpServerConfig`, and that config carries `env` —
+ * credentials, by §13. It travels the same channel `session.create` has always
+ * carried the same values on: the session socket, which is a unix socket or a
+ * named pipe locally and an `ssh -L` tunnel to a remote. What reaches the log is
+ * unchanged and is the point of the asymmetry: `mcp.attached` records env
+ * *names* only, so the durable record says what the session could reach without
+ * saying what unlocked it.
+ *
  * ## v23 says whether a terminal can be opened, which is v16's case
  *
  * `HostIdentity.shells` is a field, so a host older than v23 sends none and a
@@ -523,7 +540,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 23;
+export const SESSION_PROTOCOL_VERSION = 24;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -597,6 +614,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'workspace.list': 21,
   'workspace.open': 21,
   'session.rename': 22,
+  'session.attachMcp': 24,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -816,6 +834,22 @@ export type SessionCommand =
       goal: string;
       input?: CreateSessionInput;
     }
+  /**
+   * Attach an MCP server to a session that already exists (§17 Q20).
+   *
+   * The same thing `session.create` does with `mcpServers`, said later — and it
+   * has to be a command rather than a field somewhere, because attaching is an
+   * *act*: a process is started on the host, its tools are named into the
+   * session, and the log says when. The reply is what attached, including the
+   * failure, because §3.5 puts a server that would not start in the transcript
+   * rather than in an error the session does not remember.
+   *
+   * `server.env` holds credentials and this message is the only place they go.
+   * It is the channel `session.create` has always used for the same values;
+   * `mcp.attached` records env names alone, so the log says what the session
+   * could reach and never what unlocked it (§13).
+   */
+  | { t: 'session.attachMcp'; id: RequestId; sessionId: string; server: McpServerConfig }
   | { t: 'session.resume'; id: RequestId; sessionId: string }
   | { t: 'session.addAgent'; id: RequestId; sessionId: string; input: unknown }
   /**

@@ -223,6 +223,7 @@ const api: AgbrteApi = {
     group: call(CH.sessionsGroup),
     ungroup: call(CH.sessionsUngroup),
     rename: call(CH.sessionsRename),
+    attachMcp: call(CH.sessionsAttachMcp),
     setReasoning: call(CH.sessionsSetReasoning),
     blob: call(CH.sessionsBlob),
     listOnDisk: call(CH.sessionsListOnDisk),

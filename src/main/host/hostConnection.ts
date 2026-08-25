@@ -45,6 +45,8 @@ import type {
   AgbrteEvent,
   InstanceId,
   LineageId,
+  McpServerConfig,
+  McpServerStatus,
   ModelCapabilityHint,
   PermissionDecision,
   InboxEntry,
@@ -693,6 +695,22 @@ export class HostConnection extends EventEmitter {
   renameSession(sessionId: SessionId, title: string): Promise<Session> {
     this.require('session.rename');
     return this.call({ t: 'session.rename', sessionId, title });
+  }
+
+  /**
+   * Attach an MCP server to a session that already exists (§17 Q20).
+   *
+   * `require` for the same reason as the rename above: a host that predates the
+   * command would answer nothing, and a UI built from that silence would show
+   * tools the session cannot reach.
+   *
+   * `server` carries `env`, which is credentials. It goes out on this channel
+   * and is not held, copied or logged anywhere on the way — the same route
+   * `createSession` has always taken with the same values.
+   */
+  attachMcp(sessionId: SessionId, server: McpServerConfig): Promise<McpServerStatus> {
+    this.require('session.attachMcp');
+    return this.call({ t: 'session.attachMcp', sessionId, server });
   }
 
   groupSessions(sessionIds: SessionId[], name: string, groupId?: string): Promise<Session[]> {

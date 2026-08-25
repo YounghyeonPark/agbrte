@@ -159,6 +159,128 @@ describe('a server is attached to a session, and the log says so', () => {
   }, 30_000);
 });
 
+/**
+ * The same act, said later (§17 Q20, session protocol v24).
+ *
+ * Q20's rule is that a server is named "when the person is present", and this is
+ * the other half of that: a person present *now*, on a session that already
+ * exists. Everything the creation path guarantees has to hold here too — the
+ * namespacing, the event, the failure in the transcript, and above all §13's
+ * asymmetry — because a second way in is a second place for a credential to
+ * leak, and one of them being careful is not the property anybody needs.
+ */
+describe('a server attached to a session that already exists', () => {
+  it('attaches, names its tools, and records it where it happened', async () => {
+    const m = manager();
+    const session = await m.createSession({ title: 's', goal: 'g' });
+    // Nothing yet, and the field is absent rather than empty: a session that
+    // was never given a server has nothing to say about servers.
+    expect(session.mcp).toBeUndefined();
+
+    const status = await m.attachMcp(session.sessionId, SERVER());
+
+    expect(status).toEqual({ id: 'fake', tools: ['mcp__fake__lookup'] });
+    expect(m.get(session.sessionId).mcp).toEqual([{ id: 'fake', tools: ['mcp__fake__lookup'] }]);
+
+    /*
+     * After the turn events rather than before them, which is the point of
+     * recording it here at all: the transcript says *when* the tools arrived,
+     * so a session whose model ignored a tool an hour ago and used it after
+     * lunch reads correctly instead of looking like it always had it.
+     */
+    const events = await m.events(session.sessionId);
+    const attached = events.find((e) => e.type === 'mcp.attached');
+    if (attached?.type !== 'mcp.attached') throw new Error('no attach event');
+    expect(attached.toolNames).toEqual(['mcp__fake__lookup']);
+    expect(events.indexOf(attached)).toBeGreaterThan(0);
+  }, 30_000);
+
+  it('records env names and never env values, on this path too', async () => {
+    const m = manager();
+    const session = await m.createSession({ title: 's', goal: 'g' });
+    await m.attachMcp(session.sessionId, SERVER({ env: { FAKE_TOKEN: 'sekrit-value-1234' } }));
+
+    const text = JSON.stringify(await m.events(session.sessionId));
+    expect(text).toContain('FAKE_TOKEN');
+    expect(text, 'a credential reached the log').not.toContain('sekrit-value-1234');
+  }, 30_000);
+
+  it('reports a failure rather than throwing it', async () => {
+    // §3.5, and the same shape the creation path produces: the session is
+    // unharmed and the reason is in the record, not in an exception the session
+    // does not remember.
+    const m = manager();
+    const session = await m.createSession({ title: 's', goal: 'g' });
+
+    const status = await m.attachMcp(session.sessionId, SERVER({ id: 'dead', args: ['-e', 'process.exit(3)'] }));
+
+    expect(status.tools).toEqual([]);
+    expect(status.error).toBeTruthy();
+    expect((await m.events(session.sessionId)).some((e) => e.type === 'mcp.failed')).toBe(true);
+    expect(m.get(session.sessionId).state).not.toBe('failed');
+  }, 30_000);
+
+  it('refuses a second server under a name this session already uses', async () => {
+    /*
+     * Refused rather than replaced, because the id is the tool name.
+     *
+     * A policy rule matching `mcp__fake__*` was written against whatever `fake`
+     * meant when somebody read its tool list. Swapping the process underneath
+     * that name would leave every rule pointing at a different program with no
+     * event saying the meaning changed — the one outcome nobody could audit.
+     */
+    const m = manager();
+    const session = await m.createSession({ title: 's', goal: 'g', mcpServers: [SERVER()] });
+
+    await expect(m.attachMcp(session.sessionId, SERVER())).rejects.toThrow(/already has/);
+  }, 30_000);
+
+  it('refuses an id that cannot become a tool name, by the same rule as creation', async () => {
+    const m = manager();
+    const session = await m.createSession({ title: 's', goal: 'g' });
+
+    await expect(m.attachMcp(session.sessionId, SERVER({ id: 'Bad Id!' }))).rejects.toThrow(
+      /lowercase/,
+    );
+  }, 30_000);
+
+  /**
+   * The gap this command exists to close.
+   *
+   * A resumed session has no MCP connections **by design**: the env values were
+   * credentials the log deliberately does not carry, so a restart cannot
+   * honestly reconnect one. Before this, that was permanent — the transcript
+   * said what the session used to reach and nothing could put it back, so an app
+   * update cost a running session its tools until somebody made a new session.
+   */
+  it('gives a restarted session its tools back', async () => {
+    const first = manager();
+    const session = await first.createSession({ title: 's', goal: 'g', mcpServers: [SERVER()] });
+    expect(session.mcp).toEqual([{ id: 'fake', tools: ['mcp__fake__lookup'] }]);
+    first.dispose();
+
+    // A new manager over the same folder, which is what a host restart is.
+    const second = manager();
+    const resumed = await second.resumeSession(session.sessionId);
+    // Says nothing rather than claiming tools it does not have — the honest
+    // half that was already true, and the half that made this a dead end.
+    expect(resumed.mcp).toBeUndefined();
+
+    const status = await second.attachMcp(session.sessionId, SERVER());
+    expect(status.tools).toEqual(['mcp__fake__lookup']);
+    expect(second.get(session.sessionId).mcp).toEqual([
+      { id: 'fake', tools: ['mcp__fake__lookup'] },
+    ]);
+
+    // Both attaches are in the log, in order, which is the durable answer to
+    // "why did this session have tools, then not, then have them again".
+    const attaches = (await second.events(session.sessionId)).filter(
+      (e) => e.type === 'mcp.attached',
+    );
+    expect(attaches).toHaveLength(2);
+  }, 30_000);
+});
+
 // ---------------------------------------------------------------- the harness
 
 const ENDPOINT: ModelEndpoint = {
@@ -308,6 +430,46 @@ describe('an injected tool is a tool, not a side door', () => {
     if (decided?.type !== 'permission.decided') throw new Error('no decision');
     expect(decided.via).toBe('standing-grant');
     const result = events.find((e) => e.type === 'agent.tool_result');
+    if (result?.type !== 'agent.tool_result') throw new Error('no tool result');
+    expect(result.ok).toBe(true);
+  }, 30_000);
+
+  /**
+   * The lifetime question `McpServers.tsx` was waiting on, answered end to end.
+   *
+   * "A tool list changing under a model that has already been told what it has"
+   * was the reason there was no attach-later command, and the answer is that it
+   * does not change under anything: the spec is built per turn, so the turn in
+   * flight keeps the tools it was declared and the next one gets the new list.
+   * `groupPeers` already worked this way; this proves the same for MCP by asking
+   * the model twice and reading what it was told each time.
+   */
+  it('is declared from the next turn when it arrives mid-session', async () => {
+    // Turn one ends without a tool call; turn two calls the tool that did not
+    // exist when turn one was planned.
+    const provider = new StubProvider([{}, CALL_LOOKUP, {}]);
+    const m = harnessManager(provider);
+    const session = await m.createSession({ title: 's', goal: 'g', standingGrant: true });
+    const agent = await m.addAgent(session.sessionId, {
+      role: 'worker',
+      runtimeId: 'agbrte-harness',
+      model: { providerId: 'stub', modelId: 'stub-model' },
+    });
+
+    await m.send(session.sessionId, agent.agentId, TEXT('before'));
+    const before = provider.requests[0]?.tools?.map((t) => t.name) ?? [];
+    expect(before, 'the model was offered a tool the session did not have').not.toContain(
+      'mcp__fake__lookup',
+    );
+
+    await m.attachMcp(session.sessionId, SERVER());
+    await m.send(session.sessionId, agent.agentId, TEXT('after'));
+
+    const after = provider.requests[1]?.tools?.map((t) => t.name) ?? [];
+    expect(after).toContain('mcp__fake__lookup');
+    // And it is a real server on the other end of the name, not a declaration:
+    // the call went out and came back.
+    const result = (await m.events(session.sessionId)).find((e) => e.type === 'agent.tool_result');
     if (result?.type !== 'agent.tool_result') throw new Error('no tool result');
     expect(result.ok).toBe(true);
   }, 30_000);

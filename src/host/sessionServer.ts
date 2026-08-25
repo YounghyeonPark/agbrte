@@ -870,6 +870,27 @@ export class SessionHostServer {
           // A read: loading a session from its log changes nothing about it.
           return manager.resumeSession(command.sessionId as SessionId);
 
+        case 'session.attachMcp':
+          /*
+           * A write, and one of the few that starts a *process* on this machine.
+           *
+           * `requireWrite` is the whole gate and is the right one: this is the
+           * same act `session.create` performs with `mcpServers`, by the same
+           * person, over the same connection — a read-only client must not be
+           * able to run a command here, and a read-write one is somebody typing
+           * on a machine they have a shell on already (§13, `shell.open`).
+           *
+           * `server.env` reaches the process and nothing else. What the log
+           * gets is names — see `connectMcp` — so this handler passes the config
+           * through without copying, logging or describing it.
+           */
+          this.requireWrite(client, 'attach an MCP server');
+          return manager.attachMcp(
+            command.sessionId as SessionId,
+            command.server,
+            client.actor,
+          );
+
         case 'session.addAgent':
           this.requireWrite(client, 'add an agent');
           return manager.addAgent(

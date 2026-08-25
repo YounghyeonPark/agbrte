@@ -34,8 +34,8 @@ import { Inbox } from './Inbox.js';
 import { Search } from './Search.js';
 import { Artifacts } from './Artifacts.js';
 import { Roster } from './Roster.js';
-import { McpAttached, McpServerFields } from './McpServers.js';
-import { firstProblem, toConfigs, type McpDraft } from './mcpConfig.js';
+import { McpAttached, McpPanel, McpServerFields } from './McpServers.js';
+import { emptyDraft, firstProblem, toConfigs, type McpDraft } from './mcpConfig.js';
 import { Group } from './Group.js';
 import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
@@ -181,6 +181,18 @@ export function App(): JSX.Element {
    * looking at a session, not a fact about it.
    */
   const [changingAgent, setChangingAgent] = useState(false);
+  /**
+   * The MCP server being typed into the session panel, and whether it is going.
+   *
+   * Held here rather than in the store, and this is §13 rather than tidiness: a
+   * draft carries env *values*, which are credentials from the keystroke that
+   * types them. Component state dies with the pane; a store is the thing every
+   * other view can read, gets serialised in a devtools snapshot, and outlives
+   * the session being open. The one place a value goes is the config handed to
+   * `attachMcp`, and it is dropped the moment that succeeds.
+   */
+  const [mcpDraft, setMcpDraft] = useState<McpDraft>(emptyDraft);
+  const [attachingMcp, setAttachingMcp] = useState(false);
   /*
    * Which of three panes the session column is showing.
    *
@@ -1429,6 +1441,42 @@ export function App(): JSX.Element {
                           onGroup={(sessionId, name) => void store.groupWith(sessionId, name)}
                           onLeave={() => void store.leaveGroup()}
                           onOpen={(sessionId) => void store.openSession(sessionId)}
+                        />
+                        {/*
+                          Beside the group, and for the same reasons (§17 Q20).
+
+                          Both are things a session *is* rather than things it is
+                          doing: read rarely, changed rarely, folded away, and
+                          down here where the transcript keeps its height. It is
+                          on the session and not only on the creation form
+                          because a restart deliberately reconnects nothing — the
+                          env values are credentials the log does not carry — so
+                          without this a session that came back from an update
+                          had lost its tools with no way to say so.
+                        */}
+                        <McpPanel
+                          {...(active.mcp !== undefined ? { servers: active.mcp } : {})}
+                          draft={mcpDraft}
+                          onDraft={setMcpDraft}
+                          busy={attachingMcp}
+                          onAttach={() => {
+                            const [config] = toConfigs([mcpDraft]);
+                            if (config === undefined) return;
+                            setAttachingMcp(true);
+                            void store.attachMcp(config).then((ok) => {
+                              setAttachingMcp(false);
+                              /*
+                               * Cleared only when it landed, and then
+                               * completely — the draft holds an env value,
+                               * which §13 calls a credential, and a form that
+                               * keeps one "in case" keeps a secret in renderer
+                               * state for as long as the window is open. A
+                               * refusal leaves the fields so a mistyped command
+                               * can be fixed without retyping the key.
+                               */
+                              if (ok) setMcpDraft(emptyDraft());
+                            });
+                          }}
                         />
                     </>
                   }

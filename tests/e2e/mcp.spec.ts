@@ -155,6 +155,74 @@ test.describe('a server named on the creation form', () => {
 });
 
 /**
+ * The other way in, added at v24: a session that already exists.
+ *
+ * `tests/mcp.test.ts` proves the owner half of this — the process, the event,
+ * the credential rule, the tools arriving on the next turn. What it cannot
+ * prove is the chain a person actually uses, and that chain is new all the way
+ * down: a panel, a store action, a preload method, an IPC channel, a fleet
+ * route, a protocol command. Every link is typed except the wire, which is
+ * exactly where a dropped field survives every unit test.
+ */
+test.describe('a server attached to a session that is already open', () => {
+  test('starts it, and the session says what it contributed', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+    const page = agbrte.window;
+
+    try {
+      // Created with none, which is the state this exists for — including the
+      // one a restart leaves behind.
+      await createSession(page, 'Tools later');
+      await addAgent(page, 'echo');
+
+      const panel = page.locator('[data-testid=mcp-panel]');
+      await panel.locator('summary').click();
+      await panel.locator('[data-testid=mcp-id]').fill('fixture');
+      await panel.locator('[data-testid=mcp-command]').fill(NODE);
+      await panel.locator('[data-testid=mcp-args]').fill(FIXTURE);
+      // §13 through the UI, on this path too: the value reaches the process and
+      // must appear in neither the log nor the screen.
+      await panel.locator('[data-testid=mcp-env-add]').click();
+      await panel.locator('[data-testid=mcp-env-key]').fill('AGBRTE_E2E_TOKEN');
+      await panel.locator('[data-testid=mcp-env-value]').fill('sekrit-value-1234');
+
+      await panel.locator('[data-testid=mcp-attach]').click();
+
+      // What the session says it has, read back from the host rather than from
+      // the form that sent it.
+      await expect(panel.locator('[data-testid=mcp-panel-attached]')).toContainText('fixture', {
+        timeout: 30_000,
+      });
+      await expect(panel.locator('[data-testid=mcp-panel-attached]')).toContainText('1 tool');
+      await expect(page.locator('[data-testid=mcp-attached]')).toContainText('mcp__fixture__lookup');
+
+      // The fields are empty again, which is the credential rule and not tidying
+      // up: a draft that succeeded is a secret with nothing left to do.
+      await expect(panel.locator('[data-testid=mcp-env-row]')).toHaveCount(0);
+      await expect(panel.locator('[data-testid=mcp-id]')).toHaveValue('');
+
+      /*
+       * The log carries the name and never the value, and carries it *here* —
+       * after the session was made, which is the difference this command adds
+       * to the record.
+       */
+      const rows = await logRows(repo);
+      const attached = rows.filter((r) => r['type'] === 'mcp.attached');
+      expect(attached).toHaveLength(1);
+      expect(JSON.stringify(attached)).toContain('AGBRTE_E2E_TOKEN');
+      expect(JSON.stringify(rows), 'a credential reached the log').not.toContain(
+        'sekrit-value-1234',
+      );
+      expect(rows.indexOf(attached[0]!)).toBeGreaterThan(0);
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+/**
  * The same wiring against a real web-search server and a real local model.
  *
  * Skipped loudly rather than silently, like the Ollama tests in `app.spec.ts`:

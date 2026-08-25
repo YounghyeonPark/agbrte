@@ -217,6 +217,18 @@ export interface AgbrteState {
    * rows that are *not* open, which is most of them.
    */
   renameSession(sessionId: string, title: string): Promise<void>;
+  /**
+   * Attach an MCP server to the open session (§17 Q20).
+   *
+   * Returns whether it attached, so the form can clear itself only when there
+   * is nothing left to fix — a command with a typo in it must not take the
+   * credential typed beside it down with it.
+   *
+   * The config crosses to main and is not kept: no draft, no copy, nothing in
+   * this store. What comes back is what the session now has, which is names and
+   * tool lists (§13).
+   */
+  attachMcp(config: McpServerConfig): Promise<boolean>;
   applyBatch(batch: EventBatch): void;
   applySession(session: Session): void;
   applyPermission(request: PermissionRequest): void;
@@ -665,6 +677,29 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
       set({ sessions: await agbrte().sessions.list() });
       applySnapshot(set, get, await agbrte().sessions.snapshot(active.sessionId));
     });
+  },
+
+  async attachMcp(config) {
+    const sessionId = get().activeId;
+    if (sessionId === null) return false;
+    /*
+     * The snapshot afterwards, not the reply.
+     *
+     * `attachMcp` answers with the one server; the pane draws `Session.mcp`,
+     * which is every server this session has. Re-reading is one round trip and
+     * it keeps a single source for what is attached — patching the list here
+     * would be a second place that can disagree with the host about it.
+     *
+     * A server that *failed* still resolves: §3.5 puts the reason in the
+     * transcript and the panel, not in a banner. Only a refusal — a bad id, a
+     * duplicate, a host too old — comes back as an error.
+     */
+    const done = await guard(set, async () => {
+      await agbrte().sessions.attachMcp(sessionId, config);
+      applySnapshot(set, get, await agbrte().sessions.snapshot(sessionId));
+      return true;
+    });
+    return done === true;
   },
 
   async leaveGroup() {

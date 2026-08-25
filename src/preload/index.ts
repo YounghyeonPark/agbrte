@@ -38,6 +38,7 @@ import {
 } from '../shared/ipc/contract.js';
 import type { ReasoningMode } from '../shared/ipc/contract.js';
 import type {
+  McpServerConfig,
   PermissionDecision,
   PermissionRequest,
   PermissionResolved,
@@ -161,6 +162,8 @@ const api: AgbrteApi = {
     ungroup: (sessionId: string) => ipcRenderer.invoke(CH.sessionsUngroup, sessionId),
     rename: (sessionId: string, title: string) =>
       ipcRenderer.invoke(CH.sessionsRename, sessionId, title),
+    attachMcp: (sessionId: string, config: McpServerConfig) =>
+      ipcRenderer.invoke(CH.sessionsAttachMcp, sessionId, config),
     listOnDisk: () => ipcRenderer.invoke(CH.sessionsListOnDisk),
     resume: (instanceId: string, sessionId: string) =>
       ipcRenderer.invoke(CH.sessionsResume, instanceId, sessionId),

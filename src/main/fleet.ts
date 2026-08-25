@@ -58,6 +58,8 @@ import type {
   ExecutionTarget,
   HostLocation,
   InstanceId,
+  McpServerConfig,
+  McpServerStatus,
   LineageId,
   AgbrteEvent,
   ModelCapabilityHint,
@@ -1965,6 +1967,29 @@ export class Fleet extends EventEmitter {
     // that has never read one answers `unknown session`. That helper turns the
     // answer into a load and retries.
     return this.onSession(sessionId, (connection) => connection.renameSession(sessionId, title));
+  }
+
+  /**
+   * Attach an MCP server to a session, on whichever host owns it (§17 Q20).
+   *
+   * Through `onSession` like the rename above, and for the same reason with an
+   * extra one on top: the session most likely to want this is one that came back
+   * from a restart, since a resume deliberately reconnects nothing — the env
+   * values were credentials the log does not carry. That helper loads it first,
+   * so re-attaching to yesterday's session is one gesture rather than two.
+   *
+   * `server` is passed through untouched. Its `env` is credentials, and this
+   * layer is a wire (§7): nothing here reads, copies, logs or reports it.
+   */
+  async attachMcp(sessionId: SessionId, server: McpServerConfig): Promise<McpServerStatus> {
+    const entry = this.ownerOf(sessionId);
+    if (!entry.connection.supports('session.attachMcp')) {
+      throw new AttachRefused(
+        `the host for ${labelOf(entry)} is too old to attach an MCP server to a session that ` +
+          `already exists. Update it, or name the server when you create the next session.`,
+      );
+    }
+    return this.onSession(sessionId, (connection) => connection.attachMcp(sessionId, server));
   }
 
   /** Take one session out of its group. Routed to whoever owns it. */

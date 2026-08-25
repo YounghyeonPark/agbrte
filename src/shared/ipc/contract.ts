@@ -41,6 +41,7 @@ import type {
   ContentBlock,
   ImageBlock,
   McpServerConfig,
+  McpServerStatus,
   PermissionDecision,
   RawTail,
   SkillConfig,
@@ -997,6 +998,19 @@ export interface AgbrteApi {
      * cannot be corrected is whatever the folder was called that morning.
      */
     rename(sessionId: string, title: string): Promise<Session>;
+    /**
+     * Attach an MCP server to this session, now rather than at creation.
+     *
+     * The server is started on the machine that owns the session, and the reply
+     * is what attached — including a failure, which belongs in the transcript
+     * rather than in an exception (§3.5).
+     *
+     * `config.env` is credentials. It crosses this boundary and no other: it is
+     * never read back, never rendered, and the log records env *names* only. The
+     * asymmetry is deliberate and is why a restart cannot reconnect a server by
+     * itself — which is the gap this method exists to let a person close.
+     */
+    attachMcp(sessionId: string, config: McpServerConfig): Promise<McpServerStatus>;
     /** Take a session out of its group. Leaving must be as easy as joining. */
     ungroup(sessionId: string): Promise<Session>;
     /** Sessions on disk across every attached host, not yet loaded. */
@@ -1274,6 +1288,7 @@ export const CH = {
   sessionsGroup: 'agbrte:sessions.group',
   sessionsUngroup: 'agbrte:sessions.ungroup',
   sessionsRename: 'agbrte:sessions.rename',
+  sessionsAttachMcp: 'agbrte:sessions.attachMcp',
   inboxMarkRead: 'agbrte:inbox.markRead',
   hostsSsh: 'agbrte:hosts.ssh',
   hostsDiscover: 'agbrte:hosts.discover',
