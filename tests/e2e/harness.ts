@@ -8,7 +8,7 @@
 
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { createServer as netCreateServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawn } from 'node:child_process';
@@ -114,8 +114,14 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
 }
 
 /** A temp directory that is a real git repository. */
-export async function makeRepo(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'agbrte-e2e-repo-'));
+export async function makeRepo(at?: string): Promise<string> {
+  // `at` names the directory instead of letting `mkdtemp` do it, because the
+  // folder's **basename is on screen** — the session header shows it, and the
+  // sidebar lists it. That does not matter to an assertion and matters entirely
+  // to a screenshot, where `agbrte-e2e-repo-5Y5Z4U` tells a reader they are
+  // looking at somebody's test fixture rather than at the product.
+  const dir = at ?? (await mkdtemp(join(tmpdir(), 'agbrte-e2e-repo-')));
+  await mkdir(dir, { recursive: true });
   // A real repo, because "edits a real repo" is the acceptance criterion and a
   // bare temp folder would not prove the workspace machinery works on one.
   execFileSync('git', ['init', '-q'], { cwd: dir });
@@ -177,12 +183,12 @@ export async function warmModel(model: string): Promise<void> {
  * Playwright will not let a describe block change the browser engine, so
  * WebKit-at-phone-size has to live on its own.
  */
-export async function serveWebFixture(): Promise<{
+export async function serveWebFixture(opts: { home?: string; repo?: string } = {}): Promise<{
   url: string;
   repo: string;
   stop: () => Promise<void>;
 }> {
-  const repo = await makeRepo();
+  const repo = await makeRepo(opts.repo);
   const port = await new Promise<number>((done, fail) => {
     const probe = netCreateServer();
     probe.once('error', fail);
@@ -193,10 +199,30 @@ export async function serveWebFixture(): Promise<{
     });
   });
   const url = `http://127.0.0.1:${port}/`;
+  /*
+   * `home` gives this server its own machine directory, the way `launch` does
+   * (§8). Without it the CLI uses the real `~/.agbrte`, so the host it starts is
+   * the developer's own — reopening every workspace they have ever attached, and
+   * reading their endpoints. Left optional rather than made unconditional
+   * because the specs that only need a page served are already passing against
+   * the shared one, and a caller that wants isolation now asks for it by name.
+   */
   const server = spawn(
     process.execPath,
     [resolve('dist/cli/agbrte.js'), 'web', repo, '--port', String(port)],
-    { stdio: 'ignore' },
+    {
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        ...(opts.home === undefined ? {} : { AGBRTE_HOME: opts.home }),
+        // The same three seconds `launch` uses, for the same reason and from the
+        // same observation: the host is detached, so killing the web server it
+        // came up for leaves it running on the production default of minutes.
+        // Four runs of the shots spec left four hosts holding four temp
+        // workspaces, which is how this was noticed rather than reasoned out.
+        AGBRTE_HOST_LINGER_MS: '3000',
+      },
+    },
   );
 
   const deadline = Date.now() + 30_000;

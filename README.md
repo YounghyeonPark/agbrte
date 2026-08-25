@@ -46,9 +46,9 @@ two builds on one computer, and what the test commands cover.
 
 | ![The dashboard](docs/shots/01-dashboard.png) | ![An open session](docs/shots/02-session.png) | ![The same app on a phone](docs/shots/03-phone.png) |
 | :-- | :-- | :-- |
-| Every session on every attached machine, ranked by **who needs a human**. | One session, transcript set to a readable measure rather than the window's width. | The same app in a phone browser on your own network, driving a run on a build box. |
+| Every session on every attached machine, ranked by **who needs a human**. | One session: a tool call, the permission it went through, and the answer. | The same app in a phone browser on your own network, driving a run on a build box. |
 
-*(From the e2e suite, so the content is fixture text and the runtime is `echo`.)*
+*(Real turns against a local `qwen2.5:7b`, captured by `npx playwright test shots --grep @shots`.)*
 
 ## The one idea
 
