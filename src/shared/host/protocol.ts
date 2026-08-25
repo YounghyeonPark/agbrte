@@ -32,6 +32,8 @@ import type {
   PermissionDecision,
   AgentId,
   OutboundMessage,
+  OutboundPeerMessage,
+  PeerDelivery,
   SplitProposal,
   ProgressSignal,
   RuntimeEvent,
@@ -192,6 +194,15 @@ export type HostCommand =
       callId: RequestId;
       result: { ok: boolean; summary: string; content: string };
     }
+  /**
+   * The answer to `peerAsk` (§17 Q22).
+   *
+   * Always sent, for `toolResult`'s reason: `message_peer` is awaited inside a
+   * turn in the other process, and §17 Q22's rule is that a message is *refused
+   * rather than dropped* — a model that is not told its message failed will wait
+   * for a reply that was never coming.
+   */
+  | { t: 'peerDelivered'; askId: RequestId; delivery: PeerDelivery }
   | { t: 'shutdown' };
 
 // -------------------------------------------------------------- host → main
@@ -261,6 +272,29 @@ export type HostMessage =
    * loops is what makes it an event in the log.
    */
   | { t: 'message'; handleId: HandleId; message: OutboundMessage }
+  /**
+   * An agent addressing a *different session* in its group (§17 Q22).
+   *
+   * A request and not a one-way `message`, and the difference is the whole
+   * reason this exists separately. `sendMessage` returns nothing, so it can be
+   * posted and forgotten; `sendPeerMessage` returns a `PeerDelivery`, because a
+   * message to another session can be *refused* — wrong group, another machine,
+   * a session that has finished — and §17 Q22 requires that refusal to reach the
+   * model that sent it rather than being swallowed.
+   *
+   * It had to cross this channel and did not, which is the third time a hook
+   * added only to the owner's own factory has been left undefined on every real
+   * session (`sessionTools` and `compact` were the first two). The tool's
+   * refusal was `this session is not in a group` — said to sessions that were
+   * demonstrably in one, because the context the runtime is handed is assembled
+   * on the far side of this boundary, and every unit test builds one by hand.
+   */
+  | {
+      t: 'peerAsk';
+      askId: RequestId;
+      handleId: HandleId;
+      message: OutboundPeerMessage;
+    }
   /** An agent asking to split its session (§4.3). One-way, like `message`. */
   | { t: 'proposeSplit'; handleId: HandleId; proposal: Omit<SplitProposal, 'proposalId'> }
   /**

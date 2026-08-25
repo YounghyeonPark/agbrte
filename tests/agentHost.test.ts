@@ -24,6 +24,7 @@ import {
   type AgentHandle,
   type AgentRuntime,
   type AgentSpec,
+  type OutboundPeerMessage,
   type ProgressSignal,
   type RuntimeCapabilities,
   type RuntimeContext,
@@ -494,6 +495,116 @@ describe('session tools cross the boundary', () => {
     const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
     await r.hosted.start(spec(), context());
     expect(hostCtx!.sessionTools).toBeUndefined();
+  });
+});
+
+/**
+ * §17 Q22's group channel, at the boundary — the third hook to be left on the
+ * wrong side of it.
+ *
+ * `compactAsk` went first and `sessionTools` second, and the note above says why
+ * both were invisible: a unit test hands a runtime a context it built itself and
+ * never crosses this seam. `sendPeerMessage` and `groupPeers` were then omitted
+ * from the same assembly, so `message_peer` refused with **"this session is not
+ * in a group"** on sessions that were demonstrably in one — the log carried
+ * `session.joined_group`, the host answered with the group when asked, and the
+ * agent, which runs over here, had never been told.
+ *
+ * Found by grouping three sessions and watching a tester try to report a failing
+ * test to the engineer who could fix it. What it cost was not one tool call: it
+ * was the whole reason to put sessions in a group.
+ */
+describe('the group channel crosses the boundary', () => {
+  const message = (): OutboundPeerMessage => ({
+    toSessionId: 's-other',
+    kind: 'report',
+    text: 'the top-row case fails',
+  });
+
+  it('carries the peer list and delivers back on the owner', async () => {
+    let hostCtx: RuntimeContext | null = null;
+    const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
+
+    const sent: OutboundPeerMessage[] = [];
+    await r.hosted.start(
+      spec(),
+      context({
+        groupPeers: [{ sessionId: 's-other', title: 'logic: the board and the winner' }],
+        sendPeerMessage: async (m) => {
+          sent.push(m);
+          return { accepted: true };
+        },
+      }),
+    );
+
+    // The list is data and crosses as data; without it `message_peer` has
+    // nowhere to send and refuses before it ever reaches the wire.
+    expect(hostCtx!.groupPeers).toEqual([
+      { sessionId: 's-other', title: 'logic: the board and the winner' },
+    ]);
+
+    // The closure did not cross. It ran on the owner's side, where the sessions
+    // and the logs are, and only the verdict came back.
+    await expect(hostCtx!.sendPeerMessage!(message())).resolves.toEqual({ accepted: true });
+    expect(sent).toEqual([message()]);
+  });
+
+  it('passes a refusal through verbatim rather than swallowing it', async () => {
+    // §17 Q22: refused rather than dropped. A model told nothing waits for a
+    // reply that is not coming; a model told "not in your group" can act.
+    let hostCtx: RuntimeContext | null = null;
+    const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
+
+    await r.hosted.start(
+      spec(),
+      context({
+        groupPeers: [{ sessionId: 's-other', title: 'x' }],
+        sendPeerMessage: async () => ({ accepted: false, reason: 'that session has finished' }),
+      }),
+    );
+
+    await expect(hostCtx!.sendPeerMessage!(message())).resolves.toEqual({
+      accepted: false,
+      reason: 'that session has finished',
+    });
+  });
+
+  it('answers rather than hanging when delivery throws on the owner', async () => {
+    let hostCtx: RuntimeContext | null = null;
+    const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
+
+    await r.hosted.start(
+      spec(),
+      context({
+        groupPeers: [{ sessionId: 's-other', title: 'x' }],
+        sendPeerMessage: async () => {
+          throw new Error('the other log could not be written');
+        },
+      }),
+    );
+
+    // A turn is blocked on this promise in the other process, so a throw has to
+    // come back as a refusal — the same rule `toolResult` follows.
+    await expect(hostCtx!.sendPeerMessage!(message())).resolves.toMatchObject({
+      accepted: false,
+      reason: 'the other log could not be written',
+    });
+  });
+
+  it('gives a session in no group neither half', async () => {
+    /*
+     * Both or neither, which is the tool's own rule.
+     *
+     * A sender with no list is a guessing game and a list with no sender is a
+     * tease, so `message_peer`'s refusal keys on the sender being absent. Wiring
+     * the sender unconditionally here would turn "this session is not in a
+     * group" into a message posted into an empty room.
+     */
+    let hostCtx: RuntimeContext | null = null;
+    const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
+    await r.hosted.start(spec(), context());
+    expect(hostCtx!.groupPeers).toBeUndefined();
+    expect(hostCtx!.sendPeerMessage).toBeUndefined();
   });
 });
 

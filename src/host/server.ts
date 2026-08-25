@@ -18,6 +18,8 @@ import type {
   AgentSpec,
   CompactedHistory,
   ModelCapabilityHint,
+  OutboundPeerMessage,
+  PeerDelivery,
   PermissionDecision,
   RuntimeContext,
 } from '@shared/types/index.js';
@@ -44,6 +46,8 @@ export class AgentHostServer {
   /** Permission asks awaiting an answer from the other side. */
   private readonly asks = new Map<RequestId, (d: PermissionDecision) => void>();
   private readonly compactions = new Map<RequestId, (h: CompactedHistory | null) => void>();
+  /** In flight `message_peer` calls, waiting for the owner's `peerDelivered`. */
+  private readonly peerAsks = new Map<RequestId, (d: PeerDelivery) => void>();
   /**
    * Session-tool calls awaiting the owner's answer (§17 Q20).
    *
@@ -245,6 +249,16 @@ export class AgentHostServer {
         return;
       }
 
+      case 'peerDelivered': {
+        const resolve = this.peerAsks.get(command.askId);
+        this.peerAsks.delete(command.askId);
+        // Same as `compacted` and `toolResult`: a turn is waiting on this, so
+        // the owner always answers — an unknown id means the handle went away
+        // and took the loop with it.
+        resolve?.(command.delivery);
+        return;
+      }
+
       case 'toolResult': {
         const resolve = this.toolCalls.get(command.callId);
         this.toolCalls.delete(command.callId);
@@ -284,6 +298,7 @@ export class AgentHostServer {
       seedHistory?: RuntimeContext['seedHistory'];
       modelEgress?: RuntimeContext['modelEgress'];
       peers?: RuntimeContext['peers'];
+      groupPeers?: RuntimeContext['groupPeers'];
       sessionTools?: Array<{ name: string; description: string; schema: object }>;
     },
     abort: AbortController,
@@ -333,6 +348,30 @@ export class AgentHostServer {
       // owner of the log, which is the only party that cannot be wrong about
       // either — nothing between here and there can forge attribution (§13).
       sendMessage: (message) => this.channel.post({ t: 'message', handleId, message }),
+      /*
+       * The cross-session pair, supplied together or not at all (§17 Q22).
+       *
+       * `message_peer` refuses unless it has both, which is why the list is
+       * conditional and the sender is not: a session in no group arrives here
+       * with no `groupPeers`, the tool sees a sender with nothing to address,
+       * and says there is no group. Wiring the sender unconditionally would
+       * break that pairing.
+       *
+       * A round trip rather than a post, because a peer message can be refused
+       * and the refusal belongs to the model that sent it — the same shape as
+       * `requestPermission` and `toolCall`, and for the same reason.
+       */
+      ...(ctx.groupPeers !== undefined
+        ? {
+            groupPeers: ctx.groupPeers,
+            sendPeerMessage: (message: OutboundPeerMessage) =>
+              new Promise<PeerDelivery>((resolve) => {
+                const askId = `${handleId}:${(this.nextAskId += 1)}`;
+                this.peerAsks.set(askId, resolve);
+                this.channel.post({ t: 'peerAsk', askId, handleId, message });
+              }),
+          }
+        : {}),
       proposeSplit: (proposal) => this.channel.post({ t: 'proposeSplit', handleId, proposal }),
       requestPermission: (ask) =>
         new Promise<PermissionDecision>((resolve) => {

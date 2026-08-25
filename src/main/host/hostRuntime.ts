@@ -17,6 +17,7 @@
 import type {
   AgentHandle,
   CompactedHistory,
+  PeerDelivery,
   AgentRuntime,
   AgentSpec,
   RuntimeCapabilities,
@@ -270,6 +271,37 @@ export class HostClient {
         this.contexts.get(message.handleId)?.proposeSplit?.(message.proposal);
         return;
 
+      case 'peerAsk': {
+        /*
+         * Deliver to the other session, here, where the sessions are.
+         *
+         * A reply always goes back, like `toolResult` and unlike `message`: a
+         * turn in the other process is blocked on this one. A handle that has
+         * gone, or a delivery that threw, becomes a *refusal the model can read*
+         * — §17 Q22's "refused rather than dropped" — because silence would hang
+         * the turn and a swallowed failure would leave an agent waiting for an
+         * answer nobody is going to send.
+         */
+        const ctx = this.contexts.get(message.handleId);
+        const reply = (delivery: PeerDelivery): void =>
+          this.opts.channel.post({ t: 'peerDelivered', askId: message.askId, delivery });
+
+        if (ctx?.sendPeerMessage === undefined) {
+          reply({ accepted: false, reason: 'this session is no longer live' });
+          return;
+        }
+        void ctx
+          .sendPeerMessage(message.message)
+          .then(reply)
+          .catch((err: unknown) =>
+            reply({
+              accepted: false,
+              reason: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        return;
+      }
+
       case 'ask': {
         const ctx = this.contexts.get(message.handleId);
         if (!ctx) {
@@ -477,6 +509,16 @@ export class HostBackedRuntime implements AgentRuntime {
     const serializable = {
       ...(ctx.seedHistory !== undefined ? { seedHistory: ctx.seedHistory } : {}),
       ...(ctx.peers !== undefined ? { peers: ctx.peers } : {}),
+      /*
+       * The group's other sessions, as data — the sending half is a callback and
+       * arrives by `peerAsk` (§17 Q22).
+       *
+       * Both halves or neither is the rule the tool enforces, and it has to hold
+       * across this boundary too: `message_peer` refuses when either is missing,
+       * so sending this list without wiring `peerAsk` would produce a tool that
+       * lists addresses it cannot write to.
+       */
+      ...(ctx.groupPeers !== undefined ? { groupPeers: ctx.groupPeers } : {}),
       ...(ctx.modelEgress !== undefined ? { modelEgress: ctx.modelEgress } : {}),
       // Declarations only — `run` stays on this side, where the connection is
       // (§17 Q20). The host calls back with `toolCall`; see `handle` below.
