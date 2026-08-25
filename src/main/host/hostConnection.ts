@@ -186,6 +186,21 @@ export class HostConnection extends EventEmitter {
     return this.identity;
   }
 
+  /**
+   * Whether this link is gone — dropped, or closed by us.
+   *
+   * Exposed because a call that failed *because the connection ended* is a
+   * different kind of answer from a call the host refused, and only the caller
+   * can decide what to do with the difference. `Fleet.list` is the case that
+   * needed it: one machine restarting must not fail the list for every machine,
+   * and "was this link still there" is the question that separates that from a
+   * host that answered with an error. Reading the field beats matching on the
+   * message, which is how this was nearly written.
+   */
+  get isClosed(): boolean {
+    return this.closed !== null;
+  }
+
   private mintId(): string {
     this.nextId += 1;
     return `c${this.nextId}`;

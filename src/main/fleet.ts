@@ -342,6 +342,23 @@ interface Entry extends AttachedHost {
    * and means "deliver as they arrive"; see `onEvent` for what it is for.
    */
   holding?: Array<[string, AgbrteEvent]>;
+  /**
+   * What this host last said it holds, kept for the window where it cannot say.
+   *
+   * A restart takes a host away for as long as a bundle takes to deploy and a
+   * process takes to come up, and during that window the sessions it holds have
+   * not changed at all — nothing was closed, nothing moved, the folder on disk
+   * is exactly as it was. So the truthful answer to "what is on that machine"
+   * is the last one it gave, and the fact that it cannot be asked right now is
+   * carried by `link`, which the row shows.
+   *
+   * The alternative was an empty list, which says something false about a
+   * machine mid-update, and it is the same false thing an error says: the
+   * sidebar loses every session on that machine for the length of the restart.
+   */
+  lastSessions?: Session[];
+  /** As `lastSessions`, for the folders' unopened rows. */
+  lastOnDisk?: Array<Record<string, unknown>>;
 }
 
 /**
@@ -1764,12 +1781,46 @@ export class Fleet extends EventEmitter {
   async list(): Promise<Session[]> {
     const perHost = await Promise.all(
       [...this.entries.values()].map(async (entry) => {
-        const sessions = await entry.connection.list();
-        for (const session of sessions) this.owners.set(session.sessionId, entry.instanceId);
-        return sessions;
+        try {
+          const sessions = await entry.connection.list();
+          for (const session of sessions) this.owners.set(session.sessionId, entry.instanceId);
+          entry.lastSessions = sessions;
+          return sessions;
+        } catch (err) {
+          return this.whileUnreachable(entry, err, entry.lastSessions);
+        }
       }),
     );
     return bubbleAcrossHosts(perHost.flat()).sort(byAttentionThenRecency);
+  }
+
+  /**
+   * One host that cannot answer must not take the whole answer with it.
+   *
+   * `Promise.all` over the fleet means the *first* rejection is the result, so
+   * pressing Update on one machine failed `sessions.list` for every machine —
+   * on screen, `Error invoking remote method 'agbrte:sessions.list': closed
+   * locally`, which describes our own deliberate disconnect and names nothing a
+   * person can do. The sessions were all fine; the list simply asked a socket
+   * that had been closed a moment earlier on purpose.
+   *
+   * Narrow on purpose. A host that is **connected** and fails a read has a real
+   * failure, and swallowing it would hide a bug behind an empty sidebar — so
+   * that one is rethrown exactly as before. What is tolerated is the state the
+   * fleet already knows about and already shows: an entry being restarted by
+   * us, a link marked down, or the connection the call went out on having
+   * ended under it.
+   *
+   * The third is not covered by the second. A link that drops by itself rejects
+   * the calls in flight and runs the close handler that sets `link`, and the
+   * order between those two is the socket's business — so a read can land here
+   * a tick before the entry says what already happened to it. `isClosed` is the
+   * connection's own answer and does not depend on that ordering.
+   */
+  private whileUnreachable<T>(entry: Entry, err: unknown, last: T[] | undefined): T[] {
+    const gone = entry.updating === true || entry.link !== 'connected' || entry.connection.isClosed;
+    if (!gone) throw err;
+    return last ?? [];
   }
 
   /** Answer a split proposal on whichever host owns the session (§4.3). */
@@ -1937,29 +1988,44 @@ export class Fleet extends EventEmitter {
     }>
   > {
     const perHost = await Promise.all(
-      [...this.entries.values()].map(async (entry) =>
-        (await entry.connection.listOnDisk()).map((s) => {
-          /*
-           * Learned here as well as from loaded sessions and events.
-           *
-           * `owners` is how a command finds the host to send to, and it used to
-           * be filled only by sessions a host had *opened* — so a row in the
-           * sidebar that nobody had clicked was unroutable, and anything acting
-           * on it (renaming, for one) answered "no attached host owns that
-           * session" about a session sitting in a folder this very host serves.
-           */
-          this.owners.set(s.sessionId as SessionId, entry.instanceId);
-          return {
-          // The host's answer wins where it gives one: a host serving several
-          // workspaces knows which of them a row came from, and the entry's own
-          // id is only right for a host that has exactly one.
-            ...s,
-            instanceId: (s.instanceId as InstanceId | undefined) ?? entry.instanceId,
-          };
-        }),
-      ),
+      [...this.entries.values()].map(async (entry) => {
+        try {
+          const rows = (await entry.connection.listOnDisk()).map((s) => {
+            /*
+             * Learned here as well as from loaded sessions and events.
+             *
+             * `owners` is how a command finds the host to send to, and it used
+             * to be filled only by sessions a host had *opened* — so a row in
+             * the sidebar that nobody had clicked was unroutable, and anything
+             * acting on it (renaming, for one) answered "no attached host owns
+             * that session" about a session sitting in a folder this very host
+             * serves.
+             */
+            this.owners.set(s.sessionId as SessionId, entry.instanceId);
+            return {
+              // The host's answer wins where it gives one: a host serving
+              // several workspaces knows which of them a row came from, and the
+              // entry's own id is only right for a host that has exactly one.
+              ...s,
+              instanceId: (s.instanceId as InstanceId | undefined) ?? entry.instanceId,
+            };
+          });
+          entry.lastOnDisk = rows;
+          return rows;
+        } catch (err) {
+          // The same rule as `list`, and the same reason: these rows are folders
+          // on a disk that a restart does not touch. See `whileUnreachable`.
+          return this.whileUnreachable(entry, err, entry.lastOnDisk);
+        }
+      }),
     );
-    return perHost.flat();
+    return perHost.flat() as Array<{
+      instanceId: InstanceId;
+      sessionId: string;
+      title: string;
+      goal: string;
+      group?: { groupId: string; name: string };
+    }>;
   }
 
   hostOf(sessionId: SessionId): AttachedHost | null {
@@ -2150,12 +2216,28 @@ export class Fleet extends EventEmitter {
     Array<{ instanceId: InstanceId; request: PermissionRequest }>
   > {
     const perHost = await Promise.all(
-      [...this.entries.values()].map(async (entry) =>
-        (await entry.connection.pendingPermissions()).map((request) => ({
-          instanceId: entry.instanceId,
-          request,
-        })),
-      ),
+      [...this.entries.values()].map(async (entry) => {
+        try {
+          return (await entry.connection.pendingPermissions()).map((request) => ({
+            instanceId: entry.instanceId,
+            request,
+          }));
+        } catch (err) {
+          /*
+           * Nothing remembered here, unlike `list`.
+           *
+           * A gate on a host that cannot be reached is a question that cannot be
+           * answered — clicking Allow would go nowhere — so showing the last
+           * known one would be offering a button that does nothing. The request
+           * is durable on the host and comes back with the link (§5.4).
+           */
+          return this.whileUnreachable<{ instanceId: InstanceId; request: PermissionRequest }>(
+            entry,
+            err,
+            undefined,
+          );
+        }
+      }),
     );
     return perHost.flat();
   }

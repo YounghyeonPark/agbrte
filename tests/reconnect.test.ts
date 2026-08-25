@@ -139,6 +139,40 @@ describe('a dropped link', () => {
     expect(detached).toEqual([]);
   });
 
+  /**
+   * A machine that cannot answer must not take the answer for every machine.
+   *
+   * Reported from a real window: pressing Update on a remote host put
+   * `Error invoking remote method 'agbrte:sessions.list': Error: closed
+   * locally` across the top of the app. That sentence describes *our own*
+   * deliberate disconnect and names nothing anybody can act on — and behind it
+   * was every other machine's list, lost to `Promise.all`, because one entry
+   * rejecting is the whole result rejecting.
+   *
+   * Two states reach this, one on purpose and one by accident: `updateHost`
+   * closes the link to restart the host, and a tunnel dies on its own. This
+   * covers the second, which is the harder one — the entry learns it is down
+   * from a close handler that races the rejection of the calls in flight.
+   *
+   * The answer is the last one that host gave, not an empty list. Nothing about
+   * those sessions changed when the link did: they are folders on a disk on the
+   * other side, and the row already says the link is reconnecting.
+   */
+  it('answers what the host last said, rather than failing the list', async () => {
+    const r = await rig();
+    await r.fleet.attach({ target: { kind: 'local' }, workspaceRoot: r.root });
+    await r.fleet.createSession(r.instanceId, { title: 'still here', goal: 'g' });
+
+    expect((await r.fleet.list()).map((s) => s.title)).toEqual(['still here']);
+
+    r.unplug();
+    await until(() => r.fleet.hosts()[0]?.link === 'reconnecting');
+
+    expect((await r.fleet.list()).map((s) => s.title)).toEqual(['still here']);
+    // The unopened rows come from the same call for the same reason.
+    await expect(r.fleet.listOnDisk()).resolves.toBeInstanceOf(Array);
+  });
+
   it('replays what happened while it was down, losing nothing', async () => {
     const r = await rig();
     await r.fleet.attach({ target: { kind: 'local' }, workspaceRoot: r.root });
