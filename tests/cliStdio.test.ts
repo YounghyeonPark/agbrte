@@ -386,6 +386,40 @@ describe('what the adapter refuses to promise', () => {
 });
 
 describe('the arguments a run is given', () => {
+  it('ends the options before the prompt, so a variadic flag cannot eat it', async () => {
+    /*
+     * `--allowedTools` and `--disallowedTools` are variadic (`<tools...>`), and
+     * they are the last flags emitted — so the prompt that followed one was read
+     * as another tool name and the CLI answered `Input must be provided either
+     * through stdin or as a prompt argument when using --print`. A turn that did
+     * nothing, stopped `transport`, with nothing on screen to say why.
+     *
+     * It hid because §13 scopes writing to *inside* the workspace and
+     * `compilePolicy` refuses to widen that for an allowlist, so the default
+     * policy emits no flag at all. The first seat given an unscoped grant lost
+     * every turn. Reproduced against the real CLI both ways before the fix.
+     */
+    const seen: string[][] = [];
+    const runtime = new CliStdioRuntime({
+      manifest: CLAUDE_CODE_MANIFEST,
+      spawnFn: scriptedSpawn([[]], seen),
+    });
+    const handle = await runtime.start(
+      spec({ toolPolicy: { rules: [{ tool: 'bash', action: 'allow' }], defaultAction: 'ask' } }),
+      context(),
+    );
+    const drained = drain(handle.events);
+    await handle.send({ content: [{ type: 'text', text: 'go' }] });
+    await drained;
+
+    const argv = seen[0]!;
+    expect(argv).toContain('--allowedTools');
+    // Adjacent, not merely present: `--` anywhere earlier would not stop the
+    // variadic, and the prompt is the last argument.
+    expect(argv.at(-2)).toBe('--');
+    expect(argv.at(-1)).toContain('go');
+  });
+
   it('suppresses deterministic mode under vendor-cli-session', async () => {
     // `--bare` skips OAuth and keychain reads, and that login is the entire
     // reason for invoking the user's own CLI.

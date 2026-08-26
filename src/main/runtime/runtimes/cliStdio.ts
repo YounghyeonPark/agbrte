@@ -602,7 +602,33 @@ class CliStdioHandle implements AgentHandle {
 
     if (inv.resumeArgs && this.sessionId !== null) argv.push(...inv.resumeArgs(this.sessionId));
 
-    if (inv.promptMode === 'argv') argv.push(prompt);
+    /*
+     * `--` before the prompt, and it is load-bearing.
+     *
+     * `--allowedTools` and `--disallowedTools` take a **variadic** list
+     * (`<tools...>` in `claude --help`), so an argument following one is read as
+     * another tool name rather than as the prompt. Those two flags are emitted
+     * immediately above this line, which means a turn carrying any allowlist at
+     * all lost its prompt and the CLI answered:
+     *
+     *     Error: Input must be provided either through stdin or as a prompt
+     *     argument when using --print
+     *
+     * — surfacing as a `transport` stop, a turn that did nothing, and no clue
+     * why. Invisible until now because §13's default table scopes writing to
+     * *inside* the workspace and `compilePolicy` refuses to widen that for an
+     * allowlist, so the common case compiles to an **empty** allow list and
+     * emits no flag. The first policy that grants anything unscoped kills every
+     * turn. Reproduced against the real CLI, both ways, before this line was
+     * written.
+     *
+     * Unconditional rather than a manifest field, because it is also the fix for
+     * a prompt that merely *begins* with a hyphen — which is parsed as a flag by
+     * every one of these tools, allowlist or not. `--` is the POSIX end-of-
+     * options marker and both parsers behind these manifests implement it; a CLI
+     * that ever needs otherwise can earn a field then.
+     */
+    if (inv.promptMode === 'argv') argv.push('--', prompt);
 
     return argv;
   }
