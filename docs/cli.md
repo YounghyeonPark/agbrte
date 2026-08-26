@@ -25,7 +25,13 @@ nobody to ask, and waiting would be a job that never ends.
 `agbrte web .` serves the app over a WebSocket instead of Electron IPC. The
 renderer is unchanged, so what a phone sees is what the desktop sees.
 
-**There is no login:** anyone who can reach the address can drive the session, so
-the address is the entire boundary. It binds to loopback unless you name
+**The link carries a token, and that link is the credential.** The socket admits
+nothing until a client presents it, so reaching the address is no longer enough —
+which it used to be, and which meant any web page that could reach your loopback
+could read your sessions. A fresh token is minted per run; `--token <value>` pins
+one so a phone bookmark survives a restart.
+
+The address still decides who can *knock*. It binds to loopback unless you name
 something else, and a tailnet address (`--bind $(tailscale ip -4)`) is the
-intended answer. Do not bind it to `0.0.0.0`.
+intended answer. Do not bind it to `0.0.0.0`: a token is not a reason to put a
+shell on the internet.

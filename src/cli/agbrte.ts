@@ -39,6 +39,7 @@ import { hostHolding } from '../host/legacyHost.js';
 import { connect } from '@shared/host/socketChannel.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import { HostConnection } from '@main/host/hostConnection.js';
+import { newControlToken } from '@shared/host/loopback.js';
 import { parse } from './args.js';
 import { attach } from './attach.js';
 import { once } from './once.js';
@@ -73,8 +74,11 @@ Options for attach:
 Options for web:
   --port <n>                  default 7717
   --bind <addr>               default 127.0.0.1. Use your tailnet address to
-                              reach it from a phone. Anyone who can reach the
-                              address can drive the session — there is no login.
+                              reach it from a phone. The address decides who can
+                              reach this at all, so name it deliberately.
+  --token <value>             the bearer the printed link carries. A fresh one
+                              is minted per run; pin one to keep a bookmark
+                              working across restarts.
 
 Options for run:
   --yes                       allow every permission request (else each is denied)
@@ -295,6 +299,16 @@ async function main(): Promise<number> {
       rendererDir: resolve(here, '../renderer'),
       port: Number(value('--port') ?? 7717),
       host: bind,
+      /*
+       * Fresh per run unless the caller pins one.
+       *
+       * A new token every restart is the safe default and the wrong one for a
+       * phone: the bookmark stops working and the person is back at the
+       * terminal. `--token` is how somebody says "this address, this bearer,
+       * every time" — and passing it is a decision they make in the open rather
+       * than a default this chose for them.
+       */
+      token: value('--token') ?? newControlToken(),
     });
 
     process.stdout.write(`${c.dim(`agbrte web  ${path}`)}\n${server.url}\n`);
@@ -303,10 +317,14 @@ async function main(): Promise<number> {
         c.dim('Loopback only. Pass --bind <your tailnet address> to reach it from a phone.\n'),
       );
     } else {
-      // Said plainly every time, because it is true every time and the address
-      // is the entire boundary: there is no login in front of this.
+      // Said plainly every time, because it is true every time. The token in
+      // the link decides who is admitted; the address still decides who can
+      // knock, and that is the half a credential cannot do anything about.
       process.stdout.write(
-        c.warn(`Anyone who can reach ${bind} can drive this session. There is no login.\n`),
+        c.warn(
+          `Reachable by anything that can address ${bind}. The link above carries the token ` +
+            `that admits a client — treat it as the credential it is.\n`,
+        ),
       );
     }
 

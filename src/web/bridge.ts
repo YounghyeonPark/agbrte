@@ -24,6 +24,45 @@ import { CH, PUSH } from '../shared/ipc/contract.js';
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 
+/** Where the token is remembered, so a reload does not need the link again. */
+const TOKEN_KEY = 'agbrte:web-token';
+
+/**
+ * The bearer for this server, out of the link and then out of the way.
+ *
+ * It arrives in the **fragment** (`#t=…`), which is the one part of a URL a
+ * browser never sends anywhere: not to the server, not into an access log, not
+ * in a `Referer` to whatever the page links to next. A query string would have
+ * been in the host's own log the first time anybody opened the page.
+ *
+ * Stripped from the address bar once read, so a screenshot or a shoulder does
+ * not carry it, and kept in `sessionStorage` — per tab, gone when the tab is —
+ * so a reload does not send the person back to the terminal that printed it.
+ *
+ * `localStorage` would be the wrong shelf: it is shared by every page on this
+ * origin and outlives the browsing session, which for a credential is two
+ * properties nobody asked for.
+ */
+function token(): string {
+  const fromHash = /[#&]t=([^&]+)/.exec(location.hash)?.[1];
+  if (fromHash !== undefined) {
+    const value = decodeURIComponent(fromHash);
+    try {
+      sessionStorage.setItem(TOKEN_KEY, value);
+      history.replaceState(null, '', location.pathname + location.search);
+    } catch {
+      // A browser that refuses storage still works for this tab; the token is
+      // already in hand and only a reload would need the link again.
+    }
+    return value;
+  }
+  try {
+    return sessionStorage.getItem(TOKEN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
 function connect(): {
   call: (channel: string, args: unknown[]) => Promise<unknown>;
   fire: (channel: string, args: unknown[]) => void;
@@ -35,6 +74,8 @@ function connect(): {
   let socket: WebSocket | null = null;
   let nextId = 0;
   let backoff = 250;
+  /** Whether this socket has been through the handshake yet. */
+  let admitted = false;
 
   const open = (): void => {
     const url = new URL('/__agbrte/socket', location.href);
@@ -44,16 +85,33 @@ function connect(): {
 
     next.onopen = () => {
       backoff = 250;
-      for (const frame of outbox.splice(0)) next.send(frame);
+      /*
+       * The token first, and nothing else until it is acknowledged.
+       *
+       * §6.2's handshake, which the host's own control channel already speaks:
+       * the server wires no API to this socket until a frame proves who is on
+       * it. Flushing the outbox here instead would send every queued call into
+       * a connection that is about to be closed.
+       */
+      admitted = false;
+      next.send(JSON.stringify({ t: 'auth', token: token() }));
     };
     next.onmessage = (e: MessageEvent) => {
       const message = JSON.parse(String(e.data)) as {
+        t?: string;
         id?: number;
         value?: unknown;
         error?: string;
         push?: string;
         payload?: unknown;
       };
+      if (!admitted) {
+        // Anything before the acknowledgement is not ours to read.
+        if (message.t !== 'auth-ok') return;
+        admitted = true;
+        for (const frame of outbox.splice(0)) next.send(frame);
+        return;
+      }
       if (message.push !== undefined) {
         for (const cb of listeners.get(message.push) ?? []) cb(message.payload);
         return;
@@ -241,9 +299,9 @@ const api: AgbrteApi = {
    * The user's own terminal, routed like everything else (§7).
    *
    * Which means a phone gets a real shell on the machine `agbrte web` is
-   * serving from, and that is worth stating rather than sliding past. §8.1 is
-   * explicit that there is **no login** in front of this server; what makes it
-   * defensible is that a `read-write` web client can already start an agent with
+   * serving from, and that is worth stating rather than sliding past. The token
+   * on the socket says *who is admitted*, not *what they may do*; what makes
+   * this defensible is that a `read-write` web client can already start an agent with
    * a shell tool on that same machine and answer its own permission prompt from
    * the same screen. This is a shorter path to reach a person already has, not a
    * new one — and it is refused in exactly the places the desktop client is

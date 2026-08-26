@@ -198,7 +198,15 @@ export async function serveWebFixture(opts: { home?: string; repo?: string } = {
       probe.close(() => done(chosen));
     });
   });
-  const url = `http://127.0.0.1:${port}/`;
+  /*
+   * A pinned token, because the server now mints one per run and prints it in a
+   * link this fixture never reads — it spawns the CLI with `stdio: 'ignore'`.
+   * Fixed rather than parsed out of stdout: the value is not what any of these
+   * specs are about, and a fixture that scrapes a log is a fixture that breaks
+   * when somebody rewords a line.
+   */
+  const token = 'e2e-fixture-token';
+  const url = `http://127.0.0.1:${port}/#t=${token}`;
   /*
    * `home` gives this server its own machine directory, the way `launch` does
    * (§8). Without it the CLI uses the real `~/.agbrte`, so the host it starts is
@@ -209,7 +217,7 @@ export async function serveWebFixture(opts: { home?: string; repo?: string } = {
    */
   const server = spawn(
     process.execPath,
-    [resolve('dist/cli/agbrte.js'), 'web', repo, '--port', String(port)],
+    [resolve('dist/cli/agbrte.js'), 'web', repo, '--port', String(port), '--token', token],
     {
       stdio: 'ignore',
       env: {

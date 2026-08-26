@@ -52,3 +52,59 @@ test('serves the app and drives a session over a socket', async ({ page }) => {
     await web.stop();
   }
 });
+
+/**
+ * The gate, through a real socket rather than through the pure rule.
+ *
+ * `webAuth.test.ts` covers what `admitsFrame` decides, and runs in CI. This
+ * covers the half a pure function cannot: that the decision is actually wired to
+ * the socket, that nothing answers before it, and that the token travels in a
+ * link the way the printed one does.
+ *
+ * The frame below is not invented. It is what a page on `https://example.com`
+ * sent to a real host on this machine — over `ws://127.0.0.1:7717`, needing only
+ * the browser's Local Network Access prompt — and got a session list back from.
+ */
+test('answers nothing on a socket that has not shown the token', async () => {
+  const web = await serveWebFixture();
+
+  try {
+    const socketUrl = `${web.url.split('#')[0]!.replace('http://', 'ws://')}__agbrte/socket`;
+    const token = web.url.split('#t=')[1]!;
+
+    /** Send one frame, report the first reply, or say that none came. */
+    const ask = async (frames: unknown[]): Promise<string> => {
+      const { WebSocket } = await import('ws');
+      return new Promise<string>((done) => {
+        const socket = new WebSocket(socketUrl);
+        const finish = (verdict: string): void => {
+          clearTimeout(timer);
+          try {
+            socket.close();
+          } catch {
+            // already gone
+          }
+          done(verdict);
+        };
+        const timer = setTimeout(() => finish('silence'), 4000);
+        socket.on('open', () => {
+          for (const frame of frames) socket.send(JSON.stringify(frame));
+        });
+        socket.on('message', (raw: unknown) => finish(String(raw)));
+        socket.on('close', () => finish('closed'));
+        socket.on('error', () => finish('closed'));
+      });
+    };
+
+    const list = { id: 1, channel: 'agbrte:sessions.list', args: [] };
+
+    // The attack, verbatim: a valid call with no handshake in front of it.
+    expect(await ask([list])).toBe('closed');
+    // A wrong token is the same answer, and specifically not a different one.
+    expect(await ask([{ t: 'auth', token: 'not-the-token' }, list])).toBe('closed');
+    // And the real one is admitted, so this is a gate rather than a wall.
+    expect(await ask([{ t: 'auth', token }])).toContain('auth-ok');
+  } finally {
+    await web.stop();
+  }
+});

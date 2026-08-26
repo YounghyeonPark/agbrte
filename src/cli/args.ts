@@ -43,7 +43,7 @@ export const KNOWN_COMMANDS = new Set([
 ]);
 
 /** Flags that consume the next argument; everything else is a boolean. */
-const VALUE_FLAGS = new Set(['--runtime', '--model', '--session', '--title', '--port', '--bind', '--endpoint']);
+const VALUE_FLAGS = new Set(['--runtime', '--model', '--session', '--title', '--port', '--bind', '--endpoint', '--token']);
 
 export function parse(argv: string[]): Parsed {
   const flags = new Set<string>();

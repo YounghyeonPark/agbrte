@@ -26,11 +26,35 @@
  * server (that is what makes this possible at all), so nothing is exposed to the
  * internet and identity is already established by the network itself.
  *
- * **What this does not do is authenticate.** Anyone who can reach the address can
- * drive the session, so the address is the whole security boundary — exactly as
- * it is for the unix socket the host already listens on. That is honest for a
- * tailnet and would not be for a public interface, which is why binding to one
- * has to be typed out in full.
+ * ## It authenticates, and here is why that changed
+ *
+ * This used to say plainly that it did not, on the reasoning that the address is
+ * the whole boundary "exactly as it is for the unix socket the host already
+ * listens on". That comparison was the mistake, and `socketChannel.ts` had
+ * already written down why: a unix socket is narrowed to its owner with
+ * `chmod 0600` and a Windows named pipe's default DACL grants the creating user
+ * — so `grantRole`'s reasoning, that *reaching the socket already proved who you
+ * are*, is sound there because reaching it really is restricted. A TCP port
+ * carries no such claim. §6.2 says so in as many words for the loopback control
+ * channel and mints a bearer token there; this server is the same shape and was
+ * the one place that skipped it.
+ *
+ * Measured rather than argued, on a real browser against a real host: a page on
+ * `https://example.com` — nothing to do with this project — opened
+ * `ws://127.0.0.1:7717/__agbrte/socket` and read the session list back. It needed
+ * one thing, the browser's own Local Network Access prompt, and nothing from us.
+ * On a tailnet address there is no prompt at all: anything on that network can
+ * `curl` its way to a shell.
+ *
+ * So the socket now speaks the same handshake `loopback.ts` does, for the same
+ * reasons and with the same properties: the token is checked **before there is a
+ * channel**, compared in constant time, and a wrong one is closed rather than
+ * argued with. The token rides in the URL *fragment*, which browsers never send
+ * to a server and never write to a log or a `Referer`.
+ *
+ * What is unchanged: the address still decides who can *reach* this, so binding
+ * to anything but loopback still has to be typed out in full. A token is not a
+ * reason to expose a shell to the internet.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -38,14 +62,15 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { CH } from '@shared/ipc/contract.js';
+import { AUTH_DEADLINE_MS, tokensMatch } from '@shared/host/loopback.js';
 import { createApi, type IpcDeps } from '@main/ipc/api.js';
 
 /**
  * What a browser client must never be handed.
  *
  * All of these are *this machine's* hardware or storage, and the web server is
- * reached over a network by whoever can address it (§13: "Anyone who can reach
- * this can drive this session. There is no login."). Passing `screen` here
+ * reached over a network by whoever holds the token for it, from wherever they
+ * can address it (§13). Passing `screen` here
  * would let a browser on the tailnet capture the **server's** desktop; `clips`
  * would record somebody's dictation onto the server's disk; `selectRegion`
  * would open an overlay on a display nobody is sitting at.
@@ -72,6 +97,15 @@ export interface WebServerOptions {
   port: number;
   /** Loopback unless the caller names something else, deliberately. */
   host?: string;
+  /**
+   * The bearer this server's socket admits. Required, like the address.
+   *
+   * No default and no way to switch it off, because both would be chosen on
+   * somebody's behalf for a server that can drive a shell. A caller that wants
+   * a stable one — a phone bookmark that survives a restart — passes the same
+   * string again; one that does not mints a fresh one per run.
+   */
+  token: string;
 }
 
 export interface RunningWebServer {
@@ -92,6 +126,27 @@ const MIME: Record<string, string> = {
 
 /** Injected before the app bundle, so `window.agbrte` exists when it boots. */
 const SHIM = '/__agbrte/bridge.js';
+
+/**
+ * Whether one frame is the handshake, and the right one.
+ *
+ * Its own function so the decision can be tested without a socket, a server or a
+ * build — the wiring is checked end to end in `web.spec.ts`, but the *rule* is
+ * the part that must never quietly loosen, and this suite runs in CI while that
+ * one does not.
+ *
+ * Every branch answers `false`. There is no shape of frame, and no shape of
+ * configured token, that admits a client by accident: a server with an empty
+ * token admits nobody rather than everybody, which is the direction a mistake
+ * here has to fall.
+ */
+export function admitsFrame(frame: unknown, token: string): boolean {
+  if (token === '') return false;
+  if (typeof frame !== 'object' || frame === null) return false;
+  const { t, token: offered } = frame as { t?: unknown; token?: unknown };
+  if (t !== 'auth' || typeof offered !== 'string') return false;
+  return tokensMatch(offered, token);
+}
 
 export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer> {
   const rendererDir = resolve(opts.rendererDir);
@@ -115,6 +170,23 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
     const post = (message: unknown): void => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
     };
+
+    /*
+     * Nothing is wired until the first frame proves the caller has the token.
+     *
+     * Before the protocol rather than inside it, which is `loopback.ts`'s rule
+     * and its reason: a connection that never authenticates would otherwise be
+     * able to issue `sessions.list` — the exact call a page on example.com made
+     * against a real host while this was being written.
+     *
+     * An unauthenticated socket also gets a deadline. Without one, anything that
+     * connects and says nothing holds a socket open for as long as it likes.
+     */
+    let admitted = false;
+    const deadline = setTimeout(() => {
+      if (!admitted) socket.close();
+    }, AUTH_DEADLINE_MS);
+    deadline.unref?.();
     // Every push this connection's API produces goes to this socket and no
     // other. Electron broadcasts to all windows because they are one client;
     // two browsers are two clients.
@@ -143,6 +215,21 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
           request = JSON.parse(String(raw)) as typeof request;
         } catch {
           return; // an unparseable frame is not worth killing a live session over
+        }
+
+        if (!admitted) {
+          // Closed rather than answered. There is nothing useful to tell
+          // somebody who did not have the token, and a retry loop would turn
+          // the port into something to sit and guess against.
+          if (!admitsFrame(request, opts.token)) return void socket.close();
+          admitted = true;
+          clearTimeout(deadline);
+          // Acknowledged, for `loopback.ts`'s reason: without a reply the client
+          // has to hand over the channel optimistically, and a refusal then
+          // arrives a round trip later as `socket closed` — which is
+          // indistinguishable from a host that crashed.
+          post({ t: 'auth-ok' });
+          return;
         }
 
         if (request.channel === CH.ack) {
@@ -174,7 +261,13 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
   });
 
   return {
-    url: `http://${host.includes(':') ? `[${host}]` : host}:${opts.port}/`,
+    /*
+     * The token rides in the **fragment**, which is the whole reason it is safe
+     * to put in a link: a browser never sends `#…` to the server, so it reaches
+     * no access log, no `Referer`, and no proxy. A query string would have been
+     * in the host's own log the first time anybody opened the page.
+     */
+    url: `http://${host.includes(':') ? `[${host}]` : host}:${opts.port}/#t=${opts.token}`,
     close: () =>
       new Promise<void>((done) => {
         wss.close();
