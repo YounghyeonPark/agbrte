@@ -167,6 +167,30 @@ describe('a host with the CLI installed', () => {
       runtimeId: 'cli:claude-code',
     });
     expect(agent.spec.runtimeId).toBe('cli:claude-code');
+
+    /*
+     * And what that seat signs in with (§3.11).
+     *
+     * No caller sets `auth` — not the app's picker, not `agbrte run`, not the
+     * conformance runner — so this defaulted to `{ kind: 'none' }`, and for an
+     * installed CLI that is not a neutral default. `cliStdio` derives
+     * deterministic mode from the auth kind because for Claude Code the switch
+     * that makes a run reproducible (`--bare`) is the same one that skips OAuth
+     * and the keychain. Under `none` it was always sent, so a CLI the user had
+     * signed into weeks ago answered `Not logged in · Please run /login` on
+     * every turn, and the runtime the README offers as "the agent CLI you
+     * already have installed" could not authenticate through any client.
+     *
+     * Asserted here, on a seat a real host really admitted, because the type,
+     * the label in `Roster.tsx`, the branch in `cliStdio` and the grouping in
+     * `quota.ts` all existed already — and the only code in the repository that
+     * had ever built one of these was two unit tests.
+     */
+    expect(agent.spec.auth).toEqual({
+      kind: 'vendor-cli-session',
+      cliId: 'claude-code',
+      quotaGroup: 'machine',
+    });
   }, 60_000);
 });
 

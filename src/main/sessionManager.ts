@@ -80,6 +80,41 @@ import { ensureBlob } from './store/blobTransfer.js';
 import { compactionSizes, rehydrate } from './store/rehydrate.js';
 import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
+import { cliIdOf } from './runtime/runtimes/cliStdio.js';
+
+/**
+ * What a seat signs in with when the caller did not say (§3.11).
+ *
+ * Every caller left `auth` unset — the app's picker, `agbrte run`, the
+ * conformance runner — so every seat got `{ kind: 'none' }`, and that is not a
+ * neutral default for an **installed CLI**. `cliStdio` derives deterministic
+ * mode from the auth kind, because for Claude Code the switch that makes a run
+ * reproducible (`--bare`) is the same switch that skips OAuth and the keychain;
+ * the two cannot both be honoured. With `none` it was always sent, so a CLI the
+ * user had signed into weeks ago answered **"Not logged in · Please run
+ * /login"** on every turn, and the runtime the README offers as "the agent CLI
+ * you already have installed" could not authenticate through any client.
+ *
+ * The type existed, `Roster.tsx` had a label for it, `cliStdio` had the branch,
+ * `quota.ts` had the grouping — and the only code anywhere that constructed one
+ * was two unit tests. This is the line that was missing.
+ *
+ * **`quotaGroup` is the machine, and needs no id to say so.** A group keys a
+ * `QuotaScheduler`, one scheduler belongs to one host, and one host is one
+ * machine (§8) — so the string is already machine-scoped by where it is used.
+ * Which is also the right boundary: a machine has one CLI login, and every seat
+ * running that CLI here draws on the one subscription behind it.
+ *
+ * A seat that is *not* a CLI keeps `none`, which stays true of it: a raw
+ * endpoint carries its credential in the endpoint record, not in a vendor's
+ * session.
+ */
+function defaultAuthFor(runtimeId: string): AgentSpec['auth'] {
+  const cliId = cliIdOf(runtimeId);
+  return cliId === null
+    ? { kind: 'none' }
+    : { kind: 'vendor-cli-session', cliId, quotaGroup: 'machine' };
+}
 import { RawTailBuffer } from './rawTail.js';
 import { loadRawTails, saveRawTail } from './store/rawTailFile.js';
 import { TurnSlots } from './concurrency.js';
@@ -1119,7 +1154,7 @@ export class SessionManager extends EventEmitter {
       agentId: newAgentId(),
       role: input.role,
       runtimeId: input.runtimeId,
-      auth: input.auth ?? { kind: 'none' },
+      auth: input.auth ?? defaultAuthFor(input.runtimeId),
       // A *copy*, not the session's object. Sharing the reference meant a
       // pattern grant approved for a trusted agent silently widened every other
       // agent in the session — including one on a coarse-gated runtime (§13).

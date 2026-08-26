@@ -307,6 +307,19 @@ export function runtimeIdFor(manifest: CliAgentManifest): string {
   return `cli:${manifest.cliId}`;
 }
 
+/**
+ * The CLI behind a runtime id, or `null` for a runtime that is not one.
+ *
+ * The inverse of `runtimeIdFor`, and here rather than at the caller so the id
+ * format stays owned by one module. Its caller is `SessionManager`, deciding
+ * what a seat authenticates with: an installed CLI signs itself in, and that is
+ * a fact about *this* runtime family rather than about any particular manifest.
+ */
+export function cliIdOf(runtimeId: string): string | null {
+  const cliId = runtimeId.startsWith('cli:') ? runtimeId.slice('cli:'.length) : '';
+  return cliId === '' ? null : cliId;
+}
+
 // --------------------------------------------------------------------- handle
 
 interface Denial {

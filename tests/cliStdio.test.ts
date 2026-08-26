@@ -23,8 +23,10 @@ import { dirname, join } from 'node:path';
 import {
   ADAPTER_VERSION,
   CliStdioRuntime,
+  cliIdOf,
   detectCli,
   designatedArg,
+  runtimeIdFor,
   resumeInstruction,
   stopFromExit,
   type CliRun,
@@ -668,5 +670,24 @@ describe('finding an installed CLI, and saying why it was not found', () => {
     // machine; the host has to come up regardless (§3.12).
     expect(found.found).toBe(false);
     expect(found.found === false && found.reason).toContain('argv rejected');
+  });
+});
+
+describe('reading a CLI back out of a runtime id', () => {
+  /*
+   * The inverse of `runtimeIdFor`, and the thing `SessionManager` asks before
+   * deciding a seat signs itself in. Worth its own test because a seat that is
+   * wrongly judged *not* a CLI gets `auth: none`, which sends `--bare`, which
+   * skips OAuth — and the symptom is a logged-in CLI reporting that it is not
+   * logged in, three files away from this line.
+   */
+  it('names the CLI, and says null for anything else', () => {
+    expect(cliIdOf(runtimeIdFor(CLAUDE_CODE_MANIFEST))).toBe('claude-code');
+    expect(cliIdOf('cli:gemini')).toBe('gemini');
+    expect(cliIdOf('agbrte-harness')).toBeNull();
+    expect(cliIdOf('echo')).toBeNull();
+    // Not a CLI called "": a prefix on its own names nothing, and treating it
+    // as one would mint a quota group keyed on an empty string.
+    expect(cliIdOf('cli:')).toBeNull();
   });
 });
