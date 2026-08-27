@@ -70,3 +70,36 @@ The address still decides who can *knock*. It binds to loopback unless you name
 something else, and a tailnet address (`--bind $(tailscale ip -4)`) is the
 intended answer. Do not bind it to `0.0.0.0`: a token is not a reason to put a
 shell on the internet.
+
+### `--public`, for a host strangers are meant to reach
+
+Everything above assumes the person on the socket owns the machine. That is what
+makes a token sufficient: somebody who can start a session on their own computer
+could have opened a terminal instead. On a demo the driver is a stranger and that
+argument disappears, so `--public` withdraws every capability that rested on it.
+
+```bash
+AGBRTE_HOME=/srv/agbrte-demo agbrte web /srv/demo-workspace --public --bind 0.0.0.0
+```
+
+The agent keeps `read`, `write`, `edit`, `glob` and `grep` — every path they take
+goes through the workspace confinement, so the folder it was started in is the
+whole of what it can touch. It loses `bash`, which runs a real shell and cannot
+be confined from outside, and `screenshot`, which makes requests from wherever
+the server sits. The client loses the terminal panel, screen capture, preview
+servers, attaching machines or folders, and attaching MCP servers — an MCP server
+is a command line the caller supplies, run on your machine.
+
+Three things worth knowing before you run it:
+
+- **It refuses to reuse a host it did not start.** The withdrawal happens in the
+  process the session host forks, which inherits its environment from whoever
+  spawned it — so a host already running was started under someone else's
+  environment and cannot be trusted to be public. Give the demo its own
+  `AGBRTE_HOME`, as above, and it gets its own machine identity and its own
+  socket (§8).
+- **The workspace is the blast radius.** Make it a throwaway directory with a
+  sample project in it, not a checkout you care about. Every visitor shares it
+  and any of them can edit it.
+- **It is still not a multi-tenant system.** Visitors see each other's sessions.
+  That is fine for a demo of what the program is and wrong for anything else.

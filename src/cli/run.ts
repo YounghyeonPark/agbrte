@@ -10,6 +10,8 @@
  *   npm run agbrte -- --inspect <sessionId> --workspace ./sandbox
  */
 
+import { isPublicHost } from '@shared/publicHost.js';
+import { PUBLIC_TOOLS } from '@main/tools/index.js';
 import { createInterface } from 'node:readline/promises';
 import { resolve } from 'node:path';
 import { SessionManager } from '@main/sessionManager.js';
@@ -105,7 +107,24 @@ async function main(): Promise<void> {
 
   const provider = new OpenAiCompatibleProvider();
   const registry = new RuntimeRegistry();
-  registry.register(new AgbrteHarnessRuntime({ provider, endpointFor: () => endpoint }), {
+  /*
+   * Honours the public switch too, though nothing public reaches this command.
+   *
+   * `agbrte run` is a local one-shot on the machine somebody is sitting at, so
+   * the argument for withdrawing tools does not apply to it. It registers the
+   * harness here rather than through `buildHostRegistry`, which means the
+   * decision made there does not reach it — and that is exactly the kind of
+   * second registration site that makes a security property true in one place
+   * and false in another. Kept in step deliberately: on a box configured as a
+   * public host, every path that starts an agent holds the same tools.
+   */
+  registry.register(
+    new AgbrteHarnessRuntime({
+      provider,
+      endpointFor: () => endpoint,
+      ...(isPublicHost() ? { tools: PUBLIC_TOOLS } : {}),
+    }),
+    {
     label: `AgbrteHarness → ${args.model}`,
     model: 'required',
   });

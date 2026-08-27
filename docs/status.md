@@ -39,6 +39,16 @@ than remote and unable to see the picture.
 **OCR is not built**, so the redaction sweep reports `scanned: false` rather than
 an empty match list.
 
+**A public host is confined, not isolated.** `--public` withdraws every
+capability that reaches past the workspace directory, and that much is tested and
+was verified end to end against a real model — an agent on a public host answers
+"NO SHELL TOOL" where the same prompt on a private one runs `ls -la`. What it
+does *not* do is separate visitors from each other: they share one workspace and
+one session list, so anything one of them writes, the next one sees. That is
+acceptable for a demo of what the program is and is not a foundation for
+anything else. Per-visitor workspaces, session and turn caps, and a reset are not
+built.
+
 **The published recording ages in a direction nothing checks.** The demo at
 [agbrte.dev/app/](https://agbrte.dev/app/) replays a real socket log, so it is
 honest the day it is taken and drifts from the app every day after. A channel

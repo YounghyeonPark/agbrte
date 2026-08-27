@@ -284,7 +284,27 @@ async function main(): Promise<number> {
   if (command === 'web') {
     const { serveWeb } = await import('../web/server.js');
     const { Fleet } = await import('@main/fleet.js');
+    const { PUBLIC_HOST_ENV, isPublicHost } = await import('@shared/publicHost.js');
     const here = dirname(fileURLToPath(import.meta.url));
+
+    /*
+     * `--public` is a deployment, not a convenience flag.
+     *
+     * Everything else in this program assumes the person on the socket owns the
+     * machine, and that assumption is what makes a token sufficient: somebody
+     * who can start a session on their own computer could have opened a terminal
+     * instead. On a demo the driver is a stranger and that argument is gone, so
+     * the capabilities resting on it are withdrawn — `bash`, the vendor CLIs,
+     * MCP attach, the terminal panel, capture, preview, attaching folders.
+     *
+     * Set into the environment **here**, before anything is spawned, because
+     * that is the only way it reaches the two processes that enforce it: the
+     * session host is spawned with a copy of this environment and forks the
+     * agent host with a copy of its own. Reading a flag in this process alone
+     * would gate the web server and leave the agent holding a shell.
+     */
+    const isPublic = flags.has('--public');
+    if (isPublic) process.env[PUBLIC_HOST_ENV] = '1';
 
     // A fleet of exactly one: this is served *by* a workspace, so it shows that
     // workspace. Attaching another machine is a thing you do where the
@@ -295,8 +315,19 @@ async function main(): Promise<number> {
         { id: 'agbrte-harness', label: 'Agbrte harness', version: '0.0.1', model: 'required' },
         // Same list as the desktop app: the host detects these and reports
         // them only where the binary answered (§3.12).
-        { id: 'cli:claude-code', label: 'Claude Code (installed CLI)', version: '0.0.1', model: 'optional' },
-        { id: 'cli:gemini-cli', label: 'Gemini CLI (installed)', version: '0.0.1', model: 'optional' },
+        //
+        // Absent on a public host, where `buildHostRegistry` does not register
+        // them at all — a vendor CLI brings its own tools and its own idea of
+        // where it may go, and nothing here is in a position to confine a
+        // subprocess. Advertising one the host will refuse would put a runtime
+        // in the picker whose every session fails at admission, which is a worse
+        // way to say no than not offering it.
+        ...(isPublic
+          ? []
+          : [
+              { id: 'cli:claude-code', label: 'Claude Code (installed CLI)', version: '0.0.1', model: 'optional' as const },
+              { id: 'cli:gemini-cli', label: 'Gemini CLI (installed)', version: '0.0.1', model: 'optional' as const },
+            ]),
       ],
       connect: async () =>
         connectOrSpawnHost({
@@ -304,6 +335,9 @@ async function main(): Promise<number> {
           hostEntry: findHostEntry(),
           execPath: process.execPath,
           client: `agbrte-web@${process.env['HOSTNAME'] ?? 'server'}`,
+          // A public host has to be one this command started, or the environment
+          // above reached nothing. `connectOrSpawn` explains why at length.
+          ...(isPublic ? { mustSpawn: true } : {}),
         }),
     });
     await fleet.attach({ target: { kind: 'local' }, workspaceRoot: path });
@@ -345,6 +379,26 @@ async function main(): Promise<number> {
     });
 
     process.stdout.write(`${c.dim(`agbrte web  ${path}`)}\n${server.url}\n`);
+
+    /*
+     * Printed from `isPublicHost()` rather than from the flag that set it.
+     *
+     * They should be the same thing and the whole design depends on them being
+     * the same thing — the flag writes the variable, and the variable is what
+     * the spawned processes read. Reporting the flag would say "public" whenever
+     * somebody typed it; reporting the variable says it only when the thing the
+     * host will actually read is set. If those ever diverge, this line is where
+     * it shows, and it shows before a stranger connects rather than after.
+     */
+    if (isPublicHost()) {
+      process.stdout.write(
+        c.dim(
+          'Public host: no shell, no vendor CLIs, no MCP attach, no terminal, no capture. ' +
+            'Agents hold only tools confined to this folder.\n',
+        ),
+      );
+    }
+
     if (bind === '127.0.0.1' || bind === 'localhost') {
       process.stdout.write(
         c.dim('Loopback only. Pass --bind <your tailnet address> to reach it from a phone.\n'),

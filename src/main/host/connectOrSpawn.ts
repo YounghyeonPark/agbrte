@@ -80,6 +80,29 @@ export interface ConnectOptions {
   /** Node binary to run the host with. Electron supplies its own. */
   execPath?: string;
   client?: string;
+  /**
+   * Refuse a host this call did not start.
+   *
+   * Reuse is the whole point of this function everywhere else — §6.4's rule is
+   * that a host is proved by a socket answering, and finding one is the good
+   * case. It is the wrong case exactly once: when the environment this process
+   * is holding carries a *security* decision that only takes effect on a host it
+   * spawns.
+   *
+   * `AGBRTE_PUBLIC_HOST` is that environment. It withdraws `bash`, the vendor
+   * CLIs and the MCP attach, and it does so in the agent host — which is forked
+   * by the session host, which inherits its environment from whoever spawned it.
+   * A session host already running was spawned by somebody else, possibly
+   * before the variable existed, and nothing this side can observe distinguishes
+   * one from the other. Reusing it would serve a private host's tools to the
+   * internet, and would do it silently: the operator sets the variable, the
+   * command starts, the page comes up, and `bash` is there.
+   *
+   * So this refuses instead, and the operator is told to stop that host or use a
+   * separate `AGBRTE_HOME`. A refusal that costs a minute beats a demo that
+   * hands strangers a shell.
+   */
+  mustSpawn?: boolean;
 }
 
 /** How long a spawned host gets to open its socket before we give up. */
@@ -254,6 +277,21 @@ export async function connectOrSpawnHost(opts: ConnectOptions): Promise<HostConn
     });
 
     if (probe.at === 'host') {
+      /*
+       * A host we did not start, when only a host we start would carry the
+       * environment that makes this deployment safe. Checked here — the moment
+       * a socket answers, before the connection is used for anything — because
+       * this is the one branch where "somebody is already there" is the failure.
+       */
+      if (opts.mustSpawn === true && spawnedAt === null) {
+        probe.connection.disconnect();
+        throw new Error(
+          `a host is already running on ${socket}, and this command cannot use it: ` +
+            `a public host withdraws tools in the process it forks, so that has to be a ` +
+            `process this command started. Stop that host, or give this one its own ` +
+            `machine directory with AGBRTE_HOME.`,
+        );
+      }
       /*
        * The host answered and bound the folder that was asked for, or it did
        * not — and "did not" is now a refusal from the host rather than something

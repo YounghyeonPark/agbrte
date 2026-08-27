@@ -881,6 +881,45 @@ export const DEFAULT_TOOLS: ToolDefinition[] = [
 ];
 
 /**
+ * What an agent may hold on a host that strangers can reach (§13).
+ *
+ * Every path a file tool is given goes through `confine`, so `read`, `write`,
+ * `edit`, `glob` and `grep` cannot name anything outside the workspace they were
+ * started in — which makes the workspace directory the whole of what a visitor
+ * can touch, and makes a throwaway directory a sufficient answer.
+ *
+ * `bash` is the exception and the reason this list exists. It runs a real shell
+ * with `cwd` set to the workspace, and a shell can `cd`. One `cat` reaches the
+ * endpoint file holding the demo's own model credential; one `curl` reaches
+ * anything the server can. It is not a tool that can be *confined* — the
+ * confinement would have to be inside the shell — so on a public host it is not
+ * offered at all.
+ *
+ * `screenshot` goes for the same reason from the other direction: it renders a
+ * URL, and a URL is a request made by the server, from inside whatever network
+ * the server is on.
+ *
+ * ## Written out rather than filtered
+ *
+ * `DEFAULT_TOOLS.filter(t => t !== bashTool)` is shorter and is the wrong shape
+ * for a security boundary: a tool added to `DEFAULT_TOOLS` next month would join
+ * a public host silently, and the failure would be a capability nobody decided
+ * to publish. Listing them means the default for anything new is *absent*, and
+ * adding one here is a decision somebody makes on purpose.
+ */
+export const PUBLIC_TOOLS: ToolDefinition[] = [
+  readTool,
+  writeTool,
+  editTool,
+  globTool,
+  grepTool,
+  messageTool,
+  messagePeerTool,
+  peerHistoryTool,
+  proposeSplitTool,
+];
+
+/**
  * Whether this agent may write this path right now, or why not.
  *
  * Returns a sentence for the model rather than throwing, because both refusals

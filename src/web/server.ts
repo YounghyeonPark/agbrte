@@ -62,6 +62,8 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { CH } from '@shared/ipc/contract.js';
+import { isPublicHost } from '../shared/publicHost.js';
+import { admitsChannel, refusalFor } from './publicChannels.js';
 import { AUTH_DEADLINE_MS, tokensMatch } from '@shared/host/loopback.js';
 import { createApi, type IpcDeps } from '@main/ipc/api.js';
 
@@ -235,6 +237,27 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
         if (request.channel === CH.ack) {
           const [sessionId, seq] = (request.args ?? []) as [string, number];
           api.ack(sessionId, seq);
+          return;
+        }
+
+        /*
+         * The public gate, before the handler is even looked up (§13).
+         *
+         * Ahead of the lookup rather than inside it, so a refused channel cannot
+         * reach a handler by any route — including a channel that exists on this
+         * build and not on the one the allowlist was written against. The whole
+         * value of an allowlist is that the unknown case is the refused case,
+         * and doing this after `handlers.get` would have made the unknown case
+         * "whatever the handler does".
+         *
+         * Answered rather than closed, which is the opposite of the token check
+         * above and deliberately so. A missing token is somebody who should not
+         * be here at all; a refused channel is somebody legitimately using the
+         * demo who pressed a button it does not carry, and they are owed a
+         * sentence saying why and what would work instead.
+         */
+        if (isPublicHost() && request.channel !== undefined && !admitsChannel(request.channel)) {
+          post({ id: request.id, error: refusalFor(request.channel) });
           return;
         }
 

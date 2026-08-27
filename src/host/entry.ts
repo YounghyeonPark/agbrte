@@ -32,6 +32,8 @@ import {
 import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { CliStdioRuntime, detectCli, runtimeIdFor } from '@main/runtime/runtimes/cliStdio.js';
 import { CLI_MANIFESTS } from '@main/runtime/cli/manifests.js';
+import { isPublicHost } from '@shared/publicHost.js';
+import { PUBLIC_TOOLS } from '@main/tools/index.js';
 import { LeaseTables } from '@main/tools/leases.js';
 import {
   OpenAiCompatibleProvider,
@@ -189,6 +191,7 @@ export async function buildHostRegistry(
       // request is actually made. The endpoint it resolves carries no secret.
       provider,
       endpointFor: (endpointId) => endpoints.resolve(endpointId),
+      ...(isPublicHost() ? { tools: PUBLIC_TOOLS } : {}),
     }),
     { label: 'Agbrte harness', model: 'required' },
   );
@@ -212,9 +215,27 @@ export async function buildHostRegistry(
    * installed is right and stays; saying nothing about it was the mistake. The
    * two are separable, and the second one costs a string.
    */
-  const detected = await Promise.all(
-    CLI_MANIFESTS.map(async (manifest) => ({ manifest, found: await detectCli(manifest) })),
-  );
+  /*
+   * Not offered at all on a public host, and this is the one exclusion that is
+   * not about a tool being dangerous.
+   *
+   * A vendor CLI brings its *own* tools and its own idea of where it may go.
+   * `PUBLIC_TOOLS` governs the harness because the harness runs tools this
+   * repository wrote, every path through `confine`; a CLI is a subprocess that
+   * was handed a working directory and asked politely. It has a shell in it,
+   * it can be pointed at another folder, and nothing here is in a position to
+   * stop it — which is fine on a laptop, where the person running it owns
+   * everything it could reach, and not fine when the person driving it is a
+   * stranger.
+   *
+   * Skipped before detection rather than filtered after, so a public host does
+   * not spend a subprocess each looking for tools it would refuse to register.
+   */
+  const detected = isPublicHost()
+    ? []
+    : await Promise.all(
+        CLI_MANIFESTS.map(async (manifest) => ({ manifest, found: await detectCli(manifest) })),
+      );
   for (const { manifest, found } of detected) {
     if (!found.found) {
       notes.push({

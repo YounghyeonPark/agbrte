@@ -12,6 +12,7 @@
  * state and resume.
  */
 
+import { isPublicHost } from '@shared/publicHost.js';
 import { EventEmitter } from 'node:events';
 import { readdir, readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
@@ -2408,6 +2409,39 @@ export class SessionManager extends EventEmitter {
     actor?: Actor,
   ): Promise<McpServerStatus> {
     session.mcp ??= [];
+    /*
+     * Never on a public host, and here because here is where both paths meet.
+     *
+     * An MCP server is a **command line the caller supplies**, run on the machine
+     * the host is on. That is the point of it and it is unobjectionable when the
+     * caller owns the machine; it is arbitrary code execution when the caller is
+     * a stranger on a demo. `PUBLIC_TOOLS` does not help — this is not a tool
+     * the model asked for, it is a process the client attached — and neither does
+     * the channel allowlist on its own: `sessions.attachMcp` is refused there,
+     * but `mcpServers` also rides inside `sessions.create`, which a visitor must
+     * be able to call for the demo to be a demo at all.
+     *
+     * Which is why the check is in `connectMcp` rather than in either caller.
+     * The comment above this method already says two paths attach a server and
+     * both must keep the credential rule, and they share this function so the
+     * rule has one home. The same argument applies exactly to this one, and a
+     * copy in each caller is a copy that can be forgotten when a third arrives.
+     */
+    if (isPublicHost()) {
+      // Reported as a failed attach rather than thrown, which is how every other
+      // unreachable server here is reported (§3.5): the session is still worth
+      // having without it, and the reason belongs on screen next to the server
+      // that has it rather than in an exception that takes the create down.
+      const refused: McpServerStatus = {
+        id: server.id,
+        tools: [],
+        error:
+          'attaching an MCP server runs a command on the machine serving this page, ' +
+          'so it is turned off on the public demo. Run your own host to attach your own.',
+      };
+      session.mcp.push(refused);
+      return refused;
+    }
     try {
       const connection = await McpConnection.connect(server);
       into.set(server.id, connection);
