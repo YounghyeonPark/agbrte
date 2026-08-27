@@ -461,6 +461,13 @@ class AgbrteHarnessHandle implements AgentHandle {
           ? { sendPeerMessage: this.ctx.sendPeerMessage.bind(this.ctx) }
           : {}),
         ...(this.ctx.groupPeers !== undefined ? { groupPeers: this.ctx.groupPeers } : {}),
+        // The reading half, handed over with the list for the same reason the
+        // sending half is: `peer_history` refuses unless it has somewhere to
+        // read from, so a list without it would name sessions the tool cannot
+        // open.
+        ...(this.ctx.readPeerHistory !== undefined
+          ? { readPeerHistory: this.ctx.readPeerHistory.bind(this.ctx) }
+          : {}),
         ...(this.ctx.capture !== undefined ? { capture: this.ctx.capture.bind(this.ctx) } : {}),
         ...(this.ctx.proposeSplit !== undefined
           ? { proposeSplit: this.ctx.proposeSplit.bind(this.ctx) }

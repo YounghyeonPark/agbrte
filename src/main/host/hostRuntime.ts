@@ -18,6 +18,7 @@ import type {
   AgentHandle,
   CompactedHistory,
   PeerDelivery,
+  PeerHistory,
   AgentRuntime,
   AgentSpec,
   RuntimeCapabilities,
@@ -270,6 +271,33 @@ export class HostClient {
       case 'proposeSplit':
         this.contexts.get(message.handleId)?.proposeSplit?.(message.proposal);
         return;
+
+      case 'peerHistoryAsk': {
+        /*
+         * Read the peer's log here, where the logs are.
+         *
+         * A reply always goes back, like `peerAsk` and `toolResult`: a turn in
+         * the other process is blocked on this one. The owner's refusal — which
+         * names who *is* in the group — is the useful half of the answer, so it
+         * travels as `error` rather than being flattened into an empty history
+         * that reads as "they have done nothing".
+         */
+        const ctx = this.contexts.get(message.handleId);
+        const reply = (payload: { history?: PeerHistory; error?: string }): void =>
+          this.opts.channel.post({ t: 'peerHistory', askId: message.askId, ...payload });
+
+        if (ctx?.readPeerHistory === undefined) {
+          reply({ error: 'this session is no longer live' });
+          return;
+        }
+        void ctx
+          .readPeerHistory(message.sessionId, message.since)
+          .then((history) => reply({ history }))
+          .catch((err: unknown) =>
+            reply({ error: err instanceof Error ? err.message : String(err) }),
+          );
+        return;
+      }
 
       case 'peerAsk': {
         /*

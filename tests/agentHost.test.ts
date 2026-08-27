@@ -591,6 +591,104 @@ describe('the group channel crosses the boundary', () => {
     });
   });
 
+  it('refuses a message left outstanding when the handle ends', async () => {
+    /*
+     * The send half of the same hole, which shipped with it and was found by the
+     * read half's test.
+     *
+     * Refused rather than failed, and the wording is the point: §17 Q22 says a
+     * peer message is refused rather than dropped, so a sender whose session
+     * died mid-send is told the message did not go — not left waiting for an
+     * answer to something nobody received.
+     */
+    let hostCtx: RuntimeContext | null = null;
+    const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
+
+    await r.hosted.start(
+      spec(),
+      context({
+        groupPeers: [{ sessionId: 's-other', title: 'x' }],
+        sendPeerMessage: () => new Promise(() => {}),
+      }),
+    );
+
+    const sending = hostCtx!.sendPeerMessage!({
+      toSessionId: 's-other',
+      kind: 'report',
+      text: 'never arrives',
+    });
+    r.runtime.handles[0]?.end();
+
+    await expect(sending).resolves.toMatchObject({ accepted: false });
+  });
+
+  it('carries a peer read across, and the refusal that comes back', async () => {
+    /*
+     * The other half of §17 Q22, and the fourth hook to need this test.
+     *
+     * `readPeerHistory` is a closure over the owner's stores — it reads another
+     * session's log — so what crosses is a request and an answer, not the
+     * function. The refusal matters as much as the history: the owner's is the
+     * one that can name who *is* in the group, and flattening it into an empty
+     * result would tell the model its teammate had done nothing.
+     */
+    let hostCtx: RuntimeContext | null = null;
+    const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
+
+    const asked: Array<{ id: string; since?: number }> = [];
+    await r.hosted.start(
+      spec(),
+      context({
+        groupPeers: [{ sessionId: 's-other', title: 'logic', state: 'working' }],
+        readPeerHistory: async (sessionId, since) => {
+          asked.push({ id: sessionId, ...(since !== undefined ? { since } : {}) });
+          if (sessionId !== 's-other') throw new Error('s-nope is not in this group. In it: s-other');
+          return {
+            sessionId,
+            title: 'logic',
+            state: 'working',
+            lines: [{ seq: 12, at: 'now', kind: 'did', text: 'write logic.js' }],
+            nextSince: 12,
+            truncated: false,
+          };
+        },
+      }),
+    );
+
+    // The list crosses as data, with the state that tells a peer whether to look.
+    expect(hostCtx!.groupPeers).toEqual([
+      { sessionId: 's-other', title: 'logic', state: 'working' },
+    ]);
+
+    const history = await hostCtx!.readPeerHistory!('s-other', 7);
+    expect(history.lines).toEqual([{ seq: 12, at: 'now', kind: 'did', text: 'write logic.js' }]);
+    expect(history.nextSince).toBe(12);
+    // The cursor travelled: without it every check-in re-reads the same span.
+    expect(asked).toEqual([{ id: 's-other', since: 7 }]);
+
+    await expect(hostCtx!.readPeerHistory!('s-nope')).rejects.toThrow(/not in this group.*s-other/);
+  });
+
+  it('answers a peer read whose handle has gone, rather than hanging the turn', async () => {
+    let hostCtx: RuntimeContext | null = null;
+    const r = rig({ onStart: (ctx) => (hostCtx = ctx) });
+
+    await r.hosted.start(
+      spec(),
+      context({
+        groupPeers: [{ sessionId: 's-other', title: 'logic' }],
+        readPeerHistory: () => new Promise(() => {}),
+      }),
+    );
+
+    const read = hostCtx!.readPeerHistory!('s-other');
+    r.runtime.handles[0]?.end();
+
+    // A turn is blocked on this promise. Silence would hang it; a rejection is
+    // a tool failure the model can read and work around.
+    await expect(read).rejects.toThrow();
+  });
+
   it('gives a session in no group neither half', async () => {
     /*
      * Both or neither, which is the tool's own rule.

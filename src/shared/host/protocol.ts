@@ -34,6 +34,7 @@ import type {
   OutboundMessage,
   OutboundPeerMessage,
   PeerDelivery,
+  PeerHistory,
   SplitProposal,
   ProgressSignal,
   RuntimeEvent,
@@ -203,6 +204,15 @@ export type HostCommand =
    * for a reply that was never coming.
    */
   | { t: 'peerDelivered'; askId: RequestId; delivery: PeerDelivery }
+  /**
+   * The answer to `peerHistoryAsk` (§17 Q22).
+   *
+   * Always sent, by `toolResult`'s rule: a turn in the other process is blocked
+   * on it, so a handle the owner no longer knows — or a read that threw — comes
+   * back as `error`, a sentence the model can act on, rather than as a silence
+   * that hangs the turn.
+   */
+  | { t: 'peerHistory'; askId: RequestId; history?: PeerHistory; error?: string }
   | { t: 'shutdown' };
 
 // -------------------------------------------------------------- host → main
@@ -294,6 +304,21 @@ export type HostMessage =
       askId: RequestId;
       handleId: HandleId;
       message: OutboundPeerMessage;
+    }
+  /**
+   * An agent reading what a session in its group has done (§17 Q22).
+   *
+   * A request for the same reason `peerAsk` is one: the logs are on the owner's
+   * side, and the answer — including a refusal naming who *is* in the group — is
+   * what the model needs back. The read is bounded before it crosses, so nothing
+   * here grows with the size of somebody else's session.
+   */
+  | {
+      t: 'peerHistoryAsk';
+      askId: RequestId;
+      handleId: HandleId;
+      sessionId: string;
+      since?: number;
     }
   /** An agent asking to split its session (§4.3). One-way, like `message`. */
   | { t: 'proposeSplit'; handleId: HandleId; proposal: Omit<SplitProposal, 'proposalId'> }

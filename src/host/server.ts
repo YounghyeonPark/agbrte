@@ -20,6 +20,7 @@ import type {
   ModelCapabilityHint,
   OutboundPeerMessage,
   PeerDelivery,
+  PeerHistory,
   PermissionDecision,
   RuntimeContext,
 } from '@shared/types/index.js';
@@ -48,6 +49,11 @@ export class AgentHostServer {
   private readonly compactions = new Map<RequestId, (h: CompactedHistory | null) => void>();
   /** In flight `message_peer` calls, waiting for the owner's `peerDelivered`. */
   private readonly peerAsks = new Map<RequestId, (d: PeerDelivery) => void>();
+  /** In flight `peer_history` reads, waiting for the owner's `peerHistory`. */
+  private readonly peerReads = new Map<
+    RequestId,
+    (r: { history?: PeerHistory; error?: string }) => void
+  >();
   /**
    * Session-tool calls awaiting the owner's answer (§17 Q20).
    *
@@ -249,6 +255,18 @@ export class AgentHostServer {
         return;
       }
 
+      case 'peerHistory': {
+        const resolve = this.peerReads.get(command.askId);
+        this.peerReads.delete(command.askId);
+        // Same as the others: a turn is waiting, so the owner always answers,
+        // and an unknown id means the handle went away with the loop.
+        resolve?.({
+          ...(command.history !== undefined ? { history: command.history } : {}),
+          ...(command.error !== undefined ? { error: command.error } : {}),
+        });
+        return;
+      }
+
       case 'peerDelivered': {
         const resolve = this.peerAsks.get(command.askId);
         this.peerAsks.delete(command.askId);
@@ -364,6 +382,22 @@ export class AgentHostServer {
       ...(ctx.groupPeers !== undefined
         ? {
             groupPeers: ctx.groupPeers,
+            readPeerHistory: (sessionId: string, since?: number) =>
+              new Promise<PeerHistory>((resolve, reject) => {
+                const askId = `${handleId}:${(this.nextAskId += 1)}`;
+                this.peerReads.set(askId, (r) =>
+                  r.history !== undefined
+                    ? resolve(r.history)
+                    : reject(new Error(r.error ?? 'the peer read failed')),
+                );
+                this.channel.post({
+                  t: 'peerHistoryAsk',
+                  askId,
+                  handleId,
+                  sessionId,
+                  ...(since !== undefined ? { since } : {}),
+                });
+              }),
             sendPeerMessage: (message: OutboundPeerMessage) =>
               new Promise<PeerDelivery>((resolve) => {
                 const askId = `${handleId}:${(this.nextAskId += 1)}`;
@@ -452,6 +486,28 @@ export class AgentHostServer {
         summary: 'session tool interrupted',
         content: 'the agent stopped before the tool returned',
       });
+    }
+    /*
+     * The cross-session pair, for the same reason and with two different
+     * answers (§17 Q22).
+     *
+     * A message is *refused* — it never reached the other session, and §17 Q22's
+     * rule is that a refusal reaches the model that sent it rather than being
+     * dropped. A read *fails* — it is not a decision anybody declined to make,
+     * it is an answer that will not come back.
+     *
+     * Both were missing, and both hang the same loop the two above hang. Found
+     * by the test for the read; the message half had shipped with the hole.
+     */
+    for (const [askId, resolve] of [...this.peerAsks]) {
+      if (!askId.startsWith(`${handleId}:`)) continue;
+      this.peerAsks.delete(askId);
+      resolve({ accepted: false, reason: 'the agent stopped before the message was sent' });
+    }
+    for (const [askId, resolve] of [...this.peerReads]) {
+      if (!askId.startsWith(`${handleId}:`)) continue;
+      this.peerReads.delete(askId);
+      resolve({ error: 'the agent stopped before the read returned' });
     }
   }
 

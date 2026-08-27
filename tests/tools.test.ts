@@ -245,6 +245,11 @@ describe('the suite', () => {
       // Its own name rather than an argument on `message`, so a grant for one
       // can never widen into the other (§13, §17 Q22).
       'message_peer',
+      // The reading half of a group, and separate from the sending half for the
+      // same reason: writing to a teammate and reading their log are different
+      // permissions, and one name for both would grant whichever the user did
+      // not mean.
+      'peer_history',
       'propose_split',
       'screenshot',
     ]);

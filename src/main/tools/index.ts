@@ -26,6 +26,7 @@ import type { WorkspaceLeases } from './leases.js';
 import { PEER_MESSAGE_MAX_CHARS } from '@shared/types/index.js';
 import type {
   AgentId,
+  PeerHistory,
   ContentBlock,
   ImageBlock,
   AgentMessage,
@@ -83,7 +84,15 @@ export interface ToolContext {
    */
   sendPeerMessage?: (message: OutboundPeerMessage) => Promise<PeerDelivery>;
   /** Which sessions may be addressed, so a bad address is refused up front. */
-  groupPeers?: Array<{ sessionId: string; title: string }>;
+  groupPeers?: Array<{ sessionId: string; title: string; state?: string }>;
+  /**
+   * Read a group peer's log, folded (§17 Q22).
+   *
+   * Supplied with `groupPeers` or not at all, the same both-or-neither rule the
+   * sending half follows: a way to read with no list of who to read is a
+   * guessing game, and a list with nothing to read it with is a tease.
+   */
+  readPeerHistory?(sessionId: string, since?: number): Promise<PeerHistory>;
 }
 
 export interface ToolResult {
@@ -627,6 +636,101 @@ export const messagePeerTool: ToolDefinition = {
 };
 
 /**
+ * Read what a session in this group has been doing (DESIGN.md §17 Q22).
+ *
+ * The half of a group that makes dividing work pay. `message_peer` carries a
+ * sentence somebody chose to send; this carries the record they did not have to
+ * think to write — the turns a teammate was given, the tools it ran, what it
+ * concluded, where it now stands.
+ *
+ * `since` is a cursor rather than a filter, which is what makes checking in
+ * cheap: a peer that reads every few turns passes back the number it was given
+ * and sees only what is new.
+ */
+/**
+ * Ask for this session's scope to be split into a child (DESIGN.md §4.3).
+ *
+ * The tool §4.3 names, and it splits nothing — it asks. Approval belongs to a
+ * person, because "a decomposition mistake made autonomously produces a tree of
+ * subtly mis-scoped children that is harder to salvage than a single overlong
+ * session".
+ *
+ * `out_of_scope` is required, and it is the field doing the work. Without it a
+ * child reads widely to re-derive context it was never given — exactly the cost
+ * the split was meant to avoid — so a proposal that cannot name what it leaves
+ * behind has not thought about the seam.
+ */
+export const peerHistoryTool: ToolDefinition = {
+  name: 'peer_history',
+  description:
+    'Read what another session in your group has been doing — the turns it was given, ' +
+    'the tools it ran, what it concluded, and where it now stands. ' +
+    'Pass the `since` you were given last time to see only what is new. ' +
+    'Use this before repeating work a teammate may already have done, and after they ' +
+    'tell you something happened.',
+  schema: {
+    type: 'object',
+    properties: {
+      of: { type: 'string', description: 'The session id of a member of your group' },
+      since: {
+        type: 'number',
+        description: 'The `nextSince` from a previous read. Omit for the recent tail.',
+      },
+    },
+    required: ['of'],
+    additionalProperties: false,
+  },
+  async run(args, ctx) {
+    if (ctx.readPeerHistory === undefined) {
+      return fail('this session is not in a group, so there is no other session to read');
+    }
+    const of = args['of'];
+    if (typeof of !== 'string') return fail('of must be a session id');
+    const since = args['since'];
+    if (since !== undefined && typeof since !== 'number') return fail('since must be a number');
+
+    let history;
+    try {
+      history = await ctx.readPeerHistory(of, since as number | undefined);
+    } catch (err) {
+      // The owner's refusal, passed through as the tool's. It names the group
+      // and what is in it, which is the sentence a model can act on — and it is
+      // the same refusal `message_peer` gives for the same mistake.
+      return fail(err instanceof Error ? err.message : String(err));
+    }
+
+    /*
+     * Rendered here rather than handed over as JSON.
+     *
+     * A model reads a transcript better than it reads an array of objects, and
+     * the `seq` a caller needs next is one number rather than eighty. The lines
+     * are already clipped and bounded by the digest; nothing here can grow.
+     */
+    const body =
+      history.lines.length === 0
+        ? '(nothing since then)'
+        : history.lines.map((l: PeerHistory['lines'][number]) => `${l.kind.padEnd(5)} ${l.text}`).join('\n');
+
+    const head = `${history.title} — ${history.state}`;
+    const tail = `since=${history.nextSince}`;
+    return {
+      ok: true,
+      summary: `read ${history.lines.length} lines from ${history.title}`,
+      content: [
+        head,
+        history.truncated ? '(older lines dropped to fit)' : '',
+        '',
+        body,
+        '',
+        `Pass ${tail} to read only what comes after this.`,
+      ]
+        .filter((part) => part !== '')
+        .join('\n'),
+    };
+  },
+};
+
+/**
  * Ask for this session's scope to be split into a child (DESIGN.md §4.3).
  *
  * The tool §4.3 names, and it splits nothing — it asks. Approval belongs to a
@@ -771,6 +875,7 @@ export const DEFAULT_TOOLS: ToolDefinition[] = [
   bashTool,
   messageTool,
   messagePeerTool,
+  peerHistoryTool,
   proposeSplitTool,
   screenshotTool,
 ];

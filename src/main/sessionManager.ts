@@ -27,6 +27,7 @@ import {
   PEER_MESSAGE_MAX_CHARS,
   type OutboundMessage,
   type OutboundPeerMessage,
+  type PeerHistory,
   type PeerDelivery,
   type PeerMessage,
   type PermissionAsk,
@@ -123,6 +124,7 @@ import { fitContent } from './content/fit.js';
 import { flattenAnnotations, scaleToFit, sizeOf } from './content/pixels.js';
 import { captureUrl } from './capture/headless.js';
 import { buildBrief, checkResult, reserveForChild } from './store/brief.js';
+import { digestPeerLog } from './store/peerDigest.js';
 import {
   createWorktree,
   hasCommits,
@@ -508,6 +510,16 @@ const DEFAULT_STALL_AFTER_MS = 5 * 60 * 1_000;
  * is still in range — that being the case the inbox exists for.
  */
 const INBOX_EVENT_WINDOW = 500;
+
+/**
+ * How far back a peer read looks when it is given no cursor.
+ *
+ * The same order as the inbox window and for the same reason: enough that a
+ * session which ran overnight is still in range, bounded so that opening a
+ * month-old workspace costs what opening yesterday's does. A caller with a
+ * cursor reads exactly what is new and never touches this.
+ */
+const PEER_HISTORY_WINDOW = 500;
 
 /**
  * How many agent-to-agent hops may pass without a person.
@@ -2062,12 +2074,15 @@ export class SessionManager extends EventEmitter {
        */
       ...(live.session.group !== undefined
         ? {
-            groupPeers: this.groupPeers(live.session.sessionId).map((s) => ({
-              sessionId: s.sessionId as string,
-              title: s.title,
+            groupPeers: this.groupPeers(live.session.sessionId).map((peer) => ({
+              sessionId: peer.sessionId as string,
+              title: peer.title,
+              state: peer.state,
             })),
             sendPeerMessage: (message: OutboundPeerMessage) =>
               this.deliverPeer(live, spec.agentId, message),
+            readPeerHistory: (sessionId: string, since?: number) =>
+              this.peerHistory(live, sessionId as SessionId, since),
           }
         : {}),
       // Only when something is actually injected: an empty array would make
@@ -2498,6 +2513,85 @@ export class SessionManager extends EventEmitter {
    * person reading the transcript; nothing is enforced by it, because §13 does
    * not delegate gating to a model.
    */
+  /**
+   * What a session in this group has been doing (§17 Q22).
+   *
+   * The read half of a group, and the reason a group is worth having: dividing
+   * work between sessions only pays if each half can find out what the other
+   * half did. `deliverPeer` carries a sentence somebody chose to send; this
+   * carries the record they did not have to think to write.
+   *
+   * ## Confined to the group, and refused by the same rule as a message
+   *
+   * A session id is not a capability. `groupPeers` is the set this session may
+   * address, so it is the set this session may read — anything else is refused
+   * with the sentence the sender can act on, exactly as `message_peer` refuses
+   * an address outside the group. Two ways to name a peer with two different
+   * answers about who counts as one would be a gap somebody finds later.
+   *
+   * ## `since` is a cursor, and reading is cheap because of it
+   *
+   * A peer that checks in every few turns wants what changed. Passing back the
+   * `nextSince` from the last answer reads only the new events — the store is
+   * append-only with byte-offset resume, so that is the operation it is best at.
+   * A caller that passes nothing gets the tail rather than the whole log, since
+   * the alternative is folding a thousand events to show eighty.
+   */
+  private async peerHistory(
+    from: LiveSession,
+    sessionId: SessionId,
+    since?: number,
+  ): Promise<PeerHistory> {
+    const peers = this.groupPeers(from.session.sessionId);
+    const peer = peers.find((p) => p.sessionId === sessionId);
+    if (peer === undefined) {
+      throw new Error(
+        peers.length === 0
+          ? 'this session is not in a group, so there is no other session to read'
+          : `${sessionId} is not in this group. In it: ${peers
+              .map((p) => `${p.sessionId} (${p.title})`)
+              .join(', ')}`,
+      );
+    }
+
+    const live = this.sessions.get(sessionId);
+    if (live === undefined) {
+      // In the group by record and not open here. A group is delivered inside
+      // one host (`groupSessions` refuses to make one that is not), so this is
+      // a session that has since been closed rather than a reachability
+      // problem — and saying which is the difference between "try again" and
+      // "that work is over".
+      throw new Error(`${sessionId} is in this group but is not open on this host`);
+    }
+
+    /*
+     * A window when no cursor was given, the exact tail when one was.
+     *
+     * `PEER_HISTORY_WINDOW` bounds the *events read*, and the digest bounds the
+     * *lines returned*; they are different limits because most events fold to
+     * nothing. Reading the whole log to show eighty lines is the cost this
+     * avoids on a session that has been running all day.
+     */
+    const from0 =
+      since !== undefined
+        ? since + 1
+        : Math.max(0, live.store.nextSeq - PEER_HISTORY_WINDOW);
+    const events = await live.store.readEvents(from0);
+    const digested = digestPeerLog(events);
+
+    return {
+      sessionId: sessionId as string,
+      title: live.session.title,
+      state: live.session.state,
+      lines: digested.lines,
+      // Never behind where the caller already was: an empty window must still
+      // advance, or a peer that asks twice with nothing in between re-reads the
+      // same span forever.
+      nextSince: Math.max(digested.nextSince, since ?? 0),
+      truncated: digested.truncated,
+    };
+  }
+
   private async deliverPeer(
     from: LiveSession,
     fromAgentId: AgentId,

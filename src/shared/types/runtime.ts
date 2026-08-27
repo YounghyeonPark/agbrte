@@ -426,7 +426,35 @@ export interface RuntimeContext {
    * Absent when this session is in no group, which is the ordinary case; the
    * tool then says there is nobody to ask rather than pretending to send.
    */
-  groupPeers?: Array<{ sessionId: string; title: string }>;
+  groupPeers?: Array<{
+    sessionId: string;
+    title: string;
+    /**
+     * Where that session stands — the always-on half of §17 Q22's sharing.
+     *
+     * One word, and deliberately not a transcript. A colleague's whole history
+     * in every context, every turn, does not fit, duplicates a log §5.1 wants
+     * readable alone, and answers the wrong question anyway: what an agent needs
+     * *continuously* is whether there is anything worth going to read. A peer
+     * sitting in `awaiting_permission` or `done` is that signal, and it costs a
+     * word. The reading itself is `readPeerHistory`, called when the answer is
+     * yes.
+     */
+    state?: string;
+  }>;
+
+  /**
+   * Read what a session in this group has been doing (§17 Q22).
+   *
+   * Supplied with `groupPeers` and `sendPeerMessage` or not at all — the same
+   * both-or-neither rule, for the same reason: a way to read with no list of
+   * who to read is a guessing game.
+   *
+   * `since` is a cursor, not a filter. A peer checking in repeatedly wants what
+   * changed, and passing back the `nextSince` it was given last time is what
+   * makes the second call cheap.
+   */
+  readPeerHistory?(sessionId: string, since?: number): Promise<PeerHistory>;
   /**
    * Ask a session in this group for help (§4.2, §17 Q22).
    *
@@ -539,6 +567,24 @@ export interface PeerMessage {
  * the bound that stops two agents talking in circles — now across two bills.
  */
 export type OutboundPeerMessage = Omit<PeerMessage, 'fromSessionId' | 'fromAgentId' | 'hops'>;
+
+/**
+ * A window on what one peer session did, folded into lines (§17 Q22).
+ *
+ * `nextSince` is returned even when nothing was kept, so a caller that finds an
+ * empty answer still advances and does not re-read the same span forever.
+ */
+export interface PeerHistory {
+  sessionId: string;
+  title: string;
+  state: string;
+  lines: Array<{ seq: number; at: string; kind: 'turn' | 'did' | 'said' | 'state'; text: string }>;
+  nextSince: number;
+  /** Older lines were dropped to fit. Said rather than hidden: a reader that
+   *  cannot tell a complete answer from a clipped one will treat both as
+   *  complete. */
+  truncated: boolean;
+}
 
 /**
  * Whether a peer message was accepted for delivery — never whether it was
