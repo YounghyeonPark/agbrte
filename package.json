@@ -21,6 +21,8 @@
   "files": [
     "dist/cli",
     "dist/main",
+    "dist/renderer",
+    "dist/web",
     "README.md",
     "DESIGN.md",
     "LICENSE",
