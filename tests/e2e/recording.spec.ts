@@ -32,12 +32,17 @@
  * ## Kept out of the default run
  *
  * `@recording`, like `@shots`, because it writes a file into the repository and
- * a suite that edits tracked files on every `npm test` is a suite people learn
- * to distrust. It also wants a real model — the whole point is a transcript
- * worth reading, and the echo runtime produces a transcript that reads like a
- * test fixture, because it is one.
+ * a suite that edits tracked files on every run is a suite people learn to
+ * distrust. It also wants a real model — the whole point is a transcript worth
+ * reading, and the echo runtime produces a transcript that reads like a test
+ * fixture, because it is one.
  *
- *   npx playwright test recording --grep @recording
+ * The tag was, for a while, only a claim: nothing implemented the exclusion, so
+ * `npm run e2e` ran this, spent six real model turns, and left the published
+ * artifact modified. `playwright.config.ts` now enforces it, and the switch in
+ * the command below is what turns it back on.
+ *
+ *   AGBRTE_WRITE_FIXTURES=1 npx playwright test recording --grep @recording
  */
 
 import { test } from '@playwright/test';

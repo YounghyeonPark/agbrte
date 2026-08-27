@@ -56,7 +56,8 @@ that starts answering with a new shape finds an old one in the file, and the
 symptom is a card that opens onto a transcript rendered slightly wrong — no
 error, no failing test, and nobody looking. `pages.yml` asserts the file is
 *there*, which is a different question from whether it is *current*. Re-take it
-with `npx playwright test recording --grep @recording` when the contract moves.
+with `AGBRTE_WRITE_FIXTURES=1 npx playwright test recording --grep @recording` when
+the contract moves.
 
 ## And what a test suite cannot see
 

@@ -8,9 +8,10 @@
  *
  * Kept out of the default run by its `@shots` tag, because writing files is not
  * a test result and a suite that always writes 300 KB of images teaches people
- * to ignore its output.
+ * to ignore its output. The tag was only a claim until `playwright.config.ts`
+ * was made to enforce it; the switch below is what turns it back on.
  *
- *   npx playwright test shots --grep @shots
+ *   AGBRTE_WRITE_FIXTURES=1 npx playwright test shots --grep @shots
  *
  * ## These end up in the README, which changes what they owe a reader
  *
