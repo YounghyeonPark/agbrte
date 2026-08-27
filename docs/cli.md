@@ -36,16 +36,24 @@ matched anywhere in a line, so a whole `ls` row pipes in without an `awk` in
 front of it. `agbrte ls` then prints the group beside each title, and
 `agbrte ungroup <id>` takes one back out.
 
-What being in a group buys, for an agent on the `agbrte-harness` runtime:
+What being in a group buys:
 
 | Tool | |
 |---|---|
 | `message_peer` | send a short message to another session; it wakes and answers in its own turn, under its own permission gate |
 | `peer_history` | read what another session has been doing — the turns it was given, the tools it ran, what it concluded. `since` is a cursor, so checking in repeatedly only reads what is new |
 
-**Not on a CLI-backed seat.** A `cli:claude-code` session brings the vendor's own
-toolset, so it has neither of these. Grouping such a session is recorded and
-changes nothing it can see.
+**These work from `agbrte`.** A session driven by `agbrte run` or `agbrte attach`
+sits on the `agbrte-harness` runtime — the host registers it first, and the CLI
+takes the host's first unless told otherwise — and that runtime is the one whose
+tools these are. Nothing about a group needs the window.
+
+**They are absent when the agent *is* a third-party CLI.** `--runtime
+cli:claude-code` hands the turn to that vendor's own program, with that vendor's
+own toolset, and neither of these is in it. Two different things get called "the
+CLI" and only this one is the limitation: `agbrte` as a *client* is fine, an
+installed agent CLI as the *runtime* is not. Grouping such a session is recorded
+and changes nothing it can see.
 
 ## The same app in a browser
 

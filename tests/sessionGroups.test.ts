@@ -298,6 +298,36 @@ describe('grouping sessions on one host', () => {
     expect((await third.resumeSession(a)).group).toBeUndefined();
   });
 
+  it('opens the rest of the group when one member is opened', async () => {
+    /*
+     * The bug this closes was invisible from the app and fatal from a terminal.
+     *
+     * `groupPeers` reads the sessions this host has *open*, and `agbrte run
+     * --session <id>` opens exactly one. So a team assembled with `agbrte group`
+     * could not see itself the moment the host had forgotten the others:
+     * `message_peer` refused with "not in this group", `peer_history` had
+     * nothing to read, and `ls` showed the rest as `on disk` — grouped in the
+     * record and invisible to each other in fact. Watched happening minutes
+     * after the same pair had talked successfully while both were still loaded,
+     * which is why it survived a demonstration.
+     *
+     * Fixed by opening rather than by listing: a peer you can name but not
+     * deliver to is worse than one you cannot see, because waking the other
+     * session is what `message_peer` is *for*.
+     */
+    const first = manager();
+    const { a, b } = await two(first);
+    first.dispose();
+
+    const second = manager();
+    // One member, the way a scripted run opens one.
+    await second.resumeSession(a);
+
+    // And the other is here, so the roster the runtime is handed is truthful.
+    expect(second.list().map((s) => s.sessionId).sort()).toEqual([a, b].sort());
+    expect(second.groupPeers(a).map((s) => s.sessionId)).toEqual([b]);
+  });
+
   it('writes the attempt on the sender and the arrival on the recipient, and wakes it', async () => {
     const m = manager();
     const { a, b, aLead } = await two(m);

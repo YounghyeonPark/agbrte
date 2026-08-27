@@ -4385,7 +4385,47 @@ export class SessionManager extends EventEmitter {
     }
 
     this.emit('session', session);
+    // A team arrives together (§17 Q22). See `openGroupOf`.
+    await this.openGroupOf(session);
     return session;
+  }
+
+  /**
+   * Open the rest of a group when one of its members is opened (§17 Q22).
+   *
+   * `groupPeers` reads the sessions this host has **open**, and that was the
+   * whole feature's undoing from a terminal. `agbrte run --session <id>` opens
+   * exactly one session, so a team assembled with `agbrte group` could not see
+   * itself: `message_peer` refused with "not in this group", `peer_history` had
+   * nothing to read, and `agbrte ls` showed the others as `on disk` — grouped in
+   * the record and invisible to each other in fact. Watched happening, minutes
+   * after the same pair had talked successfully while both were still loaded.
+   *
+   * The alternative was to make the roster read from disk. That fails on the
+   * other side: a peer you can *name* but not deliver to is worse than one you
+   * cannot see, because waking a session is what `message_peer` is for. So
+   * membership is made true by opening, not by listing.
+   *
+   * Bounded by construction. It runs once per resume, opens only members not
+   * already here, and `resumeSession` is idempotent — so a sibling opening its
+   * siblings settles rather than recurses. A group is a working set: opening one
+   * member is a statement that the work it belongs to is being picked up.
+   *
+   * A member that cannot be opened is skipped rather than fatal. A group can
+   * outlive a workspace being moved or a log going missing, and refusing to open
+   * the session somebody actually asked for because a teammate's folder is gone
+   * would be the tail wagging the dog.
+   */
+  private async openGroupOf(session: Session): Promise<void> {
+    const group = session.group;
+    if (group === undefined) return;
+
+    const onDisk = await this.listOnDisk().catch(() => []);
+    for (const other of onDisk) {
+      if (other.group?.groupId !== group.groupId) continue;
+      if (this.sessions.has(other.sessionId)) continue;
+      await this.resumeSession(other.sessionId, other.instanceId).catch(() => undefined);
+    }
   }
 }
 
