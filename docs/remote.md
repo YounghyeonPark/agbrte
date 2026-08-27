@@ -31,4 +31,4 @@ by reading a record it left behind.
 
 What crosses the link, and what deliberately does not, is
 [§6 of DESIGN.md](../DESIGN.md) and the
-[design page](https://younghyeonpark.github.io/agbrte/).
+[design page](https://younghyeonpark.github.io/agbrte/idea/).

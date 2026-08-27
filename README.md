@@ -93,7 +93,7 @@ after a restart are not three features but three consequences of that.
   runs on your machine and lands in the composer for you to edit rather than
   being sent.
 
-> **[The idea, and the shape it forces](https://younghyeonpark.github.io/agbrte/)** —
+> **[The idea, and the shape it forces](https://younghyeonpark.github.io/agbrte/idea/)** —
 > the design concept as a page: the process model, how a remote host is
 > bootstrapped and what does *not* cross the link, how a session tree reserves
 > budget and bubbles blockage, and what is deliberately not built.

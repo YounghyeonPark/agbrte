@@ -1,0 +1,116 @@
+# The site, built from source rather than committed as files.
+#
+# Pages used to serve `main:/docs` directly, which is right for a folder of
+# hand-written HTML and wrong the moment one of the pages is a *build output*.
+# The browser client is compiled — checking a bundle into the repository would
+# put a generated artifact under review, and worse, would let it go stale while
+# still being served. That is the failure `release.yml` already spends a
+# paragraph on: `npm run package`, not `npm run build`, because an installer
+# that succeeds while shipping last week's code says nothing is wrong.
+#
+# So the site is assembled here, every time, from whatever is on `main`:
+#
+#   docs/            → /            the landing page and the written docs
+#   docs/idea/       → /idea/       the design concept
+#   dist/renderer/   → /app/        the browser client
+#   dist/web/        → /app/        the shim it loads first
+#
+# **Requires the repository's Pages source to be "GitHub Actions".** With the
+# legacy `/docs` source this workflow deploys nothing and the folder keeps being
+# served, which looks like a workflow that ran and did not work.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    # The site is these four things and nothing else. Building it on a commit
+    # that touched none of them would be a deploy with no change in it.
+    paths:
+      - 'docs/**'
+      - 'src/renderer/**'
+      - 'src/web/**'
+      - 'src/shared/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and a newer push wins. `cancel-in-progress: false`,
+# unlike CI: a half-finished deploy is a live site with half a build on it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The renderer and the shim, exactly as `agbrte web` serves them.
+      - run: npm run build
+
+      - name: Assemble the site
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp -r docs/. site/
+          mkdir -p site/app
+          cp -r dist/renderer/. site/app/
+          cp dist/web/bridge.js site/app/bridge.js
+
+          # Two edits the served page gets per request and a published copy
+          # cannot: the shim is injected, and `connect-src` is widened.
+          #
+          # `agbrte web` pins the policy to the one host it knows it is. A
+          # published copy has no such luxury — its whole purpose is to reach a
+          # host its visitor names, which is not knowable at build time. So the
+          # policy here permits the schemes rather than an origin, and
+          # `script-src 'self'` stays exactly as it is: the thing a CSP is
+          # actually holding back on this page is somebody else's script, not
+          # somebody else's socket.
+          #
+          # Deliberately *not* `data-agbrte-host`. Its absence is what tells the
+          # bridge it has no host and must ask for one.
+          python3 - <<'PY'
+          import pathlib
+          page = pathlib.Path('site/app/index.html')
+          html = page.read_text(encoding='utf-8')
+          html = html.replace('<head>', '<head><script src="./bridge.js"></script>', 1)
+          html = html.replace(
+              "connect-src 'self' ws://localhost:* http://localhost:*",
+              "connect-src 'self' ws: wss: http: https:",
+              1,
+          )
+          page.write_text(html, encoding='utf-8')
+          PY
+
+          # Jekyll would eat `_`-prefixed files and try to render the markdown.
+          # The docs are linked as files from the README and are read on GitHub;
+          # here they only need to be served as they are.
+          touch site/.nojekyll
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
