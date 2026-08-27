@@ -86,10 +86,14 @@ function field(label: string, placeholder: string, mode: string): HTMLInputEleme
 /**
  * Show the screen, and call `retry` once an address has been written.
  *
+ * `demo` is the other way out, for the majority who have no host to write. It
+ * resolves when the recording is playing and rejects with something worth
+ * showing when there is none to play.
+ *
  * Idempotent: the reconnect loop calls this every time it finds no host, and a
  * second call must not stack a second copy on the first.
  */
-export function askForHost(retry: () => void): void {
+export function askForHost(retry: () => void, demo?: () => Promise<void>): void {
   if (document.getElementById(ROOT_ID) !== null) return;
 
   const root = document.createElement('div');
@@ -111,16 +115,29 @@ export function askForHost(retry: () => void): void {
   style(card, { width: '100%', maxWidth: '30rem' });
 
   /*
-   * Two audiences, and the stranger goes first.
+   * Two audiences, and the stranger goes first — with something to press.
    *
    * This screen is the landing page of a published copy, so most people reading
-   * it have never heard of Agbrte and none of them has a host — somebody who
-   * does was handed a link, and a returning visitor has an address stored and
-   * never sees this at all. A page that opens with "paste your token" is a login
-   * form for a product nobody has been introduced to.
+   * it have never heard of Agbrte and none of them has a host: somebody who does
+   * was handed a link, and a returning visitor has an address stored and never
+   * sees this at all. A page that opens with "paste your token" is a login form
+   * for a product nobody has been introduced to.
    *
-   * So: what this is, then how to get it, and the field last for the minority
-   * who came here already holding a link.
+   * The first version of this screen got the *order* right and still left the
+   * majority with nothing to do. Explaining, then offering a download, then
+   * presenting two fields they cannot fill, is a locked door with directions to
+   * the locksmith written on it — and the measured behaviour at a locked door is
+   * that people leave. Describing a transcript is not showing one, and only the
+   * program can show one.
+   *
+   * So the recording is the first control on the screen. It is the only path
+   * here that works for somebody holding nothing, it opens the real app rather
+   * than a picture of it, and it reaches nothing — which is also the honest
+   * answer to the first thing anybody should wonder about a page offering to
+   * drive their computer.
+   *
+   * Then: how to get the real one, and the fields last, for the minority who
+   * came here already holding a link.
    */
   const title = document.createElement('h1');
   title.textContent = 'Agbrte';
@@ -132,6 +149,25 @@ export function askForHost(retry: () => void): void {
     'your machine, or a server over ssh — and this page is a window onto one, not the thing ' +
     'itself. Which is why it needs to be told where yours is.';
   style(lede, { margin: '0 0 1.25rem', color: '#a8a8a8' });
+
+  const tour = document.createElement('button');
+  tour.textContent = 'Look around a recorded session';
+  style(tour, {
+    display: 'block',
+    width: '100%',
+    padding: '0.7rem 1.1rem',
+    borderRadius: '7px',
+    border: '1px solid #2f5bb7',
+    background: '#1d4ed8',
+    color: '#fff',
+    font: '600 1rem/1.2 inherit',
+    cursor: 'pointer',
+  });
+
+  const tourNote = document.createElement('p');
+  tourNote.textContent =
+    'A real run, replayed from a file. Nothing installs, nothing connects to your machine.';
+  style(tourNote, { margin: '0.5rem 0 1.75rem', color: '#8a8a8a', fontSize: '0.88rem' });
 
   const links = document.createElement('p');
   style(links, { margin: '0 0 1.75rem', display: 'flex', gap: '0.9rem', flexWrap: 'wrap' });
@@ -224,6 +260,17 @@ export function askForHost(retry: () => void): void {
     });
   }
 
+  tour.addEventListener('click', () => {
+    if (demo === undefined) return;
+    tour.disabled = true;
+    tour.textContent = 'Loading the recording…';
+    demo().catch((e: unknown) => {
+      tour.disabled = false;
+      tour.textContent = 'Look around a recorded session';
+      problem.textContent = `could not load the recording: ${e instanceof Error ? e.message : String(e)}`;
+    });
+  });
+
   const nothing = document.createElement('p');
   style(nothing, { margin: '1.5rem 0 0', color: '#8a8a8a', fontSize: '0.9rem' });
   nothing.append('A host is whatever you run ');
@@ -232,7 +279,14 @@ export function askForHost(retry: () => void): void {
   style(code, { background: '#1c1c1c', padding: '0.1rem 0.35rem', borderRadius: '4px' });
   nothing.append(code, ' on. It prints the link this field wants.');
 
-  card.append(title, lede, links, already, paste, addressInput, tokenInput, problem, button, nothing);
+  card.append(title, lede);
+  /*
+   * Offered only where it can work. A page `agbrte web` served has no recording
+   * beside it, and a button that always fails is worse than one that is absent —
+   * this screen is reachable there too, when a host goes away mid-session.
+   */
+  if (demo !== undefined) card.append(tour, tourNote);
+  card.append(links, already, paste, addressInput, tokenInput, problem, button, nothing);
   root.append(card);
 
   /*

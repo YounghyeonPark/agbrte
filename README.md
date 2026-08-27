@@ -31,6 +31,10 @@ rather than a word, so there is nothing here to get wrong.
 
 ## Get it
 
+**[See a real session in your browser →](https://agbrte.dev/app/)** The actual
+client, driving a recorded run: a real dashboard, real transcripts, nothing
+installed and nothing connected to your machine.
+
 **[Download for macOS, Windows or Linux →](https://github.com/YounghyeonPark/agbrte/releases/latest)**
 Unsigned, and says so.
 

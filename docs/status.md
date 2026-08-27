@@ -39,6 +39,15 @@ than remote and unable to see the picture.
 **OCR is not built**, so the redaction sweep reports `scanned: false` rather than
 an empty match list.
 
+**The published recording ages in a direction nothing checks.** The demo at
+[agbrte.dev/app/](https://agbrte.dev/app/) replays a real socket log, so it is
+honest the day it is taken and drifts from the app every day after. A channel
+that starts answering with a new shape finds an old one in the file, and the
+symptom is a card that opens onto a transcript rendered slightly wrong — no
+error, no failing test, and nobody looking. `pages.yml` asserts the file is
+*there*, which is a different question from whether it is *current*. Re-take it
+with `npx playwright test recording --grep @recording` when the contract moves.
+
 ## And what a test suite cannot see
 
 A whole class of defect is only visible on a real remote machine: binding to the
