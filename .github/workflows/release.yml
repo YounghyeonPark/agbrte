@@ -335,9 +335,19 @@ jobs:
           prev="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
           : > changelog.txt
           if [ -n "$prev" ]; then
-            git log "$prev..$VERSION" --format='- %s' --no-merges               | grep -v '^- v[0-9]' >> changelog.txt || true
-            printf '%s
-' "$prev" > prev-tag.txt
+            git log "$prev..$VERSION" --format='- %s' --no-merges | grep -v '^- v[0-9]' >> changelog.txt || true
+            # `echo`, not `printf '%s\n'`, and the reason is this file's own
+            # history rather than a preference. The `printf` version was written
+            # from Windows through a tool that eats backslashes (CLAUDE.md
+            # hazard 5): the `\n` arrived as a real newline, which split the YAML
+            # block scalar and left the whole workflow unparseable. GitHub does
+            # not report that as a broken file — it records an instant
+            # `startup_failure` against every push, which looks like a workflow
+            # that ran, and it went unnoticed for five commits. A tag pushed in
+            # that window would have failed exactly the way `v0.0.12` and
+            # `v0.0.13` did. `$prev` is a git tag, so `echo` has nothing to get
+            # wrong here and no escape for anything to eat.
+            echo "$prev" > prev-tag.txt
           fi
 
           # The digests go in the notes as well as in the file. An attacker who
@@ -347,6 +357,10 @@ jobs:
           # rather than proof, and the sentence above says which it is.
           python3 - <<'PYEOF'
           import pathlib, os
+          # The newline this file actually contains, named rather than escaped.
+          # `notes.md` is written by a heredoc on a Linux runner, so it is `\n`
+          # whatever the machine that authored this workflow was.
+          NL = chr(10)
           notes = pathlib.Path('notes.md')
           sums = pathlib.Path('artifacts/SHA256SUMS').read_text().strip()
           run = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
@@ -368,20 +382,25 @@ jobs:
                   f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
                   f"/compare/{prev}...{os.environ['GITHUB_REF_NAME']}"
               )
-              section = (
-                  '## What changed
-
-'
-                  f'{entries}
-
-'
+              # A list of lines joined, rather than newlines inside each literal.
+              # Same reason as `prev-tag.txt` above: the escaped version was
+              # authored through a tool that ate the backslashes, and the real
+              # newlines it left behind split the YAML block scalar this Python
+              # is embedded in. There is nothing here for a backslash-eater to
+              # find. The trailing pair of empty strings is the blank line before
+              # the heading that follows the placeholder — the section replaces a
+              # line, so it has to end the way that line did.
+              section = NL.join([
+                  '## What changed',
+                  '',
+                  entries,
+                  '',
                   'Each line is one commit, and its message says what the defect was and why '
-                  f'the fix is shaped the way it is: [{prev}…{os.environ["GITHUB_REF_NAME"]}]({compare})
-
-'
-              )
-          text = text.replace('CHANGELOG
-', section)
+                  f'the fix is shaped the way it is: [{prev}…{os.environ["GITHUB_REF_NAME"]}]({compare})',
+                  '',
+                  '',
+              ])
+          text = text.replace('CHANGELOG' + NL, section)
           notes.write_text(text)
           PYEOF
 
