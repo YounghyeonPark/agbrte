@@ -21,46 +21,84 @@
 
 import type { AgbrteApi } from '../shared/ipc/contract.js';
 import { CH, PUSH } from '../shared/ipc/contract.js';
+import { askForHost, dismissAsk, reportAskFailure } from './askForHost.js';
+import { resolveHost, socketUrl, type HostAddress } from './hostAddress.js';
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 
-/** Where the token is remembered, so a reload does not need the link again. */
-const TOKEN_KEY = 'agbrte:web-token';
+/** Where the address is remembered, so a reload does not need the link again. */
+const ADDRESS_KEY = 'agbrte:host';
 
 /**
- * The bearer for this server, out of the link and then out of the way.
+ * The origin `agbrte web` stamped on the tag that loaded this file.
  *
- * It arrives in the **fragment** (`#t=…`), which is the one part of a URL a
- * browser never sends anywhere: not to the server, not into an access log, not
+ * Read from the script element rather than from an inline script, because the
+ * page's CSP is `script-src 'self'` — an inline one would be blocked, and
+ * loosening the policy to pass a single string is the wrong trade. Read
+ * *synchronously*, because `document.currentScript` is only this tag while this
+ * file is executing.
+ *
+ * Absent means the page was not served by a host: static hosting, an opened
+ * file, anything that is not `agbrte web`. That is a real state and not an
+ * error — it is what a published copy of this app looks like before somebody
+ * says where their host is.
+ */
+const SERVED_BY = document.currentScript?.getAttribute('data-agbrte-host') ?? undefined;
+
+/**
+ * The address, out of the link and then out of the way.
+ *
+ * The token arrives in the **fragment** (`#t=…`), which is the one part of a URL
+ * a browser never sends anywhere: not to the server, not into an access log, not
  * in a `Referer` to whatever the page links to next. A query string would have
- * been in the host's own log the first time anybody opened the page.
+ * been in the host's own log the first time anybody opened the page. `#h=` rides
+ * beside it so a host can hand out one string that names itself and admits the
+ * bearer.
  *
  * Stripped from the address bar once read, so a screenshot or a shoulder does
- * not carry it, and kept in `sessionStorage` — per tab, gone when the tab is —
- * so a reload does not send the person back to the terminal that printed it.
+ * not carry it.
  *
- * `localStorage` would be the wrong shelf: it is shared by every page on this
- * origin and outlives the browsing session, which for a credential is two
- * properties nobody asked for.
+ * ## Where it is kept, and why that differs by case
+ *
+ * A page **served by a host** keeps the token in `sessionStorage`: per tab, gone
+ * with the tab. The address is not worth keeping — it is wherever the page came
+ * from, every time.
+ *
+ * A **published** page has to keep the pair in `localStorage`, or the second
+ * visit is the first visit again and the person is back at the terminal for a
+ * link they already used. That is a credential living longer than a tab, which
+ * is a real cost and the honest one to pay here: the alternative is a client
+ * nobody can bookmark. It is scoped to the page's own origin, cleared by
+ * `disconnect`, and never sent anywhere but to the host it names.
  */
-function token(): string {
-  const fromHash = /[#&]t=([^&]+)/.exec(location.hash)?.[1];
-  if (fromHash !== undefined) {
-    const value = decodeURIComponent(fromHash);
-    try {
-      sessionStorage.setItem(TOKEN_KEY, value);
-      history.replaceState(null, '', location.pathname + location.search);
-    } catch {
-      // A browser that refuses storage still works for this tab; the token is
-      // already in hand and only a reload would need the link again.
-    }
-    return value;
-  }
+function readAddress(): HostAddress | null {
+  const store = SERVED_BY === undefined ? localStorage : sessionStorage;
+  let stored: HostAddress | undefined;
   try {
-    return sessionStorage.getItem(TOKEN_KEY) ?? '';
+    const raw = store.getItem(ADDRESS_KEY);
+    if (raw !== null) stored = JSON.parse(raw) as HostAddress;
   } catch {
-    return '';
+    // Unreadable or refused. Treated as nothing remembered, which lands the
+    // visitor on the same screen a first visit gets.
   }
+
+  const resolved = resolveHost({
+    served: SERVED_BY,
+    hash: location.hash,
+    ...(stored !== undefined ? { stored } : {}),
+  });
+  if (resolved === null) return null;
+
+  try {
+    // The pair, always. Storing a token without the origin that minted it is
+    // what would let one host's credential be offered to another.
+    store.setItem(ADDRESS_KEY, JSON.stringify(resolved));
+    if (location.hash !== '') history.replaceState(null, '', location.pathname + location.search);
+  } catch {
+    // A browser that refuses storage still works for this tab; only a reload
+    // would send the person back to the link.
+  }
+  return resolved;
 }
 
 function connect(): {
@@ -78,13 +116,26 @@ function connect(): {
   let admitted = false;
 
   const open = (): void => {
-    const url = new URL('/__agbrte/socket', location.href);
-    url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const next = new WebSocket(url);
+    /*
+     * Resolved on every attempt rather than once at boot.
+     *
+     * A page that started with no host — a published copy, before anybody said
+     * where theirs is — has to become one that has a host without a reload, and
+     * the reconnect loop is already the thing that runs when there is nothing to
+     * talk to. So `connect` waits here instead of failing, and the screen below
+     * fills the gap in by writing the address and letting this find it.
+     */
+    const address = readAddress();
+    if (address === null) {
+      askForHost(() => open());
+      return;
+    }
+    const next = new WebSocket(socketUrl(address));
     socket = next;
 
     next.onopen = () => {
       backoff = 250;
+      dismissAsk();
       /*
        * The token first, and nothing else until it is acknowledged.
        *
@@ -94,7 +145,7 @@ function connect(): {
        * a connection that is about to be closed.
        */
       admitted = false;
-      next.send(JSON.stringify({ t: 'auth', token: token() }));
+      next.send(JSON.stringify({ t: 'auth', token: address.token }));
     };
     next.onmessage = (e: MessageEvent) => {
       const message = JSON.parse(String(e.data)) as {
@@ -128,6 +179,24 @@ function connect(): {
       // socket. Anything queued but unsent still goes on the next one.
       for (const [, waiter] of pending) waiter.reject(new Error('lost the connection'));
       pending.clear();
+
+      /*
+       * An address that never worked is a different thing from a link that
+       * dropped, and only the first is worth interrupting somebody about.
+       *
+       * `admitted` is the test: a socket that opened and was refused, or never
+       * opened at all, has not proved the address. On a **published** page that
+       * means the person typed something this cannot reach, and silently
+       * retrying it forever would leave them looking at an empty app with no
+       * hint and no field. On a page a host served, the address cannot be wrong
+       * — that case keeps the old behaviour, which is to wait for the host to
+       * come back.
+       */
+      if (!admitted && SERVED_BY === undefined) {
+        askForHost(() => open());
+        reportAskFailure();
+      }
+
       setTimeout(open, backoff);
       backoff = Math.min(backoff * 2, 10_000);
     };

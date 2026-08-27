@@ -108,3 +108,74 @@ test('answers nothing on a socket that has not shown the token', async () => {
     await web.stop();
   }
 });
+
+/**
+ * The same bundle, served from somewhere that is not a host.
+ *
+ * This is what a published copy is: the app's own files with no `agbrte web`
+ * behind them. It has to ask where the host is rather than guess at `location`
+ * and fail at a socket — and then, once told, connect to a host on a different
+ * origin entirely.
+ *
+ * Served here by a plain static server with no stamp on the script tag, which is
+ * exactly what static hosting produces.
+ */
+test('asks where the host is when nothing served it one, and then connects', async ({ page }) => {
+  const web = await serveWebFixture();
+  const { createServer } = await import('node:http');
+  const { readFile } = await import('node:fs/promises');
+  const { join, resolve, normalize } = await import('node:path');
+
+  const rendererDir = resolve('dist/renderer');
+  const statics = createServer((req, res) => {
+    void (async () => {
+      const url = (req.url ?? '/').split('?')[0]!;
+      // The bridge is served from beside the app, the way a published copy
+      // ships it — and with no `data-agbrte-host`, which is the whole point.
+      const file =
+        url === '/__agbrte/bridge.js'
+          ? resolve('dist/web/bridge.js')
+          : join(rendererDir, normalize(url === '/' ? 'index.html' : url).replace(/^[/\\]+/u, ''));
+      const body = await readFile(file).catch(() => null);
+      if (body === null) return void res.writeHead(404).end('no');
+      const type = file.endsWith('.html')
+        ? 'text/html; charset=utf-8'
+        : file.endsWith('.js')
+          ? 'text/javascript; charset=utf-8'
+          : file.endsWith('.css')
+            ? 'text/css; charset=utf-8'
+            : 'application/octet-stream';
+      const text = file.endsWith('.html')
+        ? String(body)
+            .replace('<head>', '<head><script src="/__agbrte/bridge.js"></script>')
+            // A published copy has to permit the host its user names; the served
+            // page pins one origin because it knows which.
+            .replace("connect-src 'self'", "connect-src 'self' ws: wss: http: https:")
+        : body;
+      res.writeHead(200, { 'content-type': type }).end(text);
+    })();
+  });
+  await new Promise<void>((done) => statics.listen(0, '127.0.0.1', done));
+  const port = (statics.address() as { port: number }).port;
+
+  try {
+    await page.goto(`http://127.0.0.1:${port}/`);
+
+    // No host, so the question rather than a broken app.
+    const connect = page.locator('#agbrte-connect');
+    await expect(connect).toBeVisible();
+    await expect(connect).toContainText('Point this at your host');
+
+    // The whole printed link goes in the address field, because that is what a
+    // person will paste; the token is split out of it.
+    await connect.getByLabel('Host address').fill(web.url);
+    await connect.getByRole('button', { name: 'Connect' }).click();
+
+    // And the app comes up against a host on a different origin.
+    await expect(page.locator('[data-testid=app]')).toBeVisible({ timeout: 20_000 });
+    await expect(connect).toHaveCount(0);
+  } finally {
+    statics.close();
+    await web.stop();
+  }
+});

@@ -292,8 +292,21 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
  */
 function page(html: string, host: string | undefined): string {
   const origin = host === undefined ? '' : ` ws://${host} http://${host}`;
+  /*
+   * The stamp that says this page *has* a host, and which one.
+   *
+   * On an attribute rather than in an inline script, because the policy above is
+   * `script-src 'self'` — an inline one is blocked, and loosening a policy to
+   * carry a single string is the wrong trade. The bridge reads it from
+   * `document.currentScript` as it runs.
+   *
+   * Its absence is the signal, and that is the point: a copy of this app served
+   * from anywhere else gets no stamp, knows it has no host, and asks for one
+   * instead of guessing at `location` and failing at a socket.
+   */
+  const stamp = host === undefined ? '' : ` data-agbrte-host="http://${host}"`;
   return html
-    .replace('<head>', `<head><script src="${SHIM}"></script>`)
+    .replace('<head>', `<head><script src="${SHIM}"${stamp}></script>`)
     .replace("connect-src 'self'", `connect-src 'self'${origin}`);
 }
 
