@@ -161,10 +161,34 @@ test('asks where the host is when nothing served it one, and then connects', asy
   try {
     await page.goto(`http://127.0.0.1:${port}/`);
 
+    /*
+     * At phone size first, because that is the device this screen is mostly for:
+     * a phone has no terminal to read the printed link from, so it is the one
+     * that has to be *told* the address by hand.
+     */
+    await page.setViewportSize({ width: 390, height: 844 });
+
     // No host, so the question rather than a broken app.
     const connect = page.locator('#agbrte-connect');
     await expect(connect).toBeVisible();
     await expect(connect).toContainText('Point this at your host');
+
+    // It fits the phone it is for: nothing scrolls sideways.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+
+    /*
+     * And the keyboard corrections are off. A phone capitalises the first letter
+     * by default, so the address arrives as `Http://…` and the host is never
+     * reached; autocorrect on a 64-character hex token produces a refused
+     * handshake with nothing on screen to explain it. Asserted rather than
+     * eyeballed, because both failures look like "it just does not connect".
+     */
+    for (const name of ['Host address', 'Token']) {
+      const input = connect.getByLabel(name);
+      await expect(input).toHaveAttribute('autocapitalize', 'none');
+      await expect(input).toHaveAttribute('autocorrect', 'off');
+    }
+    await expect(connect.getByLabel('Host address')).toHaveAttribute('inputmode', 'url');
 
     // The whole printed link goes in the address field, because that is what a
     // person will paste; the token is split out of it.

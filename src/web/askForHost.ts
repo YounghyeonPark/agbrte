@@ -46,11 +46,29 @@ const style = (el: HTMLElement, css: Partial<CSSStyleDeclaration>): void => {
   Object.assign(el.style, css);
 };
 
-function field(label: string, placeholder: string): HTMLInputElement {
+function field(label: string, placeholder: string, mode: string): HTMLInputElement {
   const input = document.createElement('input');
   input.placeholder = placeholder;
   input.setAttribute('aria-label', label);
   input.spellcheck = false;
+  /*
+   * The keyboard corrections a phone applies by default, all turned off.
+   *
+   * This screen exists mostly *for* a phone — it is the device that has no
+   * terminal to read the link from — and a phone keyboard capitalises the first
+   * letter, so the address arrives as `Http://…` and the host is never reached.
+   * Autocorrect is worse on the token: sixty-four hex characters are exactly the
+   * shape a spellchecker feels entitled to improve, and the failure is a refused
+   * handshake with nothing on screen to explain it.
+   *
+   * `inputmode` is the other half — `url` puts `/` and `:` on the first layer of
+   * an on-screen keyboard, which is the difference between typing an address and
+   * hunting for it.
+   */
+  input.setAttribute('autocapitalize', 'none');
+  input.setAttribute('autocorrect', 'off');
+  input.setAttribute('autocomplete', 'off');
+  input.setAttribute('inputmode', mode);
   style(input, {
     width: '100%',
     padding: '0.6rem 0.7rem',
@@ -102,8 +120,8 @@ export function askForHost(retry: () => void): void {
     'window onto one. Paste the link it printed.';
   style(lede, { margin: '0 0 1.25rem', color: '#a8a8a8' });
 
-  const addressInput = field('Host address', 'http://127.0.0.1:7717');
-  const tokenInput = field('Token', 'the value after #t= in the printed link');
+  const addressInput = field('Host address', 'http://127.0.0.1:7717', 'url');
+  const tokenInput = field('Token', 'the value after #t= in the printed link', 'text');
 
   const problem = document.createElement('p');
   style(problem, { margin: '0.75rem 0 0', color: '#ff8f6b', minHeight: '1.5em' });
