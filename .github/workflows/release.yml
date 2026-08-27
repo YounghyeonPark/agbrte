@@ -182,6 +182,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        # Full history and tags, because the notes are now *derived* from them.
+        # A shallow clone has neither, so `git describe` finds no previous tag
+        # and the changelog silently comes out empty — which reads exactly like
+        # a release that changed nothing.
+        with:
+          fetch-depth: 0
 
       - uses: actions/download-artifact@v4
         with:
@@ -258,6 +264,7 @@ jobs:
           # Quoted heredoc, so nothing in the notes is expanded — the table below
           # is full of backticks, and an unquoted one would run them.
           cat > notes.md <<'EOF'
+          CHANGELOG
           ## Which file
 
           | You are on | Download |
@@ -315,6 +322,24 @@ jobs:
           sed -i "s/VERSION/$v/g" notes.md
           sed -i "s|REPO|$GITHUB_REPOSITORY|g" notes.md
 
+          # What changed, taken from the commits rather than from a file somebody
+          # remembers to edit. This repository's commit *titles* are sentences —
+          # "Let two sessions in a group actually reach each other" — and their
+          # bodies explain the defect and the reasoning, so the log already is
+          # the changelog. A CHANGELOG.md would be a second copy of it, and two
+          # copies of the same claim is one that gets updated and one that does
+          # not.
+          #
+          # The version-bump commit is dropped: a release has no business listing
+          # itself as one of its own changes.
+          prev="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
+          : > changelog.txt
+          if [ -n "$prev" ]; then
+            git log "$prev..$VERSION" --format='- %s' --no-merges               | grep -v '^- v[0-9]' >> changelog.txt || true
+            printf '%s
+' "$prev" > prev-tag.txt
+          fi
+
           # The digests go in the notes as well as in the file. An attacker who
           # can replace an asset can replace `SHA256SUMS` beside it; the notes are
           # a different object, edited through a different permission, and every
@@ -329,6 +354,34 @@ jobs:
           text = text.replace('RUN_URL', f'[run {os.environ["GITHUB_RUN_ID"]}]({run})')
           text = text.replace('RUN_SHA', f'`{os.environ["GITHUB_SHA"][:12]}`')
           text = text.replace('CHECKSUMS', sums)
+
+          # Absent rather than empty. A tag with nothing new behind it — a
+          # re-tag, or the very first release, which has no previous tag to
+          # measure from — gets no heading at all, because an empty "What
+          # changed" says something false about the build.
+          entries = pathlib.Path('changelog.txt').read_text().strip()
+          previous = pathlib.Path('prev-tag.txt')
+          section = ''
+          if entries and previous.exists():
+              prev = previous.read_text().strip()
+              compare = (
+                  f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+                  f"/compare/{prev}...{os.environ['GITHUB_REF_NAME']}"
+              )
+              section = (
+                  '## What changed
+
+'
+                  f'{entries}
+
+'
+                  'Each line is one commit, and its message says what the defect was and why '
+                  f'the fix is shaped the way it is: [{prev}…{os.environ["GITHUB_REF_NAME"]}]({compare})
+
+'
+              )
+          text = text.replace('CHANGELOG
+', section)
           notes.write_text(text)
           PYEOF
 
