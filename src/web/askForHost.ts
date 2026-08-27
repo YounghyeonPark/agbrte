@@ -110,15 +110,51 @@ export function askForHost(retry: () => void): void {
   const card = document.createElement('div');
   style(card, { width: '100%', maxWidth: '30rem' });
 
+  /*
+   * Two audiences, and the stranger goes first.
+   *
+   * This screen is the landing page of a published copy, so most people reading
+   * it have never heard of Agbrte and none of them has a host — somebody who
+   * does was handed a link, and a returning visitor has an address stored and
+   * never sees this at all. A page that opens with "paste your token" is a login
+   * form for a product nobody has been introduced to.
+   *
+   * So: what this is, then how to get it, and the field last for the minority
+   * who came here already holding a link.
+   */
   const title = document.createElement('h1');
-  title.textContent = 'Point this at your host';
-  style(title, { font: '600 1.3rem/1.3 inherit', margin: '0 0 0.5rem' });
+  title.textContent = 'Agbrte';
+  style(title, { font: '600 1.6rem/1.2 inherit', margin: '0 0 0.4rem' });
 
   const lede = document.createElement('p');
   lede.textContent =
-    'A session runs on a host — this machine, or a server over ssh. This page is only the ' +
-    'window onto one. Paste the link it printed.';
+    'Coding agents that keep working after you close the laptop. A session runs on a host — ' +
+    'your machine, or a server over ssh — and this page is a window onto one, not the thing ' +
+    'itself. Which is why it needs to be told where yours is.';
   style(lede, { margin: '0 0 1.25rem', color: '#a8a8a8' });
+
+  const links = document.createElement('p');
+  style(links, { margin: '0 0 1.75rem', display: 'flex', gap: '0.9rem', flexWrap: 'wrap' });
+  for (const [text, href] of [
+    ['Download', 'https://github.com/YounghyeonPark/agbrte/releases/latest'],
+    ['The idea', 'https://younghyeonpark.github.io/agbrte/idea/'],
+    ['Source', 'https://github.com/YounghyeonPark/agbrte'],
+  ]) {
+    const a = document.createElement('a');
+    a.href = href as string;
+    a.textContent = text as string;
+    a.rel = 'noreferrer';
+    style(a, { color: '#8ab4ff' });
+    links.append(a);
+  }
+
+  const already = document.createElement('h2');
+  already.textContent = 'Already have a host?';
+  style(already, { font: '600 1rem/1.3 inherit', margin: '0 0 0.15rem' });
+
+  const paste = document.createElement('p');
+  paste.textContent = 'Paste the whole link it printed — the token comes out of it.';
+  style(paste, { margin: '0 0 0.75rem', color: '#a8a8a8', fontSize: '0.92rem' });
 
   const addressInput = field('Host address', 'http://127.0.0.1:7717', 'url');
   const tokenInput = field('Token', 'the value after #t= in the printed link', 'text');
@@ -189,20 +225,14 @@ export function askForHost(retry: () => void): void {
   }
 
   const nothing = document.createElement('p');
-  style(nothing, { margin: '1.75rem 0 0', color: '#a8a8a8', fontSize: '0.92rem' });
-  nothing.append('No host yet? Run ');
+  style(nothing, { margin: '1.5rem 0 0', color: '#8a8a8a', fontSize: '0.9rem' });
+  nothing.append('A host is whatever you run ');
   const code = document.createElement('code');
   code.textContent = 'agbrte web .';
   style(code, { background: '#1c1c1c', padding: '0.1rem 0.35rem', borderRadius: '4px' });
-  nothing.append(code, ' where your work is — it prints the link this wants. ');
-  const link = document.createElement('a');
-  link.href = 'https://github.com/YounghyeonPark/agbrte#get-it';
-  link.textContent = 'Install it';
-  link.rel = 'noreferrer';
-  style(link, { color: '#8ab4ff' });
-  nothing.append(link, '.');
+  nothing.append(code, ' on. It prints the link this field wants.');
 
-  card.append(title, lede, addressInput, tokenInput, problem, button, nothing);
+  card.append(title, lede, links, already, paste, addressInput, tokenInput, problem, button, nothing);
   root.append(card);
 
   /*

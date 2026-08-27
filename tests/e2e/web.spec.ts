@@ -171,7 +171,13 @@ test('asks where the host is when nothing served it one, and then connects', asy
     // No host, so the question rather than a broken app.
     const connect = page.locator('#agbrte-connect');
     await expect(connect).toBeVisible();
-    await expect(connect).toContainText('Point this at your host');
+    // It introduces itself before it asks for anything. Most people who ever see
+    // this screen have never heard of Agbrte and none of them has a host — a
+    // page that opens with "paste your token" is a login form for a product
+    // nobody has been shown.
+    await expect(connect).toContainText('Coding agents that keep working');
+    await expect(connect.getByRole('link', { name: 'Download' })).toBeVisible();
+    await expect(connect).toContainText('Already have a host?');
 
     // It fits the phone it is for: nothing scrolls sideways.
     // Measured off the element, the way `dashboard.spec.ts` does: this file's
