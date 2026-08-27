@@ -2929,11 +2929,27 @@ function AgentPicker({
     [runtimes, answers, endpoints, notes],
   );
 
-  // Falls back to the first entry both while untouched and if a chosen model
-  // disappears from a later refresh — the list is the authority on what is
-  // there, and a selection pointing at nothing is a disabled button with no
-  // explanation.
-  const value = chosen !== null && entries.some((c) => c.value === chosen) ? chosen : (entries[0]?.value ?? '');
+  /*
+   * Untouched, this opens on something that works when the button is pressed.
+   *
+   * Falling back to `entries[0]` was the rule both while untouched and when a
+   * chosen model disappears from a later refresh, and the second half of that is
+   * still right — the list is the authority on what is there, and a selection
+   * pointing at nothing is a disabled button with no explanation.
+   *
+   * The first half was wrong in a way only a stranger meets. `Another model…`
+   * sits in `ready` because it is a route to a working agent, but it is a route
+   * through a text field: as a *default* it is an empty box and a button that
+   * does nothing until you know the name of a model. Preferring a `ready` plan
+   * skips it, and `buildEntries` having already ranked the echo runtime last
+   * means what is left at the top is a real agent.
+   *
+   * Falls all the way back to `entries[0]` when nothing is instantly runnable,
+   * which is the honest state of a machine with no models and no CLI: the list
+   * underneath is downloads, and the first entry is the shortest way to say so.
+   */
+  const preferred = entries.find((c) => c.plan.kind === 'ready')?.value ?? entries[0]?.value ?? '';
+  const value = chosen !== null && entries.some((c) => c.value === chosen) ? chosen : preferred;
   const current = entries.find((c) => c.value === value);
   /** Whether the chosen entry involves a model at all. */
   const needsModel = current !== undefined && (current.typed === true || current.modelId !== null);

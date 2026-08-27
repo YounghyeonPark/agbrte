@@ -48,6 +48,52 @@ const served = (models: string[], canInstall = true): EndpointAnswer[] => [
 ];
 
 describe('the list a person chooses from', () => {
+  /*
+   * The regression a stranger meets and nobody else does.
+   *
+   * This list is built in the order the host reports its runtimes, the echo
+   * runtime is registered first, and the control defaults to whatever is at the
+   * top. So somebody who ran the program for the first time, opened the picker
+   * and pressed the one obvious button got an agent that repeats what they
+   * typed — the worst possible first impression of a coding agent, and one that
+   * reads as the whole thing being fake.
+   *
+   * Written with `ECHO` first in the input specifically because that is the
+   * order the failure came in. A test that passed `[HARNESS, ECHO]` would go
+   * green against the old code.
+   */
+  it('never opens on the runtime that only echoes', () => {
+    const list = buildEntries([ECHO, HARNESS], served(['qwen2.5:7b']), ENDPOINT, CATALOGUE, [], labelOf);
+    expect(list[0]?.runtimeId).not.toBe('echo');
+    expect(list[0]?.modelId).toBe('qwen2.5:7b');
+  });
+
+  it('keeps the echo runtime, and keeps it among what is ready', () => {
+    // Ranked down, not removed: it is how somebody checks the log, the gate and
+    // the transcript without spending a turn, and it is genuinely here now — so
+    // it stays on this side of the boundary that means "this will download".
+    const list = buildEntries([ECHO, HARNESS], served(['qwen2.5:7b']), ENDPOINT, CATALOGUE, [], labelOf);
+    const echo = list.find((e) => e.runtimeId === 'echo');
+    expect(echo?.group).toBe('ready');
+    expect(list.findIndex((e) => e.runtimeId === 'echo')).toBeLessThan(
+      list.findIndex((e) => e.group === 'install'),
+    );
+  });
+
+  /*
+   * The distinction that makes the rule principled rather than a hardcoded id.
+   * `optional` is a runtime that brings its own model — a real agent somebody
+   * installed on purpose — and demoting it alongside echo would bury the best
+   * answer on a machine that has one.
+   */
+  it('does not demote a CLI that brings its own model', () => {
+    const list = buildEntries([ECHO, CLAUDE], served([]), ENDPOINT, CATALOGUE, [], labelOf);
+    expect(list[0]?.runtimeId).toBe('cli:claude-code');
+    expect(list.findIndex((e) => e.runtimeId === 'cli:claude-code')).toBeLessThan(
+      list.findIndex((e) => e.runtimeId === 'echo'),
+    );
+  });
+
   it('puts everything ready before everything that has to be fetched', () => {
     const list = buildEntries([HARNESS, ECHO], served(['qwen2.5:7b']), ENDPOINT, CATALOGUE, [], labelOf);
     const groups = list.map((e) => e.group);

@@ -153,6 +153,25 @@ export function buildEntries(
   labelOf: (runtimeId: string) => string,
 ): AgentEntry[] {
   const ready: AgentEntry[] = [];
+  /**
+   * Runnable, and nobody's answer to "what should run my work".
+   *
+   * Ranked below everything else in `ready` rather than dropped, because it is
+   * genuinely useful: it is how you find out whether the log, the permission
+   * gate and the transcript work without spending a turn on a model. It is also
+   * the wrong thing to hand somebody as their first agent, and it *was* being
+   * handed to them — this list is built in the order the host reports its
+   * runtimes, the echo runtime is registered first, and the control defaults to
+   * whatever is at the top. A stranger who pressed the one obvious button got a
+   * program that repeats what they typed, which is the worst possible first
+   * impression of a coding agent and reads as a fake.
+   *
+   * Selected by `model === 'none'` rather than by id, and the distinction is
+   * real: `optional` is a runtime that brings its own model — an installed CLI,
+   * which is a genuine agent and stays at the top. `none` is a runtime that
+   * neither takes a model nor has one, which is a diagnostic by definition.
+   */
+  const diagnostic: AgentEntry[] = [];
   const install: AgentEntry[] = [];
   const here = new Set(answers.flatMap((a) => a.models));
   const canInstallInto = answers.some((a) => a.canInstall === true);
@@ -163,12 +182,12 @@ export function buildEntries(
       // `optional` lands here with `none`: an installed CLI has its own model
       // configured where it lives, and asking again in this window offered a
       // second answer to a question the CLI had already settled.
-      ready.push({
+      (runtime.model === 'none' ? diagnostic : ready).push({
         value: runtime.id,
         runtimeId: runtime.id,
         modelId: null,
         label: plainName(labelOf(runtime.id)),
-        hint: 'brings its own model',
+        hint: runtime.model === 'none' ? 'no model — for checking the plumbing' : 'brings its own model',
         plan: { kind: 'ready' },
         group: 'ready',
       });
@@ -273,7 +292,13 @@ export function buildEntries(
     group: 'install',
   });
 
-  return [...ready, ...install];
+  /*
+   * Still inside the `ready` group, and that is deliberate. The heading below
+   * separates "here now" from "this will download something", and the echo
+   * runtime is very much here now — it is last among what is ready, not exiled
+   * past a boundary that means something else.
+   */
+  return [...ready, ...diagnostic, ...install];
 }
 
 /**
