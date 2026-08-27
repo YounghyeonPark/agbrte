@@ -115,9 +115,35 @@ describe('parsing a command line', () => {
      * interactive session on a folder named `interrupt`. Found on a real
      * server, which is a slow way to notice.
      */
-    for (const verb of ['attach', 'run', 'ls', 'serve', 'stop', 'web', 'interrupt']) {
+    for (const verb of [
+      'attach',
+      'run',
+      'ls',
+      'serve',
+      'stop',
+      'web',
+      'interrupt',
+      'group',
+      'ungroup',
+    ]) {
       expect(parse([verb]).command).toBe(verb);
     }
+  });
+
+  it('reads a session id as an argument, not as a workspace', () => {
+    /*
+     * `group` and `ungroup` take ids where every other command takes a path, so
+     * they need `run`'s rule: the first argument is a workspace only if it looks
+     * like one. Without it a lone id is resolved against the cwd and the command
+     * opens a workspace named after a UUID — the same silent shape as the verb
+     * that was taken for a path above.
+     */
+    const id = '01a0416e-24d8-724e-98e9-47acfd848633';
+    const parsed = parse(['group', id, '--name', 'the team']);
+    expect(parsed.command).toBe('group');
+    expect(parsed.path).toBe(process.cwd());
+    expect(parsed.rest).toEqual([id]);
+    expect(parsed.value('--name')).toBe('the team');
   });
 
   it('tells a path from a prompt by asking the filesystem', () => {

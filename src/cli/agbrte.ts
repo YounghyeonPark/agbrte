@@ -40,6 +40,7 @@ import { connect } from '@shared/host/socketChannel.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import { HostConnection } from '@main/host/hostConnection.js';
 import { newControlToken } from '@shared/host/loopback.js';
+import type { SessionId } from '@shared/types/index.js';
 import { parse } from './args.js';
 import { attach } from './attach.js';
 import { once } from './once.js';
@@ -54,6 +55,9 @@ const USAGE = `agbrte — an agent workbench, at a terminal
   agbrte [attach] [path]        open the workspace and drive it interactively
   agbrte run [path] "<prompt>"  one turn, no prompts, an exit code
   agbrte ls [path]              list sessions, one per line
+  agbrte group --name <n> <id>… put sessions in a group, so they can reach
+                                each other; ids may come from stdin
+  agbrte ungroup <id>…          take sessions back out of theirs
   agbrte serve [path]           run the host in the foreground (no client)
   agbrte web [path]             serve the app in a browser — a phone, over your VPN
   agbrte interrupt [path]       stop whatever is running here
@@ -90,8 +94,37 @@ Options for run:
 
   agbrte /srv/api                       attach to a workspace elsewhere
   agbrte ls | grep working              sessions currently mid-turn
+  agbrte ls | grep worker | agbrte group --name "the team"
+                                        a group from a pipeline; the members can
+                                        then read each other with peer_history
   agbrte run . "summarise the README"   scriptable; 0 done, 1 failed, 2 stopped short
 `;
+
+/**
+ * A session id, wherever it appears in a line.
+ *
+ * UUIDv7, matched loosely on purpose: `agbrte ls` prints `state id title`, and
+ * requiring a bare id would make every pipeline start with `awk`. Anchoring it
+ * to a word boundary is what keeps a title that happens to contain a hex run
+ * from being read as an address.
+ */
+const SESSION_ID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/;
+
+/**
+ * Session ids from stdin, for the pipeline half of `group`.
+ *
+ * Reads only when there is something to read: a terminal with no pipe attached
+ * would otherwise block on a command the user typed by hand, which is the hang
+ * `once.ts` spends a paragraph avoiding elsewhere. `isTTY` answers exactly that
+ * question, so the check is the condition rather than a timeout.
+ */
+async function idsFromStdin(): Promise<string[]> {
+  if (process.stdin.isTTY === true) return [];
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  const global = new RegExp(SESSION_ID.source, 'g');
+  return Buffer.concat(chunks).toString('utf8').match(global) ?? [];
+}
 
 /**
  * Where the session host bundle is, relative to this one.
@@ -376,6 +409,67 @@ async function main(): Promise<number> {
 
   try {
     switch (command) {
+      case 'group': {
+        /*
+         * Put sessions in a group, from a terminal (§17 Q22).
+         *
+         * The protocol had `session.group` and `HostConnection` had
+         * `groupSessions`, and between a person and them there was only the app
+         * — so a group could be made only where there is a window. That is the
+         * wrong half of the product to require one for: dividing work across
+         * sessions is what you do on a build box over ssh, and both of the
+         * things a group is *for*, `message_peer` and `peer_history`, are
+         * reachable only from inside one.
+         *
+         * Ids come from the arguments, or from stdin when there are none, so
+         * `agbrte ls | grep worker | agbrte group --name "the team"` is one
+         * line. The pattern matches an id anywhere in the input, which is what
+         * lets a whole `ls` row be piped in without cutting a column out of it.
+         */
+        const ids = rest.some((a) => SESSION_ID.test(a))
+          ? rest.filter((a) => SESSION_ID.test(a))
+          : await idsFromStdin();
+        if (ids.length === 0) {
+          process.stderr.write(
+            `${c.fail('name at least one session')} — ids come from arguments or from stdin:\n` +
+              c.dim(`  agbrte group --name "the team" <id> <id>\n`) +
+              c.dim(`  agbrte ls | grep worker | agbrte group --name "the team"\n`),
+          );
+          return 1;
+        }
+
+        const name = value('--name');
+        if (name === undefined || name.trim() === '') {
+          // The manager refuses an unnamed group and says why. Saying it here
+          // saves a round trip and names the flag rather than the concept.
+          process.stderr.write(
+            `${c.fail('a group needs a name')} — it is what a person finds it by: ` +
+              `${c.dim('--name "the team"')}\n`,
+          );
+          return 1;
+        }
+
+        const grouped = await connection.groupSessions(ids as SessionId[], name);
+        for (const g of grouped) process.stdout.write(`${g.sessionId}  ${g.title}\n`);
+        process.stderr.write(c.dim(`${grouped.length} sessions in "${name}"\n`));
+        return 0;
+      }
+
+      case 'ungroup': {
+        const ids = rest.some((a) => SESSION_ID.test(a))
+          ? rest.filter((a) => SESSION_ID.test(a))
+          : await idsFromStdin();
+        if (ids.length === 0) {
+          process.stderr.write(`${c.fail('name at least one session to take out of its group')}\n`);
+          return 1;
+        }
+        for (const id of ids) {
+          const left = await connection.ungroupSession(id as SessionId);
+          process.stdout.write(`${left.sessionId}  ${left.title}\n`);
+        }
+        return 0;
+      }
+
       case 'ls': {
         const sessions = await connection.list();
         const onDisk = await connection.listOnDisk();
@@ -388,7 +482,11 @@ async function main(): Promise<number> {
         // different sessions as `019fd625`, which cannot be pasted into
         // `--session`.
         for (const s of sessions) {
-          process.stdout.write(`${s.state.padEnd(20)} ${s.sessionId}  ${s.title}\n`);
+          // The group, where there is one. Without it a terminal cannot see
+          // which sessions are a team, and `agbrte group` would be a command
+          // whose result is invisible from the shell that ran it.
+          const team = s.group === undefined ? '' : c.dim(`  [${s.group.name}]`);
+          process.stdout.write(`${s.state.padEnd(20)} ${s.sessionId}  ${s.title}${team}\n`);
         }
         for (const d of onDisk.filter((d) => !loaded.has(d.sessionId as never))) {
           process.stdout.write(`${'on disk'.padEnd(20)} ${d.sessionId}  ${d.title}\n`);

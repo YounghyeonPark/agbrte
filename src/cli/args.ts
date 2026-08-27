@@ -40,10 +40,32 @@ export const KNOWN_COMMANDS = new Set([
   'update',
   'web',
   'interrupt',
+  'group',
+  'ungroup',
 ]);
 
 /** Flags that consume the next argument; everything else is a boolean. */
-const VALUE_FLAGS = new Set(['--runtime', '--model', '--session', '--title', '--port', '--bind', '--endpoint', '--token']);
+const VALUE_FLAGS = new Set([
+  '--runtime',
+  '--model',
+  '--session',
+  '--title',
+  '--port',
+  '--bind',
+  '--endpoint',
+  '--token',
+  '--name',
+]);
+
+/**
+ * Commands whose first argument may not be a path.
+ *
+ * `run` takes a prompt and `group` takes session ids, so for these the first
+ * argument is a workspace only if it *looks* like one. Everything else takes a
+ * path or nothing, and treating a lone session id as a directory would resolve
+ * it against the cwd and open a workspace nobody asked for.
+ */
+const TAKES_ARGUMENTS = new Set(['run', 'group', 'ungroup']);
 
 export function parse(argv: string[]): Parsed {
   const flags = new Set<string>();
@@ -85,7 +107,7 @@ export function parse(argv: string[]): Parsed {
   const first = after[0];
   const looksLikePath =
     first !== undefined &&
-    (command !== 'run' ||
+    (!TAKES_ARGUMENTS.has(command) ||
       first === '.' ||
       /^(\.\.?[/\\]|[/\\]|~|[A-Za-z]:[/\\])/.test(first) ||
       existsSync(resolve(first)));
