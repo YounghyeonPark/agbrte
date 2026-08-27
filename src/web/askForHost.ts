@@ -137,7 +137,7 @@ export function askForHost(retry: () => void): void {
   style(links, { margin: '0 0 1.75rem', display: 'flex', gap: '0.9rem', flexWrap: 'wrap' });
   for (const [text, href] of [
     ['Download', 'https://github.com/YounghyeonPark/agbrte/releases/latest'],
-    ['The idea', 'https://younghyeonpark.github.io/agbrte/idea/'],
+    ['The idea', 'https://agbrte.dev/idea/'],
     ['Source', 'https://github.com/YounghyeonPark/agbrte'],
   ]) {
     const a = document.createElement('a');

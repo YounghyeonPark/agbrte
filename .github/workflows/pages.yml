@@ -95,6 +95,13 @@ jobs:
           page.write_text(html, encoding='utf-8')
           PY
 
+          # `CNAME` rides in the artifact rather than only in the repository
+          # setting. An Actions-published site is whatever the artifact contains,
+          # so a custom domain that lives only in Settings is one deploy away
+          # from being forgotten — and the symptom is a site that answers on
+          # `*.github.io` again while every link in the README points elsewhere.
+          test -f site/CNAME || { echo "docs/CNAME is missing"; exit 1; }
+
           # Jekyll would eat `_`-prefixed files and try to render the markdown.
           # The docs are linked as files from the README and are read on GitHub;
           # here they only need to be served as they are.
