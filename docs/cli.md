@@ -6,7 +6,8 @@
 terminal is the same session the app opens — not a second, lesser mode.
 
 **`agbrte --help` is the complete reference** for the commands (`attach`, `run`,
-`ls`, `serve`, `web`, `interrupt`, `stop`, `update`) and every flag; `attach` is
+`ls`, `group`, `ungroup`, `serve`, `web`, `interrupt`, `stop`, `update`) and
+every flag; `attach` is
 line-based on purpose, because the first place it runs is an ssh session on a
 machine with no display, likely in tmux, possibly with a `TERM` nobody has tested.
 
@@ -19,6 +20,32 @@ wants those apart.
 
 **A permission request with no `--yes` is denied, not queued.** In cron there is
 nobody to ask, and waiting would be a job that never ends.
+
+## A team of sessions, from a pipeline
+
+Sessions that are in a **group** can reach each other. Grouping used to need the
+desktop app, which was backwards: dividing a job across three sessions is what
+you do on a build box over ssh.
+
+```bash
+agbrte ls | grep worker | agbrte group --name "the team"
+```
+
+Ids come from the arguments, or from stdin when there are none — and an id is
+matched anywhere in a line, so a whole `ls` row pipes in without an `awk` in
+front of it. `agbrte ls` then prints the group beside each title, and
+`agbrte ungroup <id>` takes one back out.
+
+What being in a group buys, for an agent on the `agbrte-harness` runtime:
+
+| Tool | |
+|---|---|
+| `message_peer` | send a short message to another session; it wakes and answers in its own turn, under its own permission gate |
+| `peer_history` | read what another session has been doing — the turns it was given, the tools it ran, what it concluded. `since` is a cursor, so checking in repeatedly only reads what is new |
+
+**Not on a CLI-backed seat.** A `cli:claude-code` session brings the vendor's own
+toolset, so it has neither of these. Grouping such a session is recorded and
+changes nothing it can see.
 
 ## The same app in a browser
 
