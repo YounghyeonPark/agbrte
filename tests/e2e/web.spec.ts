@@ -174,7 +174,10 @@ test('asks where the host is when nothing served it one, and then connects', asy
     await expect(connect).toContainText('Point this at your host');
 
     // It fits the phone it is for: nothing scrolls sideways.
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    // Measured off the element, the way `dashboard.spec.ts` does: this file's
+    // tsconfig has no DOM lib, and a bare `document` compiles nowhere.
+    const sideways = await page.locator('body').evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(sideways).toBeLessThanOrEqual(0);
 
     /*
      * And the keyboard corrections are off. A phone capitalises the first letter
