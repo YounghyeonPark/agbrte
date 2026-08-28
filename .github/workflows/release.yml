@@ -332,10 +332,20 @@ jobs:
           #
           # The version-bump commit is dropped: a release has no business listing
           # itself as one of its own changes.
+          #
+          # The `v` is optional, and that is not tidiness. Every bump through
+          # `v0.0.26` was titled exactly `v0.0.26`, so a pattern anchored on the
+          # `v` was correct and looked permanent. `0.0.27` was then titled
+          # `0.0.27, and the package stops being private` — a better commit
+          # message by this repository's own standard, which asks titles to be
+          # sentences — and it sailed straight through the filter and became the
+          # first line of its own release notes. Matching a version with or
+          # without the prefix costs one character class and stops the rule from
+          # depending on a habit nobody wrote down.
           prev="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
           : > changelog.txt
           if [ -n "$prev" ]; then
-            git log "$prev..$VERSION" --format='- %s' --no-merges | grep -v '^- v[0-9]' >> changelog.txt || true
+            git log "$prev..$VERSION" --format='- %s' --no-merges | grep -vE '^- v?[0-9]+\.[0-9]' >> changelog.txt || true
             # `echo`, not `printf '%s\n'`, and the reason is this file's own
             # history rather than a preference. The `printf` version was written
             # from Windows through a tool that eats backslashes (CLAUDE.md
