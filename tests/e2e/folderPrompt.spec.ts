@@ -84,9 +84,19 @@ async function askedFrom(
   let asked = false;
   term.onData((d) => {
     out += d;
-    // Answered on sight rather than after a fixed wait: the prompt is the
-    // signal, and a sleep long enough to be safe here is a slow test everywhere.
-    if (!asked && /Folder to work in \[/u.test(out)) {
+    /*
+     * Answered on sight rather than after a fixed wait: the prompt is the
+     * signal, and a sleep long enough to be safe here is a slow test everywhere.
+     *
+     * Matched on the tail of the line, not the whole of it. The first version
+     * looked for `Folder to work in [` and the prompt was later reworded to
+     * `Project folder to work in [` — for a good reason, since an unqualified
+     * "folder" read as an install path — which lowercased the F and left this
+     * waiting ninety seconds for an answer it never sent. The words before "to
+     * work in" are the part most likely to be improved again; the bracket that
+     * opens the default is the part that makes it a prompt.
+     */
+    if (!asked && /to work in \[/u.test(out)) {
       asked = true;
       setTimeout(() => term.write(`${answer}\r`), 200);
     }

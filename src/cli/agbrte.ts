@@ -142,13 +142,29 @@ async function idsFromStdin(): Promise<string[]> {
  * refusal it replaced. With nobody there this returns null and the caller prints
  * the reason and stops, exactly as before.
  *
- * ## The default it offers is not `$HOME`
+ * ## It asks for a *project* folder, and both halves of the question say so
  *
- * A home directory is refused by `assertNotInstallRoot`: `~/.agbrte` is the
- * machine's install area, so a workspace rooted there would put one folder's
- * sessions beside the private Node and `endpoints.json`. Offering it as the
- * escape from one refusal straight into another would be a special kind of
- * unhelpful, so the suggestion is a folder *inside* it.
+ * This is the one question the program asks at a terminal, so it must not be
+ * mistakable for a different one. Nothing here installs anything: `npx` leaves
+ * nothing behind, the desktop app installs itself, and the machine's own area at
+ * `~/.agbrte` is created without asking. The only thing being chosen is where the
+ * *work* lives — the folder whose code an agent will read and whose sessions are
+ * kept beside it.
+ *
+ * The first wording was `Folder to work in [~/agbrte]:`, and it read as an
+ * install path from both directions: an unqualified "folder", suggesting
+ * `~/agbrte` — one character from `~/.agbrte`, which genuinely *is* the install
+ * area sitting in the same parent. Somebody reading that could reasonably think
+ * they were being asked where to put the program.
+ *
+ * So the noun is `Project folder`, matching the wording the refusal above it
+ * already uses, and the suggestion is `~/my-project`, which is the same example
+ * the remedy prints when nothing is there to ask. One vocabulary, and a default
+ * that cannot be read as a place to install something.
+ *
+ * `$HOME` itself is not offered, and could not be: `assertNotInstallRoot` refuses
+ * it, because a workspace rooted there would write its host record over the
+ * machine's own. Suggesting it would be an escape from one refusal into another.
  *
  * Nothing is created here. A path that does not exist yet is fine — `openWorkspace`
  * makes it, recursively — and saying so is what stops somebody hunting for a
@@ -161,7 +177,7 @@ async function askForFolder(reason: string, suggestion: string): Promise<string 
   try {
     process.stdout.write(`${c.warn(reason)}\n`);
     const answer = (
-      await rl.question(c.dim(`Folder to work in [${suggestion}]: `))
+      await rl.question(c.dim(`Project folder to work in [${suggestion}]: `))
     ).trim();
     // Enter takes the suggestion. Quotes stripped because a path pasted from a
     // Windows file manager arrives wrapped in them, and the failure would be a
@@ -340,7 +356,7 @@ async function main(): Promise<number> {
    *
    * `NotAWorkspace` carries the two apart because they have different readers.
    * Printing "change into a project folder first, or name one: agbrte web …"
-   * directly above `Folder to work in [~/agbrte]:` is telling somebody how to
+   * directly above `Project folder to work in [~/my-project]:` is telling somebody how to
    * answer a question they are being asked — advice and prompt competing to be
    * the thing acted on. With no terminal there is no prompt, and then the
    * remedy is the only useful half.
@@ -382,7 +398,7 @@ async function main(): Promise<number> {
     // The reason only: the question that follows *is* the remedy.
     const chosen = await askForFolder(
       err instanceof NotAWorkspace ? err.reason : err instanceof Error ? err.message : String(err),
-      resolve(homedir(), 'agbrte'),
+      resolve(homedir(), 'my-project'),
     );
     if (chosen === null) {
       // Nothing asked, so the remedy has to travel with the reason.

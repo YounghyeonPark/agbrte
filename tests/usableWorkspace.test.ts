@@ -79,14 +79,31 @@ describe('everything else', () => {
     }
   });
 
-  it('says what to do instead, not just what went wrong', () => {
-    let said = '';
+  /*
+   * The reason and the remedy are carried apart, and the split is the behaviour
+   * rather than a detail of the type. A terminal is about to ask which project
+   * folder to use and prints the reason alone; anything that cannot ask — the
+   * app, a host, a script — prints `message`, which is both. Asserting `message`
+   * alone would let the halves be re-joined without a test noticing, which is
+   * exactly how the redundant advice got above the prompt in the first place.
+   */
+  it('separates why it refused from what to do about it', () => {
+    let thrown: unknown;
     try {
       assertUsableWorkspace(onWindows ? 'C:\\' : '/', {});
     } catch (err) {
-      said = err instanceof Error ? err.message : String(err);
+      thrown = err;
     }
-    // A newcomer reading this has to be able to act on it without a search.
-    expect(said).toMatch(/agbrte web /);
+    expect(thrown).toBeInstanceOf(NotAWorkspace);
+    const err = thrown as NotAWorkspace;
+
+    // The half a prompt does not need: no instruction on how to answer.
+    expect(err.reason).toMatch(/top of a filesystem/);
+    expect(err.reason).not.toMatch(/agbrte web /);
+
+    // The half that is the whole answer when nothing is going to ask.
+    expect(err.remedy).toMatch(/agbrte web /);
+    expect(err.message).toContain(err.reason);
+    expect(err.message).toContain(err.remedy);
   });
 });
