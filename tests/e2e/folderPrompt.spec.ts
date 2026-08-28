@@ -35,9 +35,20 @@ import { join, resolve } from 'node:path';
  */
 const REFUSED = process.platform === 'win32' ? 'C:\\Windows\\System32' : '/usr';
 
-test('asks for a folder when the one it was given belongs to the system', async () => {
-  test.setTimeout(120_000);
-
+/**
+ * Drives the CLI under a pty from a folder it must refuse, answers the question,
+ * and reports what the terminal showed.
+ *
+ * Shared by both refusals because the *question* is the behaviour under test and
+ * it must not depend on which rule declined the folder — a difference there is
+ * exactly the bug this file grew to cover, where a system directory got a clean
+ * sentence and a prompt while `$HOME` got a wrapped prefix and no way forward.
+ */
+async function askedFrom(
+  cwd: string,
+  env: Record<string, string>,
+  port: string,
+): Promise<{ out: string; asked: boolean; answer: string }> {
   const require = createRequire(import.meta.url);
   // Loaded the way `shell.ts` loads it — through `createRequire`, because it
   // carries a `.node` binary and a static import would make this file's whole
@@ -54,19 +65,18 @@ test('asks for a folder when the one it was given belongs to the system', async 
     };
   };
 
-  const home = await mkdtemp(join(tmpdir(), 'agbrte-prompt-home-'));
   const answer = join(await mkdtemp(join(tmpdir(), 'agbrte-prompt-')), 'my-project');
 
   const term = pty.spawn(
     process.execPath,
-    [resolve('dist/cli/agbrte.js'), 'web', '.', '--port', '7923', '--token', 'prompt'],
+    [resolve('dist/cli/agbrte.js'), 'web', '.', '--port', port, '--token', 'prompt'],
     {
       name: 'xterm-color',
       cols: 100,
       rows: 30,
       // The folder somebody's terminal opened in, not one they chose.
-      cwd: REFUSED,
-      env: { ...process.env, AGBRTE_HOME: home, AGBRTE_HOST_LINGER_MS: '3000' },
+      cwd,
+      env: { ...process.env, ...env, AGBRTE_HOST_LINGER_MS: '3000' },
     },
   );
 
@@ -78,23 +88,62 @@ test('asks for a folder when the one it was given belongs to the system', async 
     // signal, and a sleep long enough to be safe here is a slow test everywhere.
     if (!asked && /Folder to work in \[/u.test(out)) {
       asked = true;
-      setTimeout(() => term.write(`${answer}\r`), 200);
+      setTimeout(() => term.write(`${answer}`), 200);
     }
   });
 
   try {
     await expect
       .poll(() => out, { timeout: 90_000, message: 'the CLI never served a link' })
-      .toContain('7923');
-
-    // It said why before it asked. A prompt with no reason above it is a
-    // question somebody cannot answer well.
-    expect(out).toContain('belongs to the operating system');
-    expect(asked).toBe(true);
-    // And it is working in what was typed, not in what it was given.
-    expect(out).toContain(answer);
-    expect(out).not.toContain(`agbrte web  ${REFUSED}`);
+      .toContain(port);
+    return { out, asked, answer };
   } finally {
     term.kill();
   }
+}
+
+test('asks for a folder when the one it was given belongs to the system', async () => {
+  test.setTimeout(120_000);
+  const home = await mkdtemp(join(tmpdir(), 'agbrte-prompt-home-'));
+  const { out, asked, answer } = await askedFrom(REFUSED, { AGBRTE_HOME: home }, '7923');
+
+  // It said why before it asked. A prompt with no reason above it is a question
+  // somebody cannot answer well.
+  expect(out).toContain('belongs to the operating system');
+  expect(asked).toBe(true);
+  // And it is working in what was typed, not in what it was given.
+  expect(out).toContain(answer);
+  expect(out).not.toContain(`agbrte web  ${REFUSED}`);
+});
+
+/**
+ * The other refusal, which for a while was treated worse than this one.
+ *
+ * `$HOME` is declined by `assertNotInstallRoot`, because `~/.agbrte` is the
+ * machine's install area: a workspace rooted there writes its host record over
+ * the machine's own, and that record carries the bearer token which is the whole
+ * of the control channel's authentication (§6.2). The CLI's pre-check originally
+ * ran only the system-directory rule, so this case still arrived wrapped in
+ * `no session host for …` with no question — and home is far likelier than a
+ * system directory to be what somebody tries.
+ *
+ * Reproduced by pointing `AGBRTE_HOME` at the candidate's own `.agbrte` rather
+ * than by using the real `$HOME`. It is the same collision — the rule is about
+ * the two directories being one, not about the path being a home — and it keeps
+ * this test out of the developer's actual installation.
+ */
+test('asks for a folder when the one it was given is the install directory', async () => {
+  test.setTimeout(120_000);
+  const collides = await mkdtemp(join(tmpdir(), 'agbrte-installroot-'));
+  const { out, asked, answer } = await askedFrom(
+    collides,
+    { AGBRTE_HOME: join(collides, '.agbrte') },
+    '7924',
+  );
+
+  expect(out).toContain("this machine's Agbrte install directory");
+  // The prefix that made this case unreadable, asserted absent by name.
+  expect(out).not.toContain('no session host for');
+  expect(asked).toBe(true);
+  expect(out).toContain(answer);
 });

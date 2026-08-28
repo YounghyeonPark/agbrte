@@ -320,11 +320,23 @@ async function main(): Promise<number> {
    * PowerShell that opened in `C:\WINDOWS\system32`, the prefix is the part that
    * looks like the error.
    *
-   * So the same rule runs before anything is attached, where its message can be
-   * the whole message. The check is pure and cheap, and both call sites reading
-   * from one function is what keeps them from disagreeing.
+   * So the same rules run before anything is attached, where their message can
+   * be the whole message. They are pure and cheap, and both call sites reading
+   * from the same two functions is what keeps them from disagreeing.
+   *
+   * **Both** rules, which the first version of this got wrong. It ran only
+   * `assertUsableWorkspace`, so a system directory got a clean sentence and a
+   * question while `$HOME` — refused by `assertNotInstallRoot`, because
+   * `~/.agbrte` is this machine's install area and a workspace rooted there
+   * would write its host record over the machine's own — still got the wrapped
+   * prefix and no way forward. Home is the far likelier thing for somebody to
+   * try, so the one with the worse treatment was the one more people would meet.
    */
-  const { assertUsableWorkspace } = await import('@main/store/layout.js');
+  const { assertNotInstallRoot, assertUsableWorkspace } = await import('@main/store/layout.js');
+  const usable = (root: string): void => {
+    assertUsableWorkspace(root);
+    assertNotInstallRoot(root);
+  };
   /*
    * `let`, and the answer keeps the name every command below already uses. The
    * folder somebody asked for and the folder this ends up working in are the
@@ -333,7 +345,7 @@ async function main(): Promise<number> {
    */
   let path = requested;
   try {
-    assertUsableWorkspace(path);
+    usable(path);
   } catch (err) {
     /*
      * Asked once, not in a loop.
@@ -354,7 +366,7 @@ async function main(): Promise<number> {
       return 1;
     }
     try {
-      assertUsableWorkspace(chosen);
+      usable(chosen);
     } catch (second) {
       process.stderr.write(`${c.warn(second instanceof Error ? second.message : String(second))}\n`);
       return 1;
