@@ -17,7 +17,19 @@ import { expect, test } from '@playwright/test';
 import { serveWebFixture } from './harness.js';
 
 test('serves the app and drives a session over a socket', async ({ page }) => {
-  const web = await serveWebFixture();
+  /*
+   * Its own machine directory (§8), which this spec did without for too long.
+   *
+   * Without it the fixture uses the developer's real `~/.agbrte`: its registry
+   * gains an entry per run, and the host started for the next run reopens every
+   * temp workspace the previous ones left behind. That is how the session
+   * assertion below started matching three elements — three runs, three
+   * sessions, all still visible.
+   */
+  const { mkdtemp } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const web = await serveWebFixture({ home: await mkdtemp(join(tmpdir(), 'agbrte-web-home-')) });
   const url = web.url;
 
   try {
@@ -38,6 +50,17 @@ test('serves the app and drives a session over a socket', async ({ page }) => {
     // host and comes back as a push.
     await page.locator('[data-testid=new-session]').click();
     await page.locator('[data-testid=new-title]').fill('from a browser');
+    /*
+     * Cleared, because typing a title fills this in for you.
+     *
+     * A name here means "a folder of its own", created beside the open one — the
+     * form's intended default, and not what this test is about: it is about a
+     * session in the workspace being served. The field was left alone while the
+     * CLI's connector ignored the folder it was asked for, so the offer was
+     * inert; once that was fixed the test began creating a sibling folder on
+     * every run and putting its session there.
+     */
+    await page.locator('[data-testid=new-folder]').fill('');
     await page.locator('[data-testid=new-submit]').click();
     await expect(page.locator('[data-testid=picker]')).toBeVisible({ timeout: 20_000 });
     await expect(

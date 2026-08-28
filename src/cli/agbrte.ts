@@ -127,68 +127,6 @@ async function idsFromStdin(): Promise<string[]> {
 }
 
 /**
- * A folder to work in, asked for when the one we were given cannot be used.
- *
- * ## Asking beats refusing, but only when somebody is there
- *
- * The refusal this replaces was correct and was still a dead end: it told a
- * first-time reader that `C:\WINDOWS\system32` is not a workspace and left them
- * at a prompt to work out the rest. They are already in a terminal, already
- * running the program, and the only missing fact is a path — which is a question,
- * not an error.
- *
- * Guarded on `isTTY` for the reason `idsFromStdin` above is: a prompt in a
- * script, a CI job or a test harness is a hang, and a hang is worse than the
- * refusal it replaced. With nobody there this returns null and the caller prints
- * the reason and stops, exactly as before.
- *
- * ## It asks for a *project* folder, and both halves of the question say so
- *
- * This is the one question the program asks at a terminal, so it must not be
- * mistakable for a different one. Nothing here installs anything: `npx` leaves
- * nothing behind, the desktop app installs itself, and the machine's own area at
- * `~/.agbrte` is created without asking. The only thing being chosen is where the
- * *work* lives — the folder whose code an agent will read and whose sessions are
- * kept beside it.
- *
- * The first wording was `Folder to work in [~/agbrte]:`, and it read as an
- * install path from both directions: an unqualified "folder", suggesting
- * `~/agbrte` — one character from `~/.agbrte`, which genuinely *is* the install
- * area sitting in the same parent. Somebody reading that could reasonably think
- * they were being asked where to put the program.
- *
- * So the noun is `Project folder`, matching the wording the refusal above it
- * already uses, and the suggestion is `~/my-project`, which is the same example
- * the remedy prints when nothing is there to ask. One vocabulary, and a default
- * that cannot be read as a place to install something.
- *
- * `$HOME` itself is not offered, and could not be: `assertNotInstallRoot` refuses
- * it, because a workspace rooted there would write its host record over the
- * machine's own. Suggesting it would be an escape from one refusal into another.
- *
- * Nothing is created here. A path that does not exist yet is fine — `openWorkspace`
- * makes it, recursively — and saying so is what stops somebody hunting for a
- * `mkdir` before answering.
- */
-async function askForFolder(reason: string, suggestion: string): Promise<string | null> {
-  if (process.stdin.isTTY !== true) return null;
-  const { createInterface } = await import('node:readline/promises');
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    process.stdout.write(`${c.warn(reason)}\n`);
-    const answer = (
-      await rl.question(c.dim(`Project folder to work in [${suggestion}]: `))
-    ).trim();
-    // Enter takes the suggestion. Quotes stripped because a path pasted from a
-    // Windows file manager arrives wrapped in them, and the failure would be a
-    // second refusal naming a folder with a quote in it.
-    return (answer === '' ? suggestion : answer).replace(/^["']|["']$/gu, '');
-  } finally {
-    rl.close();
-  }
-}
-
-/**
  * Where the session host bundle is, relative to this one.
  *
  * Two layouts exist and both are legitimate. `npm i -g` installs the package
@@ -375,44 +313,45 @@ async function main(): Promise<number> {
     assertUsableWorkspace(root);
     assertNotInstallRoot(root);
   };
-  /*
-   * `let`, and the answer keeps the name every command below already uses. The
-   * folder somebody asked for and the folder this ends up working in are the
-   * same thing in every case but one, and threading a second name through
-   * thirty-eight uses to express that would be worse than reassigning here.
+  const path = requested;
+  /**
+   * Set when the folder cannot be used, and `web` carries on anyway.
+   *
+   * ## Why the terminal stopped asking
+   *
+   * There was a prompt here — *"Project folder to work in [~/my-project]:"* —
+   * on the reasoning that `agbrte web` must attach something or the client has
+   * nothing to show. Measured rather than assumed, that reasoning was wrong. A
+   * web client served with an empty fleet is not broken: it shows *"Point it at
+   * a folder and you are working"*, offers to open one by name, and attaching
+   * succeeds — `hosts.add(root)` takes an explicit path, and only the *native
+   * picker* is missing in a browser. Driven end to end, the host count goes from
+   * zero to one on a folder typed into the page.
+   *
+   * The app had already said so, in the panel behind `Attach host…`: **"This
+   * machine is always available. Choose a folder to work in when you start a
+   * session."** A session picks its own folder — that is what `NewSession` is —
+   * so asking at startup was asking a second time, earlier, in a worse place,
+   * before anything was on screen to give the question context. That is exactly
+   * what made it read as an install step.
+   *
+   * So the folder is now chosen where it belongs. The terminal says why the one
+   * it was given will not do, and gets out of the way.
+   *
+   * ## Only `web` has somewhere to defer to
+   *
+   * `run`, `serve` and `attach` have no folder picker to fall back on, so a
+   * refusal is the end for them and the remedy travels with the reason.
    */
-  let path = requested;
+  let unusable: unknown = null;
   try {
     usable(path);
   } catch (err) {
-    /*
-     * Asked once, not in a loop.
-     *
-     * A second refusal means the answer was also unusable, and a prompt that
-     * keeps reappearing is one somebody has to `Ctrl-C` out of. Once is enough
-     * to rescue the case this exists for — a terminal that opened somewhere the
-     * person did not choose — and anything past that is better served by them
-     * naming a path on the command line, which the message says.
-     */
-    const { homedir } = await import('node:os');
-    // The reason only: the question that follows *is* the remedy.
-    const chosen = await askForFolder(
-      err instanceof NotAWorkspace ? err.reason : err instanceof Error ? err.message : String(err),
-      resolve(homedir(), 'my-project'),
-    );
-    if (chosen === null) {
-      // Nothing asked, so the remedy has to travel with the reason.
+    if (command !== 'web') {
       say(err, true);
       return 1;
     }
-    try {
-      usable(chosen);
-    } catch (second) {
-      say(second, true);
-      return 1;
-    }
-    path = chosen;
-    process.stdout.write(`${c.dim(`working in ${resolve(path)}`)}\n`);
+    unusable = err;
   }
 
   if (command === 'serve') {
@@ -482,9 +421,22 @@ async function main(): Promise<number> {
               { id: 'cli:gemini-cli', label: 'Gemini CLI (installed)', version: '0.0.1', model: 'optional' as const },
             ]),
       ],
-      connect: async () =>
+      /*
+       * The folder being attached, not the folder this command started in.
+       *
+       * `location.workspaceRoot` was already the right answer and was ignored:
+       * this closed over `path` instead, which was harmless while exactly one
+       * attach ever happened — a fleet of one, made at startup from the argument.
+       * It stopped being harmless the moment the client could attach a folder
+       * itself. Opening one from the page then tried to start a host for the
+       * *command's* folder, and the refusal that came back named a directory the
+       * person had not chosen and could not see any connection to:
+       *
+       *   no session host for …\my-work: C:\Windows\System32 is inside C:\WINDOWS…
+       */
+      connect: async (location) =>
         connectOrSpawnHost({
-          workspaceRoot: path,
+          workspaceRoot: location.workspaceRoot,
           hostEntry: findHostEntry(),
           execPath: process.execPath,
           client: `agbrte-web@${process.env['HOSTNAME'] ?? 'server'}`,
@@ -493,7 +445,17 @@ async function main(): Promise<number> {
           ...(isPublic ? { mustSpawn: true } : {}),
         }),
     });
-    await fleet.attach({ target: { kind: 'local' }, workspaceRoot: path });
+    /*
+     * Attached when it can be, and served empty when it cannot.
+     *
+     * The reason is printed rather than swallowed — somebody who typed
+     * `agbrte web .` in the wrong place is owed the sentence — but it is not
+     * fatal, because the page they are about to open asks for a folder and can
+     * attach one. The remedy is withheld for the same reason the prompt was:
+     * the client is the remedy, and it is one click away.
+     */
+    if (unusable === null) await fleet.attach({ target: { kind: 'local' }, workspaceRoot: path });
+    else say(unusable, false);
 
     const bind = value('--bind') ?? '127.0.0.1';
     const server = await serveWeb({
