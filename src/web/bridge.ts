@@ -22,7 +22,6 @@
 import type { AgbrteApi } from '../shared/ipc/contract.js';
 import { CH, PUSH } from '../shared/ipc/contract.js';
 import { askForHost, dismissAsk, reportAskFailure } from './askForHost.js';
-import { startDemo, type Link } from './demo.js';
 import { resolveHost, socketUrl, type HostAddress } from './hostAddress.js';
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
@@ -102,58 +101,14 @@ function readAddress(): HostAddress | null {
   return resolved;
 }
 
-/** Set once somebody chooses the recording, so a reload stays in it. */
-const DEMO_KEY = 'agbrte:demo';
+/** What `window.agbrte` forwards through: one socket, reconnecting on its own. */
+type Link = {
+  call: (channel: string, args: unknown[]) => Promise<unknown>;
+  fire: (channel: string, args: unknown[]) => void;
+  on: (push: string, cb: (payload: unknown) => void) => () => void;
+};
 
-/**
- * Whether this tab is already in the recording.
- *
- * `sessionStorage`, not `localStorage`, and the difference is the whole
- * behaviour: a demo is a visit rather than a preference. Kept across origins the
- * way the address is, somebody who looked at the recording once would find the
- * app permanently pretending, and the way out of it would be a browser setting.
- */
-function remembersDemo(): boolean {
-  try {
-    return sessionStorage.getItem(DEMO_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-/**
- * What the API is talking to: the socket, or a recording.
- *
- * A variable rather than two builds of `api`, because every method below reads
- * it *per call*. The renderer takes `window.agbrte` once at boot and holds it,
- * so a swap has to be invisible to a reference somebody already has — replacing
- * the object would leave the app driving whatever it captured at startup.
- *
- * Declared above `connect` and left null on purpose: `connect` opens
- * synchronously and can decide, before it returns, that this page is a
- * recording. Initialising it from the value `connect` has not produced yet would
- * be a use-before-declaration, and the symptom would be a demo that throws on
- * the one path that reaches it — a reload.
- */
-let active: Link | null = null;
-
-/**
- * A link that is a promise of a link.
- *
- * The recording arrives over `fetch`, and the renderer boots on its own
- * schedule. Whichever wins, the calls must not be lost: this queues them behind
- * the fetch rather than rejecting them, which is the same bargain `send` already
- * makes with a socket that is not open yet.
- */
-function deferred(recording: Promise<Link>): Link {
-  return {
-    call: (channel, args) => recording.then((l) => l.call(channel, args)),
-    fire: () => undefined,
-    on: () => () => undefined,
-  };
-}
-
-function connect(): Link & { stop: () => void } {
+function connect(): Link {
   const pending = new Map<number, Pending>();
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
   const outbox: string[] = [];
@@ -162,61 +117,7 @@ function connect(): Link & { stop: () => void } {
   let backoff = 250;
   /** Whether this socket has been through the handshake yet. */
   let admitted = false;
-  /**
-   * Set when the recording takes over, and checked in both places that would
-   * otherwise bring this loop back.
-   *
-   * Without it the demo is unusable rather than merely impure: the retry timer
-   * keeps firing, finds no address, and puts the connect screen back over the
-   * app every few seconds — the loop's whole job is to recover from having no
-   * host, and "no host" is now the intended state.
-   */
-  let stopped = false;
-
-  /**
-   * Hand the app over to the recording, and stop looking for a host.
-   *
-   * Awaited rather than fired off, so a missing or unreadable recording rejects
-   * back to the button that asked for it and is reported on the screen the
-   * person is still standing on. Nothing is torn down until the recording is in
-   * hand — a failure here has to leave the connect screen exactly as it was.
-   */
-  const enterDemo = async (): Promise<void> => {
-    await startDemo();
-    /*
-     * Remembered, and then the page is started again from the top.
-     *
-     * The swap alone is not enough and the reason is in the renderer, not here:
-     * it booted while there was nothing to talk to, so its store holds the
-     * failures of a socket that never opened, and a recording pushes nothing
-     * that would invalidate them. Something has to make it ask again.
-     *
-     * A reload is that something, and it is deliberately *not* a private
-     * arrangement with the renderer — poking its router or its store from the
-     * shim would be this file reaching across the boundary that lets the same
-     * renderer run under Electron untouched. The flag is what makes the reload
-     * safe: the next boot finds it before the connect screen is ever drawn.
-     */
-    try {
-      sessionStorage.setItem(DEMO_KEY, '1');
-    } catch {
-      // Refused storage costs the demo on reload, so say so rather than
-      // reloading into the door the person just came through.
-      throw new Error('this browser will not let the page remember anything');
-    }
-    /*
-     * Last, and after everything that can fail. An earlier version stopped the
-     * loop before writing the flag, so a browser refusing storage left the
-     * person holding an error message *and* a Connect button that no longer did
-     * anything — the retry it calls is the loop this had already killed.
-     */
-    stopped = true;
-    socket?.close();
-    location.reload();
-  };
-
   const open = (): void => {
-    if (stopped) return;
     /*
      * Resolved on every attempt rather than once at boot.
      *
@@ -228,22 +129,7 @@ function connect(): Link & { stop: () => void } {
      */
     const address = readAddress();
     if (address === null) {
-      /*
-       * A remembered choice, taken before the screen is drawn.
-       *
-       * Somebody in the recording who reloads — or follows a link inside the app
-       * that lands on a fresh document — has already answered this question, and
-       * asking it again would drop them back at the door they just came through.
-       * The flag is `sessionStorage`, so it lasts exactly as long as the tab: a
-       * demo is a visit, not a preference, and a person who comes back tomorrow
-       * to connect a real host should not have to find the way out of one.
-       */
-      if (remembersDemo()) {
-        stopped = true;
-        active = deferred(startDemo());
-        return;
-      }
-      askForHost(() => open(), SERVED_BY === undefined ? enterDemo : undefined);
+      askForHost(() => open());
       return;
     }
     const next = new WebSocket(socketUrl(address));
@@ -309,11 +195,10 @@ function connect(): Link & { stop: () => void } {
        * come back.
        */
       if (!admitted && SERVED_BY === undefined) {
-        askForHost(() => open(), SERVED_BY === undefined ? enterDemo : undefined);
+        askForHost(() => open());
         reportAskFailure();
       }
 
-      if (stopped) return;
       setTimeout(open, backoff);
       backoff = Math.min(backoff * 2, 10_000);
     };
@@ -341,20 +226,15 @@ function connect(): Link & { stop: () => void } {
       listeners.set(push, set);
       return () => set.delete(cb);
     },
-    stop: () => {
-      stopped = true;
-      socket?.close();
-    },
   };
 }
 
-const live = connect();
-active ??= live;
+const link = connect();
 
 const call =
   (channel: string) =>
   (...args: unknown[]): Promise<never> =>
-    (active ?? live).call(channel, args) as Promise<never>;
+    link.call(channel, args) as Promise<never>;
 
 const api: AgbrteApi = {
   hosts: {
@@ -518,16 +398,16 @@ const api: AgbrteApi = {
   },
   // One-way, exactly as in the preload: an ack has no reply, and awaiting one
   // per batch would serialize rendering behind the round trip.
-  ack: (sessionId: string, seq: number) => (active ?? live).fire(CH.ack, [sessionId, seq]),
+  ack: (sessionId: string, seq: number) => link.fire(CH.ack, [sessionId, seq]),
   on: {
-    events: (cb) => (active ?? live).on(PUSH.events, cb as (p: unknown) => void),
-    session: (cb) => (active ?? live).on(PUSH.session, cb as (p: unknown) => void),
-    permission: (cb) => (active ?? live).on(PUSH.permission, cb as (p: unknown) => void),
-    permissionResolved: (cb) => (active ?? live).on(PUSH.permissionResolved, cb as (p: unknown) => void),
-    hosts: (cb) => (active ?? live).on(PUSH.hosts, cb as (p: unknown) => void),
-    setup: (cb) => (active ?? live).on(PUSH.setup, cb as (p: unknown) => void),
-    shell: (cb) => (active ?? live).on(PUSH.shell, cb as (p: unknown) => void),
-    shellExit: (cb) => (active ?? live).on(PUSH.shellExit, cb as (p: unknown) => void),
+    events: (cb) => link.on(PUSH.events, cb as (p: unknown) => void),
+    session: (cb) => link.on(PUSH.session, cb as (p: unknown) => void),
+    permission: (cb) => link.on(PUSH.permission, cb as (p: unknown) => void),
+    permissionResolved: (cb) => link.on(PUSH.permissionResolved, cb as (p: unknown) => void),
+    hosts: (cb) => link.on(PUSH.hosts, cb as (p: unknown) => void),
+    setup: (cb) => link.on(PUSH.setup, cb as (p: unknown) => void),
+    shell: (cb) => link.on(PUSH.shell, cb as (p: unknown) => void),
+    shellExit: (cb) => link.on(PUSH.shellExit, cb as (p: unknown) => void),
     // Never pushed to a browser: there is no updater on this side. A no-op
     // unsubscribe rather than an absent method, so the renderer's cleanup is
     // the same shape everywhere.

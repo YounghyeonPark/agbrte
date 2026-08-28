@@ -31,9 +31,14 @@ rather than a word, so there is nothing here to get wrong.
 
 ## Get it
 
-**[See a real session in your browser →](https://agbrte.dev/app/)** The actual
-client, driving a recorded run: a real dashboard, real transcripts, nothing
-installed and nothing connected to your machine.
+```bash
+npx agbrte web .
+```
+
+One line, Node 22+, nothing installed. It starts a real host on your machine and
+prints a link — open it and the browser client is driving your own folder. It is
+the same host the desktop app uses, so a folder open in both shows one session
+list.
 
 **[Download for macOS, Windows or Linux →](https://github.com/YounghyeonPark/agbrte/releases/latest)**
 Unsigned, and says so.
@@ -52,7 +57,7 @@ two builds on one computer, and what the test commands cover.
 | :-- | :-- | :-- |
 | Every session on every attached machine, ranked by **who needs a human**. | One session: a tool call, the permission it went through, and the answer. | The same app in a phone browser on your own network, driving a run on a build box. |
 
-*(Real turns against a local `qwen2.5:7b`, captured by `npx playwright test shots --grep @shots`.)*
+*(Real turns against a local `qwen2.5:7b`, captured by `AGBRTE_WRITE_FIXTURES=1 npx playwright test shots --grep @shots`.)*
 
 ## The one idea
 

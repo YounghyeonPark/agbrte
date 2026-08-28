@@ -12,7 +12,6 @@
 #
 #   docs/            → /            the landing page and the written docs
 #   docs/idea/       → /idea/       the design concept
-#   docs/app/        → /app/        the recording the client replays
 #   dist/renderer/   → /app/        the browser client
 #   dist/web/        → /app/        the shim it loads first
 #
@@ -69,18 +68,6 @@ jobs:
           mkdir -p site/app
           cp -r dist/renderer/. site/app/
           cp dist/web/bridge.js site/app/bridge.js
-
-          # The recording is the only thing here that is neither written by hand
-          # nor built by `npm run build`: it is taken by `recording.spec.ts`
-          # against a real host and a real model, and committed. Asserted rather
-          # than assumed, because without it `/app/` is the locked door this
-          # whole page exists to unlock — and its absence is invisible until a
-          # stranger presses the button.
-          test -f site/app/recording.json || {
-            echo "docs/app/recording.json is missing — take one with:"
-            echo "  npx playwright test recording --grep @recording"
-            exit 1
-          }
 
           # Two edits the served page gets per request and a published copy
           # cannot: the shim is injected, and `connect-src` is widened.

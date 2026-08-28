@@ -49,16 +49,6 @@ acceptable for a demo of what the program is and is not a foundation for
 anything else. Per-visitor workspaces, session and turn caps, and a reset are not
 built.
 
-**The published recording ages in a direction nothing checks.** The demo at
-[agbrte.dev/app/](https://agbrte.dev/app/) replays a real socket log, so it is
-honest the day it is taken and drifts from the app every day after. A channel
-that starts answering with a new shape finds an old one in the file, and the
-symptom is a card that opens onto a transcript rendered slightly wrong — no
-error, no failing test, and nobody looking. `pages.yml` asserts the file is
-*there*, which is a different question from whether it is *current*. Re-take it
-with `AGBRTE_WRITE_FIXTURES=1 npx playwright test recording --grep @recording` when
-the contract moves.
-
 ## And what a test suite cannot see
 
 A whole class of defect is only visible on a real remote machine: binding to the
