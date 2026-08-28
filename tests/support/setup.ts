@@ -1,3 +1,5 @@
+import { afterAll } from 'vitest';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -70,4 +72,32 @@ if (process.env['AGBRTE_HOME'] === undefined || process.env[OWNED] === '1') {
     `agbrte-file-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
   );
   process.env[OWNED] = '1';
+}
+
+/*
+ * And it is removed when the file is done with it.
+ *
+ * `setupFiles` runs once per test file, so this hook covers all of them from one
+ * place — which is the only proportionate way to reach seventy-six specs. Each
+ * home holds whatever a host wrote under it: `machine.json`, `endpoints.json`,
+ * and a workspace or two. Nothing read it after the file ended, and nothing
+ * removed it either, so a day of running the suite left a few hundred of them
+ * beside the ones the e2e suite was leaving.
+ *
+ * Only the one this file created. `AGBRTE_HOME_FROM_SUITE` is what says so —
+ * a developer who exported their own `AGBRTE_HOME` to point the suite somewhere
+ * has not asked for it to be deleted afterwards.
+ *
+ * Failures are swallowed. On Windows a directory can be held by a host still
+ * inside its linger window, and a cleanup that throws would turn tidiness into a
+ * red suite.
+ */
+if (process.env[OWNED] === '1') {
+  const mine = process.env['AGBRTE_HOME'];
+  afterAll(async () => {
+    if (mine === undefined) return;
+    await rm(mine, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(
+      () => undefined,
+    );
+  });
 }

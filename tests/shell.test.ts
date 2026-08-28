@@ -24,8 +24,8 @@
  * started as `electron.exe` with `ELECTRON_RUN_AS_NODE=1`.
  */
 
-import { describe, expect, it } from 'vitest';
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { afterAll, describe, expect, it } from 'vitest';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -192,6 +192,18 @@ function harness(): {
     },
   };
 }
+
+/*
+ * The directories these two tests plant an executable in, removed afterwards.
+ *
+ * Made with `mkdtempSync` inside the test because the file it plants has to
+ * exist before the call under test looks for it; a list plus one hook is what
+ * keeps that from leaving a folder per run under the system temp directory.
+ */
+const planted: string[] = [];
+afterAll(() => {
+  for (const dir of planted) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+});
 
 describe('what a terminal is allowed to start', () => {
   it('opens the shell when nobody chose, and the caller cannot name one', () => {
@@ -474,6 +486,7 @@ describe('finding a program on this machine', () => {
    */
   it('expands PATHEXT on Windows, so a bare name finds the .exe', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agbrte-path-'));
+    planted.push(dir);
     const name = process.platform === 'win32' ? 'probe.exe' : 'probe';
     const file = join(dir, name);
     writeFileSync(file, '');
@@ -493,6 +506,7 @@ describe('finding a program on this machine', () => {
     // checkout that shipped a `claude.exe` beside its README would otherwise be
     // run by this pane on the strength of its filename.
     const dir = mkdtempSync(join(tmpdir(), 'agbrte-cwd-'));
+    planted.push(dir);
     const name = process.platform === 'win32' ? 'planted.exe' : 'planted';
     const file = join(dir, name);
     writeFileSync(file, '');

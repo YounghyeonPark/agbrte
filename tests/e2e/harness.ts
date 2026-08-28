@@ -8,12 +8,12 @@
 
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { createServer as netCreateServer } from 'node:net';
-import { tmpdir } from 'node:os';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { delimiter, join, resolve } from 'node:path';
+import { recordFixture, tempFixture } from './fixtureDirs.js';
 
 export const ROOT = resolve(import.meta.dirname, '../..');
 
@@ -46,7 +46,7 @@ export interface LaunchedApp {
  */
 export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
   if (workspaces.length === 0) throw new Error('launch needs at least one workspace');
-  const userDataDir = await mkdtemp(join(tmpdir(), 'agbrte-e2e-profile-'));
+  const userDataDir = await tempFixture('agbrte-e2e-profile-');
 
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -120,8 +120,17 @@ export async function makeRepo(at?: string): Promise<string> {
   // sidebar lists it. That does not matter to an assertion and matters entirely
   // to a screenshot, where `agbrte-e2e-repo-5Y5Z4U` tells a reader they are
   // looking at somebody's test fixture rather than at the product.
-  const dir = at ?? (await mkdtemp(join(tmpdir(), 'agbrte-e2e-repo-')));
+  const dir = at ?? (await tempFixture('agbrte-e2e-repo-'));
   await mkdir(dir, { recursive: true });
+  /*
+   * Recorded, because almost nobody removes one of these.
+   *
+   * About fifty call sites across the specs ask for a repo and go on to test
+   * something else; a `finally` at each of them is fifty edits and one omission
+   * away from being wrong again. One line here covers every caller, including
+   * the ones written next year. `fixtureDirs.ts` says what happens to the list.
+   */
+  await recordFixture(dir);
   // A real repo, because "edits a real repo" is the acceptance criterion and a
   // bare temp folder would not prove the workspace machinery works on one.
   execFileSync('git', ['init', '-q'], { cwd: dir });

@@ -37,10 +37,10 @@
  * failing, which is the honest failure mode for a path nobody has run.
  */
 
+import { tempFixture } from './fixtureDirs.js';
 import { _electron as electron, expect, test } from '@playwright/test';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { ROOT, makeRepo } from './harness.js';
 import { addAgent, createSession } from './actions.js';
@@ -59,7 +59,7 @@ test('a packaged app starts its own CLI on the session in the pane', async () =>
   );
 
   const repo = await makeRepo();
-  const userDataDir = await mkdtemp(join(tmpdir(), 'agbrte-packaged-profile-'));
+  const userDataDir = await tempFixture('agbrte-packaged-profile-');
 
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {

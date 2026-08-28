@@ -18,6 +18,7 @@
 
 import { readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { LEDGER_ENV, openLedger } from './fixtureDirs.js';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 
@@ -42,6 +43,16 @@ async function newestUnder(dir: string): Promise<number> {
 }
 
 export default async function globalSetup(): Promise<void> {
+  /*
+   * Opened before the staleness check, so the variable reaches the workers even
+   * on a run that is about to be refused — the refusal happens before any
+   * fixture is made, but a setup that half-configures the environment depending
+   * on where it threw is a thing nobody wants to reason about later.
+   *
+   * `fixtureDirs.ts` explains what the file is for and what removes it.
+   */
+  process.env[LEDGER_ENV] = await openLedger();
+
   const source = await newestUnder(join(ROOT, 'src'));
 
   /*

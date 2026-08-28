@@ -25,10 +25,10 @@
  * forward — is a blank screen rather than an error.
  */
 
+import { tempFixture } from './fixtureDirs.js';
 import { expect, test } from '@playwright/test';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 /**
@@ -45,7 +45,7 @@ async function serveFrom(
   cwd: string,
   port: string,
 ): Promise<{ out: string; stop: () => void }> {
-  const home = await mkdtemp(join(tmpdir(), 'agbrte-empty-home-'));
+  const home = await tempFixture('agbrte-empty-home-');
   const server = spawn(
     process.execPath,
     [resolve('dist/cli/agbrte.js'), 'web', '.', '--port', port, '--token', 'empty'],
@@ -93,7 +93,7 @@ test('serves the client anyway when the folder it was given is a system director
     // Created first: this field *opens* a folder. Naming one that does not exist
     // is what the panel's separate "new folder" field is for, and pointing the
     // open field at nothing is how the first version of this test failed.
-    const chosen = join(await mkdtemp(join(tmpdir(), 'agbrte-chosen-')), 'work');
+    const chosen = join(await tempFixture('agbrte-chosen-'), 'work');
     await mkdir(chosen, { recursive: true });
     await writeFile(join(chosen, 'README.md'), '# chosen in the page\n', 'utf8');
     await page.getByText('New session in a folder', { exact: false }).first().click();
@@ -122,10 +122,10 @@ test('serves the client anyway when the folder it was given is a system director
  */
 test('serves the client anyway when the folder it was given is the install directory', async () => {
   test.setTimeout(180_000);
-  const collides = await mkdtemp(join(tmpdir(), 'agbrte-installroot-'));
+  const collides = await tempFixture('agbrte-installroot-');
   await writeFile(join(collides, 'README.md'), '# here\n', 'utf8');
 
-  const home = await mkdtemp(join(tmpdir(), 'unused-'));
+  const home = await tempFixture('unused-');
   void home;
   const server = spawn(
     process.execPath,

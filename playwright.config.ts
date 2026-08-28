@@ -18,6 +18,10 @@ export default defineConfig({
   // a failure. The check costs a directory walk; see the file for what it cost
   // not to have it.
   globalSetup: './tests/e2e/globalSetup.ts',
+  // Removes the temp directories the run made, on a green run. It reads the
+  // pass/fail answer out of `test-results/.last-run.json`; see the file for the
+  // two places that looked like better homes and were not.
+  globalTeardown: './tests/e2e/globalTeardown.ts',
   // A live test waits on a 7B model generating a tool call.
   timeout: 180_000,
   expect: { timeout: 15_000 },

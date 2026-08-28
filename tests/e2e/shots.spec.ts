@@ -35,10 +35,10 @@
  * silently producing different pictures under one name.
  */
 
+import { tempFixture } from './fixtureDirs.js';
 import { test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { modelAvailable, serveWebFixture, warmModel } from './harness.js';
 
@@ -155,7 +155,7 @@ test.describe('@shots', () => {
     // Its own machine directory and its own endpoint file, so this neither reads
     // nor writes the developer's `~/.agbrte` (§8) — the alternative is a run
     // that quietly depends on how the person running it configured their models.
-    const home = await mkdtemp(join(tmpdir(), 'agbrte-shots-home-'));
+    const home = await tempFixture('agbrte-shots-home-');
     if (live) {
       await writeFile(
         join(home, 'endpoints.json'),
@@ -177,7 +177,7 @@ test.describe('@shots', () => {
     // `agbrte-e2e-repo-5Y5Z4U` in a published screenshot says "test fixture".
     const web = await serveWebFixture({
       home,
-      repo: join(await mkdtemp(join(tmpdir(), 'agbrte-shots-')), 'probe'),
+      repo: join(await tempFixture('agbrte-shots-'), 'probe'),
     });
 
     try {

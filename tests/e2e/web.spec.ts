@@ -13,6 +13,7 @@
  * start something is not a test, and skipping instead would have been worse.
  */
 
+import { tempFixture } from './fixtureDirs.js';
 import { expect, test } from '@playwright/test';
 import { serveWebFixture } from './harness.js';
 
@@ -26,10 +27,7 @@ test('serves the app and drives a session over a socket', async ({ page }) => {
    * assertion below started matching three elements — three runs, three
    * sessions, all still visible.
    */
-  const { mkdtemp } = await import('node:fs/promises');
-  const { tmpdir } = await import('node:os');
-  const { join } = await import('node:path');
-  const web = await serveWebFixture({ home: await mkdtemp(join(tmpdir(), 'agbrte-web-home-')) });
+  const web = await serveWebFixture({ home: await tempFixture('agbrte-web-home-') });
   const url = web.url;
 
   try {

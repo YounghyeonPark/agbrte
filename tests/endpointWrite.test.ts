@@ -17,8 +17,8 @@
  * the same `restrictToOwner` this now shares with the host record.
  */
 
-import { describe, expect, it } from 'vitest';
-import { mkdtemp, readFile, stat, writeFile, mkdir } from 'node:fs/promises';
+import { afterAll, describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { addEndpoint, EndpointRejected, loadEndpoints } from '../src/host/endpoints.js';
@@ -33,8 +33,25 @@ import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtoco
 
 const KEY = 'sk-test-do-not-log-me';
 
+/*
+ * Collected, because `scratch()` is called once per test and nothing removed
+ * them: this file alone left ten directories under the system temp folder per
+ * run. Neighbouring `endpoints.test.ts` has always done this with a
+ * `beforeEach`/`afterEach` pair; here the directory is made inside the test, so
+ * the list is what makes one hook enough.
+ */
+const scratches: string[] = [];
+afterAll(async () => {
+  for (const dir of scratches) {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(
+      () => undefined,
+    );
+  }
+});
+
 async function scratch(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'agbrte-endpoints-'));
+  scratches.push(dir);
   return join(dir, '.agbrte', 'endpoints.json');
 }
 
@@ -208,6 +225,7 @@ describe('what the write preserves', () => {
 describe('who may add one', () => {
   it('refuses a read-only client and writes nothing', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'agbrte-endpoint-role-'));
+    scratches.push(dir);
     const file = join(dir, 'endpoints.json');
     const identity = await openWorkspace(dir);
     const registry = new RuntimeRegistry();
