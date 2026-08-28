@@ -127,6 +127,52 @@ async function idsFromStdin(): Promise<string[]> {
 }
 
 /**
+ * A folder to work in, asked for when the one we were given cannot be used.
+ *
+ * ## Asking beats refusing, but only when somebody is there
+ *
+ * The refusal this replaces was correct and was still a dead end: it told a
+ * first-time reader that `C:\WINDOWS\system32` is not a workspace and left them
+ * at a prompt to work out the rest. They are already in a terminal, already
+ * running the program, and the only missing fact is a path — which is a question,
+ * not an error.
+ *
+ * Guarded on `isTTY` for the reason `idsFromStdin` above is: a prompt in a
+ * script, a CI job or a test harness is a hang, and a hang is worse than the
+ * refusal it replaced. With nobody there this returns null and the caller prints
+ * the reason and stops, exactly as before.
+ *
+ * ## The default it offers is not `$HOME`
+ *
+ * A home directory is refused by `assertNotInstallRoot`: `~/.agbrte` is the
+ * machine's install area, so a workspace rooted there would put one folder's
+ * sessions beside the private Node and `endpoints.json`. Offering it as the
+ * escape from one refusal straight into another would be a special kind of
+ * unhelpful, so the suggestion is a folder *inside* it.
+ *
+ * Nothing is created here. A path that does not exist yet is fine — `openWorkspace`
+ * makes it, recursively — and saying so is what stops somebody hunting for a
+ * `mkdir` before answering.
+ */
+async function askForFolder(reason: string, suggestion: string): Promise<string | null> {
+  if (process.stdin.isTTY !== true) return null;
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    process.stdout.write(`${c.warn(reason)}\n`);
+    const answer = (
+      await rl.question(c.dim(`Folder to work in [${suggestion}]: `))
+    ).trim();
+    // Enter takes the suggestion. Quotes stripped because a path pasted from a
+    // Windows file manager arrives wrapped in them, and the failure would be a
+    // second refusal naming a folder with a quote in it.
+    return (answer === '' ? suggestion : answer).replace(/^["']|["']$/gu, '');
+  } finally {
+    rl.close();
+  }
+}
+
+/**
  * Where the session host bundle is, relative to this one.
  *
  * Two layouts exist and both are legitimate. `npm i -g` installs the package
@@ -260,7 +306,7 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  const { command, path, rest, flags, value } = parse(argv);
+  const { command, path: requested, rest, flags, value } = parse(argv);
 
   /*
    * Checked here as well as in `openWorkspace`, and the duplication buys the
@@ -278,12 +324,44 @@ async function main(): Promise<number> {
    * the whole message. The check is pure and cheap, and both call sites reading
    * from one function is what keeps them from disagreeing.
    */
+  const { assertUsableWorkspace } = await import('@main/store/layout.js');
+  /*
+   * `let`, and the answer keeps the name every command below already uses. The
+   * folder somebody asked for and the folder this ends up working in are the
+   * same thing in every case but one, and threading a second name through
+   * thirty-eight uses to express that would be worse than reassigning here.
+   */
+  let path = requested;
   try {
-    const { assertUsableWorkspace } = await import('@main/store/layout.js');
     assertUsableWorkspace(path);
   } catch (err) {
-    process.stderr.write(`${c.warn(err instanceof Error ? err.message : String(err))}\n`);
-    return 1;
+    /*
+     * Asked once, not in a loop.
+     *
+     * A second refusal means the answer was also unusable, and a prompt that
+     * keeps reappearing is one somebody has to `Ctrl-C` out of. Once is enough
+     * to rescue the case this exists for — a terminal that opened somewhere the
+     * person did not choose — and anything past that is better served by them
+     * naming a path on the command line, which the message says.
+     */
+    const { homedir } = await import('node:os');
+    const chosen = await askForFolder(
+      err instanceof Error ? err.message : String(err),
+      resolve(homedir(), 'agbrte'),
+    );
+    if (chosen === null) {
+      process.stderr.write(`${c.warn(err instanceof Error ? err.message : String(err))}\n`);
+      return 1;
+    }
+    try {
+      assertUsableWorkspace(chosen);
+    } catch (second) {
+      process.stderr.write(`${c.warn(second instanceof Error ? second.message : String(second))}\n`);
+      return 1;
+    }
+    path = chosen;
+    process.stdout.write(`${c.dim(`working in ${resolve(path)}`)}
+`);
   }
 
   if (command === 'serve') {
