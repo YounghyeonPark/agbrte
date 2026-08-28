@@ -22,7 +22,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { machineRoot } from '../../host/machine.js';
 import type { SessionId } from '@shared/types/index.js';
 
@@ -136,6 +136,92 @@ export function assertNotInstallRoot(root: string, home?: string): void {
   throw new Error(
     `${resolve(root)} cannot be a workspace: its ${WORKSPACE_DIR}/ is this machine's Agbrte install directory (${dir}). Choose a project folder instead.`,
   );
+}
+
+/**
+ * Refuse a workspace that would put a project folder inside the operating system.
+ *
+ * ## The path somebody actually took
+ *
+ * `npx agbrte web .` is the shortest way into this program and the connect screen
+ * offers it first, so the folder it lands in is whatever the terminal opened in.
+ * On Windows, "Run as administrator" opens PowerShell in `C:\WINDOWS\system32` —
+ * and a first-time reader who pastes the line there gets
+ *
+ *   no session host for C:\Windows\System32: EPERM: operation not permitted,
+ *   mkdir 'C:\Windows\System32\.agbrte'
+ *
+ * which names an errno and a path and nothing they can act on.
+ *
+ * ## The quieter half, which is why this is a name check
+ *
+ * That message is at least a *failure*. The same paste from an elevated shell
+ * with write access to `System32` **succeeds**: a workspace is created inside the
+ * Windows system directory, a detached host binds it, and sessions accumulate in
+ * a folder nobody will ever look in and no uninstall will clean up. A check that
+ * only translated the permission error would let exactly the more privileged case
+ * through, which is the wrong way round.
+ *
+ * So this refuses by name, before anything is created, like
+ * `assertNotInstallRoot` above it and for a related reason: some directories are
+ * not workspaces, and the honest response is to say so rather than to comply.
+ *
+ * ## What is on the list, and what deliberately is not
+ *
+ * A filesystem root, and the directories an operating system owns. Read from the
+ * environment on Windows rather than hardcoded, because `C:` is a default rather
+ * than a fact and a machine installed on `D:` would otherwise be unguarded.
+ *
+ * The list is short on purpose. `/var`, `/opt`, `/srv` and `%ProgramData%` are
+ * all places people genuinely keep working directories — a demo host lives under
+ * `/srv` in this project's own documentation — and refusing a folder somebody
+ * chose on purpose is a worse failure than the one this prevents. What is here is
+ * only what nobody puts a project in.
+ */
+export function assertUsableWorkspace(root: string, env: NodeJS.ProcessEnv = process.env): void {
+  const target = resolve(root);
+
+  // `dirname` of a root is itself, on both platforms. Cheaper and more reliable
+  // than matching drive-letter shapes, and it is right for a UNC share too.
+  if (dirname(target) === target) {
+    throw new Error(
+      `${target} is the top of a filesystem, not a project folder. ` +
+        `Change into the folder you want to work in first, or name one: ` +
+        `agbrte web ${process.platform === 'win32' ? 'C:\\Users\\you\\my-project' : '~/my-project'}`,
+    );
+  }
+
+  const owned =
+    process.platform === 'win32'
+      ? [env['SystemRoot'], env['windir'], env['ProgramFiles'], env['ProgramFiles(x86)']]
+      : ['/bin', '/sbin', '/usr', '/etc', '/boot', '/proc', '/sys', '/dev', '/System'];
+
+  /*
+   * Compared case-insensitively on Windows, which is not a nicety.
+   *
+   * `%SystemRoot%` is spelled `C:\WINDOWS` and `path.resolve` of a working
+   * directory hands back `C:\Windows\System32`. A case-sensitive `startsWith`
+   * therefore matched neither, and the first version of this check let the exact
+   * folder it was written for straight through — the filesystem-root branch
+   * caught `C:\` and the one that mattered silently did not. The filesystem is
+   * case-insensitive here; the comparison has to be too.
+   */
+  const fold = (p: string): string => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const folded = fold(target);
+
+  for (const raw of owned) {
+    if (raw === undefined || raw === '') continue;
+    const dir = resolve(raw);
+    // The directory itself or anything under it. `startsWith` on the separator
+    // rather than on the string, so `/systemd` is not read as inside `/sys`.
+    if (folded !== fold(dir) && !folded.startsWith(fold(dir) + sep)) continue;
+    throw new Error(
+      `${target} is inside ${dir}, which belongs to the operating system — ` +
+        `Agbrte will not keep a workspace there. Change into a project folder ` +
+        `first, or name one: agbrte web ` +
+        `${process.platform === 'win32' ? 'C:\\Users\\you\\my-project' : '~/my-project'}`,
+    );
+  }
 }
 
 export interface WorkspaceLayout {

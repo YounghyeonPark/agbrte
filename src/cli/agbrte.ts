@@ -262,6 +262,30 @@ async function main(): Promise<number> {
 
   const { command, path, rest, flags, value } = parse(argv);
 
+  /*
+   * Checked here as well as in `openWorkspace`, and the duplication buys the
+   * sentence somebody actually reads.
+   *
+   * `openWorkspace` is the real guard — it covers the app, the host and every
+   * other caller — but by the time its refusal reaches a terminal it has been
+   * wrapped by `Fleet.attach` into `no session host for <path>: …`. That prefix
+   * is a different and wrong claim: nothing failed to start, a folder was
+   * declined. To a first-time reader who pasted `npx agbrte web .` into a
+   * PowerShell that opened in `C:\WINDOWS\system32`, the prefix is the part that
+   * looks like the error.
+   *
+   * So the same rule runs before anything is attached, where its message can be
+   * the whole message. The check is pure and cheap, and both call sites reading
+   * from one function is what keeps them from disagreeing.
+   */
+  try {
+    const { assertUsableWorkspace } = await import('@main/store/layout.js');
+    assertUsableWorkspace(path);
+  } catch (err) {
+    process.stderr.write(`${c.warn(err instanceof Error ? err.message : String(err))}\n`);
+    return 1;
+  }
+
   if (command === 'serve') {
     // Deferred so the common paths do not pay to load the whole host.
     const { startSessionHost } = await import('../host/hostMain.js');

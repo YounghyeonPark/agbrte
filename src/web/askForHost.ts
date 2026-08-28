@@ -211,10 +211,20 @@ export function askForHost(retry: () => void): void {
   });
   row.append(cmd, copy);
 
+  /*
+   * "In a project folder", said here rather than left to be discovered.
+   *
+   * The earlier wording was "in whatever folder you are in", which is true and
+   * was the trap: a terminal opens where it opens, and on Windows the elevated
+   * PowerShell shortcut opens in `C:\WINDOWS\system32`. Somebody pasted this
+   * line there and got an errno. The CLI now refuses that folder by name and
+   * says what to do — but a sentence here is what stops them meeting the refusal
+   * at all, and the `.` is only obvious to people who already knew.
+   */
   const runNote = document.createElement('p');
   runNote.textContent =
-    'Runs the real thing on your own machine, in whatever folder you are in. Needs Node 22+, ' +
-    'nothing else. It prints a link — open it, or paste it below.';
+    'Run it inside a project folder — the sessions live with the code, so the folder matters. ' +
+    'Needs Node 22+, nothing else. It prints a link: open that, or paste it below.';
   style(runNote, { margin: '0.5rem 0 0', color: '#8a8a8a', fontSize: '0.88rem' });
 
   run.append(runHead, row, runNote);

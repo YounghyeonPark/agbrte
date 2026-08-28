@@ -35,10 +35,10 @@ rather than a word, so there is nothing here to get wrong.
 npx agbrte web .
 ```
 
-One line, Node 22+, nothing installed. It starts a real host on your machine and
-prints a link — open it and the browser client is driving your own folder. It is
-the same host the desktop app uses, so a folder open in both shows one session
-list.
+Run it **inside a project folder** — one line, Node 22+, nothing installed. It
+starts a real host on your machine and prints a link; open that and the browser
+client is driving your own folder. It is the same host the desktop app uses, so a
+folder open in both shows one session list.
 
 **[Download for macOS, Windows or Linux →](https://github.com/YounghyeonPark/agbrte/releases/latest)**
 Unsigned, and says so.

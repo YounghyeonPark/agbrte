@@ -22,6 +22,7 @@ import {
 } from '@shared/types/index.js';
 import {
   assertNotInstallRoot,
+  assertUsableWorkspace,
   NESTED_GITIGNORE,
   REQUIRED_GITIGNORE_LINES,
   PRIVATE_DIR_MODE,
@@ -121,6 +122,9 @@ export async function openWorkspace(
   // `~/.agbrte` are the same directory when root is `$HOME`, and the two are
   // different things that must not share a folder — see `assertNotInstallRoot`.
   assertNotInstallRoot(root);
+  // Beside it, and for the same reason: some directories are not workspaces, and
+  // the answer is to say so before anything is created rather than to comply.
+  assertUsableWorkspace(root);
   const layout = workspaceLayout(root);
 
   // §13 specifies 0700 for `.agbrte/`. `memory/` holds agent-written project
