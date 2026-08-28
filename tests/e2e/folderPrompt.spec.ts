@@ -111,6 +111,16 @@ test('asks for a folder when the one it was given belongs to the system', async 
   // somebody cannot answer well.
   expect(out).toContain('belongs to the operating system');
   expect(asked).toBe(true);
+
+  /*
+   * And it did *not* also explain how to answer. `NotAWorkspace` carries the
+   * reason and the remedy apart precisely so this half can be withheld when a
+   * question is coming: printing "change into a project folder first, or name
+   * one — agbrte web …" directly above `Folder to work in [~/agbrte]:` leaves two
+   * instructions competing to be the one acted on, and only one of them is the
+   * thing actually being asked.
+   */
+  expect(out).not.toContain('or name one');
   // And it is working in what was typed, not in what it was given.
   expect(out).toContain(answer);
   expect(out).not.toContain(`agbrte web  ${REFUSED}`);

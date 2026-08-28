@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { assertUsableWorkspace } from '../src/main/store/layout.js';
+import { assertUsableWorkspace, NotAWorkspace } from '../src/main/store/layout.js';
 
 const onWindows = process.platform === 'win32';
 

@@ -116,6 +116,34 @@ export function workspaceDirName(root: string): string {
 }
 
 /**
+ * A folder that is not a workspace, and why, kept apart from what to do about it.
+ *
+ * The two halves have different audiences. `openWorkspace` throws this at a
+ * caller that cannot ask anything — the app, a host, a script — and there the
+ * remedy has to travel with the reason or the message is a dead end. A terminal
+ * is about to ask *"Folder to work in [~/agbrte]:"*, and printing "change into a
+ * project folder first, or name one: agbrte web …" immediately above that
+ * question is telling somebody how to answer a question they can simply answer.
+ *
+ * So the reason is the sentence, the remedy is a separate one, and `message`
+ * joins them for every reader that is not going to follow up.
+ */
+export class NotAWorkspace extends Error {
+  constructor(
+    readonly reason: string,
+    readonly remedy: string,
+  ) {
+    super(`${reason} ${remedy}`);
+    this.name = 'NotAWorkspace';
+  }
+}
+
+/** What to type instead, on this platform. */
+function anExample(): string {
+  return `agbrte web ${process.platform === 'win32' ? 'C:\\Users\\you\\my-project' : '~/my-project'}`;
+}
+
+/**
  * Refuse a workspace whose data directory would *be* the machine install area.
  *
  * Only one path does this: `$HOME`, where `<root>/.agbrte` and `~/.agbrte` are
@@ -133,8 +161,9 @@ export function assertNotInstallRoot(root: string, home?: string): void {
   // pointing at the other installation — which is the trap `machineFilePath`
   // fell into. Passing `home` through preserves the caller that names one.
   if (dir !== resolve(machineRoot(home))) return;
-  throw new Error(
-    `${resolve(root)} cannot be a workspace: its ${WORKSPACE_DIR}/ is this machine's Agbrte install directory (${dir}). Choose a project folder instead.`,
+  throw new NotAWorkspace(
+    `${resolve(root)} cannot be a workspace: its ${WORKSPACE_DIR}/ is this machine's Agbrte install directory (${dir}).`,
+    `Choose a project folder instead — ${anExample()}`,
   );
 }
 
@@ -184,10 +213,9 @@ export function assertUsableWorkspace(root: string, env: NodeJS.ProcessEnv = pro
   // `dirname` of a root is itself, on both platforms. Cheaper and more reliable
   // than matching drive-letter shapes, and it is right for a UNC share too.
   if (dirname(target) === target) {
-    throw new Error(
-      `${target} is the top of a filesystem, not a project folder. ` +
-        `Change into the folder you want to work in first, or name one: ` +
-        `agbrte web ${process.platform === 'win32' ? 'C:\\Users\\you\\my-project' : '~/my-project'}`,
+    throw new NotAWorkspace(
+      `${target} is the top of a filesystem, not a project folder.`,
+      `Change into the folder you want to work in first, or name one — ${anExample()}`,
     );
   }
 
@@ -215,11 +243,10 @@ export function assertUsableWorkspace(root: string, env: NodeJS.ProcessEnv = pro
     // The directory itself or anything under it. `startsWith` on the separator
     // rather than on the string, so `/systemd` is not read as inside `/sys`.
     if (folded !== fold(dir) && !folded.startsWith(fold(dir) + sep)) continue;
-    throw new Error(
-      `${target} is inside ${dir}, which belongs to the operating system — ` +
-        `Agbrte will not keep a workspace there. Change into a project folder ` +
-        `first, or name one: agbrte web ` +
-        `${process.platform === 'win32' ? 'C:\\Users\\you\\my-project' : '~/my-project'}`,
+    throw new NotAWorkspace(
+      `${target} is inside ${dir}, which belongs to the operating system, ` +
+        `so Agbrte will not keep a workspace there.`,
+      `Change into a project folder first, or name one — ${anExample()}`,
     );
   }
 }

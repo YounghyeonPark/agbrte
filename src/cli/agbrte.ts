@@ -332,7 +332,29 @@ async function main(): Promise<number> {
    * prefix and no way forward. Home is the far likelier thing for somebody to
    * try, so the one with the worse treatment was the one more people would meet.
    */
-  const { assertNotInstallRoot, assertUsableWorkspace } = await import('@main/store/layout.js');
+  const { NotAWorkspace, assertNotInstallRoot, assertUsableWorkspace } = await import(
+    '@main/store/layout.js',
+  );
+  /*
+   * The reason always; the remedy only when nothing is going to ask.
+   *
+   * `NotAWorkspace` carries the two apart because they have different readers.
+   * Printing "change into a project folder first, or name one: agbrte web …"
+   * directly above `Folder to work in [~/agbrte]:` is telling somebody how to
+   * answer a question they are being asked — advice and prompt competing to be
+   * the thing acted on. With no terminal there is no prompt, and then the
+   * remedy is the only useful half.
+   */
+  const say = (err: unknown, withRemedy: boolean): void => {
+    const text =
+      err instanceof NotAWorkspace && !withRemedy
+        ? err.reason
+        : err instanceof Error
+          ? err.message
+          : String(err);
+    process.stderr.write(`${c.warn(text)}
+`);
+  };
   const usable = (root: string): void => {
     assertUsableWorkspace(root);
     assertNotInstallRoot(root);
@@ -357,23 +379,24 @@ async function main(): Promise<number> {
      * naming a path on the command line, which the message says.
      */
     const { homedir } = await import('node:os');
+    // The reason only: the question that follows *is* the remedy.
     const chosen = await askForFolder(
-      err instanceof Error ? err.message : String(err),
+      err instanceof NotAWorkspace ? err.reason : err instanceof Error ? err.message : String(err),
       resolve(homedir(), 'agbrte'),
     );
     if (chosen === null) {
-      process.stderr.write(`${c.warn(err instanceof Error ? err.message : String(err))}\n`);
+      // Nothing asked, so the remedy has to travel with the reason.
+      say(err, true);
       return 1;
     }
     try {
       usable(chosen);
     } catch (second) {
-      process.stderr.write(`${c.warn(second instanceof Error ? second.message : String(second))}\n`);
+      say(second, true);
       return 1;
     }
     path = chosen;
-    process.stdout.write(`${c.dim(`working in ${resolve(path)}`)}
-`);
+    process.stdout.write(`${c.dim(`working in ${resolve(path)}`)}\n`);
   }
 
   if (command === 'serve') {
