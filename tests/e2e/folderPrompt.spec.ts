@@ -88,7 +88,7 @@ async function askedFrom(
     // signal, and a sleep long enough to be safe here is a slow test everywhere.
     if (!asked && /Folder to work in \[/u.test(out)) {
       asked = true;
-      setTimeout(() => term.write(`${answer}`), 200);
+      setTimeout(() => term.write(`${answer}\r`), 200);
     }
   });
 
