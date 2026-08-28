@@ -1,6 +1,6 @@
 {
   "name": "agbrte",
-  "version": "0.0.26",
+  "version": "0.0.27",
   "description": "Agent Bridge Terminal — durable, bridge-owned agent sessions you attach to from any terminal.",
   "license": "Apache-2.0",
   "author": "Younghyeon Park <ypark.dev@gmail.com>",
@@ -12,7 +12,6 @@
   "bugs": {
     "url": "https://github.com/YounghyeonPark/agbrte/issues"
   },
-  "private": true,
   "type": "module",
   "main": "dist/main/main.js",
   "bin": {
