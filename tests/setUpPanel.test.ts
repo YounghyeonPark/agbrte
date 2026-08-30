@@ -27,6 +27,7 @@ import {
   type EndpointAnswer,
   type RuntimeSummary,
 } from '../src/renderer/setupRoutes.js';
+import type { ModelCapabilityHint } from '../src/shared/types/index.js';
 
 const HARNESS: RuntimeSummary = { id: 'agbrte-harness', model: 'required' };
 const ECHO: RuntimeSummary = { id: 'echo', model: 'none' };
@@ -45,6 +46,45 @@ const labelOf = (id: string): string =>
 
 const served = (models: string[], canInstall = true): EndpointAnswer[] => [
   { endpointId: 'local', models, canInstall },
+];
+
+/**
+ * A self-description in the shape Ollama's own answer produces.
+ *
+ * `hintFrom` turns `/api/show`'s `capabilities` into this: a list containing
+ * `tools` becomes a `self-described` *native*, a list without it becomes a
+ * `self-described` **none** — which is the strong direction, because Ollama
+ * refuses a tool request for such a model outright rather than attempting it.
+ */
+const declares = (modelId: string, tools: boolean): ModelCapabilityHint => ({
+  endpointId: 'local',
+  modelId,
+  tools: { value: tools ? 'native' : 'none', from: 'self-described' },
+});
+
+/**
+ * This machine, measured — `curl /api/tags` then `/api/show` for each.
+ *
+ * Written out rather than reduced to the two rows that make the point, because
+ * the ordering bug is a property of the whole list: `qwen3:0.6b` first,
+ * `qwen2.5:7b` fifth, and two `smollm2` tags in between that declare
+ * `["completion"]` and nothing else. A two-model fixture would have gone green
+ * against the old code by accident.
+ */
+const THIS_MACHINE: EndpointAnswer[] = [
+  {
+    endpointId: 'local',
+    canInstall: true,
+    models: ['qwen3:0.6b', 'smollm2:360m', 'llama3.2:1b', 'smollm2:135m', 'qwen2.5:7b'],
+    capabilities: [
+      // Declares tools, and does not deliver one. The model from the incident.
+      declares('qwen3:0.6b', true),
+      declares('smollm2:360m', false),
+      declares('llama3.2:1b', true),
+      declares('smollm2:135m', false),
+      declares('qwen2.5:7b', true),
+    ],
+  },
 ];
 
 describe('the list a person chooses from', () => {
@@ -78,6 +118,108 @@ describe('the list a person chooses from', () => {
     expect(list.findIndex((e) => e.runtimeId === 'echo')).toBeLessThan(
       list.findIndex((e) => e.group === 'install'),
     );
+  });
+
+  /*
+   * The same failure as the echo one, from a different direction and one that
+   * survives having a real model server.
+   *
+   * A machine with Ollama has no echo problem — a model runtime is reported
+   * before the diagnostic one — and it still opened on an agent that cannot
+   * work, because the list was in the endpoint's order and this endpoint puts
+   * `qwen3:0.6b` first. That model declares tool support and then fails to
+   * produce a usable call, which is the whole reason `modelCapabilities.ts`
+   * exists; the badge told the person afterwards, and this stops them being
+   * pointed at it in the first place.
+   */
+  it('opens on a model that can do the work, not on whichever came back first', () => {
+    const list = buildEntries([HARNESS, ECHO], THIS_MACHINE, ENDPOINT, CATALOGUE, [], labelOf);
+    expect(list[0]?.modelId).toBe('qwen2.5:7b');
+  });
+
+  it('sends the models whose server declares no tools to the back', () => {
+    const list = buildEntries([HARNESS], THIS_MACHINE, ENDPOINT, CATALOGUE, [], labelOf);
+    const models = list.filter((e) => e.group === 'ready' && e.modelId !== null).map((e) => e.modelId);
+    // Ranked, not hidden. A machine that has only these must still be able to
+    // pick one, and the row's own badge is what says it can only chat.
+    expect(models).toEqual([
+      'qwen2.5:7b', // in the catalogue, and declares tools
+      'qwen3:0.6b', // declares tools; the endpoint's order decides the tie
+      'llama3.2:1b',
+      'smollm2:360m', // declares `["completion"]` — cannot call a tool at all
+      'smollm2:135m',
+    ]);
+  });
+
+  /*
+   * The tie-break is *no* tie-break, and that is the claim worth pinning.
+   *
+   * Catalogue membership was chosen over catalogue position precisely so this
+   * stays true: the catalogue's order is a download recommendation, decided by
+   * what a laptop with no GPU can run, and reusing it here would answer "which
+   * of the models you already have" with the answer to a different question.
+   */
+  it('leaves models the endpoint listed in an order it has no reason to change', () => {
+    const answer: EndpointAnswer[] = [
+      {
+        endpointId: 'local',
+        canInstall: true,
+        // Both in the catalogue, and the catalogue lists them the other way round.
+        models: ['qwen2.5:7b', 'llama3.2:3b'],
+        capabilities: [declares('qwen2.5:7b', true), declares('llama3.2:3b', true)],
+      },
+    ];
+    const list = buildEntries([HARNESS], answer, ENDPOINT, CATALOGUE, [], labelOf);
+    expect(list.filter((e) => e.modelId !== null && e.group === 'ready').map((e) => e.modelId)).toEqual([
+      'qwen2.5:7b',
+      'llama3.2:3b',
+    ]);
+  });
+
+  it('ranks inside an endpoint and never across them', () => {
+    // §13: two endpoints are two recipients, one of them possibly the network,
+    // and a list that interleaved them would make the row the only place that
+    // could say which — after having just been reordered by us.
+    const two = [
+      { id: 'openai', label: 'OpenAI' },
+      { id: 'local', label: 'Ollama (that machine)' },
+    ];
+    const answers: EndpointAnswer[] = [
+      { endpointId: 'openai', models: ['gpt-nothing-we-know-about'], canInstall: false },
+      {
+        endpointId: 'local',
+        canInstall: true,
+        models: ['smollm2:135m', 'qwen2.5:7b'],
+        capabilities: [declares('smollm2:135m', false), declares('qwen2.5:7b', true)],
+      },
+    ];
+    const list = buildEntries([HARNESS], answers, two, CATALOGUE, [], labelOf);
+    expect(list.filter((e) => e.modelId !== null && e.group === 'ready').map((e) => e.modelId)).toEqual([
+      // The API's model stays first because its endpoint is first, even though
+      // nothing here recommends it: we do not know an API's models, and moving
+      // one machine's models above another's is not a ranking we were asked for.
+      'gpt-nothing-we-know-about',
+      'qwen2.5:7b',
+      'smollm2:135m',
+    ]);
+  });
+
+  it('is unchanged by a host too old to describe its models', () => {
+    // `capabilities` is absent from a host older than v14, and an absent claim
+    // is "nobody could tell" rather than a no — so only the catalogue speaks.
+    const list = buildEntries(
+      [HARNESS],
+      served(['qwen3:0.6b', 'smollm2:135m', 'qwen2.5:7b']),
+      ENDPOINT,
+      CATALOGUE,
+      [],
+      labelOf,
+    );
+    expect(list.filter((e) => e.modelId !== null && e.group === 'ready').map((e) => e.modelId)).toEqual([
+      'qwen2.5:7b',
+      'qwen3:0.6b',
+      'smollm2:135m',
+    ]);
   });
 
   /*

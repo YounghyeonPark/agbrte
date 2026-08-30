@@ -16,6 +16,8 @@
  * `buildEntries` is where it is done once.
  */
 
+import type { ModelCapabilityHint } from '../shared/types/index.js';
+
 /**
  * A runtime's name with our own parenthetical taken off.
  *
@@ -103,6 +105,16 @@ export interface EndpointAnswer {
   endpointId: string;
   models: string[];
   canInstall?: boolean;
+  /**
+   * What each listed model says about itself, where anything says anything
+   * (§3.3).
+   *
+   * Here for the *order* rather than for the badges — those are read off the
+   * DTO in the component, beside the row they describe. `buildEntries` needs
+   * one claim out of this, and the reason it is worth threading through is that
+   * it arrives with the list: nothing has to be run to know it.
+   */
+  capabilities?: ModelCapabilityHint[];
 }
 
 /** A runtime the host advertised, narrowed the same way. */
@@ -127,12 +139,67 @@ export function sizeOf(bytes: number): string {
 }
 
 /**
+ * Where one already-present model sits among the others, lower first.
+ *
+ * These rows used to come out in whatever order the endpoint answered in, and
+ * on a real machine that is close to arbitrary. This one lists `qwen3:0.6b`
+ * first and `qwen2.5:7b` fifth. The control opens on the first entry, so the
+ * first agent a stranger was handed was a 0.6B model that declares tool support,
+ * does not then produce a usable tool call, and can therefore only chat.
+ *
+ * That is the incident `modelCapabilities.ts` was written for, arriving one step
+ * earlier. There the person is told what they picked; here they are not steered
+ * into it. Both are needed — this ranks, it does not hide, and the badge on the
+ * row is still the thing that says what a model can do.
+ *
+ * ## Two signals, and neither costs a request
+ *
+ * **A server that declares no tools sends its model last.** `hintFrom` in
+ * `openaiCompatible.ts` argues why a declared *no* is much stronger evidence
+ * than a declared yes — Ollama refuses such a request outright rather than
+ * attempting it — so this is settled rather than guessed, and a model that
+ * cannot call a tool cannot do any of the work this program exists to do.
+ * Measured on the machine this was written on: both `smollm2` tags answer
+ * `["completion"]` and nothing more, while `qwen3:0.6b` answers `["completion",
+ * "tools","thinking"]` and is the liar.
+ *
+ * **A model in the catalogue comes before one that is not.** That file is the
+ * only place this codebase has written down which models are worth suggesting —
+ * it exists because "reliable at tool calling" is not deducible from a tag and a
+ * byte count — and a model somebody has already pulled *and* we already
+ * recommend is the best answer obtainable without running anything.
+ *
+ * ## What is deliberately not used
+ *
+ * Size, name, and **position within the catalogue**. That order is a download
+ * recommendation, where a 2 GB model that runs on a laptop with no discrete GPU
+ * beats a better 5 GB one; which of the models already here should be first is a
+ * different question, asked on a machine whose hardware has already answered it.
+ * Reusing the one order for both would quietly answer each with the other. So
+ * membership only, which leaves ties — and a tie keeps the endpoint's order,
+ * because a stable sort changes nothing it was not asked to.
+ */
+function readyRank(
+  model: string,
+  hint: ModelCapabilityHint | undefined,
+  catalogue: CatalogueModel[],
+): number {
+  if (hint?.tools?.value === 'none') return 2;
+  return catalogue.some((c) => c.tag === model) ? 0 : 1;
+}
+
+/**
  * Every way this host could run a session, as one ordered list.
  *
  * **Ready first, always.** A returning user's choice is a model that is already
  * there, and it must not move down the list because a catalogue grew. The
  * grouping is the whole of the warning about cost: nothing in the second group
  * happens without a download, and nothing in the first group does.
+ *
+ * **Within `ready`, the models are ranked rather than listed.** See `readyRank`
+ * for the two signals and for the machine that made it necessary; the short of
+ * it is that the endpoint's own order put a model that cannot call a tool at the
+ * top, and the top is what the control opens on.
  *
  * The structural invariant from the version this replaces is kept: **every
  * model-taking runtime yields at least one entry**, so a model list that failed
@@ -194,7 +261,25 @@ export function buildEntries(
       continue;
     }
     for (const answer of answers) {
-      for (const model of answer.models) {
+      /*
+       * Ranked within the endpoint and never across endpoints.
+       *
+       * Sorting the whole set together would interleave two recipients — one of
+       * them possibly the network — and §13 wants the recipient legible at the
+       * moment of choosing. So the endpoints keep the order the host listed them
+       * in, and only what is inside one of them moves.
+       */
+      const ranked = answer.models
+        .map((model) => ({
+          model,
+          rank: readyRank(
+            model,
+            answer.capabilities?.find((c) => c.modelId === model),
+            catalogue,
+          ),
+        }))
+        .sort((a, b) => a.rank - b.rank);
+      for (const { model } of ranked) {
         const described = catalogue.find((c) => c.tag === model);
         ready.push({
           value: `${runtime.id}::${answer.endpointId}::${model}`,
