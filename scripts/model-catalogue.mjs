@@ -27,6 +27,44 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(root, 'src/shared/models/catalogue.json');
 
 /**
+ * When somebody last read the list below and asked whether it is still the list.
+ *
+ * ## The gap this closes, which was the whole of it
+ *
+ * `--check` compares the committed file against the registry, so it catches a
+ * tag that **vanished** or changed size. It cannot catch the failure that
+ * actually happens: a tag that **appeared**. There is no signal anywhere for
+ * "a new generation shipped" — `CANDIDATES` is written by hand, the registry has
+ * nothing to ask about a model nobody has named, and `verifiedAt` in the output
+ * is read by no code at all. So the list rots in exactly one direction, silently,
+ * and stays green the whole way.
+ *
+ * That was tolerable while the catalogue only suggested downloads. It stopped
+ * being tolerable when `readyRank` began using catalogue membership to order the
+ * models a machine already has: a stale list now mis-ranks a model somebody went
+ * and got. (`readyRank` puts a probed model above the catalogue for this reason,
+ * so the two halves of the answer are in the two files.)
+ *
+ * ## Why the date is here and not in the generated file
+ *
+ * `verifiedAt` is written by this script, so `npm run models` bumps it without
+ * anybody thinking — a staleness check reading it would be satisfied by the one
+ * command that cannot possibly fix the problem. This constant is the opposite:
+ * nothing writes it, and the only way to move it is to open this file, which is
+ * the file the list is in. The chore and the thing it is a chore about are the
+ * same edit.
+ *
+ * Ninety days because that is roughly how fast open-weight generations move.
+ * Shorter turns an unrelated pull request red for a reason its author cannot act
+ * on; longer and a whole generation ships inside one interval. Set to the date
+ * the list was last actually touched rather than to the day this check was
+ * added — starting a clock by claiming a review that did not happen is the one
+ * way to make it lie from the first day.
+ */
+const REVIEWED = '2026-08-12';
+const REVIEW_EVERY_DAYS = 90;
+
+/**
  * Candidates, with the one thing the registry cannot supply: why you would pick
  * this one. Sizes and existence come from the registry below.
  */
@@ -72,6 +110,19 @@ const catalogue = {
 
 const text = `${JSON.stringify(catalogue, null, 2)}\n`;
 
+/**
+ * How long ago somebody last looked at `CANDIDATES`, in days.
+ *
+ * Whole days from UTC midnights, so a run at 09:00 and a run at 23:00 on the
+ * same day give the same answer and the check cannot flip inside one afternoon.
+ */
+function daysSinceReview() {
+  const then = Date.parse(`${REVIEWED}T00:00:00Z`);
+  if (Number.isNaN(then)) throw new Error(`REVIEWED is not a date: ${REVIEWED}`);
+  const today = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
+  return Math.round((today - then) / 86_400_000);
+}
+
 if (process.argv.includes('--check')) {
   let current = '';
   try {
@@ -87,6 +138,26 @@ if (process.argv.includes('--check')) {
   } else {
     console.log('catalogue is out of date — run `node scripts/model-catalogue.mjs`');
     process.exitCode = 1;
+  }
+
+  /*
+   * Reported after the registry answer and separately from it, because they are
+   * different problems with different remedies: one is fixed by running a
+   * command, and this one cannot be. Both are printed even when both are wrong,
+   * so a red build says everything it knows in one go.
+   */
+  const age = daysSinceReview();
+  if (age > REVIEW_EVERY_DAYS) {
+    console.log(
+      `the suggested-model list was last reviewed ${age} days ago (${REVIEWED}).\n` +
+        '  Nothing here can tell you a new model exists — that is what the review is.\n' +
+        '  Open scripts/model-catalogue.mjs, look at CANDIDATES against what the\n' +
+        '  registry now publishes, change what should change, and move REVIEWED.\n' +
+        '  Running `npm run models` will not clear this, deliberately.',
+    );
+    process.exitCode = 1;
+  } else {
+    console.log(`suggested-model list reviewed ${age} days ago (every ${REVIEW_EVERY_DAYS})`);
   }
 } else {
   writeFileSync(OUT, text);

@@ -62,6 +62,13 @@ const declares = (modelId: string, tools: boolean): ModelCapabilityHint => ({
   tools: { value: tools ? 'native' : 'none', from: 'self-described' },
 });
 
+/** The same claim, but watched rather than reported — §3.3's strongest tier. */
+const probed = (modelId: string, tools: boolean): ModelCapabilityHint => ({
+  endpointId: 'local',
+  modelId,
+  tools: { value: tools ? 'native' : 'none', from: 'probed' },
+});
+
 /**
  * This machine, measured — `curl /api/tags` then `/api/show` for each.
  *
@@ -148,6 +155,58 @@ describe('the list a person chooses from', () => {
       'llama3.2:1b',
       'smollm2:360m', // declares `["completion"]` — cannot call a tool at all
       'smollm2:135m',
+    ]);
+  });
+
+  /*
+   * The answer to the one question the catalogue cannot answer: what about a
+   * model that did not exist when the catalogue was written?
+   *
+   * The catalogue ships in a release. `--check` in `scripts/model-catalogue.mjs`
+   * catches a tag that vanished and cannot catch one that appeared, so the list
+   * rots in exactly the direction that matters, and a rank resting only on it
+   * would put next year's model below `mistral:7b` forever.
+   *
+   * A probe does not rot. It is a fact about this machine, established by
+   * running the model, and it is free to read because the picker already probes
+   * whatever is selected on an endpoint that costs nothing. So somebody who
+   * pulls a model we have never heard of and uses it once has ranked it, with no
+   * release from us.
+   */
+  it('puts a model watched calling a tool above one we merely recommend', () => {
+    const answer: EndpointAnswer[] = [
+      {
+        endpointId: 'local',
+        canInstall: true,
+        models: ['qwen2.5:7b', 'a-model-released-after-this-was-written'],
+        capabilities: [
+          // In the catalogue, and only the server's word for it.
+          declares('qwen2.5:7b', true),
+          // In no catalogue, and watched doing the thing.
+          probed('a-model-released-after-this-was-written', true),
+        ],
+      },
+    ];
+    const list = buildEntries([HARNESS], answer, ENDPOINT, CATALOGUE, [], labelOf);
+    expect(list[0]?.modelId).toBe('a-model-released-after-this-was-written');
+  });
+
+  it('does not let a probe rescue a model that cannot call a tool', () => {
+    // The tiers are not a ladder to climb: `probed` is how a claim was
+    // established, not a bonus. A model watched *failing* is the strongest
+    // evidence here, and it points down.
+    const answer: EndpointAnswer[] = [
+      {
+        endpointId: 'local',
+        canInstall: true,
+        models: ['watched-failing', 'llama3.2:3b'],
+        capabilities: [probed('watched-failing', false), declares('llama3.2:3b', true)],
+      },
+    ];
+    const list = buildEntries([HARNESS], answer, ENDPOINT, CATALOGUE, [], labelOf);
+    expect(list.filter((e) => e.modelId !== null && e.group === 'ready').map((e) => e.modelId)).toEqual([
+      'llama3.2:3b',
+      'watched-failing',
     ]);
   });
 

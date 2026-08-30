@@ -152,7 +152,15 @@ export function sizeOf(bytes: number): string {
  * into it. Both are needed — this ranks, it does not hide, and the badge on the
  * row is still the thing that says what a model can do.
  *
- * ## Two signals, and neither costs a request
+ * ## Three signals, and none of them costs a request
+ *
+ * **A model watched calling a tool here comes first.** The strongest evidence
+ * available, and the only one that does not go stale: it is a fact about this
+ * machine rather than an opinion shipped in a release. It is free to read —
+ * `probe()` caches, and the picker already probes whatever is selected on an
+ * endpoint that costs nothing — and it is what keeps the catalogue from
+ * outranking a model that did not exist when the catalogue was written. Somebody
+ * who pulls next year's model and uses it once has ranked it, without us.
  *
  * **A server that declares no tools sends its model last.** `hintFrom` in
  * `openaiCompatible.ts` argues why a declared *no* is much stronger evidence
@@ -167,9 +175,28 @@ export function sizeOf(bytes: number): string {
  * only place this codebase has written down which models are worth suggesting —
  * it exists because "reliable at tool calling" is not deducible from a tag and a
  * byte count — and a model somebody has already pulled *and* we already
- * recommend is the best answer obtainable without running anything.
+ * recommend is the best answer obtainable without running anything. It is third
+ * rather than first because it is the one signal here with a shelf life: it
+ * ships in a release and says nothing about a model released after it.
  *
  * ## What is deliberately not used
+ *
+ * **How recently the model was pulled**, which is available — `/v1/models`
+ * carries `created`, and Ollama's own `/api/tags` carries `modified_at` — and
+ * which ranks this machine exactly backwards:
+ *
+ * ```
+ * qwen3:0.6b    2026-08-13   newest, and the model from the incident
+ * smollm2:360m  2026-08-12
+ * llama3.2:1b   2026-08-12
+ * smollm2:135m  2026-08-12
+ * qwen2.5:7b    2026-05-31   oldest, and the one that works
+ * ```
+ *
+ * It looked like the answer to catalogue staleness and it is the opposite of
+ * one: people pull small models to try them and install the model they work with
+ * once, long ago. Measured before it was believed, which is the only reason it
+ * is not in the list above.
  *
  * Size, name, and **position within the catalogue**. That order is a download
  * recommendation, where a 2 GB model that runs on a laptop with no discrete GPU
@@ -184,8 +211,10 @@ function readyRank(
   hint: ModelCapabilityHint | undefined,
   catalogue: CatalogueModel[],
 ): number {
-  if (hint?.tools?.value === 'none') return 2;
-  return catalogue.some((c) => c.tag === model) ? 0 : 1;
+  const tools = hint?.tools;
+  if (tools?.value === 'none') return 3;
+  if (tools?.from === 'probed') return 0;
+  return catalogue.some((c) => c.tag === model) ? 1 : 2;
 }
 
 /**
