@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { readFile, rm, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { launch, makeRepo, modelAvailable, warmModel } from './harness.js';
+import { tempFixture } from './fixtureDirs.js';
 import {
   addAgent,
   attachedHosts,
@@ -194,11 +195,25 @@ test.describe('the shell', () => {
         env: {
           ...process.env,
           AGBRTE_HOST_LINGER_MS: '500',
-          // The same machine directory the app under test is using, or this
-          // would reach a *different* host — one per `~/.agbrte` (§8).
-          ...(process.env['AGBRTE_HOME'] === undefined
-            ? {}
-            : { AGBRTE_HOME: process.env['AGBRTE_HOME'] }),
+          /*
+           * Its own machine directory (§8), and the line it replaces is worth
+           * recording because it looked correct and did nothing.
+           *
+           * It forwarded `process.env['AGBRTE_HOME']` *if set*, saying it wanted
+           * "the same machine directory the app under test is using". Under
+           * Playwright it is never set: `launch` builds that variable into each
+           * child's environment and not into this process's. So the condition
+           * was always false, this ran against the developer's real `~/.agbrte`,
+           * and every full run left the real `workspaces.json` naming a fixture
+           * repo that teardown then deleted. Found by diffing that file across a
+           * run, after isolating `serveWebFixture` failed to stop it.
+           *
+           * Sharing a home with the app was never what makes this work anyway.
+           * The session is found through the *workspace* store in `repo`, and
+           * the two hosts are deliberately never alive at once — that is what
+           * the 500ms linger and the wait below are for.
+           */
+          AGBRTE_HOME: await tempFixture('agbrte-madeearlier-'),
         },
       },
     );

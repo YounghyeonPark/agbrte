@@ -186,15 +186,23 @@ export async function warmModel(model: string): Promise<void> {
 }
 
 /**
- * A `agbrte web` server on a free port, with its own throwaway workspace.
+ * A `agbrte web` server on a free port, with its own throwaway workspace **and
+ * its own machine directory**.
  *
  * Shared because the phone spec needs the same thing in a different file:
  * Playwright will not let a describe block change the browser engine, so
  * WebKit-at-phone-size has to live on its own.
+ *
+ * `home` and `repo` exist for a caller that needs to *name* one — a spec that
+ * pins a path, or one that inspects the directory afterwards. Neither is how
+ * isolation is obtained any more; that is the default now, for reasons written
+ * where the spawn is.
  */
 export async function serveWebFixture(opts: { home?: string; repo?: string } = {}): Promise<{
   url: string;
   repo: string;
+  /** Run the CLI against *this* server's host. See the implementation. */
+  run: (...args: string[]) => void;
   stop: () => Promise<void>;
 }> {
   const repo = await makeRepo(opts.repo);
@@ -217,21 +225,42 @@ export async function serveWebFixture(opts: { home?: string; repo?: string } = {
   const token = 'e2e-fixture-token';
   const url = `http://127.0.0.1:${port}/#t=${token}`;
   /*
-   * `home` gives this server its own machine directory, the way `launch` does
-   * (§8). Without it the CLI uses the real `~/.agbrte`, so the host it starts is
-   * the developer's own — reopening every workspace they have ever attached, and
-   * reading their endpoints. Left optional rather than made unconditional
-   * because the specs that only need a page served are already passing against
-   * the shared one, and a caller that wants isolation now asks for it by name.
+   * Its own machine directory, always — the way `launch` does (§8).
+   *
+   * This used to be optional, on the reasoning that "the specs that only need a
+   * page served are already passing against the shared one". That was wrong in
+   * both halves. Nine of the twelve callers took the default, so nine fixtures
+   * per run ran against the developer's real `~/.agbrte`: the host they started
+   * was the developer's own, reading their endpoints and reopening what they had
+   * attached. And it *wrote* there. After every full run the real
+   * `workspaces.json` named a fixture repo that teardown had already deleted —
+   * a different one each time, so this was reproducing rather than left over
+   * from something once.
+   *
+   * A suite that edits the machine record of the machine it is run on has no
+   * business being opt-out. It also breaks §8's one-host-per-machine rule in the
+   * direction CLAUDE.md warns about: every one of those fixtures shared a socket
+   * named from one `machineId`, with a three-second linger between them.
+   *
+   * Honest about what this does not claim: it is *not* established that this is
+   * why two of six full runs failed. Three candidate mechanisms were measured
+   * and all three refuted — see the commit. This is fixed because it is wrong,
+   * not because it is proven guilty.
    */
+  const home = opts.home ?? (await tempFixture('agbrte-web-home-'));
   const server = spawn(
     process.execPath,
     [resolve('dist/cli/agbrte.js'), 'web', repo, '--port', String(port), '--token', token],
     {
-      stdio: 'ignore',
+      // Kept, not discarded. `stdio: 'ignore'` is what made the last
+      // investigation cost a day: the CLI died on a busy port with a stack
+      // trace that went nowhere, and all this fixture could say was that the
+      // server never came up — naming neither the port nor the cause. Whatever
+      // it printed is now part of the failure.
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
-        ...(opts.home === undefined ? {} : { AGBRTE_HOME: opts.home }),
+        AGBRTE_HOME: home,
         // The same three seconds `launch` uses, for the same reason and from the
         // same observation: the host is detached, so killing the web server it
         // came up for leaves it running on the production default of minutes.
@@ -241,6 +270,15 @@ export async function serveWebFixture(opts: { home?: string; repo?: string } = {
       },
     },
   );
+
+  let said = '';
+  server.stdout.on('data', (d: Buffer) => (said += String(d)));
+  server.stderr.on('data', (d: Buffer) => (said += String(d)));
+  /** Why the process is gone, when it is — the other half of a silent failure. */
+  let exit: string | null = null;
+  server.on('exit', (code, signal) => {
+    exit = signal === null ? `exited with code ${String(code)}` : `killed by ${signal}`;
+  });
 
   const deadline = Date.now() + 30_000;
   let up = false;
@@ -253,12 +291,52 @@ export async function serveWebFixture(opts: { home?: string; repo?: string } = {
   }
   if (!up) {
     server.kill();
-    throw new Error('the web server never came up');
+    throw new Error(
+      `the web server never came up on port ${port}` +
+        `${exit === null ? ' (still running, so it never finished listening)' : ` — it ${exit}`}` +
+        `${said.trim() === '' ? ' and printed nothing' : `:\n${said.trim()}`}`,
+    );
   }
 
   return {
     url,
     repo,
+    /**
+     * Run the CLI against *this* server's host, with its workspace and its
+     * machine directory already filled in.
+     *
+     * Five specs made a session by spawning `agbrte run` themselves, and all
+     * five left the environment off. That worked for exactly as long as this
+     * fixture shared the developer's real `~/.agbrte` — the page and the
+     * out-of-band `run` landed on one host by accident of both defaulting to it
+     * — and all five broke together the moment it stopped. The failure was not
+     * five mistakes; it was one fact that was nobody's job to carry.
+     *
+     * So it is not the caller's to remember. Same argument §8 makes about the
+     * machine directory generally: one that has to be passed by hand at every
+     * call site is one that eventually is not.
+     */
+    run: (...args: string[]): void => {
+      try {
+        execFileSync(process.execPath, [resolve('dist/cli/agbrte.js'), ...args], {
+          // Captured for the same reason the server's output now is: a CLI that
+          // failed silently is a test failure that names the exit code and
+          // nothing else.
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, AGBRTE_HOME: home },
+        });
+      } catch (err) {
+        const said = [
+          (err as { stdout?: Buffer }).stdout?.toString() ?? '',
+          (err as { stderr?: Buffer }).stderr?.toString() ?? '',
+        ]
+          .join('')
+          .trim();
+        throw new Error(
+          `agbrte ${args.join(' ')} failed${said === '' ? ' and printed nothing' : `:\n${said}`}`,
+        );
+      }
+    },
     stop: async () => {
       server.kill();
       await rm(repo, { recursive: true, force: true }).catch(() => undefined);

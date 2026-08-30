@@ -13,21 +13,21 @@
  * start something is not a test, and skipping instead would have been worse.
  */
 
-import { tempFixture } from './fixtureDirs.js';
 import { expect, test } from '@playwright/test';
 import { serveWebFixture } from './harness.js';
 
 test('serves the app and drives a session over a socket', async ({ page }) => {
   /*
-   * Its own machine directory (§8), which this spec did without for too long.
+   * The session assertion below counts elements, so it depends on this fixture
+   * having a machine directory of its own (§8) — against the developer's real
+   * `~/.agbrte` it started matching three, being three runs' worth of leftover
+   * workspaces reopened by one host.
    *
-   * Without it the fixture uses the developer's real `~/.agbrte`: its registry
-   * gains an entry per run, and the host started for the next run reopens every
-   * temp workspace the previous ones left behind. That is how the session
-   * assertion below started matching three elements — three runs, three
-   * sessions, all still visible.
+   * That used to be arranged here, by hand, by this one spec. It is the
+   * harness's default now — see `serveWebFixture`, where the same reasoning
+   * turned out to apply to the eight callers that were not doing it.
    */
-  const web = await serveWebFixture({ home: await tempFixture('agbrte-web-home-') });
+  const web = await serveWebFixture();
   const url = web.url;
 
   try {

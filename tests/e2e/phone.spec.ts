@@ -10,9 +10,8 @@
  */
 
 import { devices, expect, test } from '@playwright/test';
-import { execFileSync } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { serveWebFixture } from './harness.js';
 
 test.use({ ...devices['iPhone 14 Pro Max'] });
@@ -55,11 +54,7 @@ test('opens a session full-screen, and comes back to the dashboard', async ({ pa
   try {
     // Made through the CLI: what is under test is the phone's navigation, and
     // clicking a session into existence would make it about the picker.
-    execFileSync(
-      process.execPath,
-      [resolve('dist/cli/agbrte.js'), 'run', web.repo, '--runtime', 'echo', '--title', 'on a phone', 'go'],
-      { stdio: 'ignore' },
-    );
+    web.run('run', web.repo, '--runtime', 'echo', '--title', 'on a phone', 'go');
 
     await page.goto(web.url);
     // A session exists, so the dashboard is what is useful rather than the guide.
@@ -103,11 +98,7 @@ test('gives the pane to one rail at a time, with no room for three columns', asy
     // Something to open. `makeRepo` is a bare `git init`, so without this the
     // root listing is two directories and there is no file to click.
     await writeFile(join(web.repo, 'phone.txt'), 'read on a phone\n');
-    execFileSync(
-      process.execPath,
-      [resolve('dist/cli/agbrte.js'), 'run', web.repo, '--runtime', 'echo', '--title', 'narrow', 'go'],
-      { stdio: 'ignore' },
-    );
+    web.run('run', web.repo, '--runtime', 'echo', '--title', 'narrow', 'go');
 
     await page.goto(web.url);
     await expect(page.locator('[data-testid=session-card]')).toBeVisible({ timeout: 25_000 });

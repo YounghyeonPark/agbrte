@@ -9,8 +9,6 @@
  */
 
 import { expect, test } from '@playwright/test';
-import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
 import { serveWebFixture } from './harness.js';
 
 test('shows every session, with what needs a human first', async ({ page }) => {
@@ -19,11 +17,7 @@ test('shows every session, with what needs a human first', async ({ page }) => {
 
   try {
     for (const title of titles) {
-      execFileSync(
-        process.execPath,
-        [resolve('dist/cli/agbrte.js'), 'run', web.repo, '--runtime', 'echo', '--title', title, `work on ${title}`],
-        { stdio: 'ignore' },
-      );
+      web.run('run', web.repo, '--runtime', 'echo', '--title', title, `work on ${title}`);
     }
 
     await page.goto(web.url);
@@ -79,11 +73,7 @@ test('a long title truncates instead of overflowing its card', async ({ page }) 
     'a title that is quite a lot longer than the others, to see what the card does with it';
 
   try {
-    execFileSync(
-      process.execPath,
-      [resolve('dist/cli/agbrte.js'), 'run', web.repo, '--runtime', 'echo', '--title', long, 'go'],
-      { stdio: 'ignore' },
-    );
+    web.run('run', web.repo, '--runtime', 'echo', '--title', long, 'go');
 
     // The narrow viewport is where it showed worst, and is a shape §12's CSS
     // already takes seriously.
@@ -127,11 +117,7 @@ test('the sidebar does not repeat the dashboard, and returns when a session is o
 
   try {
     for (const title of titles) {
-      execFileSync(
-        process.execPath,
-        [resolve('dist/cli/agbrte.js'), 'run', web.repo, '--runtime', 'echo', '--title', title, 'go'],
-        { stdio: 'ignore' },
-      );
+      web.run('run', web.repo, '--runtime', 'echo', '--title', title, 'go');
     }
 
     await page.goto(web.url);

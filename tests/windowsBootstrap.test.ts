@@ -29,7 +29,7 @@ import { removeTemp } from './support/tempDir.js';
 import { until } from './support/until.js';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -54,6 +54,29 @@ import type { AgentId, SessionId } from '@shared/types/index.js';
 const onWindows = process.platform === 'win32' ? describe : describe.skip;
 
 /**
+ * A profile directory this file may write into, standing in for the remote
+ * machine's own.
+ *
+ * The bootstrap resolves the machine directory as `%USERPROFILE%\.agbrte`, and
+ * that is *correct* — §8 puts it on the machine the host runs on, and for a real
+ * remote box that is the box's own profile. What was wrong was the double.
+ * `localWindowsRunner` executes here, through the real `cmd.exe`, so every
+ * `%USERPROFILE%` it expanded was the developer's: a stand-in for "another
+ * computer" that answered with this one's home.
+ *
+ * It had been doing that for a while, and the bill was visible. A full
+ * `npm test` left the developer's real `~/.agbrte` holding a **96 MB private
+ * Node install**, both host bundles, a 200 KB `scptest.bin`, a host log, and a
+ * `workspaces.json` rewritten every run — beside the two files that are actually
+ * theirs, `machine.json` and `attached.json`. Found by diffing that directory
+ * across a run while chasing something else entirely.
+ *
+ * `mkdtempSync` rather than the async helper because the runner is built at call
+ * time inside tests and this has to exist before the first one.
+ */
+const PROFILE = mkdtempSync(join(tmpdir(), 'agbrte-winprofile-'));
+
+/**
  * A runner that executes here, through `cmd.exe`.
  *
  * `ssh <host> <command>` on Windows runs the command in the default shell,
@@ -67,6 +90,8 @@ function localWindowsRunner(): SshRunner {
       const child = spawn('cmd.exe', ['/c', command], {
         stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        // The one thing this double has to lie about; see PROFILE.
+        env: { ...process.env, USERPROFILE: PROFILE },
       });
       let stdout = '';
       let stderr = '';
@@ -101,6 +126,9 @@ afterAll(async () => {
   for (const root of roots.splice(0)) {
     await removeTemp(root);
   }
+  // Last, and after the workspaces: it holds the private Node and the bundles,
+  // and a host lingering on one of those roots still has them open.
+  await removeTemp(PROFILE);
   /*
    * A longer deadline than the 10s default, because what is being removed is a
    * directory a *deliberately lingering* host still has open — `lingerMs` here is
@@ -166,7 +194,11 @@ onWindows('against this machine, for real', () => {
     expect(probe.reachable, `probe failed: ${probe.detail}`).toBe(true);
     expect(probe.platform).toBe('Windows_NT');
     expect(['x64', 'arm64']).toContain(probe.arch);
-    expect(probe.home).toBe(homedir());
+    // The double's profile, not this machine's. That the probe reports whatever
+    // `%USERPROFILE%` says is the property under test — it is how a real remote
+    // names its own machine directory — and asserting `homedir()` here only
+    // looked like checking it, while guaranteeing the suite wrote there.
+    expect(probe.home).toBe(PROFILE);
   }, 60_000);
 
   it('installs a private Node, and touches nothing else', async () => {
