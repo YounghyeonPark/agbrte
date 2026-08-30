@@ -68,6 +68,56 @@ import { AUTH_DEADLINE_MS, tokensMatch } from '@shared/host/loopback.js';
 import { createApi, type IpcDeps } from '@main/ipc/api.js';
 
 /**
+ * Why this server could not start, said to the person who chose the number.
+ *
+ * `listen EADDRINUSE: address already in use 127.0.0.1:3000` is accurate and is
+ * not an answer: it names a C error code, a syscall and an address, and leaves
+ * out the only two things that help — that some *other* program has the port,
+ * and that `--port` is how you pick a different one. The CLI's top-level handler
+ * prints `err.message` and nothing else, so the sentence has to be built where
+ * the port and the bind address are still in scope.
+ *
+ * Only the three that a person can actually do something about are translated.
+ * Anything else is passed through unchanged rather than wrapped in a guess:
+ * a paraphrase of an error nobody here anticipated is worse than the error.
+ */
+export function listenFailure(err: Error, port: number, host: string): Error {
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code === 'EADDRINUSE') {
+    return new Error(
+      `port ${port} is already in use on ${host} — something else is listening there. ` +
+        'Pass a different --port, or stop whatever is holding it.',
+    );
+  }
+  if (code === 'EACCES') {
+    return new Error(
+      `not allowed to listen on port ${port}` +
+        // The overwhelmingly common cause, and one nobody guesses from EACCES.
+        (port < 1024 ? ' — ports below 1024 need administrator rights on most systems' : '') +
+        '. Pass a different --port.',
+    );
+  }
+  if (code === 'EADDRNOTAVAIL') {
+    return new Error(
+      `${host} is not an address this machine has, so nothing could bind to it. ` +
+        'Pass --bind with an address this machine actually answers on.',
+    );
+  }
+  return err;
+}
+
+/**
+ * A socket error after the server is up: reported, never thrown.
+ *
+ * Written to stderr rather than raised, because by this point a browser is
+ * connected and a session may be mid-turn. The alternative was an unhandled
+ * `error` event, which is the crash `listenFailure` exists for, one stage later.
+ */
+function afterStart(err: Error): void {
+  process.stderr.write(`agbrte web: ${err.message}\n`);
+}
+
+/**
  * What a browser client must never be handed.
  *
  * All of these are *this machine's* hardware or storage, and the web server is
@@ -278,9 +328,41 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
   });
 
   const host = opts.host ?? '127.0.0.1';
+  /*
+   * Both emitters get a handler, and that is not belt-and-braces.
+   *
+   * `ws` attaches to this http server and **re-emits its errors on itself**. An
+   * EventEmitter with no `error` listener *throws* rather than reporting, so a
+   * port already in use killed the process with a raw stack trace — straight
+   * past the `http.once('error', fail)` that used to be the whole of this and
+   * had looked like it covered the case. `agbrte web --port 3000` against a
+   * busy 3000 printed twelve lines of node internals at somebody whose actual
+   * problem was that they needed to pick another number.
+   *
+   * Found through the e2e harness, which spawns this with `stdio: 'ignore'`:
+   * there the crash went nowhere at all and surfaced thirty seconds later as
+   * "the web server never came up", which names neither the port nor the cause.
+   * A failure that is invisible in the one place it is being watched for is the
+   * argument for handling it here rather than at the caller.
+   */
   await new Promise<void>((done, fail) => {
-    http.once('error', fail);
-    http.listen(opts.port, host, done);
+    const failed = (err: Error): void => fail(listenFailure(err, opts.port, host));
+    wss.on('error', failed);
+    http.on('error', failed);
+    http.listen(opts.port, host, () => {
+      /*
+       * Swapped rather than removed. Past startup there is no promise left to
+       * reject, and an emitter with nothing listening is exactly the crash
+       * above — so a later socket error is reported and the server carries on,
+       * because one dropped connection is not a reason to take the session down
+       * with it.
+       */
+      wss.off('error', failed);
+      http.off('error', failed);
+      wss.on('error', afterStart);
+      http.on('error', afterStart);
+      done();
+    });
   });
 
   return {
