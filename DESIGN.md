@@ -951,9 +951,19 @@ Editing splits along the grain of the data rather than into one canvas. **Struct
 
 **Round-trip fidelity is a requirement, not a nicety.** The file is tracked and the diff is the whole safety argument, so an editor that reorders keys or reformats makes every edit unreviewable and destroys the property the design rests on. One deterministic writer, stable key order — the discipline `scripts/model-catalogue.mjs` and the conformance report writer already use, where a `--check` comparing text is a proven pattern.
 
-#### Open, and known
+#### Two limits that turned out to measure different things
 
-**`maxChildrenPerSession: 8`.** A workflow run makes every node a child of one root, so eight nodes is the cap. The stated reason — "keeps a tree node reviewable by a human" — is weaker here, since that review has already happened in the file. Raising it for workflows, grouping nodes under intermediate parents, or leaving the cap and refusing larger workflows are all defensible; none is chosen yet.
+`maxChildrenPerSession: 8` does not bind a workflow run's root, and the reason is worth stating because it separates that limit from the one sitting beside it in §4.3's table.
+
+Its stated purpose is "keeps a tree node reviewable by a human", which makes it a **readability** limit: children render as a flat list under their parent, and twenty rows there is not something anyone reads. `maxOpenDescendants: 24` measures something else entirely — concurrent cost and process count. The two were never distinguished because until now the same act created both problems at once: every child was proposed, approved and spawned in the same moment, so bounding the list also bounded the spend.
+
+A workflow pulls them apart. The review that `maxChildrenPerSession` protects has already happened, in a diff, before anything ran — that is the whole of this section's approval argument — and a run is read in the graph view rather than as a flat list. The readability limit is therefore served by other means and does not apply. `maxOpenDescendants` still does, because a workflow authored carefully costs exactly as much to run as one authored carelessly, and a file review says nothing about how many models are answering at once.
+
+**The exemption is narrow on purpose.** It covers a workflow run's root spawning the nodes its own document declares, and nothing else. A node that calls `propose_split` mid-run is an ordinary split meeting the ordinary limit — that is precisely the decomposition nobody reviewed in advance, which is the case the limit was written for. An exemption that leaked past the declared nodes would hand every workflow node an unreviewed budget for eight more.
+
+**Total node count is left to the review, and the consequence is on screen rather than in the scheduler.** A forty-node workflow is a forty-node workflow; somebody committed it. But forty rows under one sidebar entry is exactly what the readability limit was protecting against, so a run's nodes are collapsed under its root there — it is one unit — and expanded in the graph view, which is built for that shape.
+
+#### Open, and known
 
 **Budget refuses early.** Reserving the whole graph at the start means a workflow can be refused before anything runs. That is correct — §4.3's argument for reserving at spawn rather than at spend applies with more force to N children — but the refusal has to name the shortfall and the workflow, not just fail.
 
