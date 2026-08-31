@@ -16,6 +16,7 @@ import type { ListeningPort } from '../preview/ports.js';
 import type { PreviewServer, PreviewServerLog } from '../preview/servers.js';
 import type { ShellHandle } from '../terminal/shell.js';
 import type { SessionTemplate } from '../store/templates.js';
+import type { WorkflowSummary } from '@shared/host/sessionProtocol.js';
 import { EventEmitter } from 'node:events';
 import {
   COMMAND_SINCE,
@@ -464,6 +465,18 @@ export class HostConnection extends EventEmitter {
   async templates(): Promise<SessionTemplate[]> {
     this.require('template.list');
     return this.call<SessionTemplate[]>({ t: 'template.list' });
+  }
+
+  /**
+   * Workflow documents in this host's workspace, parsed and validated (§4.4).
+   *
+   * `require` rather than an empty list, so a host too old to answer says so.
+   * The two states are not the same and only one has a remedy: a workspace with
+   * no workflows is finished, and a host that predates them wants updating.
+   */
+  async workflows(): Promise<WorkflowSummary[]> {
+    this.require('workflow.list');
+    return this.call<WorkflowSummary[]>({ t: 'workflow.list' });
   }
 
   /**

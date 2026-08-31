@@ -90,6 +90,9 @@ const api: AgbrteApi = {
     list: (limit?: number) => ipcRenderer.invoke(CH.inboxList, limit),
     markRead: () => ipcRenderer.invoke(CH.inboxMarkRead),
   },
+  workflows: {
+    list: (instanceId: string) => ipcRenderer.invoke(CH.workflowsList, instanceId),
+  },
   capture: {
     sources: () => ipcRenderer.invoke(CH.captureSources),
     grab: (r: CaptureRequestDto) => ipcRenderer.invoke(CH.captureGrab, r),

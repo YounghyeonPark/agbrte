@@ -29,7 +29,7 @@ import { basename } from 'node:path';
 
 import { byAttentionThenRecency, describeTarget, sameTarget } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
-import type { HostIdentity } from '@shared/host/sessionProtocol.js';
+import type { HostIdentity, WorkflowSummary } from '@shared/host/sessionProtocol.js';
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import { requireTransport } from './host/transports.js';
 import {
@@ -1618,6 +1618,26 @@ export class Fleet extends EventEmitter {
       return await entry.connection.templates();
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * Workflow documents in one workspace (§4.4).
+   *
+   * Answers `null` where `templates()` answers `[]`, and the difference is the
+   * point. An empty list is a real state a workspace can be in — nobody has
+   * written a workflow — while a host too old to be asked is a state with a
+   * remedy, and rendering the second as the first would tell somebody they have
+   * no workflows when what is true is that this machine cannot say. The same
+   * distinction §3.3 draws between an absent capability claim and a `no`.
+   */
+  async workflows(instanceId: InstanceId): Promise<WorkflowSummary[] | null> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('workflow.list')) return null;
+    try {
+      return await entry.connection.workflows();
+    } catch {
+      return null;
     }
   }
 

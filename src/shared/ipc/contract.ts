@@ -51,6 +51,7 @@ import type {
   SessionProjection,
   ShellProgram,
 } from '../types/index.js';
+import type { WorkflowSummary } from '../host/sessionProtocol.js';
 
 // ------------------------------------------------------------------- payloads
 
@@ -772,6 +773,24 @@ export interface AgbrteApi {
     markRead(): Promise<void>;
   };
   /**
+   * Workflow documents in one workspace (§4.4).
+   *
+   * Per instance and not across the fleet, unlike `inbox`: a workflow is a file
+   * in one repository, so "which workflows are there" is only a question about a
+   * workspace. Reading it goes through the host because the workspace may be on
+   * another machine — the same reason `templates` is a command rather than a
+   * file the app opens.
+   *
+   * **`null` is a host too old to be asked**, which an empty list would hide.
+   * A workspace with no workflows is a finished answer; a host that predates
+   * them has a remedy, and telling somebody they have none when the truth is
+   * that nothing could say is the failure §3.3 spends four capability states on
+   * avoiding.
+   */
+  workflows: {
+    list(instanceId: string): Promise<WorkflowSummary[] | null>;
+  };
+  /**
    * Your screen, for the sessions that want to see it (§12.1).
    *
    * Not on `sessions` even though a capture is always attached to one: what is
@@ -1284,6 +1303,7 @@ export const CH = {
   hostsRuntimes: 'agbrte:hosts.runtimes',
   hostsConformance: 'agbrte:hosts.conformance',
   inboxList: 'agbrte:inbox.list',
+  workflowsList: 'agbrte:workflows.list',
   sessionsRespondSplit: 'agbrte:sessions.respondSplit',
   sessionsGroup: 'agbrte:sessions.group',
   sessionsUngroup: 'agbrte:sessions.ungroup',

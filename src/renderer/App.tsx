@@ -41,6 +41,7 @@ import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
 import { Welcome } from './Welcome.js';
 import { About } from './About.js';
+import { Workflows, type WorkspaceWorkflows } from './Workflows.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import { EMPTY_ENDPOINT, SetUpEndpoint, SetupProgress, type EndpointDraft } from './SetUpMachine.js';
 import {
@@ -147,7 +148,23 @@ export function App(): JSX.Element {
    * session showing, because a page you can only reach from an empty window is
    * unreachable exactly when it is wanted.
    */
-  const [view, setView] = useState<'none' | 'guide' | 'about'>('none');
+  const [view, setView] = useState<'none' | 'guide' | 'about' | 'workflows'>('none');
+  /**
+   * Workflow documents per attached workspace, fetched when the pane opens.
+   *
+   * On open rather than on every host push, because a document is a file
+   * somebody edits by hand and the pane is the only thing that reads it — the
+   * picker's model list makes the same call for the same reason. Re-asked each
+   * time it opens, so a file edited in another window is not stale behind a tab
+   * that was left open.
+   *
+   * A refusal becomes `null`, the same as a host too old to answer. That is not
+   * laziness about the difference: a public host declines the channel outright
+   * (§4.4, `publicChannels.ts`), and *this client cannot ask* is the same fact
+   * for a reader as *this host cannot answer* — both mean the list on screen is
+   * not evidence about what the workspace holds.
+   */
+  const [workflows, setWorkflows] = useState<WorkspaceWorkflows[]>([]);
   /*
    * Which pane a narrow screen is showing. Above `md` both are up and this is
    * ignored.
@@ -393,6 +410,34 @@ export function App(): JSX.Element {
   useEffect(() => {
     setFocusedAgent(null);
   }, [active?.sessionId]);
+
+  /*
+   * Ask every attached workspace what workflows it has, when the pane opens.
+   *
+   * One call per host and all of them at once: they are separate machines, so a
+   * slow remote must not hold up the local answer, and `Promise.all` over hosts
+   * is what makes the pane render in the time of the slowest rather than the sum.
+   *
+   * Nothing is thrown away on failure except into `null`. A host that refuses —
+   * too old, or a public host declining the channel — is a workspace whose row
+   * says so, not a pane that fails to render because one of four machines is
+   * behind.
+   */
+  useEffect(() => {
+    if (view !== 'workflows') return;
+    let live = true;
+    void Promise.all(
+      hosts.map(async (host) => ({
+        host,
+        found: await window.agbrte.workflows.list(host.instanceId).catch(() => null),
+      })),
+    ).then((all) => {
+      if (live) setWorkflows(all);
+    });
+    return () => {
+      live = false;
+    };
+  }, [view, hosts]);
 
   // A different seat is a different question, so the answer is thrown away and
   // the pane returns to chat. The only place availability goes back to false.
@@ -861,6 +906,19 @@ export function App(): JSX.Element {
             >
               Guide
             </button>
+            {/* Beside Guide rather than in the session list, which is §4.4's
+                distinction made visible: a workflow *run* is a session and
+                belongs with the sessions, a workflow *document* is a file and
+                belongs where files are looked at. */}
+            <button
+              className="btn"
+              data-testid="show-workflows"
+              title="Workflow documents in the attached folders"
+              aria-pressed={view === 'workflows'}
+              onClick={() => setView((open) => (open === 'workflows' ? 'none' : 'workflows'))}
+            >
+              Workflows
+            </button>
             {/* The menu bar used to be the one place an About lived; with the
                 bar gone this button is its whole surface. */}
             <button
@@ -1063,7 +1121,9 @@ export function App(): JSX.Element {
           </div>
         )}
 
-        {view === 'about' ? (
+        {view === 'workflows' ? (
+          <Workflows workspaces={workflows} />
+        ) : view === 'about' ? (
           <About />
         ) : view === 'guide' ? (
           <StartGuide

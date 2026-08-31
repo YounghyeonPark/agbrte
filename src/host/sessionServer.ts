@@ -36,6 +36,7 @@ import {
   readTemplate,
   saveTemplate,
 } from '@main/store/templates.js';
+import { listWorkflows } from '@main/store/workflows.js';
 import {
   AccessDenied,
   newAgentId,
@@ -721,6 +722,22 @@ export class SessionHostServer {
 
         case 'template.list':
           return listTemplates(this.bound(client, 'list templates').info.root);
+
+        case 'workflow.list': {
+          /*
+           * Read where the workspace is, like `template.list` beside it, because
+           * that is where the documents are — a workflow may be authored on a
+           * build box and the app asking about it may be a phone (§4.4, §6.6).
+           *
+           * The absolute path each file was read from is dropped here rather
+           * than at the client: a path that crosses a machine names nothing on
+           * the far side (§5.4b), and the boundary is the honest place to stop
+           * one. Everything else travels, problems included — a broken document
+           * is a row with its reason, never an error that hides the good ones.
+           */
+          const files = await listWorkflows(this.bound(client, 'list workflows').info.root);
+          return files.map(({ id, workflow, problems }) => ({ id, workflow, problems }));
+        }
 
         case 'template.save': {
           // A write: it puts a file in the repo that colleagues will pull.

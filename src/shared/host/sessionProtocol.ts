@@ -47,6 +47,7 @@ import type {
   Session,
   SessionProjection,
   ShellProgram,
+  Workflow,
 } from '../types/index.js';
 import type { HostChannel } from './protocol.js';
 
@@ -64,6 +65,26 @@ export interface EndpointAdded {
   endpointId: string;
   path: string;
   authenticated: boolean;
+}
+
+/**
+ * One workflow document, as it crosses the wire (§4.4).
+ *
+ * The host's own `WorkflowFile` carries the absolute path it read; this does
+ * not, and that is the only difference. A path is the field that is wrong the
+ * moment it crosses a machine — §5.4b spends a whole codec on stopping one
+ * travelling by accident — and a listing that handed a laptop
+ * `/home/dev/proj/.agbrte/templates/x.workflow.json` would be naming nothing
+ * there. The `id` is what a client needs and the only thing it can act on.
+ *
+ * `workflow` is absent when the file could not be parsed, which is why
+ * `problems` is not enough on its own: a document with a bad seam still has a
+ * document, and an editor needs it in order to fix it.
+ */
+export interface WorkflowSummary {
+  id: string;
+  workflow?: Workflow;
+  problems: Array<{ node?: string; message: string }>;
 }
 
 /**
@@ -271,6 +292,21 @@ export interface HostIdentity {
  * ignores the extra `hello` field and reports `protocol: 1` exactly as it always
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
+ *
+ * ## v25 adds `workflow.list`, which is the ordinary case
+ *
+ * A workflow document lives in `<workspace>/.agbrte/templates/` (§4.4, §5.1), so
+ * it is read by the host that owns the workspace — the same reason
+ * `template.list` is a command rather than a file the app opens. A v24 host does
+ * not have it, `supports()` says so, and the client reports that this machine's
+ * host is too old to list them rather than showing an empty list, which would be
+ * indistinguishable from a workspace that has none.
+ *
+ * The reply omits each document's **absolute path**, which the host knows and
+ * the client does not need. A path is the one field that is wrong the moment it
+ * crosses a machine, and §5.4b spends a whole codec on not letting one travel by
+ * accident; a listing that carried `/home/dev/proj/.agbrte/templates/x.json` to
+ * a laptop would be handing over a string that names nothing there.
  *
  * ## v6 adds a *field*, which the table below cannot express
  *
@@ -540,7 +576,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 24;
+export const SESSION_PROTOCOL_VERSION = 25;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -615,6 +651,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'workspace.open': 21,
   'session.rename': 22,
   'session.attachMcp': 24,
+  'workflow.list': 25,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -685,6 +722,8 @@ export type SessionCommand =
       target?: ExecutionTarget;
     }
   | { t: 'template.list'; id: RequestId }
+  /** Workflow documents in this workspace, parsed and validated (§4.4). */
+  | { t: 'workflow.list'; id: RequestId }
   | { t: 'template.apply'; id: RequestId; templateId: string; title?: string }
   /**
    * What each endpoint on this host can serve, right now (§3.8).

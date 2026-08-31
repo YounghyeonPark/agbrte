@@ -287,6 +287,9 @@ const api: AgbrteApi = {
     list: call(CH.inboxList),
     markRead: call(CH.inboxMarkRead),
   },
+  workflows: {
+    list: call(CH.workflowsList),
+  },
   /**
    * Routed to the server like everything else, which is what makes the honest
    * answer possible (§12.1).

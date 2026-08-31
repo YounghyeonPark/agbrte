@@ -592,6 +592,7 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
 
   handle(CH.inboxList, (limit?: number) => fleet.inbox(limit));
   handle(CH.inboxMarkRead, () => fleet.markInboxRead());
+  handle(CH.workflowsList, (instanceId: string) => fleet.workflows(instanceId as InstanceId));
 
   handle(CH.sessionsList, () => fleet.list());
 
