@@ -42,6 +42,7 @@ export const KNOWN_COMMANDS = new Set([
   'interrupt',
   'group',
   'ungroup',
+  'workflows',
 ]);
 
 /** Flags that consume the next argument; everything else is a boolean. */

@@ -55,6 +55,8 @@ const USAGE = `agbrte — an agent workbench, at a terminal
   agbrte [attach] [path]        open the workspace and drive it interactively
   agbrte run [path] "<prompt>"  one turn, no prompts, an exit code
   agbrte ls [path]              list sessions, one per line
+  agbrte workflows [path]       check every workflow document here (§4.4);
+                                exits non-zero if any would be refused
   agbrte group --name <n> <id>… put sessions in a group, so they can reach
                                 each other; ids may come from stdin
   agbrte ungroup <id>…          take sessions back out of theirs
@@ -352,6 +354,50 @@ async function main(): Promise<number> {
       return 1;
     }
     unusable = err;
+  }
+
+  /*
+   * `agbrte workflows` — the documents, checked before they cost anything (§4.4).
+   *
+   * The validator's first caller, and deliberately not the editor. §4.4 puts the
+   * review of a workflow in a diff rather than in an approval modal, which makes
+   * this the same shape as `scripts/model-catalogue.mjs --check`: something CI
+   * can run over what is committed, so a seam that would be refused at spawn is
+   * refused at review instead — while its author still has the context to fix it.
+   *
+   * Shaped like `agbrte ls` rather than as `workflow check <id>`, because the
+   * parser decides whether the first word after a command is a path and would
+   * have read `check` as one. A subcommand would mean adding `workflow` to
+   * `TAKES_ARGUMENTS`, which then makes `[path]` unavailable for this command
+   * alone — a worse trade than listing all of them, which is what somebody
+   * running this in CI wants anyway.
+   *
+   * Above the host entirely: it reads files and answers. Starting a session host
+   * to say that some JSON is malformed would be absurd.
+   */
+  if (command === 'workflows') {
+    const { listWorkflows } = await import('@main/store/workflows.js');
+    const files = await listWorkflows(path);
+    if (files.length === 0) {
+      process.stdout.write(c.dim(`no workflows in ${path}\n`));
+      return 0;
+    }
+    let bad = 0;
+    for (const file of files) {
+      if (file.problems.length === 0) {
+        const n = file.workflow?.nodes.length ?? 0;
+        process.stdout.write(`${c.ok('ok')} ${file.id} — ${n} node${n === 1 ? '' : 's'}\n`);
+        continue;
+      }
+      bad += 1;
+      process.stdout.write(`${c.fail('refused')} ${file.id}\n`);
+      // Every finding, not the first: a document has many seams, and being told
+      // one problem six times is the reason `validateWorkflow` returns a list.
+      for (const p of file.problems) {
+        process.stdout.write(`  ${p.node === undefined ? '' : c.dim(`${p.node}: `)}${p.message}\n`);
+      }
+    }
+    return bad === 0 ? 0 : 1;
   }
 
   if (command === 'serve') {

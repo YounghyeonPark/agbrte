@@ -30,7 +30,7 @@ import type {
   SessionBrief,
   SessionBudget,
 } from '@shared/types/index.js';
-import { availableTokens } from '@shared/types/index.js';
+import { availableTokens, seamRefusal } from '@shared/types/index.js';
 import type { SessionStore } from './sessionStore.js';
 import { estimateTokens, rehydrate } from './rehydrate.js';
 
@@ -89,19 +89,12 @@ export async function buildBrief(
   parent: SessionStore,
   opts: BuildBriefOptions,
 ): Promise<BuiltBrief> {
-  if (opts.scope.trim() === '') {
-    throw new BriefRefused('a child needs a scope; an empty one produces an aimless session');
-  }
-  if (opts.outOfScope.length === 0) {
-    // Not a default we can invent: only the parent knows what it is keeping.
-    throw new BriefRefused(
-      'outOfScope is required — without it the child reads widely to re-derive ' +
-        'context, which is the cost the split was meant to avoid (§4.3)',
-    );
-  }
-  if (opts.contract.summaryMaxTokens <= 0) {
-    throw new BriefRefused('the result contract needs a positive summaryMaxTokens ceiling');
-  }
+  // The three that need no store, shared with the workflow validator so a seam
+  // refused in a document and a seam refused at spawn are refused for the same
+  // reasons, in the same words (§4.4). The fourth is below and stays here: it
+  // needs the parent's projection, which a document does not have.
+  const unusable = seamRefusal(opts);
+  if (unusable !== null) throw new BriefRefused(unusable);
 
   const meta = await parent.readMeta();
   const { projection } = await parent.load();

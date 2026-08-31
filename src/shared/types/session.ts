@@ -340,6 +340,49 @@ export interface ResultContract {
 }
 
 /**
+ * The three things every seam must name, checked without a store (§4.3, §4.4).
+ *
+ * These are `buildBrief`'s first three refusals, lifted out because a second
+ * caller arrived and the two must not drift: a workflow declares its seams in a
+ * file, and a seam that is wrong there is wrong for exactly the same reasons it
+ * would be wrong at spawn time. Two paths, one function — the same argument §13
+ * makes about the two paths that attach an MCP server.
+ *
+ * **Returns the refusal rather than throwing it**, which is the whole reason it
+ * is a separate function and not an early `return` inside `buildBrief`. One
+ * caller is a spawn that must fail loudly; the other is an editor validating on
+ * every keystroke, where an exception per character is not a design aid. The
+ * caller decides what a refusal *is*; this decides what the refusals *are*.
+ *
+ * `buildBrief`'s fourth refusal — a brief exceeding its own token ceiling — is
+ * deliberately not here and cannot be: it needs the parent's projection, so it
+ * is knowable at spawn and unknowable while writing a document. A workflow
+ * therefore validates three of the four in advance, and the fourth still fires
+ * where it always did. Said plainly rather than left to be discovered, because
+ * "the file validated" must not be read as "every node will spawn".
+ */
+export function seamRefusal(seam: {
+  scope: string;
+  outOfScope: string[];
+  contract: ResultContract;
+}): string | null {
+  if (seam.scope.trim() === '') {
+    return 'a child needs a scope; an empty one produces an aimless session';
+  }
+  if (seam.outOfScope.length === 0) {
+    // Not a default anyone can invent: only the parent knows what it is keeping.
+    return (
+      'outOfScope is required — without it the child reads widely to re-derive ' +
+      'context, which is the cost the split was meant to avoid (§4.3)'
+    );
+  }
+  if (seam.contract.summaryMaxTokens <= 0) {
+    return 'the result contract needs a positive summaryMaxTokens ceiling';
+  }
+  return null;
+}
+
+/**
  * A parent's cached projection of a child. The child owns the truth; this
  * exists so a tree still renders when the child's workspace is unreachable —
  * the same pattern as the offline mirror (§6.6).

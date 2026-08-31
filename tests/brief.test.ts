@@ -21,7 +21,7 @@ import {
 } from '@main/store/brief.js';
 import { SessionStore } from '@main/store/sessionStore.js';
 import { openWorkspace } from '@main/store/identity.js';
-import { newSessionId, type InstanceId, type ResultContract, type SessionBudget } from '@shared/types/index.js';
+import { newSessionId, seamRefusal, type InstanceId, type ResultContract, type SessionBudget } from '@shared/types/index.js';
 
 let root: string;
 let instanceId: InstanceId;
@@ -114,6 +114,25 @@ describe('buildBrief', () => {
     await expect(buildBrief(await parentStore(), { ...OPTS, outOfScope: [] })).rejects.toThrow(
       /outOfScope is required/,
     );
+  });
+
+  /*
+   * The pin that makes the sharing load-bearing (§4.4).
+   *
+   * A workflow declares its seams in a file and refuses them with the same
+   * function, so a seam wrong in a document is refused for the same reason and
+   * in the same words as one wrong at spawn. Asserted as an exact string rather
+   * than a pattern, because a pattern passes against a second implementation
+   * that happens to contain the same phrase — and a reimplementation here is
+   * precisely what would put the two paths out of step. Same shape of guarantee
+   * as §13's rule that both MCP attach paths share one function.
+   */
+  it('refuses with the words the workflow validator uses, not merely similar ones', async () => {
+    const expected = seamRefusal({ ...OPTS, outOfScope: [] });
+    expect(expected).not.toBeNull();
+    await expect(
+      buildBrief(await parentStore(), { ...OPTS, outOfScope: [] }),
+    ).rejects.toThrow(expected as string);
   });
 
   it('refuses an empty scope', async () => {
