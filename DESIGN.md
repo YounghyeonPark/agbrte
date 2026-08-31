@@ -963,9 +963,27 @@ A workflow pulls them apart. The review that `maxChildrenPerSession` protects ha
 
 **Total node count is left to the review, and the consequence is on screen rather than in the scheduler.** A forty-node workflow is a forty-node workflow; somebody committed it. But forty rows under one sidebar entry is exactly what the readability limit was protecting against, so a run's nodes are collapsed under its root there — it is one unit — and expanded in the graph view, which is built for that shape.
 
+#### The budget is checked whole, before anything is reserved
+
+`reserveForChild` refuses at the moment of reserving — *"cannot reserve 40000 tokens: only 12000 remain unreserved"* — and for a single split that is both correct and sufficient. It is correct because §4.3's rule only holds if the reservation happens at spawn rather than at spend, "by then the money is gone and the check is a report". It is sufficient because the person reading it just approved that one child and knows which one it names.
+
+**A workflow knows something a split cannot: the total, in advance.** A parent proposing one split has no idea what the next child will ask for, so reserving as it goes is the only thing available to it. Every node ceiling of a workflow is written in the document, so the sum is knowable before anything runs — and where a complete check is possible, an incremental one is a worse version of it.
+
+So a workflow's budget is checked against the whole graph first, and nothing is reserved until it passes. Three things follow.
+
+**The refusal can say what to do about it**, which the incremental form structurally cannot. Stopping at the seventh node reports one number about one node out of twelve, leaving the reader to work out the shortfall, the total, and which contracts to cut — from a session that, per §4.3's "a refused split leaves nothing behind", has by then also released the six reservations it had taken, so nothing on screen records that any of it happened. A whole-graph refusal names the workflow, the total it needs, what is available, and the nodes that did not fit, because it computed all of them before touching anything.
+
+**Nothing is taken and given back.** §4.3's leave-nothing-behind rule is satisfied trivially rather than by an unwind path, and an unwind path is exactly the kind of code that is written once and then never exercised.
+
+**A workflow that passes is pessimistic on purpose.** The check is over declared ceilings, and a node finishing under its ceiling releases the remainder as §4.3 already specifies, so a graph may be refused for a total it would never have spent. That is the right way round: the alternative starts a workflow that dies halfway with six nodes' work done and no budget to finish, and being told up front that the ceiling is too low is strictly better than being told it in the middle.
+
+Mid-run `propose_split` needs no exception. A node reserves from its own ceiling, which was reserved from the root, so the tree still cannot outspend what its root was granted.
+
+The check is a pure function of the document and the root's available budget, which puts it in the validator rather than the runner — the same place the brief refusals live, and one more reason the format is worth building before the thing that executes it.
+
 #### Open, and known
 
-**Budget refuses early.** Reserving the whole graph at the start means a workflow can be refused before anything runs. That is correct — §4.3's argument for reserving at spawn rather than at spend applies with more force to N children — but the refusal has to name the shortfall and the workflow, not just fail.
+**What a workflow does when a node fails.** §4.3 gives the choice to the parent — retry, re-scope and respawn, abandon and proceed, or escalate — and for a hand-made split that parent is an agent holding the context to choose. A workflow's root is a scheduler. A document that says nothing leaves it either stopping the whole graph on any failure, or carrying on into successors whose predecessor produced nothing; neither is right as a default, and there is no field for it yet. Deliberately not invented here, because the answer wants a real workflow failing in a real way to look at.
 
 ---
 
