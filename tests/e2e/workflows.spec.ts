@@ -22,7 +22,7 @@
  */
 
 import { expect, test } from '@playwright/test';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { serveWebFixture } from './harness.js';
 
@@ -161,6 +161,72 @@ test('lists the documents in the workspace, with what is wrong with them', async
     await expect(
       broken.locator('[data-testid=workflow-node][data-id=a][data-ok=no]'),
     ).toHaveCount(1);
+  } finally {
+    await web.stop();
+  }
+});
+
+test('edits one, refuses to save it broken, and writes it back canonically', async ({ page }) => {
+  const web = await serveWebFixture();
+
+  try {
+    await writeWorkflows(web.repo);
+    const path = join(web.repo, '.agbrte', 'templates', 'review.workflow.json');
+    const before = await readFile(path, 'utf8');
+    await page.goto(web.url);
+    await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
+    await page.locator('[data-testid=show-workflows]').click();
+
+    const review = page.locator('[data-testid=workflow-row][data-id=review]');
+    await expect(review).toBeVisible({ timeout: 20_000 });
+    await review.locator('[data-testid=workflow-shape] summary').click();
+    await review.locator('[data-testid=workflow-edit]').click();
+    await expect(page.locator('[data-testid=workflow-editor]')).toBeVisible();
+
+    /*
+     * Live validation is the whole argument for an editor over a text file
+     * (§4.4). Emptying `outOfScope` must say so *while typing* — the same
+     * refusal §4.3 raises at spawn, from the same function — and the save must
+     * go dark rather than offering a round trip whose only outcome is this list.
+     */
+    await page.locator('[data-testid=wf-select-node][data-id=scan]').click();
+    await page.locator('[data-testid=wf-outofscope]').fill('');
+    await expect(page.locator('[data-testid=wf-node-problems]')).toContainText(
+      'outOfScope is required',
+    );
+    await expect(page.locator('[data-testid=wf-save]')).toBeDisabled();
+    // And the node is marked in the picture, so the drawing and the findings
+    // cannot disagree about which node is wrong.
+    await expect(
+      page.locator('[data-testid=workflow-editor] [data-testid=workflow-node][data-id=scan][data-ok=no]'),
+    ).toHaveCount(1);
+
+    // Nothing has been written while it was invalid. Asserted against the bytes
+    // as they were before the editor opened, which is the actual claim — the
+    // first version of this line named a value from a different fixture and
+    // failed against correct code.
+    expect(await readFile(path, 'utf8')).toBe(before);
+
+    // Put it back as it was, change exactly one other field, and save.
+    await page.locator('[data-testid=wf-outofscope]').fill('everything else');
+    await page.locator('[data-testid=wf-scope]').fill('list every changed file and why');
+    await expect(page.locator('[data-testid=wf-save]')).toBeEnabled();
+    await page.locator('[data-testid=wf-save]').click();
+    await expect(page.locator('[data-testid=workflow-editor]')).toHaveCount(0, { timeout: 20_000 });
+
+    /*
+     * The property §4.4's approval argument rests on: these files are reviewed
+     * as a diff, so a one-field edit must be a one-line change. Asserted on the
+     * bytes rather than on the object, because the object is not what a reviewer
+     * reads.
+     */
+    const after = await readFile(path, 'utf8');
+    expect(after).toContain('list every changed file and why');
+    expect(after.endsWith('}\n')).toBe(true);
+    // Written by the host through the one serializer, so key order is canonical
+    // rather than whatever the form happened to touch first.
+    const order = [...after.matchAll(/^ {6}"(\w+)":/gmu)].map((m) => m[1]).slice(0, 4);
+    expect(order).toEqual(['id', 'title', 'scope', 'outOfScope']);
   } finally {
     await web.stop();
   }

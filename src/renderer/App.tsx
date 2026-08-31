@@ -1122,7 +1122,29 @@ export function App(): JSX.Element {
         )}
 
         {view === 'workflows' ? (
-          <Workflows workspaces={workflows} />
+          <Workflows
+            workspaces={workflows}
+            onSave={async (instanceId, workflowId, workflow) => {
+              const saved = await window.agbrte.workflows.save(instanceId, workflowId, workflow);
+              /*
+               * Re-read on success rather than patching the list in place. The
+               * host is the one that serialised it, so what is on disk is its
+               * answer and not the draft — and a pane showing the draft would be
+               * showing something no file contains.
+               */
+              if (saved.problems.length === 0) {
+                setWorkflows(
+                  await Promise.all(
+                    hosts.map(async (host) => ({
+                      host,
+                      found: await window.agbrte.workflows.list(host.instanceId).catch(() => null),
+                    })),
+                  ),
+                );
+              }
+              return saved.problems;
+            }}
+          />
         ) : view === 'about' ? (
           <About />
         ) : view === 'guide' ? (

@@ -17,6 +17,7 @@ import type { PreviewServer, PreviewServerLog } from '../preview/servers.js';
 import type { ShellHandle } from '../terminal/shell.js';
 import type { SessionTemplate } from '../store/templates.js';
 import type { WorkflowSummary } from '@shared/host/sessionProtocol.js';
+import type { Workflow } from '@shared/types/index.js';
 import { EventEmitter } from 'node:events';
 import {
   COMMAND_SINCE,
@@ -477,6 +478,21 @@ export class HostConnection extends EventEmitter {
   async workflows(): Promise<WorkflowSummary[]> {
     this.require('workflow.list');
     return this.call<WorkflowSummary[]>({ t: 'workflow.list' });
+  }
+
+  /**
+   * Write a workflow document into this host's workspace (§4.4).
+   *
+   * The *document* goes over the wire and not the text, so the canonical form
+   * is a property of the file rather than of whichever client last saved it —
+   * two apps at different versions cannot produce two spellings of one workflow.
+   */
+  async saveWorkflow(
+    workflowId: string,
+    workflow: Workflow,
+  ): Promise<{ id: string; problems: Array<{ node?: string; message: string }> }> {
+    this.require('workflow.save');
+    return this.call({ t: 'workflow.save', workflowId, workflow });
   }
 
   /**

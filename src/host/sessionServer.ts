@@ -36,7 +36,7 @@ import {
   readTemplate,
   saveTemplate,
 } from '@main/store/templates.js';
-import { listWorkflows } from '@main/store/workflows.js';
+import { listWorkflows, saveWorkflow } from '@main/store/workflows.js';
 import {
   AccessDenied,
   newAgentId,
@@ -737,6 +737,17 @@ export class SessionHostServer {
            */
           const files = await listWorkflows(this.bound(client, 'list workflows').info.root);
           return files.map(({ id, workflow, problems }) => ({ id, workflow, problems }));
+        }
+
+        case 'workflow.save': {
+          // A write: it puts a file in the repo that colleagues will pull, which
+          // is the same sentence `template.save` carries and the same gate.
+          this.requireWrite(client, 'save a workflow');
+          return saveWorkflow(
+            this.bound(client, 'save a workflow').info.root,
+            command.workflowId,
+            command.workflow,
+          );
         }
 
         case 'template.save': {

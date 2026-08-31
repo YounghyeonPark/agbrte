@@ -45,6 +45,7 @@ import type { ListeningPort } from './preview/ports.js';
 import type { PreviewServer, PreviewServerLog } from './preview/servers.js';
 import type { ShellHandle } from './terminal/shell.js';
 import type { SessionTemplate } from './store/templates.js';
+import type { Workflow } from '@shared/types/index.js';
 import type { ModelNeed } from './runtime/registry.js';
 import type {
   CreateSessionInput,
@@ -1631,6 +1632,23 @@ export class Fleet extends EventEmitter {
    * no workflows when what is true is that this machine cannot say. The same
    * distinction §3.3 draws between an absent capability claim and a `no`.
    */
+  /**
+   * Save a workflow document into one workspace (§4.4).
+   *
+   * Errors are *not* swallowed the way `workflows()` swallows them. Reading is a
+   * question whose worst honest answer is "cannot say"; writing is an
+   * instruction, and one that quietly did nothing would leave somebody believing
+   * their edit is on disk. Same split `templates()` and `saveTemplate` already
+   * make, and the same reason.
+   */
+  async saveWorkflow(
+    instanceId: InstanceId,
+    workflowId: string,
+    workflow: Workflow,
+  ): Promise<{ id: string; problems: Array<{ node?: string; message: string }> }> {
+    return this.host(instanceId).connection.saveWorkflow(workflowId, workflow);
+  }
+
   async workflows(instanceId: InstanceId): Promise<WorkflowSummary[] | null> {
     const entry = this.host(instanceId);
     if (!entry.connection.supports('workflow.list')) return null;

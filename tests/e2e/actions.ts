@@ -125,6 +125,14 @@ export async function addAgent(page: Page, runtimeId: string, model?: string): P
    * So this asserts the half that is ambiguous and leaves the other half
    * exactly as strict. Nothing is retried and nothing is swallowed: a trigger
    * that does not open still fails, five seconds sooner and saying so.
+   *
+   * **It has since answered the question.** The next run in which the flake
+   * recurred failed *here* rather than on the option — the list never appeared —
+   * which rules out the picker missing a runtime and leaves the trigger click
+   * going nowhere. `page.click` had already found the element and judged it
+   * actionable, so the open is being lost after the dispatch; the picker
+   * re-renders shortly after it mounts, when `refreshModels()` answers, and that
+   * is where to look next.
    */
   await expect(page.locator('[data-testid=runtime-list]')).toBeVisible({ timeout: 15_000 });
 

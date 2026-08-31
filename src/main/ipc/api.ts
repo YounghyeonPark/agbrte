@@ -81,7 +81,7 @@ import type { ClipStore } from '../voice/clips.js';
 import type { Speaker } from '../voice/tts.js';
 import { buildMatrix } from '@main/conformance.js';
 import { exportSessionMarkdown } from '@main/store/exportSession.js';
-import type { ConformanceReport, MatrixCell } from '@shared/types/index.js';
+import type { ConformanceReport, MatrixCell, Workflow } from '@shared/types/index.js';
 import { readSshHosts } from '../host/sshConfig.js';
 import { assertSafeAlias, discoverRemoteWorkspaces } from '../host/discoverWorkspaces.js';
 import type { AttachedHost, Fleet, FleetRuntime } from '../fleet.js';
@@ -593,6 +593,9 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   handle(CH.inboxList, (limit?: number) => fleet.inbox(limit));
   handle(CH.inboxMarkRead, () => fleet.markInboxRead());
   handle(CH.workflowsList, (instanceId: string) => fleet.workflows(instanceId as InstanceId));
+  handle(CH.workflowsSave, (r: { instanceId: string; workflowId: string; workflow: Workflow }) =>
+    fleet.saveWorkflow(r.instanceId as InstanceId, r.workflowId, r.workflow),
+  );
 
   handle(CH.sessionsList, () => fleet.list());
 

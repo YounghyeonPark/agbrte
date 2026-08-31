@@ -293,6 +293,21 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  *
+ * ## v26 adds `workflow.save`, and it is the first *write* of its kind
+ *
+ * `workflow.list` reads; this puts a file in the repository that colleagues will
+ * pull, which is what `template.save` says about itself for the same reason. So
+ * it takes `requireWrite` — a read-only client that could still write would not
+ * be read-only — and a public host declines the channel outright, since
+ * `publicChannels.ts` is an allowlist and a stranger driving a demo has no
+ * business committing to somebody's tree.
+ *
+ * The client sends the **document**, not the text. Serialising on the host is
+ * what makes §4.4's canonical form a property of the file rather than of
+ * whichever client last touched it: two apps at different versions cannot
+ * produce two spellings of one workflow, and the diff — which is the whole of
+ * §4.4's approval argument — stays readable.
+ *
  * ## v25 adds `workflow.list`, which is the ordinary case
  *
  * A workflow document lives in `<workspace>/.agbrte/templates/` (§4.4, §5.1), so
@@ -576,7 +591,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 25;
+export const SESSION_PROTOCOL_VERSION = 26;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -652,6 +667,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'session.rename': 22,
   'session.attachMcp': 24,
   'workflow.list': 25,
+  'workflow.save': 26,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -724,6 +740,8 @@ export type SessionCommand =
   | { t: 'template.list'; id: RequestId }
   /** Workflow documents in this workspace, parsed and validated (§4.4). */
   | { t: 'workflow.list'; id: RequestId }
+  /** Write a workflow document into the workspace (§4.4). A write, gated. */
+  | { t: 'workflow.save'; id: RequestId; workflowId: string; workflow: Workflow }
   | { t: 'template.apply'; id: RequestId; templateId: string; title?: string }
   /**
    * What each endpoint on this host can serve, right now (§3.8).

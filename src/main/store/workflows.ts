@@ -1,5 +1,5 @@
 /**
- * Reading a workflow document off disk (DESIGN.md §4.4, §5.1).
+ * Reading and writing workflow documents (DESIGN.md §4.4, §5.1, §13).
  *
  * Beside session templates, in `<workspace>/.agbrte/templates/`, which is
  * **tracked** — and that is the point rather than a filing decision. §4.4's
@@ -12,13 +12,17 @@
  * without either having to open the other's files to find out what they are.
  *
  * Tracked also puts these under §13: a workflow may name a credential and must
- * never carry one. Nothing here writes, so nothing here can leak one; when the
- * editor lands, that is the rule it has to keep.
+ * never carry one. That is kept by the **type** rather than by a filter here — a
+ * `Workflow` has no field a secret fits in, no `env`, no headers, no command —
+ * and `serialize.ts` writes only the fields the type knows, so a hand-added one
+ * does not survive a save. Adding a field that could hold a credential would
+ * therefore be a decision visible in a diff rather than an oversight.
  */
 
-import { readdir, readFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { validateWorkflow, type WorkflowFinding } from '@shared/workflow/validate.js';
+import { serializeWorkflow } from '@shared/workflow/serialize.js';
 import type { Workflow } from '@shared/types/index.js';
 import { templatesDir } from './templates.js';
 
@@ -93,6 +97,39 @@ export async function readWorkflow(
     };
   }
   return { id: safe, path, workflow: parsed, problems: validateWorkflow(parsed, against) };
+}
+
+/**
+ * Write a workflow document, through the one serializer (§4.4).
+ *
+ * **A write, and it lands in a tracked directory** — the same thing
+ * `saveTemplate` says about itself: it puts a file in the repo that colleagues
+ * will pull. The caller gates it; this only writes.
+ *
+ * The document is serialised here rather than accepted as text, and that is what
+ * makes the canonical form a property of the *file* rather than of whichever
+ * client last touched it. Two apps at different versions cannot produce two
+ * spellings of one workflow, so the diff stays readable — and the diff is the
+ * whole of §4.4's approval argument.
+ *
+ * Refused when the document would not validate, because a file that the reader
+ * will refuse is not a saved workflow, it is a trap set for later. The findings
+ * come back rather than a bare failure: the editor already has them on screen
+ * and this is the same list, so nothing has to be re-derived to say why.
+ */
+export async function saveWorkflow(
+  workspaceRoot: string,
+  id: string,
+  workflow: Workflow,
+): Promise<{ id: string; problems: WorkflowFinding[] }> {
+  const safe = id.replace(/[^a-zA-Z0-9._-]/g, '-');
+  const problems = validateWorkflow(workflow);
+  if (problems.length > 0) return { id: safe, problems };
+
+  const dir = templatesDir(workspaceRoot);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, `${safe}${WORKFLOW_SUFFIX}`), serializeWorkflow(workflow), 'utf8');
+  return { id: safe, problems: [] };
 }
 
 /**

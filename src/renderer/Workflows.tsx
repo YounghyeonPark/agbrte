@@ -25,10 +25,12 @@
  * document that will be refused is the one somebody is looking for.
  */
 
-import type { JSX } from 'react';
+import { useState, type JSX } from 'react';
 import type { HostInfo } from '../shared/ipc/contract.js';
 import type { WorkflowSummary } from '../shared/host/sessionProtocol.js';
 import { WorkflowGraph } from './WorkflowGraph.js';
+import { WorkflowEditor } from './WorkflowEditor.js';
+import type { Workflow } from '../shared/types/index.js';
 
 /**
  * One workspace's answer.
@@ -49,8 +51,30 @@ function nodeCount(n: number): string {
   return `${n} node${n === 1 ? '' : 's'}`;
 }
 
-export function Workflows({ workspaces }: { workspaces: WorkspaceWorkflows[] }): JSX.Element {
+export function Workflows({
+  workspaces,
+  onSave,
+}: {
+  workspaces: WorkspaceWorkflows[];
+  /**
+   * Write one back. Resolves with the host's findings, empty when it was saved.
+   *
+   * Absent where saving is not available — a public host declines the channel
+   * outright (`publicChannels.ts` is an allowlist), and a read-only client is
+   * refused by the host. Absent rather than a button that fails: §3.12's rule
+   * about a dark control teaching people the feature does nothing.
+   */
+  onSave?: (
+    instanceId: string,
+    workflowId: string,
+    workflow: Workflow,
+  ) => Promise<Array<{ node?: string; message: string }>>;
+}): JSX.Element {
   const anything = workspaces.some((w) => (w.found?.length ?? 0) > 0);
+  /** `instanceId::id` of the document open in the editor, if any. */
+  const [editing, setEditing] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   return (
     <section className="grid gap-4 p-4" data-testid="workflows">
       <div className="grid gap-1">
@@ -115,11 +139,51 @@ export function Workflows({ workspaces }: { workspaces: WorkspaceWorkflows[] }):
                     would make the button the feature. So a row is a disclosure,
                     and the picture is the thing it discloses.
                   */}
-                  {file.workflow !== undefined ? (
+                  {file.workflow !== undefined && editing === `${host.instanceId}::${file.id}` ? (
+                    <WorkflowEditor
+                      initial={file.workflow}
+                      saving={saving}
+                      saveError={saveError}
+                      onCancel={() => {
+                        setEditing(null);
+                        setSaveError(null);
+                      }}
+                      onSave={(draft) => {
+                        if (onSave === undefined) return;
+                        setSaving(true);
+                        setSaveError(null);
+                        void onSave(host.instanceId, file.id, draft)
+                          .then((problems) => {
+                            // Empty means it is on disk. Anything else is the
+                            // host's own list, which is the same list the editor
+                            // computes — so a disagreement is worth seeing
+                            // rather than smoothing over.
+                            if (problems.length === 0) setEditing(null);
+                            else setSaveError(problems.map((p) => p.message).join('; '));
+                          })
+                          .catch((err: unknown) => {
+                            setSaveError(err instanceof Error ? err.message : String(err));
+                          })
+                          .finally(() => setSaving(false));
+                      }}
+                    />
+                  ) : file.workflow !== undefined ? (
                     <details data-testid="workflow-shape">
                       <summary className="text-muted cursor-pointer text-[11px]">shape</summary>
-                      <div className="pt-2">
+                      <div className="grid gap-2 pt-2">
                         <WorkflowGraph workflow={file.workflow} problems={file.problems} />
+                        {onSave !== undefined ? (
+                          <div>
+                            <button
+                              type="button"
+                              className="btn text-[11px]"
+                              data-testid="workflow-edit"
+                              onClick={() => setEditing(`${host.instanceId}::${file.id}`)}
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     </details>
                   ) : null}

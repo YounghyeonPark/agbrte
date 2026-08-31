@@ -52,6 +52,7 @@ import type {
   ShellProgram,
 } from '../types/index.js';
 import type { WorkflowSummary } from '../host/sessionProtocol.js';
+import type { Workflow } from '../types/index.js';
 
 // ------------------------------------------------------------------- payloads
 
@@ -789,6 +790,20 @@ export interface AgbrteApi {
    */
   workflows: {
     list(instanceId: string): Promise<WorkflowSummary[] | null>;
+    /**
+     * Write one, and hand back what the host made of it.
+     *
+     * The **document** travels, never the text: §4.4 puts a canonical form on
+     * disk so a one-field edit is a one-line diff, and a client serialising for
+     * itself would make that a property of the app version rather than of the
+     * file.  non-empty means nothing was written — a document the
+     * reader will refuse is not a saved workflow, it is a trap set for later.
+     */
+    save(
+      instanceId: string,
+      workflowId: string,
+      workflow: Workflow,
+    ): Promise<{ id: string; problems: Array<{ node?: string; message: string }> }>;
   };
   /**
    * Your screen, for the sessions that want to see it (§12.1).
@@ -1304,6 +1319,7 @@ export const CH = {
   hostsConformance: 'agbrte:hosts.conformance',
   inboxList: 'agbrte:inbox.list',
   workflowsList: 'agbrte:workflows.list',
+  workflowsSave: 'agbrte:workflows.save',
   sessionsRespondSplit: 'agbrte:sessions.respondSplit',
   sessionsGroup: 'agbrte:sessions.group',
   sessionsUngroup: 'agbrte:sessions.ungroup',

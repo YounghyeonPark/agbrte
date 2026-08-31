@@ -289,6 +289,8 @@ const api: AgbrteApi = {
   },
   workflows: {
     list: call(CH.workflowsList),
+    save: (instanceId, workflowId, workflow) =>
+      call(CH.workflowsSave)({ instanceId, workflowId, workflow }),
   },
   /**
    * Routed to the server like everything else, which is what makes the honest

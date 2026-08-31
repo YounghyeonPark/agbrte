@@ -131,16 +131,57 @@ describe('workflow.list over the session protocol', () => {
 });
 
 describe('a host that predates the command', () => {
-  it('is refused by name rather than answering an empty list', async () => {
-    await expect((await connect(SESSION_PROTOCOL_VERSION - 1)).workflows()).rejects.toThrow(
+  /*
+   * Pinned to what the *command* needs, not to one below the current protocol.
+   *
+   * The first version of this said `SESSION_PROTOCOL_VERSION - 1`, which meant
+   * "a host one release behind" and was true only until the next bump — adding
+   * `workflow.save` at v26 made v25 a host that *does* have `workflow.list`, and
+   * the test failed for a reason that had nothing to do with what it asserts.
+   * `COMMAND_SINCE` is the record of when a command appeared, so a host older
+   * than *that* is the state being described.
+   */
+  const tooOldFor = (command: string): number => (COMMAND_SINCE[command] ?? 1) - 1;
+
+  it('refuses a read by name rather than answering an empty list', async () => {
+    await expect((await connect(tooOldFor('workflow.list'))).workflows()).rejects.toThrow(
       /workflow\.list/,
     );
   });
 
-  it('is registered in COMMAND_SINCE at the version that added it', () => {
-    // The table is the record of when a command appeared, and `supports()` is
-    // derived from it — an entry missing here makes the refusal above silent.
+  it('refuses a write by name too', async () => {
+    // A write has more to lose from a silent no-op than a read: somebody who
+    // saved and was told nothing believes their edit is on disk.
+    await expect(
+      (await connect(tooOldFor('workflow.save'))).saveWorkflow('review', DOC as never),
+    ).rejects.toThrow(/workflow\.save/);
+  });
+
+  it('registers both in COMMAND_SINCE at the versions that added them', () => {
+    // `supports()` is derived from this table — an entry missing here makes the
+    // refusals above silent, which is the failure the table exists to prevent.
     expect(COMMAND_SINCE['workflow.list']).toBe(25);
-    expect(SESSION_PROTOCOL_VERSION).toBeGreaterThanOrEqual(25);
+    expect(COMMAND_SINCE['workflow.save']).toBe(26);
+    expect(SESSION_PROTOCOL_VERSION).toBeGreaterThanOrEqual(26);
+  });
+});
+
+describe('writing over the wire', () => {
+  it('saves, and a listing then finds it', async () => {
+    const connection = await connect();
+    const edited = { ...DOC, goal: 'find what is broken and fix what is safe' };
+    expect((await connection.saveWorkflow('review', edited as never)).problems).toEqual([]);
+    const found = await connection.workflows();
+    expect(found[0]?.workflow?.goal).toBe('find what is broken and fix what is safe');
+  });
+
+  it('refuses a document the reader would refuse, and changes nothing', async () => {
+    const connection = await connect();
+    const bad = { ...DOC, nodes: [{ ...DOC.nodes[0], outOfScope: [] }] };
+    const said = await connection.saveWorkflow('review', bad as never);
+    expect(said.problems[0]?.message).toContain('outOfScope is required');
+    // The file on disk is untouched: a document that will be refused on read is
+    // not a saved workflow, it is a trap set for later.
+    expect((await connection.workflows())[0]?.workflow?.goal).toBe(DOC.goal);
   });
 });

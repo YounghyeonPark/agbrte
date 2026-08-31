@@ -15,10 +15,10 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { listWorkflows, readWorkflow, WORKFLOW_SUFFIX } from '../src/main/store/workflows.js';
+import { listWorkflows, readWorkflow, saveWorkflow, WORKFLOW_SUFFIX } from '../src/main/store/workflows.js';
 
 const made: string[] = [];
 afterEach(async () => {
@@ -129,6 +129,59 @@ describe('an id that came from somewhere else', () => {
     const inside = join(root, '.agbrte', 'templates');
     expect(resolve(escaped.path).startsWith(resolve(inside))).toBe(true);
     expect(escaped.workflow).toBeUndefined();
+  });
+});
+
+describe('writing one back', () => {
+  it('is a fixed point: save what was read and the bytes do not move', async () => {
+    /*
+     * The property §4.4's approval argument rests on. These files are tracked
+     * and reviewed as a diff, so an editor that opened and saved a document
+     * without changing it must produce no diff at all — otherwise every review
+     * carries noise nobody made, and a reviewer stops reading.
+     *
+     * Through the store rather than the serializer alone, because this is the
+     * path an editor takes: read, hand back, write.
+     */
+    const root = await workspace();
+    const first = await saveWorkflow(root, 'review', GOOD as never);
+    expect(first.problems).toEqual([]);
+    const path = join(root, '.agbrte', 'templates', `review${WORKFLOW_SUFFIX}`);
+    const once = await readFile(path, 'utf8');
+
+    const read = await readWorkflow(root, 'review');
+    await saveWorkflow(root, 'review', read.workflow!);
+    expect(await readFile(path, 'utf8')).toBe(once);
+  });
+
+  it('refuses a document the reader would refuse, and writes nothing', async () => {
+    // A file that fails validation is not a saved workflow, it is a trap set for
+    // later — and the findings come back rather than a bare failure, because the
+    // editor already has them on screen and this is the same list.
+    const root = await workspace();
+    const bad = { ...GOOD, nodes: [{ ...GOOD.nodes[0], outOfScope: [] }] };
+    const result = await saveWorkflow(root, 'bad', bad as never);
+    expect(result.problems[0]?.message).toContain('outOfScope is required');
+    expect((await listWorkflows(root)).length).toBe(0);
+  });
+
+  it('writes where a listing will find it', async () => {
+    const root = await workspace();
+    await saveWorkflow(root, 'fresh', GOOD as never);
+    const found = await listWorkflows(root);
+    expect(found.map((f) => f.id)).toEqual(['fresh']);
+    expect(found[0]?.problems).toEqual([]);
+  });
+
+  it('narrows an id on the way in, as reading does', async () => {
+    // Same reasoning as `readWorkflow`: this string reaches `join()`, and an id
+    // that arrived over IPC is an id somebody else chose.
+    const root = await workspace();
+    const saved = await saveWorkflow(root, '../escape', GOOD as never);
+    expect(saved.id).not.toContain('/');
+    expect(saved.id).not.toContain('\\');
+    const inside = join(root, '.agbrte', 'templates');
+    expect(resolve(inside, `${saved.id}${WORKFLOW_SUFFIX}`).startsWith(resolve(inside))).toBe(true);
   });
 });
 
