@@ -470,7 +470,16 @@ test.describe('creating a session asks for a folder', () => {
 
       // A seventy-character path is the other way a row grows: once in the field
       // it fills, and again in the trigger that then has to display it.
+      //
+      // The reopen is asserted before anything is clicked inside it, for the
+      // reason `addAgent` gives at length: this line failed once here with a 30s
+      // timeout on a candidate, a message that cannot say whether the popup
+      // reopened. Choosing an item closes it, so this click lands nearest a
+      // transition of any in the file.
       await trigger.click();
+      await expect(page.locator('[data-testid=attach-workspace-list]')).toBeVisible({
+        timeout: 15_000,
+      });
       await page.click(
         '[data-testid=attach-candidate][data-path="/home/dev/src/a-rather-deeply-nested/monorepo-with-a-long-name-0-build-01"]',
       );

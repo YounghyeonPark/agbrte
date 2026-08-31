@@ -109,6 +109,24 @@ export function hostGroup(page: Page, label?: string) {
  */
 export async function addAgent(page: Page, runtimeId: string, model?: string): Promise<void> {
   await page.click('[data-testid=runtime-trigger]');
+  /*
+   * The list is open before anything is clicked in it — which localises a
+   * failure rather than papering over one.
+   *
+   * Two of this suite's intermittent failures were the *same* line: a 30s
+   * timeout waiting for `[data-testid=runtime-option][data-runtime="echo"]`,
+   * from `files.spec.ts` on one run and `mcp.spec.ts` on another, neither
+   * reproducible in isolation. That message cannot distinguish the two things
+   * that produce it — the dropdown never opened, or it opened without the
+   * option — and they have opposite meanings: the first is a click that went
+   * nowhere, the second is a picker genuinely missing a runtime, which is a
+   * product bug this suite exists to catch.
+   *
+   * So this asserts the half that is ambiguous and leaves the other half
+   * exactly as strict. Nothing is retried and nothing is swallowed: a trigger
+   * that does not open still fails, five seconds sooner and saying so.
+   */
+  await expect(page.locator('[data-testid=runtime-list]')).toBeVisible({ timeout: 15_000 });
 
   if (model === undefined) {
     await page.click(`[data-testid=runtime-option][data-runtime="${runtimeId}"]`);
