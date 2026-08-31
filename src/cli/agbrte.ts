@@ -41,7 +41,7 @@ import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtoco
 import { HostConnection } from '@main/host/hostConnection.js';
 import { newControlToken } from '@shared/host/loopback.js';
 import type { SessionId } from '@shared/types/index.js';
-import { parse } from './args.js';
+import { KNOWN_COMMANDS, parse } from './args.js';
 import { attach } from './attach.js';
 import { once } from './once.js';
 import { c } from './format.js';
@@ -262,7 +262,30 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  const { command, path: requested, rest, flags, value } = parse(argv);
+  const { command, path: requested, rest, flags, value, mistypedCommand } = parse(argv);
+
+  /*
+   * A word that is neither a verb nor plausibly a folder, refused before it
+   * becomes a project.
+   *
+   * Without this, `agbrte wrokflows` resolves against the cwd and `attach`
+   * creates the folder and starts a detached host in it — which happened, inside
+   * this repository, while `workflows` was being added as a command. A typo
+   * should not leave a directory and a running process behind.
+   *
+   * The verbs are listed because that is what somebody who mistyped one needs,
+   * and the folder remedy is named because the other reading is real: `agbrte
+   * my-project` may genuinely mean a folder that does not exist yet, and writing
+   * it as a path is how you say so. Two characters, and the ambiguity is gone.
+   */
+  if (mistypedCommand !== undefined) {
+    process.stderr.write(
+      `${c.fail(`agbrte: "${mistypedCommand}" is not a command`)}\n` +
+        `  Commands: ${[...KNOWN_COMMANDS].sort().join(', ')}\n` +
+        `  To open a folder of that name, write it as a path: agbrte ./${mistypedCommand}\n`,
+    );
+    return 1;
+  }
 
   /*
    * Checked here as well as in `openWorkspace`, and the duplication buys the

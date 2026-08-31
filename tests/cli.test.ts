@@ -352,6 +352,60 @@ describe('asking what is here must not make something be here', () => {
     expect(code).toBe(0);
     expect(out).not.toMatch(/no agbrte workspace/i);
   });
+
+  /*
+   * The other half of the same failure, and the one that leaves a process behind.
+   *
+   * An unlisted first argument is a *path*, which is what lets `agbrte /srv/api`
+   * work without a verb — and makes a mistyped verb a path too. `agbrte
+   * wrokflows` resolved against the cwd and `attach` created the folder and
+   * started a detached host in it. Measured rather than imagined: it put a
+   * workspace called `workflows` inside this repository, with a host running on
+   * it, while `workflows` was being added as a command.
+   *
+   * Same family as the `update` bug two blocks down, where a verb in one
+   * vocabulary and not the other attached to a directory of that name and
+   * reported success. That was closed by making the vocabularies agree; this is
+   * the case where the word is in neither.
+   */
+  it('refuses a word that is neither a verb nor plausibly a folder', async () => {
+    const typo = join(dir, 'wrokflows');
+    const { code, out } = await cli(['wrokflows', ...[]].map(String));
+
+    expect(code).toBe(1);
+    expect(out).toContain('is not a command');
+    // The two things the reader needs: the verbs, and how to say "I did mean a
+    // folder" — which is two characters.
+    expect(out).toContain('workflows');
+    expect(out).toContain('./wrokflows');
+    // The whole point: nothing was created and nothing was started.
+    expect(existsSync(typo)).toBe(false);
+    expect(existsSync(join(process.cwd(), 'wrokflows'))).toBe(false);
+  });
+
+  it('still takes a folder that does not exist yet, written as one', async () => {
+    /*
+     * The reading that must survive. `agbrte my-project` may genuinely mean a
+     * folder nobody has made, and writing it as a path is how that is said — the
+     * discrimination `looksLikePath` already drew and did not act on.
+     *
+     * Checked by the side effect rather than the exit code: this attach has no
+     * terminal to drive, and what matters is that it got far enough to make the
+     * workspace instead of being refused as a typo.
+     */
+    const named = join(dir, 'brand-new');
+    await cli([named]);
+    expect(existsSync(join(named, '.agbrte'))).toBe(true);
+  });
+
+  it('leaves an explicit verb alone, since that word was typed on purpose', async () => {
+    // `agbrte attach wrokflows` still creates it. The refusal is about a word
+    // mistaken for a verb, and here the verb is present and unambiguous —
+    // widening it would change what `attach` means.
+    const named = join(dir, 'explicit');
+    await cli(['attach', named, '--session', 'nope']);
+    expect(existsSync(join(named, '.agbrte'))).toBe(true);
+  });
 });
 
 /**

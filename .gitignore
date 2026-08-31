@@ -36,3 +36,10 @@ release/
 
 # electron-builder output.
 release/
+
+# PowerShell's own module cache, which it writes here rather than under
+# %LOCALAPPDATA% when a child process cannot resolve that variable. Not ours,
+# never useful, and it has been swept into `git add -A` twice. Ignored rather
+# than explained: three runs of the suite failed to reproduce it and the cause
+# is still unknown, so this stops it being committed and nothing more.
+Microsoft/

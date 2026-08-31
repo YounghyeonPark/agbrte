@@ -16,6 +16,32 @@ interface Parsed {
   rest: string[];
   flags: Set<string>;
   value(name: string): string | undefined;
+  /**
+   * The first word, when it is neither a verb nor plausibly a folder.
+   *
+   * An unlisted first argument is treated as a path, which is what makes
+   * `agbrte /srv/api` work without a verb. The cost is that a **mistyped verb**
+   * is a path too: `agbrte wrokflows` resolves against the cwd, and `attach`
+   * creates the folder and starts a host in it. Measured rather than imagined —
+   * it put a workspace called `workflows` inside this repository, with a host
+   * running on it, while a new command was being added.
+   *
+   * The same family as the bug in `KNOWN_COMMANDS` above, where `agbrte update`
+   * attached to a directory called `update` and reported success. That one was
+   * closed by making the vocabularies agree; this is the other half, where the
+   * word is in *neither* vocabulary and the fallback quietly invents a project.
+   *
+   * The discrimination is the one `looksLikePath` already draws and did not act
+   * on here: a word **written** as a path (`.`, `./x`, `/x`, `~`, `C:\x`) or one
+   * that **exists** is a folder, and anything else is a guess. So the refusal is
+   * narrow by construction and its remedy is two characters — `./wrokflows`
+   * means the folder, and always did.
+   *
+   * Only the inferred case. `agbrte attach wrokflows` still creates it, because
+   * the verb was typed on purpose and this field is about the word that was
+   * mistaken for one.
+   */
+  mistypedCommand?: string;
 }
 
 /**
@@ -106,12 +132,19 @@ export function parse(argv: string[]): Parsed {
   // became the workspace. Everything else is prompt, because for `run` a prompt
   // is the argument that must always work unquoted.
   const first = after[0];
+  // Split out of the condition below rather than inlined, because the *evidence*
+  // is now wanted separately from the decision: `looksLikePath` short-circuits
+  // to true for every command that does not take arguments, so the two halves
+  // that say "this really is a folder" were never evaluated for them — and they
+  // are exactly what tells a mistyped verb from a real path. See
+  // `mistypedCommand`.
+  const writtenAsPath =
+    first !== undefined && (first === '.' || /^(\.\.?[/\\]|[/\\]|~|[A-Za-z]:[/\\])/.test(first));
+  const onDisk = first !== undefined && existsSync(resolve(first));
   const looksLikePath =
-    first !== undefined &&
-    (!TAKES_ARGUMENTS.has(command) ||
-      first === '.' ||
-      /^(\.\.?[/\\]|[/\\]|~|[A-Za-z]:[/\\])/.test(first) ||
-      existsSync(resolve(first)));
+    first !== undefined && (!TAKES_ARGUMENTS.has(command) || writtenAsPath || onDisk);
+
+  const inferred = positional[0] !== undefined && !KNOWN.has(positional[0]);
 
   return {
     command,
@@ -119,5 +152,8 @@ export function parse(argv: string[]): Parsed {
     rest: looksLikePath ? after.slice(1) : after,
     flags,
     value: (name) => values.get(name),
+    ...(inferred && !writtenAsPath && !onDisk
+      ? { mistypedCommand: positional[0] as string }
+      : {}),
   };
 }
