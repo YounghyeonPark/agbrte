@@ -143,6 +143,17 @@
   </section>
 
   <section>
+    <span class="eyebrow">Workflows</span>
+    <h2>Write the decomposition down, and review it like code</h2>
+    <p class="lead">Work that has a shape you already know should not be re-derived every time. A workflow is that shape as a file in the repository: what the parts are, what each one may not touch, what it owes back, and what it waits on.</p>
+    <p>Because it is a file, it is read in a diff — which is what makes a decomposition somebody wrote safe where one a machine invented is not. An agent can propose one, and it proposes by writing the file rather than by starting a run. The editor draws the graph and refuses a part while you are still writing it, using the same rules a live session would have hit later.</p>
+    <p class="caveat">Running one spawns each part as its dependencies finish, with its own log and a slice of the budget reserved before it exists. A part that fails stops what needed it and nothing else.</p>
+    <div class="cta">
+      <a class="button ghost" href="./idea/#workflows">How it is put together</a>
+    </div>
+  </section>
+
+  <section>
     <span class="eyebrow">What it looks like</span>
     <h2>Every session on every attached machine, ranked by who needs a human</h2>
     <div class="shots">

@@ -364,6 +364,58 @@
     </div>
   </section>
 
+  <section id="workflows">
+    <span class="eyebrow">Written down</span>
+    <h2>The decomposition can exist before the run does</h2>
+    <p class="lead">A tree is built one seam at a time: an agent proposes a split and a person approves it. That is right when nobody knew the shape in advance, and wasteful when somebody did — the same decomposition is re-derived on every run and written down nowhere. A <strong>workflow</strong> is that shape as a file.</p>
+
+    <figure>
+      <div class="scroll">
+        <svg viewBox="0 0 1120 300" role="img" aria-label="A workflow document with four nodes: scan feeds tests and lint, and both feed report. Two arrows meet at report, which is a join a session tree cannot express with parentage alone.">
+          <defs>
+            <marker id="w" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+          </defs>
+          <g fill="none" stroke="currentColor" stroke-width="1">
+            <rect x="60" y="118" width="180" height="56" rx="2" />
+            <rect x="360" y="46" width="180" height="56" rx="2" />
+            <rect x="360" y="190" width="180" height="56" rx="2" />
+            <rect x="660" y="118" width="180" height="56" rx="2" />
+            <path d="M240,140 C300,132 310,86 356,76" marker-end="url(#w)" />
+            <path d="M240,152 C300,160 310,208 356,218" marker-end="url(#w)" />
+            <path d="M540,76 C600,86 606,132 656,140" marker-end="url(#w)" />
+            <path d="M540,218 C600,208 606,160 656,152" marker-end="url(#w)" />
+          </g>
+          <g fill="currentColor" font-family="Helvetica, Arial, sans-serif" font-size="13">
+            <text x="150" y="151" text-anchor="middle">scan</text>
+            <text x="450" y="79" text-anchor="middle">tests</text>
+            <text x="450" y="223" text-anchor="middle">lint</text>
+            <text x="750" y="151" text-anchor="middle">report</text>
+          </g>
+          <g fill="currentColor" fill-opacity=".62" font-family="Helvetica, Arial, sans-serif" font-size="11.5">
+            <text x="750" y="196" text-anchor="middle">waits for both — a join</text>
+            <text x="900" y="140" text-anchor="middle">every node is a child</text>
+            <text x="900" y="158" text-anchor="middle">of one root session</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>The arrows are <strong>dependency, not parentage</strong>, and keeping those apart is what makes a graph expressible at all. A session has exactly one parent — that is who reserves its budget, receives its result and adopts it on cancel — so a join like <em>report</em> cannot be drawn by giving a node two parents. Every node is a child of the run's root, and the arrows are a second edge that owns none of those duties. It also stops the depth limit from capping pipeline length by accident: six stages are six siblings, not a chain six deep.</figcaption>
+    </figure>
+
+    <h3>Why a file, and not a wizard</h3>
+    <p>An agent proposing a whole graph is exactly the autonomous decomposition this design otherwise refuses — a tree of subtly mis-scoped children is harder to salvage than one overlong session. The objection is not that a machine did the spawning; it is that <strong>nobody read the decomposition</strong>. So an agent proposes a workflow by writing a file and never by starting a run, and hand-written and agent-proposed documents converge on one artifact reviewed in one medium: a diff, at the reader's own pace, with history and a branch. A twelve-node graph in an approval dialog is not read.</p>
+    <p>That is also why the file has a canonical form. These live beside session templates in the repository and are tracked, so an editor that reordered keys would turn a one-word change into a wall of diff — and a review nobody can read is not a review. The rule the format holds is exact: <strong>changing one field changes one line.</strong></p>
+
+    <h3>The refusals arrive while you are writing</h3>
+    <p>A seam wrong in a document is wrong for the same reasons a seam is wrong at spawn, so it is refused by the same function. Leaving out what a part must <em>not</em> touch is the one worth naming: without exclusions a child reads widely to re-derive context it was never given, which is the cost the split was meant to avoid — so it cannot be defaulted, because only the author knows what they are keeping. The editor runs those checks on every keystroke and marks the node in the picture, which turns a refusal that would have arrived mid-run into something you fix while you are already looking at it.</p>
+    <p>The budget is checked the same way and differently: a workflow is the one place a <em>complete</em> check is possible, because every node's ceiling is written down, so the whole graph is priced before anything runs. A refusal can then say what it costs, what is available, how short it is, and which parts to cut — where reserving as it goes would stop at the seventh node of twelve, report one number, and release what it had taken.</p>
+
+    <h3>What a failure does</h3>
+    <p>It stops what depended on it, following the arrows, and nothing else. Stopping the whole graph discards branches that had nothing to do with it and may already be finished; carrying on regardless starts a part whose input never arrived, which spends a turn to reach the same failure one step later. The document already says which parts are which — that is what the arrows are — so this needed no new field.</p>
+    <p>The run itself keeps no record of its progress. What has run is read from the children every time it is asked, because the log is the source of truth and a scheduler with its own bookkeeping is a second one that can disagree with it. A host that restarts mid-run therefore has the parts, their states and the tree; what it does not yet have is which document they came from, and that is the one piece still to make durable.</p>
+  </section>
+
   <section>
     <span class="eyebrow">Localities</span>
     <h2>Eight kinds of target, two of them real</h2>

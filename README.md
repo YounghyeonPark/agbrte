@@ -94,6 +94,14 @@ after a restart are not three features but three consequences of that.
   and reach each other one bounded message at a time, carrying words and never
   authority. MCP servers and skills attach per session, not from an app-wide
   registry somebody enabled months ago.
+- **A decomposition can be written down before it runs.** A *workflow* is a file
+  in the repository: what the parts are, what each one may not touch, what it
+  owes back, and what it waits on. Because it is a file it is reviewed in a diff
+  the way code is — which is what makes an authored decomposition safe where an
+  autonomous one is not — and the same refusals a split meets at spawn are raised
+  while it is being written, in an editor that draws the graph. Running one
+  spawns each part as its dependencies finish; a part that fails stops what
+  needed it and nothing else.
 - **A real terminal that says when it is off the record.** The PTY pane writes no
   events, passes no permission gate and spends your own allowance, and its header
   says so every time it is open.
@@ -109,10 +117,11 @@ after a restart are not three features but three consequences of that.
 
 ## Status
 
-**Phases 1, 2, 4 and 6 are done; 5 and 7 met their acceptance criteria with named
-substitutions; 3 is half validated; 8 is started.** The model-provider axis has
-exactly one implementation, and "an agent on a GPU box using that box's own model
-server" has never run, because that box has no model server.
+**Phases 1, 2, 4 and 6 are done; 5, 7 and 9 met their criteria with named gaps; 3
+is half validated; 8 is started.** The model-provider axis has exactly one
+implementation, and "an agent on a GPU box using that box's own model server" has
+never run, because that box has no model server. A workflow run does not yet
+survive its host restarting.
 
 [The full status](docs/status.md) names the rest rather than glossing it, and
 [DESIGN.md §15](DESIGN.md) is the authority.
