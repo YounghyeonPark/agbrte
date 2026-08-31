@@ -13,6 +13,7 @@
  */
 
 import { isPublicHost } from '@shared/publicHost.js';
+import { WorkflowRuns } from './workflowRun.js';
 import { EventEmitter } from 'node:events';
 import { readdir, readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
@@ -577,6 +578,15 @@ interface SlotHolder {
 
 export class SessionManager extends EventEmitter {
   private readonly sessions = new Map<SessionId, LiveSession>();
+  /**
+   * Workflow runs this host is driving (§4.4).
+   *
+   * Held here because a run is a session tree and this is what owns session
+   * trees — a runner living anywhere else would be a second thing that creates
+   * sessions. It holds documents and no progress: what has run is read from the
+   * children every time, so nothing here can disagree with the log.
+   */
+  readonly workflowRuns = new WorkflowRuns(this);
   /** The slot each running turn currently holds, so a prompt can hand it back. */
   private readonly turnSlots = new Map<AgentId, SlotHolder>();
   private readonly pending = new Map<string, PendingPermission>();
@@ -3470,6 +3480,17 @@ export class SessionManager extends EventEmitter {
   async prepareChild(
     parentSessionId: SessionId,
     input: SpawnChildInput,
+    opts?: {
+      /**
+       * This child is a node the workflow document declared (§4.4).
+       *
+       * Lifts `maxChildrenPerSession` and nothing else — not depth, not the
+       * budget, not `maxOpenDescendants`. Set by `WorkflowRuns.advance` and by
+       * no other caller, which is what keeps the exemption as narrow as §4.4
+       * wrote it.
+       */
+      declaredByWorkflow?: boolean;
+    },
   ): Promise<{ create: CreateSessionInput; parentBudget: SessionBudget }> {
     const parent = this.live(parentSessionId);
 
@@ -3483,7 +3504,32 @@ export class SessionManager extends EventEmitter {
           `a tree this deep is usually a sign the split is wrong rather than deep work`,
       );
     }
-    if (parent.session.children.length >= TREE_LIMITS.maxChildrenPerSession) {
+    /*
+     * The readability limit, and the one exemption §4.4 grants it.
+     *
+     * `maxChildrenPerSession` and `maxOpenDescendants` sit in the same table and
+     * measure different things: this one says "keeps a tree node reviewable by a
+     * human" — children render as a flat list, and twenty rows is not something
+     * anyone reads — while the other bounds concurrent cost. Nothing had ever
+     * separated them, because until workflows the same act caused both.
+     *
+     * A workflow separates them. The review this protects happened in a diff
+     * before anything ran, and a run is read in the graph view rather than as a
+     * flat list, so the readability limit is served by other means. The cost
+     * limit is untouched: a workflow authored carefully costs exactly as much to
+     * run as one authored carelessly.
+     *
+     * Narrow by construction — the flag is passed by `WorkflowRuns.advance` for
+     * the nodes a document declares, and by nothing else. A node calling
+     * `propose_split` mid-run is an ordinary split meeting the ordinary limit,
+     * which is precisely the unreviewed decomposition this exists for. An
+     * exemption that leaked past the declared nodes would hand every workflow
+     * node an unreviewed budget for eight more.
+     */
+    if (
+      opts?.declaredByWorkflow !== true &&
+      parent.session.children.length >= TREE_LIMITS.maxChildrenPerSession
+    ) {
       throw new SplitRefused(
         `this session already has ${parent.session.children.length} children, ` +
           `which is the limit that keeps a tree node reviewable by a human`,
@@ -3670,6 +3716,27 @@ export class SessionManager extends EventEmitter {
     // attention — and an incremental update that only ever adds is how a stale
     // summons stays on screen after the thing it pointed at was answered.
     this.recomputeAttention(parent);
+
+    /*
+     * A workflow root learns a node finished here, because this is where a
+     * child's state reaches its parent (§4.4).
+     *
+     * Driven from the roll-up rather than from a timer or a subscription: the
+     * one moment a run has anything new to decide is the moment a child's state
+     * changed, and that is exactly what this function is called for. `advance`
+     * reads the children and does nothing when nothing is ready, so calling it
+     * more often than necessary costs a comparison.
+     *
+     * Not awaited, and it must not be. `rollUp` is synchronous and on the path
+     * of every state transition; making it wait on a spawn would put session
+     * creation inside the update that reported the previous one. Failures are
+     * swallowed for the same reason a roll-up may not fail a turn — a run that
+     * cannot spawn its next node leaves the tree exactly as a person can see it.
+     */
+    if (this.workflowRuns.isRun(parent.session.sessionId)) {
+      void this.workflowRuns.advance(parent.session.sessionId).catch(() => undefined);
+    }
+
     this.rollUp(parent);
   }
 

@@ -981,9 +981,19 @@ Mid-run `propose_split` needs no exception. A node reserves from its own ceiling
 
 The check is a pure function of the document and the root's available budget, which puts it in the validator rather than the runner — the same place the brief refusals live, and one more reason the format is worth building before the thing that executes it.
 
+#### A failed node stops what depended on it, and nothing else
+
+This was left open until there was a runner to watch, and the answer turned out to need no new field.
+
+§4.3 gives the choice to a parent — retry, re-scope and respawn, abandon and proceed, or escalate — and for a hand-made split that parent is an agent holding the context to choose. A workflow's root is a scheduler, which chooses nothing, so it needed a rule. Both obvious ones are wrong. **Stopping the whole graph** discards branches that have nothing to do with the failure and may already be finished. **Carrying on regardless** starts a node whose predecessor produced nothing for it to read, which is a turn spent to arrive at the same failure one step later.
+
+Following the edges is neither, and the document already says which they are: a `needs` is exactly the author's statement of what a node cannot do without. So a failure blocks its dependents — **transitively**, because a node whose immediate predecessor is merely *blocked* would otherwise sit pending forever, and a graph that has quietly stopped is worse than either default. Everything else runs.
+
+**A run with a blocked node is a failed run**, even though other branches finished. §4.3's rule that a failed child does not fail its parent is about a parent *choosing*; a scheduler is not choosing, and reporting success because three nodes of four worked would be the report making a decision nobody made.
+
 #### Open, and known
 
-**What a workflow does when a node fails.** §4.3 gives the choice to the parent — retry, re-scope and respawn, abandon and proceed, or escalate — and for a hand-made split that parent is an agent holding the context to choose. A workflow's root is a scheduler. A document that says nothing leaves it either stopping the whole graph on any failure, or carrying on into successors whose predecessor produced nothing; neither is right as a default, and there is no field for it yet. Deliberately not invented here, because the answer wants a real workflow failing in a real way to look at.
+**A run does not survive its host restarting.** The children are durable, their states are durable, and the tree edge is on both logs — what is held only in memory is *which document* a root is running, so a host that comes back has everything except the ability to spawn the nodes that had not started. The root sits in `awaiting_children` with what it has. The hole is one field wide: `session.created` carries `goal` and `title` and would need the workflow id beside them, folded by the projection and versioned in the checkpoint like every other durable fact. It is not bolted on somewhere cheaper on purpose — a run identity kept anywhere but the log is exactly the second store §5.1 refuses.
 
 ---
 
@@ -2015,7 +2025,7 @@ Each endpoint records provider, region, and retention posture (`dataHandling`, �
 | 6 | Multi-agent + hierarchy | 6th | **done**, including a child on another machine (§17.5); automatic split *signals* are not measured |
 | 7 | Multimodal | 7th | **criteria met**, with two named substitutions; OCR not built |
 | 8 | Breadth + polish | 8th | started — usage/cost, per-agent ceilings, session export, cross-machine search |
-| 9 | Workflows | 9th | **designed, unbuilt** (§4.4) — a decomposition authored before the run, executed by Phase 6's tree. Built view-first: types and validation, a home for templates, the graph view, the editor, then the runner |
+| 9 | Workflows | 9th | **built, with one named gap** (§4.4) — types and validation, a home for templates, the graph view, the editor, and a runner that spawns nodes as their dependencies finish. A run does not survive its host restarting; §4.4 says what that costs and what it needs |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow. Building Phases 2, 3, and 4 against a local-only assumption invites rework, because each touches state that a server-authoritative topology relocates: relocation resolution becomes a question about the server's filesystem, quota scheduling spans clients, and the dashboard reads a mirror rather than a local log. Second, **device independence is a headline requirement and Phase 5 is where it lives** — the log already being the source of truth means a second device is a new windowed projection rather than a sync protocol, but only once the log is authoritative somewhere central. Third, computer use and multimodal both get materially safer afterwards: an agent driving a virtual display on an expendable server is a bounded blast radius, which is the only honest answer to `click(x, y)` being outside what §13 can gate.
 
