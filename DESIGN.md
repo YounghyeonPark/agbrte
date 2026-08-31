@@ -867,6 +867,96 @@ A child's ceiling is **reserved from the parent's remaining budget at spawn**, s
 
 Child sessions are the most expensive form of decomposition — a new log, a new plan, its own agents, its own budget. They do not replace compaction (different problem), subagents (cheaper, ephemeral, share the caller's task), or multiple agents in one session (parallel work inside one coherent scope). Reach for a child session when the scope genuinely does not fit, when a part needs a different workspace or machine, or when a part deserves a durable history of its own.
 
+### 4.4 Workflows — the decomposition, written down before the run
+
+*Designed, unbuilt. Phase 9 (§15).*
+
+§4.3 builds a tree one node at a time: an agent proposes a split, a person approves it, a child is spawned with a brief and a contract. For work that has a shape somebody already knows — review a branch, then test it, then report — that shape is re-derived and re-approved on every run, and it is never written anywhere a person can read or a diff can show.
+
+A workflow is that missing document and nothing more: **a decomposition authored and approved before the run**. It introduces no second execution model, no second durable store and no second state machine. A workflow *run* is a session tree produced by §4.3's machinery, and every invariant there holds unchanged — brief, result contract, hierarchical budget reserved at spawn, `awaiting_children`, failure isolation, orphan-on-cancel, attention bubbling, resume, and children on other machines.
+
+#### Why this is not the automatic splitting §4.3 refuses
+
+§4.3 gates automatic splitting off by default for an exact reason: "a decomposition mistake made autonomously produces a tree of subtly mis-scoped children that is harder to salvage than a single overlong session." The objection is not that a machine did the spawning. It is that **nobody read the decomposition**.
+
+A workflow answers that rather than working around it, by moving the review from run time to authoring time — which is better in two ways that matter. The person is not deciding under the pressure of a turn that is already blocked, and they see the whole shape at once instead of one seam at a time. Everything §4.3 demands of a single split — a stated reason, a scope, exclusions, a budget — a workflow demands of all of them, before any of them has cost anything.
+
+#### Lineage is a tree; dependency is a separate edge
+
+The one thing a session tree cannot express is a **join**: a node that waits on two others. `TreePosition` gives each session exactly one `parentSessionId`, and that is load-bearing — the parent reserves the child's budget, receives its result, and adopts it as a root on cancel.
+
+So the two edges are kept apart rather than the tree being generalised.
+
+| Edge | Cardinality | What it decides |
+|---|---|---|
+| **lineage** — `parentSessionId` | exactly one | who pays, who receives the result, what happens on cancel |
+| **dependency** — `needs` | zero or more | what must finish before this starts |
+
+Every node of a workflow run is a child of the run's root; `needs` names siblings. Nothing in §4.3 changes, and a genuine DAG becomes expressible.
+
+It also removes a limit that would otherwise bite immediately. **A six-stage pipeline is depth 1, not depth 6** — the stages are siblings, sequenced by `needs` — so `maxDepth: 3` bounds what it was written to bound (decomposition that has lost its way) instead of accidentally capping pipeline length. Execution order and lineage were always different things; expressing them with one edge is what would have conflated them.
+
+#### Shape
+
+```ts
+/** One node: a child session that starts when its predecessors have finished. */
+export interface WorkflowNode {
+  id: string;                 // a name, unique within the workflow — not a uuid, since people write these
+  needs?: string[];           // dependency, never lineage
+  title: string;
+  scope: string;              // → SessionBrief.scope
+  outOfScope: string[];       // → SessionBrief.outOfScope — refused when empty, exactly as today
+  acceptance: string[];
+  contract: ResultContract;   // summaryMaxTokens required, exactly as today
+  pointers?: SessionBrief['pointers'];
+  target?: ExecutionTarget;   // a node may name another machine, as a child already may
+}
+
+export interface Workflow {
+  id: string;
+  name: string;
+  goal: string;               // → SessionBrief.parentGoal for every node
+  nodes: WorkflowNode[];
+  budget?: SessionBudget;     // reserved whole, at the start of the run
+}
+```
+
+There is no `run` field, no condition and no loop. **`needs` is the only edge**, and that is a refusal rather than an omission: the moment a workflow document can branch and repeat it is a programming language, and a programming language needs a debugger, a stack and an execution log of its own — a second durable store, which §5.1 exists to not have. Dynamism arrives through the mechanism that already provides it: a node's agent can `propose_split` mid-run, which is reviewed the way every split is. **The document stays declarative; the runtime stays where the judgement already lives.**
+
+**Nothing new carries data between nodes.** A predecessor's result lands on the parent's log as §4.3 specifies; the runner puts that summary and its artifact refs into the successor's brief as `pointers`. `summaryMaxTokens` therefore bounds node-to-node flow for free, and the failure §4.3 names — a child returning its transcript and exploding the parent's context — cannot reappear one abstraction up.
+
+#### Two authoring paths, one artifact
+
+A workflow may be written by a person or proposed by an agent, and the second is exactly the automatic decomposition §4.3 refuses unless a human reads it. **A twelve-node graph in an approval modal is not read.** §4.3 already established that approving a split is a judgement rather than a reflex, and a whole graph is that judgement N times over, arriving at once.
+
+So an agent proposes a workflow **by writing a file, never by starting a run** — the same rule `proposeSplit()` follows, where "nothing there creates a session". The file lands in `<workspace>/.agbrte/templates/` beside session templates (§5.1, §17 Q12), which is tracked, so both authoring paths converge on one artifact reviewed in one medium: a diff, at the reader's own pace, with history and a branch. No approval UI has to make a graph legible in a modal, and the run-time confirmation goes back to being cheap — *run this, reserving this much* — because the judgement already happened.
+
+That the file is tracked also puts it under §13: a workflow may name a credential and never carry one.
+
+#### On screen: separate the document, not the run
+
+They are different objects and the sidebar should say so in different ways.
+
+**The document is separate, and needs a home that does not exist yet.** Templates today are reachable only as *apply* buttons inside the new-session panel — they cannot be browsed, read or edited. Building this builds that home, and session templates get one with it.
+
+**The run is not separate.** It appears in the session list as one root row with its nodes beneath it, like any split session, distinguished by a badge. Two things in this design break if it is moved out: the sidebar groups by host because §8's caps are per host and §10 wants "what is running this, and where" answerable without a click — and a workflow's nodes may each name their own `target`. And §4.3's most important tree behaviour, `needsAttention` bubbling to the root, works because the fleet receives every session and re-sorts them globally by attention. A run outside that list is a run whose blocked node stops surfacing.
+
+#### The editor, and what it is for
+
+The graph view is **one component serving both**: the static shape when it is a document, the same nodes lit with state when it is running. Read-first — the review happens in the diff — so it is worth building before the runner, since a picture of the document is how anyone tells whether the format is right.
+
+Editing splits along the grain of the data rather than into one canvas. **Structure is geometry and prose is not.** Which nodes exist and what waits on what is what a graph editor is good at; `scope`, `outOfScope` and `acceptance` are the writing that decides whether a child works — §4.3 refuses an empty `outOfScope` outright, because "without exclusions the child reads widely to re-derive context it was never given". A node canvas optimises the easy half and puts the hard half in a small box. So: graph for structure, a form beside it for the selected node's prose.
+
+**Live validation is the reason the editor exists at all.** `buildBrief()`'s refusals are already written and already correct; running them as the document is edited and marking the offending node turns a run-time refusal into a design aid, and it is the one thing a text file cannot do.
+
+**Round-trip fidelity is a requirement, not a nicety.** The file is tracked and the diff is the whole safety argument, so an editor that reorders keys or reformats makes every edit unreviewable and destroys the property the design rests on. One deterministic writer, stable key order — the discipline `scripts/model-catalogue.mjs` and the conformance report writer already use, where a `--check` comparing text is a proven pattern.
+
+#### Open, and known
+
+**`maxChildrenPerSession: 8`.** A workflow run makes every node a child of one root, so eight nodes is the cap. The stated reason — "keeps a tree node reviewable by a human" — is weaker here, since that review has already happened in the file. Raising it for workflows, grouping nodes under intermediate parents, or leaving the cap and refusing larger workflows are all defensible; none is chosen yet.
+
+**Budget refuses early.** Reserving the whole graph at the start means a workflow can be refused before anything runs. That is correct — §4.3's argument for reserving at spawn rather than at spend applies with more force to N children — but the refusal has to name the shortfall and the workflow, not just fail.
+
 ---
 
 ## 5. Persistence — surviving a folder move
@@ -1897,6 +1987,7 @@ Each endpoint records provider, region, and retention posture (`dataHandling`, �
 | 6 | Multi-agent + hierarchy | 6th | **done**, including a child on another machine (§17.5); automatic split *signals* are not measured |
 | 7 | Multimodal | 7th | **criteria met**, with two named substitutions; OCR not built |
 | 8 | Breadth + polish | 8th | started — usage/cost, per-agent ceilings, session export, cross-machine search |
+| 9 | Workflows | 9th | **designed, unbuilt** (§4.4) — a decomposition authored before the run, executed by Phase 6's tree. Built view-first: types and validation, a home for templates, the graph view, the editor, then the runner |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow. Building Phases 2, 3, and 4 against a local-only assumption invites rework, because each touches state that a server-authoritative topology relocates: relocation resolution becomes a question about the server's filesystem, quota scheduling spans clients, and the dashboard reads a mirror rather than a local log. Second, **device independence is a headline requirement and Phase 5 is where it lives** — the log already being the source of truth means a second device is a new windowed projection rather than a sync protocol, but only once the log is authoritative somewhere central. Third, computer use and multimodal both get materially safer afterwards: an agent driving a virtual display on an expendable server is a bounded blast radius, which is the only honest answer to `click(x, y)` being outside what §13 can gate.
 

@@ -11,6 +11,7 @@ only partly true. This page is the summary.
 | 🟡 | **5 · Remote execution and device independence** · **7 · Multimodal** | acceptance criteria met, with named substitutions |
 | 🟡 | **3 · Three-shape proof** | half validated |
 | 🔨 | **8 · Breadth + polish** | started |
+| 📐 | **9 · Workflows** | designed, not built — [DESIGN.md §4.4](../DESIGN.md) |
 
 ## What works
 
