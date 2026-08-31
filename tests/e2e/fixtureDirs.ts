@@ -96,31 +96,27 @@ function processLedger(ledger: string): string {
  * strays were killed. One failure became three because the first left something
  * behind.
  *
- * **The mechanism is not established, and two guesses at it were already wrong.**
+ * **Two things survive a run, and for most of a day only one of them was
+ * suspected.** The corrections are kept because each was believed on evidence.
  *
- * A single spec that times out with an app open does *not* leak — Playwright
- * closes it, checked deliberately with a throwaway spec that timed out on
- * purpose. So "an aborted test never runs its `finally`" is not the answer,
- * though it was the obvious one.
+ * *Apps.* Two green full runs each left one behind — not a race, which would
+ * sometimes leave none. Why is still unknown, and two guesses are ruled out: a
+ * spec written to time out with an app open does not leak, Playwright closes it;
+ * and the runs it was caught on were green, so it is not a worker torn down
+ * between the live-model block's retries. The ledger is in launch order, so the
+ * survivor's position names the spec, which is where to look next.
  *
- * Nor is it about failing runs. The first run this actually caught was **green**:
- * 68 passed, nothing timed out, and one app was still holding its workspace when
- * the teardown ran. That also rules out the second guess, which was a worker torn
- * down hard between the retries of the live-model block.
+ * *Hosts, which were the ones actually costing anything.* Every `electron.exe`
+ * counted by hand was very likely one of these rather than an app: a host is
+ * spawned with `process.execPath`, which inside Electron *is* `electron.exe`.
+ * See `hostPids` for what keeps one alive and how it is found. That is also why
+ * "the two apps found by hand were still running minutes later" — an earlier
+ * version of this paragraph — was true about the processes and wrong about what
+ * they were.
  *
- * What is left, and it is a better lead than "occasionally": **every green full
- * run measured since has leaked exactly one.** Two in a row, one app each. That
- * is not a race — a race would sometimes leak none — and it is not the failing
- * tests, which had none. Something in a full run reliably starts an app that
- * nothing closes, and the count being one makes it findable: the ledger is
- * written in launch order, so the survivor's position in it names the spec.
- *
- * It is also not a shutdown that had not finished. The two apps found by hand
- * before this existed were still running minutes later, on a machine doing
- * nothing.
- *
- * This does not wait for the reason, because it does not need it: every app the
- * suite starts is recorded here, so a survivor is killed whatever made it one.
+ * None of this waits for a full explanation, because it does not need one:
+ * every app the suite starts is recorded here, every workspace it makes records
+ * its own host, and a survivor of either kind is killed whatever made it one.
  *
  * By pid, and never by process name. `electron.exe` is a name the developer's
  * own work may also be running under, and a teardown that kills by name is one
@@ -150,20 +146,13 @@ export async function recordProcess(pid: number | undefined): Promise<void> {
  * worse in a way that cannot be bounded.
  */
 export async function reapRecorded(ledger: string): Promise<number> {
-  let listed: string[];
-  try {
-    listed = (await readFile(processLedger(ledger), 'utf8')).split('\n').filter((l) => l.trim() !== '');
-  } catch {
-    return 0;
-  }
+  const pids = [...(await recordedPids(ledger)), ...(await hostPids(ledger))];
   let killed = 0;
-  for (const line of listed) {
-    const pid = Number(line);
-    if (!Number.isInteger(pid) || pid <= 0) continue;
+  for (const pid of pids) {
     try {
       process.kill(pid, 0);
     } catch {
-      continue; // Already gone, which is what a green run looks like.
+      continue; // Already gone, which is what a green run mostly looks like.
     }
     try {
       process.kill(pid, 'SIGKILL');
@@ -174,6 +163,68 @@ export async function reapRecorded(ledger: string): Promise<number> {
     }
   }
   return killed;
+}
+
+/** The apps `launch` started. */
+async function recordedPids(ledger: string): Promise<number[]> {
+  try {
+    return (await readFile(processLedger(ledger), 'utf8'))
+      .split('\n')
+      .map((l) => Number(l.trim()))
+      .filter((n) => Number.isInteger(n) && n > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The **session hosts** those apps started, read from each fixture's own record.
+ *
+ * This is the half that was actually keeping the machine busy, and finding it
+ * corrected two things at once.
+ *
+ * A host is spawned with `process.execPath`, which inside Electron is
+ * `electron.exe` — so every "leaked Electron" counted by hand was very likely a
+ * host and its forked agent host, not an app. And a host is *meant* to outlive
+ * the app (§8); the tests set `AGBRTE_HOST_LINGER_MS=3000` so it goes shortly
+ * after. It only goes when **idle**, and a session left waiting on a permission
+ * prompt is not idle. Measured: a host from a timed-out live-model test was
+ * still running twelve minutes later, its last event an `agent.tool_use` four
+ * seconds in, holding a workspace and an agent host with it.
+ *
+ * That behaviour is right for a person — a pending decision is state worth
+ * coming back to — and wrong for a suite that makes fifty throwaway workspaces.
+ *
+ * Found through `host.json` rather than by matching command lines, which would
+ * be platform-specific and would have to guess at what is ours. §6.4 says a
+ * record is a hint and only a socket answering is a fact; that is the rule for
+ * *deciding a host is alive*, and this is asking the opposite question of a
+ * directory the suite created itself. `process.kill(pid, 0)` supplies the
+ * missing half, and a stale record simply names a pid that is already gone.
+ */
+async function hostPids(ledger: string): Promise<number[]> {
+  let dirs: string[];
+  try {
+    dirs = (await readFile(ledger, 'utf8')).split('\n').filter((l) => l.trim() !== '');
+  } catch {
+    return [];
+  }
+  const found: number[] = [];
+  for (const dir of dirs) {
+    try {
+      const record = JSON.parse(await readFile(join(dir, '.agbrte', 'host.json'), 'utf8')) as {
+        pid?: unknown;
+      };
+      if (typeof record.pid === 'number' && Number.isInteger(record.pid) && record.pid > 0) {
+        found.push(record.pid);
+      }
+    } catch {
+      // No workspace, no record, or a half-written one. All three mean there is
+      // no host to reap here, which is the ordinary case for a fixture that was
+      // never opened.
+    }
+  }
+  return found;
 }
 
 /**

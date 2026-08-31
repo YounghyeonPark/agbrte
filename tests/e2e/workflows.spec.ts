@@ -129,6 +129,38 @@ test('lists the documents in the workspace, with what is wrong with them', async
     await expect(page.locator('[data-testid=workflow-row]').last()).not.toContainText(
       '.workflow.json',
     );
+
+    /*
+     * The shape, drawn. Folded until asked for — four workflows would otherwise
+     * make this pane a page of pictures — so the disclosure is opened here.
+     *
+     * The edges are the reason this is drawn at all: a **join**, two
+     * predecessors meeting at one node, is the thing a session tree cannot
+     * express with lineage and the whole reason `needs` is a separate edge
+     * (§4.4). A rendering that could not draw a line would show four boxes and
+     * hide the one fact worth seeing.
+     */
+    const review = page.locator('[data-testid=workflow-row][data-id=review]');
+    await review.locator('[data-testid=workflow-shape] summary').click();
+    const graph = review.locator('[data-testid=workflow-graph]');
+    await expect(graph).toBeVisible();
+    await expect(graph).toHaveAttribute('data-nodes', '4');
+    await expect(graph.locator('[data-testid=workflow-node]')).toHaveCount(4);
+    // scan→tests, scan→lint, tests→report, lint→report — the last two are the join.
+    await expect(graph.locator('[data-testid=workflow-edge]')).toHaveCount(4);
+    await expect(
+      graph.locator('[data-testid=workflow-edge][data-from=tests][data-to=report]'),
+    ).toHaveCount(1);
+    await expect(
+      graph.locator('[data-testid=workflow-edge][data-from=lint][data-to=report]'),
+    ).toHaveCount(1);
+
+    // The broken document's bad node is marked in its picture too, so the
+    // drawing and the findings list cannot disagree about which node is wrong.
+    await broken.locator('[data-testid=workflow-shape] summary').click();
+    await expect(
+      broken.locator('[data-testid=workflow-node][data-id=a][data-ok=no]'),
+    ).toHaveCount(1);
   } finally {
     await web.stop();
   }

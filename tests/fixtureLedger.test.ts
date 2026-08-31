@@ -1,31 +1,36 @@
 /**
  * The e2e suite's own cleanup, tested where it can be (DESIGN.md §14).
  *
- * `reapRecorded` kills apps a run left running, and the failure it exists for
- * cannot be reproduced from inside the e2e suite: it needs a test to *time out*,
- * which aborts before its `finally` and leaves an Electron behind. A spec that
- * deliberately times out costs three minutes and makes every run red.
+ * `reapRecorded` kills two things a run leaves behind — the apps `launch`
+ * started, and the **session hosts** those apps started — and neither can be
+ * produced on demand from inside the e2e suite. A spec written to time out with
+ * an app open does not leak one, checked deliberately; and a stuck host needs a
+ * live model to hang mid-turn, which costs three minutes and makes every run
+ * red. So the mechanism is exercised here against real processes that are not
+ * Electron, and the e2e suite covers the one line neither of these can: that
+ * `launch` and a real workspace record the right pids.
  *
- * So the mechanism is checked here against real processes that are not Electron.
- * What is being asserted is the part that was written new — that a recorded pid
- * is killed, that one which already exited is not counted, and that nothing
- * outside the ledger is touched. Whether `launch` records the right pid is the
- * one line the e2e suite covers by using it.
+ * Two properties are worth the file on their own.
  *
- * Kills by **pid and never by name**, which is the property worth pinning: this
- * runs on a developer's machine, `electron.exe` is a name their own work may
- * also be running under, and a teardown that matched on it would close somebody's
- * editor.
+ * **By pid, never by name.** This runs on a developer's machine, where
+ * `electron.exe` is a name their own work may also be running under — and,
+ * confusingly, the name a *host* runs under too, since one is spawned with
+ * `process.execPath`. A teardown matching on it would close somebody's editor.
+ *
+ * **Only what the suite made.** A host is found through the `host.json` inside a
+ * recorded fixture directory, so a real workspace open in the app next door is
+ * never even read.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   LEDGER_ENV,
   openLedger,
+  recordFixture,
   recordProcess,
   reapRecorded,
   removeRecorded,
@@ -127,6 +132,74 @@ describe('apps a run left running', () => {
     const path = await ledger();
     await writeFile(join(path, '..', 'processes.txt'), 'not-a-number\n\n-1\n0\n', 'utf8');
     expect(await reapRecorded(path)).toBe(0);
+  });
+});
+
+describe('session hosts, which are what actually survives', () => {
+  /**
+   * A host writes its own pid to `<workspace>/.agbrte/host.json`, and the
+   * directory ledger already names every workspace the suite made — so the two
+   * together find a host without matching command lines, which would be
+   * platform-specific and would have to guess at what is ours.
+   *
+   * Worth its own tests because a host is *meant* to outlive the app (§8) and
+   * only goes when idle, and a session left waiting on a permission prompt is
+   * not idle. Measured: one from a timed-out live-model test was still running
+   * twelve minutes later against a three-second linger.
+   */
+  const workspaceHolding = async (pid: number): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), 'agbrte-ledgerws-'));
+    dirs.push(dir);
+    await mkdir(join(dir, '.agbrte'), { recursive: true });
+    await writeFile(join(dir, '.agbrte', 'host.json'), JSON.stringify({ pid }), 'utf8');
+    return dir;
+  };
+
+  it('kills a host named by a recorded workspace', async () => {
+    const path = await ledger();
+    const child = sleeper();
+    await recordFixture(await workspaceHolding(child.pid as number));
+
+    expect(await reapRecorded(path)).toBe(1);
+    for (let i = 0; i < 50 && alive(child.pid as number); i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(alive(child.pid as number)).toBe(false);
+  });
+
+  it('ignores a workspace that never had a host', async () => {
+    // The ordinary case: about fifty repos per run and most are never opened.
+    const path = await ledger();
+    const dir = await mkdtemp(join(tmpdir(), 'agbrte-ledgerws-'));
+    dirs.push(dir);
+    await recordFixture(dir);
+    expect(await reapRecorded(path)).toBe(0);
+  });
+
+  it('survives a half-written record without throwing', async () => {
+    // A host writing its record while the run ends is a real interleaving, and
+    // nothing in the teardown may fail the run.
+    const path = await ledger();
+    const dir = await mkdtemp(join(tmpdir(), 'agbrte-ledgerws-'));
+    dirs.push(dir);
+    await mkdir(join(dir, '.agbrte'), { recursive: true });
+    await writeFile(join(dir, '.agbrte', 'host.json'), '{"pid":', 'utf8');
+    await recordFixture(dir);
+    expect(await reapRecorded(path)).toBe(0);
+  });
+
+  it('does not read a workspace nobody recorded', async () => {
+    /*
+     * The property that keeps this away from the developer's own work. A host
+     * record is only consulted for a directory this suite created, so a real
+     * workspace open in the app next door is never even looked at.
+     */
+    const path = await ledger();
+    const child = sleeper();
+    await workspaceHolding(child.pid as number); // made, deliberately not recorded
+
+    expect(await reapRecorded(path)).toBe(0);
+    expect(alive(child.pid as number)).toBe(true);
   });
 });
 

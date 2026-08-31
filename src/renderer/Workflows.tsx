@@ -19,15 +19,16 @@
  *
  * The review of a workflow happens in a **diff**, not here — that is the whole
  * of §4.4's approval argument, and it is why an agent proposes one by writing a
- * file rather than by starting a run. So this pane is for *what is here and is
- * it usable*, and it stops at the seam: it does not open, edit or run anything
- * yet. The refusals are the content, because a document that will be refused is
- * the one fact worth carrying before the graph view exists to draw it.
+ * file rather than by starting a run. So this pane answers *what is here, what
+ * shape is it, and is it usable*, and stops there: it does not edit or run
+ * anything. The refusals are content rather than an error state, because the
+ * document that will be refused is the one somebody is looking for.
  */
 
 import type { JSX } from 'react';
 import type { HostInfo } from '../shared/ipc/contract.js';
 import type { WorkflowSummary } from '../shared/host/sessionProtocol.js';
+import { WorkflowGraph } from './WorkflowGraph.js';
 
 /**
  * One workspace's answer.
@@ -106,6 +107,21 @@ export function Workflows({ workspaces }: { workspaces: WorkspaceWorkflows[] }):
                   </div>
                   {file.workflow?.goal !== undefined && file.workflow.goal !== '' ? (
                     <p className="text-muted text-[12px]">{file.workflow.goal}</p>
+                  ) : null}
+                  {/*
+                    Drawn under the row that names it, and only when asked.
+                    Every graph open at once would make a pane of four workflows
+                    a page of pictures nobody is looking at; none of them open
+                    would make the button the feature. So a row is a disclosure,
+                    and the picture is the thing it discloses.
+                  */}
+                  {file.workflow !== undefined ? (
+                    <details data-testid="workflow-shape">
+                      <summary className="text-muted cursor-pointer text-[11px]">shape</summary>
+                      <div className="pt-2">
+                        <WorkflowGraph workflow={file.workflow} problems={file.problems} />
+                      </div>
+                    </details>
                   ) : null}
                   {file.problems.length > 0 ? (
                     /* Every finding, not the first. A document has many seams and

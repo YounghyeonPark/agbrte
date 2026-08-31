@@ -78,11 +78,12 @@ export default async function globalTeardown(): Promise<void> {
    * and unlike a directory it does not sit still: it holds a workspace open and
    * goes on taking CPU, which is how one failure becomes three.
    *
-   * Measured before this existed. Two apps survived each of two full runs; both
+   * Measured before this existed. Processes survived each of two full runs; both
    * took about 11.9 minutes against a normal 5.7, and on one of them
    * `files.spec.ts` then failed on a picker that could not populate in thirty
-   * seconds — passing in 20s once the strays were killed by hand. What makes
-   * them survive is still unknown; `fixtureDirs.ts` says what was ruled out.
+   * seconds — passing in 20s once the strays were killed by hand. Most of them
+   * turned out to be **session hosts** rather than apps, which look identical in
+   * a process list; `fixtureDirs.ts` has both stories and what is still unknown.
    *
    * Above the `AGBRTE_KEEP_FIXTURES` return as well, because keeping fixtures is
    * a request to keep *files* and nobody has ever wanted a stray Electron.
