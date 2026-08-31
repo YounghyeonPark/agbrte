@@ -13,7 +13,7 @@ import { createServer as netCreateServer } from 'node:net';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { delimiter, join, resolve } from 'node:path';
-import { recordFixture, tempFixture } from './fixtureDirs.js';
+import { recordFixture, recordProcess, tempFixture } from './fixtureDirs.js';
 
 export const ROOT = resolve(import.meta.dirname, '../..');
 
@@ -95,6 +95,11 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
     env,
     cwd: ROOT,
   });
+
+  // Recorded before the first window, because the failure this guards against
+  // is an app that came up and then had to be abandoned — and a launch that
+  // never reaches `firstWindow` has left a process behind exactly the same way.
+  await recordProcess(app.process().pid);
 
   const window = await app.firstWindow();
   // `data-testid`, not a styling class: the previous `.app` selector broke on a

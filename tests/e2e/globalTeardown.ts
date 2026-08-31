@@ -1,5 +1,9 @@
 /**
- * Removes the temporary directories the run made — when the run passed.
+ * Cleans up after a run: the apps it left running always, the directories it
+ * made when the run passed.
+ *
+ * Two rules rather than one, because the two things are not alike — see the
+ * comment on `reapRecorded` at the top of the function.
  *
  * `launch` and `serveWebFixture` already clean up after themselves; `makeRepo`
  * never did, and it is called from about fifty places. A day of running this
@@ -32,7 +36,7 @@
 
 import { readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { LEDGER_ENV, removeRecorded } from './fixtureDirs.js';
+import { LEDGER_ENV, reapRecorded, removeRecorded } from './fixtureDirs.js';
 
 /**
  * Whether anything failed, read from what Playwright has already written.
@@ -63,6 +67,37 @@ async function somethingFailed(): Promise<boolean> {
 export default async function globalTeardown(): Promise<void> {
   const ledger = process.env[LEDGER_ENV];
   if (ledger === undefined || ledger === '') return;
+
+  /*
+   * Processes first, and on every path out of this function.
+   *
+   * The rule for a *directory* is below and is conditional: a failed run keeps
+   * its fixtures, because they hold the `.agbrte/` the failure happened in. A
+   * process is the opposite case and the asymmetry is deliberate. It is not
+   * evidence — Playwright already captured the trace and the error context —
+   * and unlike a directory it does not sit still: it holds a workspace open and
+   * goes on taking CPU, which is how one failure becomes three.
+   *
+   * Measured before this existed. Two apps survived each of two full runs; both
+   * took about 11.9 minutes against a normal 5.7, and on one of them
+   * `files.spec.ts` then failed on a picker that could not populate in thirty
+   * seconds — passing in 20s once the strays were killed by hand. What makes
+   * them survive is still unknown; `fixtureDirs.ts` says what was ruled out.
+   *
+   * Above the `AGBRTE_KEEP_FIXTURES` return as well, because keeping fixtures is
+   * a request to keep *files* and nobody has ever wanted a stray Electron.
+   */
+  const reaped = await reapRecorded(ledger);
+  if (reaped > 0) {
+    // States the fact and not a cause. An earlier version of this line said
+    // "a test that times out never runs its own cleanup", which was a guess and
+    // was wrong twice over: a single timing-out spec does not leak, and the
+    // first run this caught was green.
+    process.stdout.write(
+      `\n  killed ${reaped} app${reaped === 1 ? '' : 's'} the run left running` +
+        ` — see fixtureDirs.ts for what is and is not known about why\n`,
+    );
+  }
 
   if (process.env['AGBRTE_KEEP_FIXTURES'] === '1') {
     process.stdout.write(`\n  fixtures kept, as asked — the list is ${ledger}\n`);

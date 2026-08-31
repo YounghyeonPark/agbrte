@@ -71,6 +71,112 @@ export async function openLedger(): Promise<string> {
 }
 
 /**
+ * Where the launched apps are listed. Beside the directory ledger, same reason.
+ *
+ * A separate file rather than a second column, because the two are cleaned on
+ * different rules: a directory is kept when the run fails, and a process never
+ * is. See `reapRecorded`.
+ */
+function processLedger(ledger: string): string {
+  return join(ledger, '..', 'processes.txt');
+}
+
+/**
+ * Remember an app the suite started, so the teardown can make sure it is gone.
+ *
+ * `launch` closes its own app, Playwright closes any it forgot, and between them
+ * that is almost always enough. Twice it was not: after two separate full runs,
+ * two `electron.exe` processes were still holding their workspaces — measured,
+ * and killed by hand.
+ *
+ * That is not a tidiness problem, because the cost compounds. Both of those runs
+ * took about 11.9 minutes against a normal 5.7; on one of them the live-model
+ * test blew its 180s timeout and `files.spec.ts` then failed on a picker that
+ * could not populate in thirty seconds, and both passed in 8.5s and 20s once the
+ * strays were killed. One failure became three because the first left something
+ * behind.
+ *
+ * **The mechanism is not established, and two guesses at it were already wrong.**
+ *
+ * A single spec that times out with an app open does *not* leak — Playwright
+ * closes it, checked deliberately with a throwaway spec that timed out on
+ * purpose. So "an aborted test never runs its `finally`" is not the answer,
+ * though it was the obvious one.
+ *
+ * Nor is it about failing runs. The first run this actually caught was **green**:
+ * 68 passed, nothing timed out, and one app was still holding its workspace when
+ * the teardown ran. That also rules out the second guess, which was a worker torn
+ * down hard between the retries of the live-model block.
+ *
+ * What is left, and it is a better lead than "occasionally": **every green full
+ * run measured since has leaked exactly one.** Two in a row, one app each. That
+ * is not a race — a race would sometimes leak none — and it is not the failing
+ * tests, which had none. Something in a full run reliably starts an app that
+ * nothing closes, and the count being one makes it findable: the ledger is
+ * written in launch order, so the survivor's position in it names the spec.
+ *
+ * It is also not a shutdown that had not finished. The two apps found by hand
+ * before this existed were still running minutes later, on a machine doing
+ * nothing.
+ *
+ * This does not wait for the reason, because it does not need it: every app the
+ * suite starts is recorded here, so a survivor is killed whatever made it one.
+ *
+ * By pid, and never by process name. `electron.exe` is a name the developer's
+ * own work may also be running under, and a teardown that kills by name is one
+ * that closes somebody's editor.
+ */
+export async function recordProcess(pid: number | undefined): Promise<void> {
+  const ledger = process.env[LEDGER_ENV];
+  if (ledger === undefined || ledger === '' || pid === undefined) return;
+  await appendFile(processLedger(ledger), `${pid}\n`, 'utf8').catch(() => undefined);
+}
+
+/**
+ * Kill anything the run started that is still running.
+ *
+ * **Always, including when the run failed** — the opposite rule to the
+ * directories beside it, and the asymmetry is the point. A kept directory is
+ * evidence at rest: it holds the `.agbrte/` a failure happened in and costs
+ * disk. A surviving process is not evidence, because Playwright has already
+ * captured the trace and the error context; it is a resource that goes on
+ * consuming, and on the next run it is a slower machine.
+ *
+ * `signal 0` first, so the normal case — everything closed itself — reports
+ * nothing rather than a list of pids that were already gone. A pid that has
+ * been reused by an unrelated process is the one real hazard here, and the
+ * window for it is the minutes between a test aborting and the teardown; small
+ * enough to accept, and the alternative is matching on a process name, which is
+ * worse in a way that cannot be bounded.
+ */
+export async function reapRecorded(ledger: string): Promise<number> {
+  let listed: string[];
+  try {
+    listed = (await readFile(processLedger(ledger), 'utf8')).split('\n').filter((l) => l.trim() !== '');
+  } catch {
+    return 0;
+  }
+  let killed = 0;
+  for (const line of listed) {
+    const pid = Number(line);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      continue; // Already gone, which is what a green run looks like.
+    }
+    try {
+      process.kill(pid, 'SIGKILL');
+      killed += 1;
+    } catch {
+      // Not ours to kill, or it exited between the two calls. Either way the
+      // teardown has nothing useful to say and must not fail the run.
+    }
+  }
+  return killed;
+}
+
+/**
  * Remove every directory the run recorded, and the ledger with it.
  *
  * Failures are swallowed per path. On Windows a directory can be held open by a
