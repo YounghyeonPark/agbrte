@@ -293,6 +293,21 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  *
+ * ## v27 adds a field, and it is v6's case rather than v16's
+ *
+ * `CreateSessionInput.workflow` says the session being created is a run of a
+ * workflow document (§4.4), and `session.created` carries it into the log so a
+ * restarted host knows which document its children came from. A v26 host ignores
+ * the field, which degrades to exactly the behaviour that shipped in v26: the
+ * run works and does not come back after a restart. That is the old behaviour
+ * rather than a broken one, so `COMMAND_SINCE` gains nothing — no command was
+ * added — and the number moves because §17 Q16 says it moves whenever the shape
+ * does.
+ *
+ * The checkpoint version moves with it, and that one is not cosmetic: a v5
+ * checkpoint has no `workflow` in its projection, so resuming from one would
+ * give a host the children of a run without knowing the run.
+ *
  * ## v26 adds `workflow.save`, and it is the first *write* of its kind
  *
  * `workflow.list` reads; this puts a file in the repository that colleagues will
@@ -591,7 +606,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 26;
+export const SESSION_PROTOCOL_VERSION = 27;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).

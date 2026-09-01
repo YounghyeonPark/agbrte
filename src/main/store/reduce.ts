@@ -88,6 +88,11 @@ export function reduceEvents(
       case 'session.created':
         p.state = 'planning';
         p.title = ev.title;
+        // Only when there is one, so an ordinary session's projection does not
+        // gain a key meaning "not a workflow" — absent already means that, and
+        // a checkpoint from before this existed says the same thing by saying
+        // nothing.
+        if (ev.workflow !== undefined) p.workflow = ev.workflow;
         break;
 
       // Last one wins, which is the whole of renaming.

@@ -38,7 +38,12 @@ import { PRIVATE_DIR_MODE, checkpointName } from './layout.js';
 // re-admitting a seat that will never run, and drop it from the roster if its
 // runtime has since been uninstalled, taking the name off every transcript row
 // it wrote.
-export const CHECKPOINT_VERSION = 5;
+// 6: the projection carries `workflow`, the id of the document a run is a run of
+// (§4.4). A v5 checkpoint does not, and resuming from one would give a host the
+// children of a workflow run without knowing which workflow — it would then
+// spawn nothing further and the root would sit in `awaiting_children` forever,
+// which is exactly the hole this field was added to close.
+export const CHECKPOINT_VERSION = 6;
 
 export interface Checkpoint {
   version: number;

@@ -115,7 +115,7 @@ export class SessionStore {
   static async create(
     workspaceRoot: string,
     meta: SessionMeta,
-    opts: { checkpointInterval?: number; actor?: Actor } = {},
+    opts: { checkpointInterval?: number; actor?: Actor; workflow?: string } = {},
   ): Promise<SessionStore> {
     const layout = sessionLayout(workspaceRoot, meta.sessionId);
     await mkdir(layout.dir, { recursive: true, mode: PRIVATE_DIR_MODE });
@@ -130,7 +130,14 @@ export class SessionStore {
       workspaceRoot,
     );
     await store.append(
-      { type: 'session.created', goal: meta.goal, title: meta.title },
+      {
+        type: 'session.created',
+        goal: meta.goal,
+        title: meta.title,
+        // Only when there is one. An ordinary session's log must not gain a key
+        // meaning 'not a workflow' — absent already says that (SS4.4).
+        ...(opts.workflow !== undefined ? { workflow: opts.workflow } : {}),
+      },
       { ...(opts.actor !== undefined ? { actor: opts.actor } : {}) },
     );
     return store;

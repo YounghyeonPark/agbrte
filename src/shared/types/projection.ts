@@ -106,6 +106,16 @@ export interface SessionProjection {
    * the metadata file.
    */
   title?: string;
+  /**
+   * The workflow document this session is a run of, if it is one (§4.4).
+   *
+   * Folded from `session.created` and never written anywhere else, so a host
+   * that comes back reads which document it was running out of the log — the
+   * same place it reads what the children did. Absent for every ordinary
+   * session, and absent from a checkpoint written before this existed, both of
+   * which mean *not a run*.
+   */
+  workflow?: string;
   agents: ProjectedAgent[];
   /** Highest seq folded in. The resume point for an incremental fold. */
   lastSeq: number;

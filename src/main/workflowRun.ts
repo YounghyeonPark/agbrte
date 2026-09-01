@@ -37,9 +37,26 @@ import { nextStep, runSucceeded, type NodeState, type RunState } from '@shared/w
 import type { SessionId, Workflow, WorkflowNode } from '@shared/types/index.js';
 import type { SessionManager } from './sessionManager.js';
 
-/** What a live run needs, which is the document and nothing else. */
+/** What a live run needs: the document, and one advance at a time. */
 interface Running {
   workflow: Workflow;
+  /**
+   * The advance currently in flight, so a second one queues behind it.
+   *
+   * Not an optimisation. `advance` reads what the children are doing and spawns
+   * what is ready, and those are two steps: two callers that read before either
+   * writes both see the same nodes unstarted and both spawn them. The roll-up
+   * hook makes that reachable in ordinary use — a child finishing calls
+   * `advance` while an earlier one is still creating sessions — and it produced
+   * a run with `tests` and `lint` twice, each with its own log and its own
+   * reservation out of the root.
+   *
+   * Found by a test that called `advance` explicitly after settling a node, next
+   * to a roll-up that had already called it. Serialising is the whole fix: the
+   * second read then happens after the first write, sees the children, and does
+   * nothing.
+   */
+  advancing?: Promise<void>;
 }
 
 /**
@@ -57,7 +74,26 @@ function nodeStates(manager: SessionManager, rootId: SessionId): RunState {
   const root = manager.get(rootId);
   const nodes: Record<string, NodeState> = {};
   for (const child of root.children) {
-    const state = child.lastKnown.state;
+    /*
+     * The child's own state when it is loaded, and the parent's cache only when
+     * it is not — in that order, because they disagree and one of them is not
+     * evidence.
+     *
+     * §4.3 says `lastKnown` is "a cache for rendering a tree whose children may
+     * be unreachable, never authoritative", and it is refreshed by `rollUp`
+     * while both ends are in memory. After a host restart the parent comes back
+     * from its log with the cache as it was at spawn, so every finished node
+     * reads as still running — which is a run that resumes and then does
+     * nothing, the exact failure the durable id was added to fix. Found by the
+     * resume test, not by reading.
+     */
+    let state = child.lastKnown.state;
+    try {
+      state = manager.get(child.sessionId).state;
+    } catch {
+      // Not loaded here — another workspace, or simply not opened. The cache is
+      // what §4.3 keeps it for.
+    }
     nodes[child.title] =
       state === 'done'
         ? 'done'
@@ -107,6 +143,54 @@ export class WorkflowRuns {
   }
 
   /**
+   * Pick a run back up after a restart, from the log and the file.
+   *
+   * `session.created` carries which document a root is a run of, so this needs
+   * nothing the host did not already have: the children and their states came
+   * back with the session, and the document is re-read from the workspace. Then
+   * `advance` asks the same question it asks at any other moment — the scheduler
+   * holds no progress, so "resume" and "carry on" are the same call.
+   *
+   * A document that has since been **edited** is used as it now is, deliberately
+   * and not by oversight. The alternative is a snapshot taken at start, which
+   * would be a second copy of a tracked file living in a log — and the file is
+   * the thing under review, so a run that quietly followed an older version
+   * would be running something nobody is looking at. Nodes already finished are
+   * read from the children by id; ones the edit removed simply never start, and
+   * ones it added start when their dependencies allow.
+   *
+   * Silent when there is no document, and that covers three real cases: an
+   * ordinary session, a log written before this field existed, and a workflow
+   * whose file has been deleted since. None of them is a run this host can
+   * drive, and none is an error — the tree is on screen either way.
+   */
+  async resume(rootId: SessionId, workflowId: string, workspaceRoot: string): Promise<void> {
+    if (this.live.has(rootId)) return;
+    const { readWorkflow } = await import('./store/workflows.js');
+    const file = await readWorkflow(workspaceRoot, workflowId);
+    if (file.workflow === undefined || file.problems.length > 0) return;
+
+    /*
+     * Every node this run already made is loaded before anything is decided.
+     *
+     * A child's state is durable in the child's *own* log, and the copy on the
+     * parent is a cache §4.3 keeps for rendering an unreachable child — after a
+     * restart it says what was true at spawn. Deciding from it would read every
+     * finished node as still running and spawn nothing, so the run would come
+     * back and stall, which is not better than not coming back.
+     *
+     * `resumeSession` is idempotent, so this costs one open per node once. A
+     * child that cannot be opened — deleted, or in a workspace this host does
+     * not hold — falls through to the cache, which is what that cache is for.
+     */
+    for (const child of this.manager.get(rootId).children) {
+      await this.manager.resumeSession(child.sessionId).catch(() => undefined);
+    }
+
+    await this.start(rootId, file.workflow);
+  }
+
+  /**
    * Spawn everything the document says is now ready.
    *
    * Safe to call at any time and as often as anything likes: it reads the
@@ -115,6 +199,20 @@ export class WorkflowRuns {
    * already been advanced for the same change.
    */
   async advance(rootId: SessionId): Promise<void> {
+    const run = this.live.get(rootId);
+    if (run === undefined) return;
+
+    // Queued behind whatever is already spawning for this run — see `advancing`.
+    // The `catch` keeps a failed advance from poisoning every later one, which
+    // would turn one refused spawn into a run that never moves again.
+    const mine = (run.advancing ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.spawnReady(rootId));
+    run.advancing = mine.catch(() => undefined);
+    return mine;
+  }
+
+  private async spawnReady(rootId: SessionId): Promise<void> {
     const run = this.live.get(rootId);
     if (run === undefined) return;
 

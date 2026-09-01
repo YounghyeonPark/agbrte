@@ -296,9 +296,27 @@ export async function serveWebFixture(opts: { home?: string; repo?: string } = {
   }
   if (!up) {
     server.kill();
+    /*
+     * The output decides what happened, not the exit status.
+     *
+     * This used to say "still running, so it never finished listening" whenever
+     * the process was alive — an inference, and the first real failure it caught
+     * contradicted it: the server had printed its link, which `serveWeb` only
+     * does *after* `listen` resolves. So it was up, listening, and unreachable
+     * from this process for thirty seconds, which is a different problem from
+     * the one that sentence named and would have sent the next reader the wrong
+     * way. The link is the evidence, so the link is what is reported.
+     */
+    const listened = said.includes(String(port));
     throw new Error(
-      `the web server never came up on port ${port}` +
-        `${exit === null ? ' (still running, so it never finished listening)' : ` — it ${exit}`}` +
+      `the web server on port ${port} was never reachable` +
+        `${
+          listened
+            ? ' — it printed its link, so it did listen and the poll could not reach it'
+            : exit === null
+              ? ' — it is still running and never printed a link'
+              : ` — it ${exit}`
+        }` +
         `${said.trim() === '' ? ' and printed nothing' : `:\n${said.trim()}`}`,
     );
   }

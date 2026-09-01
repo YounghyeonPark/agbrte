@@ -74,7 +74,22 @@ export interface EventEnvelope {
 }
 
 export type EventBody =
-  | { type: 'session.created'; goal: string; title: string }
+  /**
+   * `workflow` is the id of the document this session is a **run of** (§4.4).
+   *
+   * On the event rather than anywhere cheaper, because it is the one fact about
+   * a run that is not derivable: the children are durable, their states are
+   * durable, and the tree edge is on both logs — a host that restarts has all of
+   * it and, without this, no longer knows which document they came from, so it
+   * cannot spawn the nodes that had not started. Keeping it in memory is what
+   * that cost, and keeping it anywhere but the log is the second source of truth
+   * §5.1 refuses.
+   *
+   * Absent for every session that is not a workflow run, which is almost all of
+   * them, and absent from a log written before this existed. Both read as *not a
+   * run*, which is what they are.
+   */
+  | { type: 'session.created'; goal: string; title: string; workflow?: string }
   /**
    * Renamed by a person.
    *

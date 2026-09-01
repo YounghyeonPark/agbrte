@@ -884,7 +884,10 @@ export class SessionManager extends EventEmitter {
       title: input.title,
       goal: input.goal,
       createdAt,
-    }, { ...(actor !== undefined ? { actor } : {}) });
+    }, {
+      ...(actor !== undefined ? { actor } : {}),
+      ...(input.workflow !== undefined ? { workflow: input.workflow } : {}),
+    });
 
     const session: Session = {
       sessionId,
@@ -4313,7 +4316,35 @@ export class SessionManager extends EventEmitter {
       ...(projection.skills.length > 0
         ? { skills: projection.skills.map((s) => ({ id: s.id, description: s.description })) }
         : {}),
-      tree: { rootSessionId: sessionId, depth: 0, ancestry: [] },
+      /*
+       * A resumed child remembers whose child it is (§4.3, §5.1).
+       *
+       * This said `{ rootSessionId: sessionId, depth: 0, ancestry: [] }`
+       * unconditionally, which made **every** session a root on resume. §4.3
+       * says the edge is written on both ends "so either can be reconstructed
+       * alone", and it is — `session.brief_received` records the parent and the
+       * projection folds it — the resume path simply did not read it. The cost
+       * was quiet and total: after a host restart a child could no longer
+       * `reportResult`, because it had no parent to report to, so its parent sat
+       * in `awaiting_children` forever with work that had actually finished.
+       * Found by a workflow run that came back and could not settle a node.
+       *
+       * **Depth and ancestry are not durable, and this does not pretend they
+       * are.** Only the parent is on the log, so a resumed grandchild says depth
+       * 1 rather than 2 — which under-counts `maxDepth` for a split made from a
+       * resumed session, and is a smaller wrong than claiming it is a root. The
+       * honest fix is the position in `session.brief_received` beside the parent
+       * it already carries; that is a shape change and is not this one.
+       */
+      tree:
+        projection.parentSessionId === null
+          ? { rootSessionId: sessionId, depth: 0, ancestry: [] }
+          : {
+              rootSessionId: projection.parentSessionId,
+              depth: 1,
+              ancestry: [projection.parentSessionId],
+              parentSessionId: projection.parentSessionId,
+            },
       children: projection.children,
       // Restored from the log, like the standing grant and the skills above: a
       // restart is still the same session, and one that had forgotten its group
@@ -4374,6 +4405,30 @@ export class SessionManager extends EventEmitter {
     }
     this.sessions.set(sessionId, live);
     await this.restoreRawTails(live);
+
+    /*
+     * A workflow run picks itself back up (§4.4).
+     *
+     * The log says which document this is a run of, the children came back with
+     * their states, and the scheduler holds no progress — so resuming is the
+     * same call as carrying on, and the nodes that had not started when the host
+     * went away start now.
+     *
+     * After `sessions.set`, because `advance` reads this session's children
+     * through the manager and a run registered before the session is in the
+     * table would be advancing against a session that cannot be found.
+     *
+     * Not awaited, for the same reason the roll-up is not: spawning is a
+     * sequence of session creations, and making a resume wait on them would put
+     * the whole graph inside the call that reopened one session. Failures are
+     * swallowed because a run that cannot restart leaves the tree exactly as a
+     * person can already see it.
+     */
+    if (projection.workflow !== undefined) {
+      void this.workflowRuns
+        .resume(sessionId, projection.workflow, workspace.root)
+        .catch(() => undefined);
+    }
 
     for (const projected of projection.agents) {
       const spec: AgentSpec = {

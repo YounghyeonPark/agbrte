@@ -684,6 +684,14 @@ export interface CreateSessionInput {
    */
   budget?: SessionBudget;
   /**
+   * The workflow document this session is a run of (§4.4).
+   *
+   * Written into `session.created`, so it survives a host restart the way every
+   * other durable fact does. Absent for an ordinary session, which is almost all
+   * of them.
+   */
+  workflow?: string;
+  /**
    * Splits this session may make without asking (§17 Q8).
    *
    * Set when the run is created, which is when the person is present. Absent

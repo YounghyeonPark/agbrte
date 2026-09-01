@@ -65,11 +65,30 @@ async function rootFor(tokenCeiling = 200_000): Promise<SessionId> {
   return session.sessionId;
 }
 
-/** Pretend a node finished, the way its own session settling would. */
-function settle(rootId: SessionId, nodeId: string, state: 'done' | 'failed'): void {
-  const child = manager.get(rootId).children.find((c) => c.title === nodeId);
+/**
+ * Finish a node for real, through the path a child actually takes.
+ *
+ * Not by writing `lastKnown`, which the first version of this did. That field is
+ * the parent's **cache** — §4.3 keeps it for rendering a child that cannot be
+ * reached — so faking it produces a run that looks settled to anything reading
+ * the parent and is untouched on disk. Every resume test then passed against a
+ * runner that could not have worked, which is how this was caught: the resume
+ * test failed, and the helper was the thing that was wrong.
+ *
+ * `reportResult` is what a child does when it is done, and `cancelSession` is a
+ * settled failure. Both write to the child's own log, which is what a restarted
+ * host reads.
+ */
+async function settle(
+  m: SessionManager,
+  rootId: SessionId,
+  nodeId: string,
+  state: 'done' | 'failed',
+): Promise<void> {
+  const child = m.get(rootId).children.find((c) => c.title === nodeId);
   if (child === undefined) throw new Error(`no child for ${nodeId}`);
-  child.lastKnown = { ...child.lastKnown, state };
+  if (state === 'done') await m.reportResult(child.sessionId, { summary: `${nodeId} finished` });
+  else await m.cancelSession(child.sessionId);
 }
 
 const titles = (rootId: SessionId): string[] =>
@@ -99,7 +118,7 @@ describe('a run is an ordinary session tree', () => {
     const wf = workflow([node('scan'), node('tests', ['scan']), node('lint', ['scan'])]);
     await manager.workflowRuns.start(rootId, wf);
 
-    settle(rootId, 'scan', 'done');
+    await settle(manager, rootId, 'scan', 'done');
     await manager.workflowRuns.advance(rootId);
     // Both branches at once. Nothing in the document orders them, so a runner
     // that serialised them would be inventing a constraint.
@@ -141,17 +160,174 @@ describe('when a node fails', () => {
       node('report', ['tests', 'lint']),
     ]);
     await manager.workflowRuns.start(rootId, wf);
-    settle(rootId, 'scan', 'done');
+    await settle(manager, rootId, 'scan', 'done');
     await manager.workflowRuns.advance(rootId);
 
-    settle(rootId, 'tests', 'failed');
-    settle(rootId, 'lint', 'done');
+    await settle(manager, rootId, 'tests', 'failed');
+    await settle(manager, rootId, 'lint', 'done');
     await manager.workflowRuns.advance(rootId);
 
     // `report` needed the failed node and is never spawned; nothing else was
     // discarded. §4.4 named the two wrong answers, and this is neither.
     expect(titles(rootId)).toEqual(['lint', 'scan', 'tests']);
     expect(manager.workflowRuns.succeeded(rootId, wf)).toBe(false);
+  });
+});
+
+describe('a run that outlives the host that started it', () => {
+  /**
+   * The hole §4.4 named, and the two more that were behind it.
+   *
+   * Which *document* a root is a run of is now on `session.created`, so a
+   * restarted host knows it. Building that path found two older gaps of the same
+   * kind, both unrelated to workflows and both worse: a resumed session was
+   * hardcoded as a **root**, so a child could not report its result to a parent
+   * it no longer knew it had; and a session's **budget** is not durable at all,
+   * so a restarted session cannot reserve for a child and therefore cannot
+   * split.
+   *
+   * The first is fixed here. The second is not — it needs an event and a fold of
+   * its own, and there is no budget event to build on — so a resumed run comes
+   * back knowing what it is and what has run, and cannot yet spawn the next
+   * node. §4.4 says so rather than implying otherwise, and these tests assert
+   * what is true rather than what was intended.
+   *
+   * Driven by building a second `SessionManager` over the same workspace, which
+   * is what a restart actually is: the log is on disk, nothing is in memory, and
+   * `resumeSession` reads both back.
+   */
+  async function restart(): Promise<SessionManager> {
+    const registry = new RuntimeRegistry();
+    registry.register(new EchoRuntime({ script: [] }), { label: 'Echo', model: 'none' });
+    return new SessionManager({ registry, workspaceRoot: root, instanceId });
+  }
+
+  /** The document on disk, which is where a resumed run reads it from. */
+  async function writeDoc(wf: Workflow): Promise<void> {
+    const { saveWorkflow } = await import('@main/store/workflows.js');
+    const saved = await saveWorkflow(root, wf.id, wf);
+    expect(saved.problems).toEqual([]);
+  }
+
+  it('carries on from the log, spawning what had not started', async () => {
+    const wf = workflow([node('scan'), node('tests', ['scan']), node('lint', ['scan'])]);
+    await writeDoc(wf);
+
+    const session = await manager.createSession({
+      title: wf.name,
+      goal: wf.goal,
+      workflow: wf.id,
+      budget: { tokenCeiling: 200_000, spent: 0, reservedForChildren: 0 },
+    });
+    await manager.workflowRuns.start(session.sessionId, wf);
+    expect(titles(session.sessionId)).toEqual(['scan']);
+
+    /*
+     * The host goes away here, with `scan` running and the rest never started.
+     *
+     * Nothing is settled first, deliberately. Finishing a node on the old
+     * manager would have *its* roll-up spawn the next ones, and then two
+     * managers would be writing one workspace — which §5.1's single-writer rule
+     * forbids. The first version of this test did exactly that and failed on
+     * duplicate children, which was the test's fault and not the runner's.
+     */
+    const after = await restart();
+    await after.resumeSession(session.sessionId);
+    // `resume` is not awaited by `resumeSession` — deliberately, since it spawns
+    // — so this waits rather than assuming.
+    await new Promise((r) => setTimeout(r, 100));
+
+    // The run came back: the new host knows this session is a run of that
+    // document, which is what `session.created` now carries and what nothing
+    // held durably before.
+    expect(after.workflowRuns.isRun(session.sessionId)).toBe(true);
+    expect(after.get(session.sessionId).children).toHaveLength(1);
+
+    /*
+     * And the node it made came back as a child rather than as a root, which is
+     * what lets it report a result at all. `resumeSession` used to hardcode
+     * every resumed session as a root, so a child could not find its parent and
+     * `reportResult` refused — the parent then waited on work that had already
+     * finished. Asserted here because a workflow run is the first thing that
+     * noticed, and the bug was never about workflows.
+     */
+    const child = after.get(after.get(session.sessionId).children[0]!.sessionId);
+    expect(child.tree.parentSessionId).toBe(session.sessionId);
+    await expect(
+      after.reportResult(child.sessionId, { summary: 'scan finished' }),
+    ).resolves.toBeDefined();
+  });
+
+  it('does not re-spawn a node that already ran', async () => {
+    /*
+     * The property that makes resuming safe rather than expensive. What has run
+     * is read from the children every time, so a restart is the same question
+     * asked again — and `scan` is `done`, not missing.
+     */
+    const wf = workflow([node('scan'), node('tests', ['scan'])]);
+    await writeDoc(wf);
+    const session = await manager.createSession({
+      title: wf.name,
+      goal: wf.goal,
+      workflow: wf.id,
+      budget: { tokenCeiling: 200_000, spent: 0, reservedForChildren: 0 },
+    });
+    await manager.workflowRuns.start(session.sessionId, wf);
+    await settle(manager, session.sessionId, 'scan', 'done');
+    // Let the old host finish before pretending it went away: two managers
+    // writing one workspace is what §5.1's single-writer rule forbids, and it is
+    // how an earlier version of this file produced duplicate children.
+    await manager.workflowRuns.advance(session.sessionId);
+    expect(titles(session.sessionId)).toEqual(['scan', 'tests']);
+
+    const after = await restart();
+    await after.resumeSession(session.sessionId);
+    await new Promise((r) => setTimeout(r, 120));
+
+    /*
+     * Still two. The resumed run reads `scan` as **done** and `tests` as
+     * running, so it has nothing to start — where a runner reading the parent's
+     * cached `lastKnown` would see both as unstarted and spawn them again, each
+     * with its own log and its own reservation. That is the read `nodeStates`
+     * gets right, and the one this pins.
+     */
+    const children = after.get(session.sessionId).children;
+    expect(children.map((c) => c.title).sort()).toEqual(['scan', 'tests']);
+    expect(after.get(children.find((c) => c.title === 'scan')!.sessionId).state).toBe('done');
+  });
+
+  it('leaves an ordinary session alone', async () => {
+    // Almost every session is not a run, and one that gained a runner on resume
+    // would be a session spawning children nobody asked for.
+    const session = await manager.createSession({ title: 'just work', goal: 'do a thing' });
+    const after = await restart();
+    await after.resumeSession(session.sessionId);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(after.get(session.sessionId).children).toEqual([]);
+    expect(after.workflowRuns.isRun(session.sessionId)).toBe(false);
+  });
+
+  it('says nothing when the document has since been deleted', async () => {
+    /*
+     * A tracked file somebody removed on a branch. There is no run to drive and
+     * that is not an error — the tree is on screen either way, and a resume that
+     * threw would take the session down with it.
+     */
+    const wf = workflow([node('scan'), node('tests', ['scan'])]);
+    await writeDoc(wf);
+    const session = await manager.createSession({
+      title: wf.name,
+      goal: wf.goal,
+      workflow: wf.id,
+      budget: { tokenCeiling: 200_000, spent: 0, reservedForChildren: 0 },
+    });
+    await manager.workflowRuns.start(session.sessionId, wf);
+    await rm(join(root, '.agbrte', 'templates'), { recursive: true, force: true });
+
+    const after = await restart();
+    await expect(after.resumeSession(session.sessionId)).resolves.toBeDefined();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(after.workflowRuns.isRun(session.sessionId)).toBe(false);
   });
 });
 

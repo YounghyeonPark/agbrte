@@ -991,9 +991,19 @@ Following the edges is neither, and the document already says which they are: a 
 
 **A run with a blocked node is a failed run**, even though other branches finished. §4.3's rule that a failed child does not fail its parent is about a parent *choosing*; a scheduler is not choosing, and reporting success because three nodes of four worked would be the report making a decision nobody made.
 
+#### A run comes back knowing what it is, and two older gaps came with it
+
+`session.created` carries the workflow id, so a restarted host reads which document its children came from out of the log — the same place it reads what they did. Nothing else about a run needed to become durable: the scheduler holds no progress, so resuming is the same call as carrying on.
+
+**Building that path found two gaps that have nothing to do with workflows and are both worse.** Neither was visible before, because nothing had asked a resumed session to do anything with its family.
+
+**A resumed session was hardcoded as a root.** `session.brief_received` records the parent and the projection folds it — the edge really is written on both ends, as this section claims — but the resume path never read it, so every session came back believing it had no parent. A restarted child could not `reportResult`, and its parent then sat in `awaiting_children` holding work that had already finished. Fixed: the parent is restored from the projection. Depth and ancestry are not, because only the parent is on the log — a resumed grandchild reports depth 1 rather than 2, which under-counts `maxDepth` for a split made from it and is a smaller wrong than claiming it is a root. The proper fix is the whole `TreePosition` in `session.brief_received` beside the parent it already carries.
+
+**A session's budget is not durable at all.** There is no budget event, so a restarted session has none — and §4.3's `prepareChild` refuses a parent with no budget, which is correct and means **a restarted session cannot split**. For a workflow this is the remaining half of resume: a run comes back registered, knowing its nodes and their real states, and cannot spawn the next one. The fix is its own decision rather than a field: what event records a reservation, and what `spent` folds from.
+
 #### Open, and known
 
-**A run does not survive its host restarting.** The children are durable, their states are durable, and the tree edge is on both logs — what is held only in memory is *which document* a root is running, so a host that comes back has everything except the ability to spawn the nodes that had not started. The root sits in `awaiting_children` with what it has. The hole is one field wide: `session.created` carries `goal` and `title` and would need the workflow id beside them, folded by the projection and versioned in the checkpoint like every other durable fact. It is not bolted on somewhere cheaper on purpose — a run identity kept anywhere but the log is exactly the second store §5.1 refuses.
+**A resumed run cannot spawn**, for the budget reason above. It is the one place §4.4's claims stop short of what the code does, and it is stated here rather than left to be discovered.
 
 ---
 
@@ -2025,7 +2035,7 @@ Each endpoint records provider, region, and retention posture (`dataHandling`, �
 | 6 | Multi-agent + hierarchy | 6th | **done**, including a child on another machine (§17.5); automatic split *signals* are not measured |
 | 7 | Multimodal | 7th | **criteria met**, with two named substitutions; OCR not built |
 | 8 | Breadth + polish | 8th | started — usage/cost, per-agent ceilings, session export, cross-machine search |
-| 9 | Workflows | 9th | **built, with one named gap** (§4.4) — types and validation, a home for templates, the graph view, the editor, and a runner that spawns nodes as their dependencies finish. A run does not survive its host restarting; §4.4 says what that costs and what it needs |
+| 9 | Workflows | 9th | **built, with one named gap** (§4.4) — types and validation, a home for templates, the graph view, the editor, and a runner that spawns nodes as their dependencies finish. A run comes back knowing what it is; it cannot yet spawn, because a session budget is not durable — §4.4 says so and names the two older gaps found building it |
 
 **Why Phase 5 moved from fifth to second.** The deployment model is now explicit: the service runs on a central agent server and the app is used from whichever device you are at. That makes remote execution the substrate rather than a later capability, and three consequences follow. Building Phases 2, 3, and 4 against a local-only assumption invites rework, because each touches state that a server-authoritative topology relocates: relocation resolution becomes a question about the server's filesystem, quota scheduling spans clients, and the dashboard reads a mirror rather than a local log. Second, **device independence is a headline requirement and Phase 5 is where it lives** — the log already being the source of truth means a second device is a new windowed projection rather than a sync protocol, but only once the log is authoritative somewhere central. Third, computer use and multimodal both get materially safer afterwards: an agent driving a virtual display on an expendable server is a bounded blast radius, which is the only honest answer to `click(x, y)` being outside what §13 can gate.
 
