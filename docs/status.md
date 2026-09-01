@@ -44,12 +44,16 @@ consumption against its ceiling, because the ModelGateway that would is not
 built. A ceiling is a decomposition allowance, not a spend cap, and the name
 invites the other reading.
 
-**A child on another machine has never been spawned by two real hosts.** The
-three-step that makes it possible — prepare on the parent's host, create on the
-target's, commit back on the parent's — is exercised over the session protocol,
-but through one host answering itself on an in-memory channel. What that cannot
-see is the pair disagreeing: two builds, two versions, and a field one of them
-does not send.
+**A child on another machine is spawned by two hosts in one process, not by two
+machines.** The three-step that makes it possible — prepare on the parent's host,
+create on the target's, commit back on the parent's — now runs against two hosts
+with their own workspaces, managers and sockets, over the platform's real socket
+rather than an in-memory channel, so what crosses is genuinely encoded. What that
+still cannot see is the pair *disagreeing*: two builds, two versions, a field one
+side sends and the other has never heard of. Two spawned host processes would
+show it, and are blocked on something real — a split begins with an agent calling
+`propose_split`, which has no command on the wire by design, so nothing outside a
+host process can make a session inside it propose anything.
 
 **OCR is not built**, so the redaction sweep reports `scanned: false` rather than
 an empty match list.
