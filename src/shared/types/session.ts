@@ -167,11 +167,45 @@ export class AccessDenied extends Error {
   }
 }
 
+/**
+ * What a session may spend, and what it has handed downward (§4.3).
+ *
+ * Two of these fields do not mean what their names suggest, and in both cases
+ * that is settled rather than unfinished. Read them before doing budget
+ * arithmetic anywhere.
+ */
 export interface SessionBudget {
   tokenCeiling: number;
+  /**
+   * **Always zero.** Nothing increments it, here or anywhere in the codebase.
+   *
+   * What a session actually consumed is `usage`, which the log records per turn
+   * already; the ModelGateway that §6.5 has enforcing a ceiling against it is
+   * not built. The field stays because it is where that number goes on the day
+   * there is an enforcer, and because `availableTokens` subtracting it is a
+   * formula that keeps working when it stops being constant. It is said here so
+   * a reader does not take the zero for a fold that lost something.
+   */
   spent: number;
   costCeiling?: number;
   cost?: number | 'unknown';
+  /**
+   * Carved out at spawn and **never given back**, for the life of the parent.
+   *
+   * §4.3 said "released on completion" for a long time while nothing anywhere
+   * decremented this, and reading that as a missing feature is the trap. Since
+   * `spent` is always zero, this figure is the *only* quantity a budget bounds
+   * anything with — so releasing it on completion would let a 100,000-token
+   * root spawn 20,000-token children one after another forever, each finishing,
+   * each handing its allowance back, none ever debited for what it used. "A
+   * tree cannot spend more than its root was granted" would quietly become a
+   * sentence about how many children may run *at once*.
+   *
+   * So a budget grants a **lifetime allowance of child ceilings**, and the
+   * consequence is worth meeting here rather than in a surprise: running the
+   * same workflow twice against one root costs that root twice. That is the
+   * conservative direction, and the sentence is what was wrong.
+   */
   reservedForChildren: number;
   inheritedFrom?: SessionId;
 }

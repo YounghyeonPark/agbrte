@@ -846,14 +846,16 @@ Signals, all measurable from the log: projected context against the window; file
 
 ```ts
 export interface SessionBudget {
-  tokenCeiling: number; spent: number;
+  tokenCeiling: number; spent: number;   // spent is always 0 — see below
   costCeiling?: number; cost?: number | 'unknown';
-  reservedForChildren: number;    // carved out at spawn, released on completion
+  reservedForChildren: number;    // carved out at spawn, never released
   inheritedFrom?: string;         // parent session id
 }
 ```
 
-A child's ceiling is **reserved from the parent's remaining budget at spawn**, so a tree cannot spend more than its root was granted. That survives hosts being plural without anyone owning a total: the debit happens on the parent's host before the child exists, there is no refund path anywhere, and the child enforces a figure it was given (§17.5). The ModelGateway already enforces per-session ceilings (§6.5) and becomes tree-aware by resolving against the root; descendants inherit `quotaGroup`, so the QuotaScheduler (§8) already throttles an entire tree drawing on one credential.
+A child's ceiling is **reserved from the parent's remaining budget at spawn**, so a tree cannot spend more than its root was granted. That survives hosts being plural without anyone owning a total: the debit happens on the parent's host before the child exists, there is no refund path anywhere, and the child enforces a figure it was given (§17.5). Descendants inherit `quotaGroup`, so the QuotaScheduler (§8) throttles an entire tree drawing on one credential. What does *not* hold this together yet is the ModelGateway: §6.5 has it enforcing per-session ceilings and recording usage, and §15 has it deliberately not built, so nothing in the running system compares a session's consumption against its ceiling.
+
+**Which is why a reservation is never released, and why "released on completion" was the wrong half of the pair to keep.** `spent` is always zero — nothing increments it, and the thing that would is the gateway above — so `reservedForChildren` is the only quantity a budget bounds anything with. Releasing it when a child finishes would let a 100,000-token root spawn 20,000-token children one after another forever: each finishes, each hands its allowance back, and none is ever debited for what it actually used. The sentence a tree is supposed to satisfy would quietly become one about how many children may run *at once*. So a budget grants a **lifetime allowance of child ceilings**, with the consequence stated rather than discovered: running the same workflow twice against one root costs that root twice.
 
 #### State roll-up and failure
 
@@ -975,7 +977,7 @@ So a workflow's budget is checked against the whole graph first, and nothing is 
 
 **Nothing is taken and given back.** §4.3's leave-nothing-behind rule is satisfied trivially rather than by an unwind path, and an unwind path is exactly the kind of code that is written once and then never exercised.
 
-**A workflow that passes is pessimistic on purpose.** The check is over declared ceilings, and a node finishing under its ceiling releases the remainder as §4.3 already specifies, so a graph may be refused for a total it would never have spent. That is the right way round: the alternative starts a workflow that dies halfway with six nodes' work done and no budget to finish, and being told up front that the ceiling is too low is strictly better than being told it in the middle.
+**A workflow that passes is pessimistic on purpose.** The check is over declared ceilings rather than over what the nodes will use, so a graph may be refused for a total it would never have spent. That is the right way round: the alternative starts a workflow that dies halfway with six nodes' work done and no budget to finish, and being told up front that the ceiling is too low is strictly better than being told it in the middle. The pessimism is more than an approximation, because §4.3's reservations are never released — a node that finishes under its ceiling does not hand the remainder back, so a root that runs this document has spent that allowance for good.
 
 Mid-run `propose_split` needs no exception. A node reserves from its own ceiling, which was reserved from the root, so the tree still cannot outspend what its root was granted.
 
@@ -1007,9 +1009,13 @@ Fixed, and the shape of the fix is worth recording because two of its three part
 
 **A resumed session knows where it is, not just whose child it is.** `session.brief_received` carries the whole `TreePosition` beside the parent it already carried — and it was at the write site the entire time, in the `input.child.tree` the event was narrowing to one field. Restoring only the parent gave every resumed child depth 1 however deep it was, and `maxDepth` counts from the parent's depth, so a tree could grow past the limit one restart at a time. The parent-only fallback stays for logs written before the field, imprecise in the safe direction.
 
-#### Open, and known
+#### Settled: the code was right and the sentence was wrong
 
-**`reservedForChildren` is never released**, though this section says "released on completion". Nothing in the code decrements it, so a tree that finishes its children still holds their reservations against the root. The fold matches the code rather than this sentence, deliberately — a projection that released what the runtime does not would disagree with the live session it is meant to reproduce. Which of the two is wrong is a decision about budget semantics rather than about durability, and it has not been made.
+**`reservedForChildren` is never released**, and this section used to say "released on completion" while nothing in the code decremented it. The fold matched the code rather than the sentence, deliberately — a projection that released what the runtime does not would disagree with the live session it exists to reproduce — and which of the two was wrong was left open, as a question about budget semantics rather than about durability.
+
+It is the sentence. Answering it needed one fact that is easy to walk past: **`spent` is always zero.** Nothing increments it anywhere, because the ModelGateway that §6.5 has enforcing ceilings and recording usage is, per §15, deliberately not built. So `reservedForChildren` is not one term of a budget beside consumption — it is the *entire* budget, the only quantity anything is bounded by. A release on completion would let a 100,000-token root spawn 20,000-token children serially without limit, each finishing and handing back an allowance it was never debited against, and "a tree cannot spend more than its root was granted" would silently become a statement about concurrency.
+
+So the guarantee is stated as what it is: a budget is a **lifetime allowance of child ceilings**, not a running balance. It is pinned by a test rather than left to be inferred, because the mismatch reads exactly like a missing decrement and the fix that looks obvious is the one that removes the bound. When there is a gateway to debit `spent`, releasing becomes possible and is a different design with a different argument; it is not this one.
 
 ---
 

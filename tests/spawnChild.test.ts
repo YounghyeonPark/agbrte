@@ -142,6 +142,29 @@ describe('the budget', () => {
     );
   });
 
+  it('keeps the reservation after the child ends, however it ends', async () => {
+    const m = manager();
+    const parent = await m.createSession({ title: 'p', goal: 'g', budget: BUDGET });
+    const done = await m.spawnChild(parent.sessionId, split({ tokenCeiling: 20_000 }));
+    const cancelled = await m.spawnChild(parent.sessionId, split({ tokenCeiling: 20_000 }));
+
+    await m.reportResult(done.sessionId, { summary: 'the parser is ported' });
+    await m.cancelSession(cancelled.sessionId);
+
+    /*
+     * Pinned, because §4.3 said "released on completion" for a long time while
+     * nothing decremented this, and the obvious way to close that gap is to
+     * decrement here. It would quietly unbound the tree.
+     *
+     * `spent` is always zero — nothing increments it and the gateway that would
+     * is not built — so this figure is the only quantity a budget bounds
+     * anything with. Releasing it would let this 100,000 root spawn 20,000
+     * children one after another forever, each finishing, each handing the
+     * allowance back, none ever debited for what it used.
+     */
+    expect(m.get(parent.sessionId).budget?.reservedForChildren).toBe(40_000);
+  });
+
   it('lets a session with no ceiling split, carrying the absence down', async () => {
     const m = manager();
     const parent = await m.createSession({ title: 'p', goal: 'g' });

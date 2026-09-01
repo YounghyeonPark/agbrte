@@ -37,6 +37,13 @@ run, because that box has no model server.
 **Phase 7's acceptance sentence has run end to end**, with the agent local rather
 than remote and unable to see the picture.
 
+**A session budget does not limit spending.** It bounds what a session may hand
+*downward* — the sum of the ceilings it gives its children, for its lifetime,
+since a reservation is never released. Nothing compares a session's actual
+consumption against its ceiling, because the ModelGateway that would is not
+built. A ceiling is a decomposition allowance, not a spend cap, and the name
+invites the other reading.
+
 **A child on another machine has never been spawned by two real hosts.** The
 three-step that makes it possible — prepare on the parent's host, create on the
 target's, commit back on the parent's — is exercised over the session protocol,
