@@ -46,8 +46,13 @@ export interface BuildBriefOptions {
   /** How the child's result gets back, and its ceiling. */
   contract: ResultContract;
   acceptance: string[];
-  /** Reserved from the parent's remaining budget by the caller (§4.3). */
-  budget: SessionBudget;
+  /**
+   * Reserved from the parent's remaining budget by the caller (§4.3).
+   *
+   * Absent when the parent had none to reserve from, which is unbudgeted rather
+   * than zero — see `SessionBrief.budget`.
+   */
+  budget?: SessionBudget;
   /** Lineage-keyed memory slugs; free to pass, since they follow the repo. */
   memoryRefs?: string[];
   /**
@@ -125,7 +130,7 @@ export async function buildBrief(
       ref: a.artifactId,
       why: `produced by the parent session (${a.kind})`,
     })),
-    budget: opts.budget,
+    ...(opts.budget !== undefined ? { budget: opts.budget } : {}),
     ...(verbatim.length > 0 ? { verbatim } : {}),
   };
 

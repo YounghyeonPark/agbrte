@@ -706,11 +706,21 @@ export class HostConnection extends EventEmitter {
   recordChild(
     sessionId: SessionId,
     child: Session,
-    parentBudget: SessionBudget,
+    /** Absent when the parent is unbudgeted, which its children then are too. */
+    parentBudget: SessionBudget | undefined,
     contract: ResultContract,
   ): Promise<void> {
     this.require('session.recordChild');
-    return this.call({ t: 'session.recordChild', sessionId, child, parentBudget, contract });
+    // Spread rather than sent as `undefined`, so the message on the wire is the
+    // shape the protocol declares. JSON would drop the key either way; the
+    // difference is that anything reading this call sees which it is.
+    return this.call({
+      t: 'session.recordChild',
+      sessionId,
+      child,
+      ...(parentBudget !== undefined ? { parentBudget } : {}),
+      contract,
+    });
   }
 
   /**

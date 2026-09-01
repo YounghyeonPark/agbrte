@@ -106,10 +106,15 @@ export type EventBody =
        * What this session was granted (§4.3).
        *
        * Here because it was nowhere: a budget lived only in memory, so a
-       * restarted session had none — and `prepareChild` correctly refuses a
-       * parent with no budget, which made **a restarted session unable to
-       * split at all**. Found by a workflow run that resumed and then could not
-       * spawn its next node.
+       * restarted session had none — and `prepareChild` then refused a parent
+       * with no budget, which made **a restarted session unable to split at
+       * all**. Found by a workflow run that resumed and then could not spawn
+       * its next node.
+       *
+       * That refusal is gone, and this field is load-bearing for the arithmetic
+       * rather than the permission: a parent that comes back having forgotten
+       * its ceiling reserves nothing for the children it spawns next, so a tree
+       * outspends the grant its root was given, one restart at a time.
        *
        * Only the root's grant is this event's business. A *child's* ceiling has
        * always been durable and is carried by `session.brief_received` inside

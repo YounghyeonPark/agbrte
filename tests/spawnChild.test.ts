@@ -142,12 +142,52 @@ describe('the budget', () => {
     );
   });
 
-  it('refuses to split a session that has no ceiling of its own', async () => {
+  it('lets a session with no ceiling split, carrying the absence down', async () => {
     const m = manager();
     const parent = await m.createSession({ title: 'p', goal: 'g' });
-    // Inventing one would put a number nobody agreed to at the root of a
-    // subtree, and every descendant would inherit it.
-    await expect(m.spawnChild(parent.sessionId, split())).rejects.toThrow(SplitRefused);
+    const child = await m.spawnChild(parent.sessionId, split());
+
+    /*
+     * This threw for a long time, and the argument behind the throw was that
+     * inventing a ceiling would put a number nobody agreed to at the root of a
+     * subtree. That is an argument against inventing a number; the third
+     * option — carrying the absence down — invents nothing and was never
+     * considered.
+     *
+     * What the refusal cost is the two rules meeting. §4.3 makes a budget
+     * optional because most sessions are a person working, and then that same
+     * absence stopped the person decomposing their work at all: every split
+     * and every workflow run needed a token figure picked first.
+     */
+    expect(child.budget).toBeUndefined();
+    expect(m.get(parent.sessionId).budget).toBeUndefined();
+    expect(m.get(parent.sessionId).children).toHaveLength(1);
+  });
+
+  it('writes no reservation for a child there was nothing to reserve for', async () => {
+    const m = manager();
+    const parent = await m.createSession({ title: 'p', goal: 'g' });
+    await m.spawnChild(parent.sessionId, split());
+
+    // A zero here would be a claim that a ceiling was consulted and nothing was
+    // taken, which §4.3 keeps distinct from unbudgeted on purpose. The field is
+    // simply absent, and a reader gets what happened.
+    const spawned = (await m.events(parent.sessionId)).find(
+      (e) => e.type === 'session.spawned_child',
+    );
+    expect(spawned).toBeDefined();
+    expect(spawned).not.toHaveProperty('reserved');
+  });
+
+  it('bounds an unbudgeted tree by depth, having no ceiling to bound it', async () => {
+    const m = manager();
+    let current = await m.createSession({ title: 'root', goal: 'g' });
+    for (let i = 0; i < 3; i += 1) {
+      current = await m.spawnChild(current.sessionId, split());
+    }
+    // The limits that do not depend on a budget are untouched, which is what
+    // keeps an unbudgeted tree bounded exactly as an unbudgeted session is.
+    await expect(m.spawnChild(current.sessionId, split())).rejects.toThrow(SplitRefused);
   });
 });
 

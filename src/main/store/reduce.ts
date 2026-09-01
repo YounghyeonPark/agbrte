@@ -226,7 +226,9 @@ export function reduceEvents(
         if (ev.position !== undefined) p.tree = { ...ev.position };
         // A child's ceiling has always been durable — it is part of the brief,
         // which is where its whole scope lives. It simply was never read back.
-        p.budget = { ...ev.brief.budget };
+        // Absent means unbudgeted, which stays absent rather than folding to a
+        // zero the reader would take for a ceiling.
+        if (ev.brief.budget !== undefined) p.budget = { ...ev.brief.budget };
         break;
 
       case 'session.child_result': {

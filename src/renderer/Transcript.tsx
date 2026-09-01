@@ -409,9 +409,20 @@ export function PermissionPrompt({
  */
 export function SplitPrompt({
   proposal,
+  budgeted,
   onDecide,
 }: {
   proposal: SplitProposal;
+  /**
+   * Whether this session holds a ceiling for the child to be reserved from.
+   *
+   * Passed rather than assumed because §4.3 now lets an unbudgeted session
+   * split — the absence carries down — and the row below said "reserved from
+   * this session" unconditionally. On a session with no ceiling that sentence
+   * described an accounting entry nobody was going to make, in the one prompt
+   * the design puts the number on screen to be judged by.
+   */
+  budgeted: boolean;
   onDecide: (approved: boolean) => void;
 }): JSX.Element {
   return (
@@ -441,9 +452,15 @@ export function SplitPrompt({
         <div className="flex gap-2">
           <dt className="text-muted w-20 shrink-0">Budget</dt>
           {/* Reserved out of this session at spawn, so the number is what this
-              session gives up rather than what the child might use. */}
+              session gives up rather than what the child might use — when there
+              is anything to give up. On an unbudgeted session the absence
+              carries down instead (§4.3) and the proposed figure is not applied
+              anywhere, which is a materially different thing to be approving
+              and so is said rather than left to be inferred from a number. */}
           <dd data-testid="split-budget">
-            {proposal.tokenCeiling.toLocaleString()} tokens, reserved from this session
+            {budgeted
+              ? `${proposal.tokenCeiling.toLocaleString()} tokens, reserved from this session`
+              : `asked for ${proposal.tokenCeiling.toLocaleString()} tokens; this session has no ceiling, so the child runs unbudgeted too`}
           </dd>
         </div>
       </dl>

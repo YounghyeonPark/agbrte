@@ -43,9 +43,11 @@ import { PRIVATE_DIR_MODE, checkpointName } from './layout.js';
 // children of a workflow run without knowing which workflow — it would then
 // spawn nothing further and the root would sit in `awaiting_children` forever,
 // which is exactly the hole this field was added to close.
-// 7: the projection carries `budget` (§4.3). A v6 checkpoint has none, and a
-// session resumed from one cannot split at all — `prepareChild` refuses a parent
-// with no budget, correctly, so the whole of §4.3 stops working after a restart.
+// 7: the projection carries `budget` (§4.3). A v6 checkpoint has none, so a
+// session resumed from one comes back unbudgeted — which at the time meant it
+// could not split at all, and now means its whole subtree is unbudgeted and a
+// tree can outspend the grant its root was given by restarting the host between
+// two spawns.
 // 8: the projection carries `tree`, a child's whole position (§4.3). A v7
 // checkpoint has only the parent, so a session resumed from one reports depth 1
 // however deep it is — and `maxDepth` then under-counts for any split made from

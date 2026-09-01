@@ -89,11 +89,11 @@ after a restart are not three features but three consequences of that.
   and the new one takes over, both written into the transcript, so it says what
   answered and when.
 - **Work is decomposed into sessions, not into a roster.** A session too large to
-  hold can split into a child with its own log and a slice of its budget — on
-  another machine, if that is where the work is. Sessions can also be *grouped*
-  and reach each other one bounded message at a time, carrying words and never
-  authority. MCP servers and skills attach per session, not from an app-wide
-  registry somebody enabled months ago.
+  hold can split into a child with its own log, and a slice of its budget when
+  it has one to give — on another machine, if that is where the work is.
+  Sessions can also be *grouped* and reach each other one bounded message at a
+  time, carrying words and never authority. MCP servers and skills attach per
+  session, not from an app-wide registry somebody enabled months ago.
 - **A decomposition can be written down before it runs.** A *workflow* is a file
   in the repository: what the parts are, what each one may not touch, what it
   owes back, and what it waits on. Because it is a file it is reviewed in a diff

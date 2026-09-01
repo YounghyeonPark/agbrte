@@ -293,6 +293,29 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  *
+ * ## v28 makes a field optional, and the pairing is what makes that safe
+ *
+ * `PreparedChild.parentBudget` and `session.recordChild`'s copy of it may now be
+ * absent, because §4.3 stopped refusing a parent with no budget and carries the
+ * absence down to the child instead. Absent means unbudgeted, not zero.
+ *
+ * A required field becoming optional is normally the dangerous direction — an
+ * older host receives a message missing something it dereferences, which here
+ * would be a `TypeError` reading `reservedForChildren` of undefined rather than
+ * a refusal anybody could read. It is safe because of *who* can produce the
+ * absence. `recordChild` always goes back to the **parent's** host, which is the
+ * same host that answered `prepareSplit` a moment earlier — the fleet holds one
+ * connection for the parent and uses it for both. A v27 host still refuses an
+ * unbudgeted split inside its own `prepareChild`, so it never returns a
+ * `PreparedChild` without a budget and is never handed one. The omission and the
+ * dereference cannot meet.
+ *
+ * The number moves anyway, because §17 Q16's rule is that it moves whenever the
+ * shape does, and a client that learns a host is v27 now learns something true
+ * about it: that host cannot split a session with no ceiling. `COMMAND_SINCE`
+ * gains nothing — no command was added, and the existing ones are refused by
+ * name already.
+ *
  * ## v27 adds a field, and it is v6's case rather than v16's
  *
  * `CreateSessionInput.workflow` says the session being created is a run of a
@@ -431,7 +454,15 @@ export interface HostIdentity {
  */
 export interface PreparedChild {
   create: CreateSessionInput;
-  parentBudget: SessionBudget;
+  /**
+   * The parent's budget as it stands after the reservation — or absent, because
+   * there was no budget to reserve from (§4.3).
+   *
+   * Absent is not zero. It says this subtree is unbudgeted, the same as the
+   * parent that produced it, and the host receiving it must leave the parent's
+   * budget alone rather than write a ceiling nobody set.
+   */
+  parentBudget?: SessionBudget;
   contract: ResultContract;
 }
 
@@ -606,7 +637,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 27;
+export const SESSION_PROTOCOL_VERSION = 28;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -1059,7 +1090,8 @@ export type SessionCommand =
       id: RequestId;
       sessionId: string;
       child: Session;
-      parentBudget: SessionBudget;
+      /** Absent when the parent is unbudgeted — see `PreparedChild`. */
+      parentBudget?: SessionBudget;
       contract: ResultContract;
     }
   /**

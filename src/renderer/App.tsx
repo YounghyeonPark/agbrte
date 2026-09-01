@@ -1404,6 +1404,7 @@ export function App(): JSX.Element {
                   <SplitPrompt
                     key={p.proposalId}
                     proposal={p}
+                    budgeted={active.budget !== undefined}
                     onDecide={(approved) => void store.respondSplit(p.proposalId, approved)}
                   />
                 ))}

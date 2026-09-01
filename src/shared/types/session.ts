@@ -428,7 +428,21 @@ export interface SessionBrief {
   pointers: Array<{ kind: 'file' | 'artifact' | 'event'; ref: string; why: string }>;
   /** A small, deliberate set — by exception, not default. */
   verbatim?: NormalizedTurn[];
-  budget: SessionBudget;
+  /**
+   * What this child may spend, when its parent had a ceiling to carve one from.
+   *
+   * **Absent means unbudgeted**, the same as it does on a session — and it had
+   * to become expressible here, because a parent with no budget used to be
+   * refused a split entirely. §4.3's argument was that "inventing a ceiling
+   * would put a number nobody agreed to at the root of a subtree", which is an
+   * argument against inventing a number and was read as one for refusing. The
+   * absence carries down instead, which invents nothing.
+   *
+   * Optional late, so briefs already in logs all have one. A reader meeting the
+   * absence gets what it means rather than a zero, which §4.3 keeps distinct
+   * from unbudgeted on purpose.
+   */
+  budget?: SessionBudget;
 }
 
 /**
@@ -677,10 +691,13 @@ export interface CreateSessionInput {
    *
    * Absent by default, and absent means unbudgeted rather than zero — most
    * sessions are a person working, and imposing a ceiling nobody chose would
-   * stop turns for a reason the user never set. A tree, though, cannot be
-   * carved out of nothing: `spawnChild` refuses on a parent with no budget,
-   * because inventing one would put a number nobody agreed to at the root of a
-   * subtree.
+   * stop turns for a reason the user never set. A child of an unbudgeted
+   * session is unbudgeted too — the absence carries down, which invents
+   * nothing. `spawnChild` refused instead for a long time, on the argument that
+   * inventing a ceiling would put a number nobody agreed to at the root of a
+   * subtree; that argument is against inventing a number and was read as one
+   * for refusing, and the refusal made the ordinary session — the unbudgeted
+   * one — the single kind that could not decompose its own work.
    */
   budget?: SessionBudget;
   /**

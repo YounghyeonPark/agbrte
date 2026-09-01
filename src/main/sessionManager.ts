@@ -3502,7 +3502,7 @@ export class SessionManager extends EventEmitter {
        */
       declaredByWorkflow?: boolean;
     },
-  ): Promise<{ create: CreateSessionInput; parentBudget: SessionBudget }> {
+  ): Promise<{ create: CreateSessionInput; parentBudget?: SessionBudget }> {
     const parent = this.live(parentSessionId);
 
     // Depth first, because it is the cheapest thing to be wrong about and the
@@ -3565,30 +3565,55 @@ export class SessionManager extends EventEmitter {
      * nothing to route.
      */
     const budget = parent.session.budget;
-    if (budget === undefined) {
-      // A parent with no ceiling cannot carve one out, and inventing one would
-      // put a number nobody agreed to at the root of a subtree.
-      throw new SplitRefused('this session has no budget, so nothing can be reserved for a child');
-    }
-
-    // Taken *before* the child exists. §4.3's claim that "a tree cannot outspend
-    // what its root was granted" only holds if the reservation happens at spawn
-    // rather than being checked when the child spends — by then the money is
-    // gone and the check is a report.
-    const reserved = reserveForChild(budget, input.tokenCeiling);
+    /*
+     * An unbudgeted parent makes unbudgeted children, rather than being refused.
+     *
+     * This threw, and the reasoning behind the throw was sound: "inventing a
+     * ceiling would put a number nobody agreed to at the root of a subtree".
+     * That is an argument against **inventing a number**, and it was read as an
+     * argument for refusing — the third option, carrying the absence down,
+     * invents nothing and was never considered.
+     *
+     * What the refusal cost is the two rules meeting. §4.3 makes a budget
+     * optional because "most sessions are a person working and a ceiling nobody
+     * chose would stop turns for a reason nobody set" — and then that same
+     * absence stopped the person decomposing their work at all. Every split and
+     * every workflow run required picking a token number first, which is a limit
+     * imposed by the mechanism rather than by anybody's intent.
+     *
+     * The tree does not become unbounded. `maxDepth` and `maxOpenDescendants`
+     * are untouched above, so an unbudgeted tree is bounded exactly as an
+     * unbudgeted session is — which is what almost every session here already
+     * is.
+     *
+     * Taken *before* the child exists, when there is something to take. §4.3's
+     * claim that "a tree cannot outspend what its root was granted" only holds
+     * if the reservation happens at spawn rather than when the child spends —
+     * by then the money is gone and the check is a report. A tree with no grant
+     * has nothing to outspend.
+     */
+    const reserved =
+      budget === undefined
+        ? { parent: undefined, child: undefined }
+        : reserveForChild(budget, input.tokenCeiling);
 
     const built = await buildBrief(parent.store, {
       scope: input.scope,
       outOfScope: input.outOfScope,
       contract: input.contract,
       acceptance: input.acceptance ?? [],
-      budget: reserved.child,
+      ...(reserved.child !== undefined ? { budget: reserved.child } : {}),
       ...(input.memoryRefs !== undefined ? { memoryRefs: input.memoryRefs } : {}),
       ...(input.verbatimTurns !== undefined ? { verbatimTurns: input.verbatimTurns } : {}),
     });
 
     return {
-      parentBudget: reserved.parent,
+      // Spread, not set to `undefined`. An explicit key holding undefined is a
+      // different object from one without the key, and the difference is only
+      // invisible across a transport that serialises to JSON — so an in-memory
+      // channel would see a shape a socket never carries, which is the one
+      // place a wire test stops being evidence.
+      ...(reserved.parent !== undefined ? { parentBudget: reserved.parent } : {}),
       create: {
         title: input.title,
         goal: input.scope,
@@ -3614,7 +3639,9 @@ export class SessionManager extends EventEmitter {
          * granting it had not seen.
          */
         policy: clonePolicy(parent.policy),
-        budget: reserved.child,
+        // Absent stays absent: an unbudgeted parent makes an unbudgeted child,
+        // which is the whole of the decision above.
+        ...(reserved.child !== undefined ? { budget: reserved.child } : {}),
         /*
          * Passed in rather than patched on afterwards.
          *
@@ -3652,7 +3679,8 @@ export class SessionManager extends EventEmitter {
   async recordChild(
     parentSessionId: SessionId,
     child: Session,
-    parentBudget: SessionBudget,
+    /** Absent when the parent is unbudgeted, which its children then are too. */
+    parentBudget: SessionBudget | undefined,
     contract: ResultContract,
     actor?: Actor,
   ): Promise<void> {
@@ -3684,9 +3712,14 @@ export class SessionManager extends EventEmitter {
      * believing nothing was reserved, so a tree could be made to outspend what
      * its root was granted by restarting the host between two spawns.
      */
-    const reserved = parentBudget.reservedForChildren - (parent.session.budget?.reservedForChildren ?? 0);
+    const reserved =
+      parentBudget === undefined
+        ? 0
+        : parentBudget.reservedForChildren - (parent.session.budget?.reservedForChildren ?? 0);
 
-    parent.session.budget = parentBudget;
+    // Absent stays absent. An unbudgeted parent has nothing to update and
+    // nothing to record, and writing a zero would be a ceiling nobody set.
+    if (parentBudget !== undefined) parent.session.budget = parentBudget;
     parent.session.children.push(ref);
     await parent.store.append(
       {
@@ -4030,7 +4063,11 @@ export class SessionManager extends EventEmitter {
     proposalId: string,
     decision: { approved: boolean; reason?: string },
     actor?: Actor,
-  ): Promise<{ create: CreateSessionInput; parentBudget: SessionBudget; contract: ResultContract } | null> {
+  ): Promise<{
+    create: CreateSessionInput;
+    parentBudget?: SessionBudget;
+    contract: ResultContract;
+  } | null> {
     const proposal = this.live(sessionId).pendingSplits.get(proposalId);
     if (proposal === undefined) throw new Error(`no pending split ${proposalId}`);
 
@@ -4377,12 +4414,15 @@ export class SessionManager extends EventEmitter {
       /*
        * The budget, restored (§4.3).
        *
-       * A session used to come back with none, and `prepareChild` refuses a
-       * parent with no budget — correctly, since inventing a ceiling would put a
-       * number nobody agreed to at the root of a subtree. The consequence was
-       * that **a restarted session could not split at all**, which is the whole
-       * of §4.3 stopping at a host restart. Found by a workflow run that resumed
-       * and could not spawn its next node.
+       * A session used to come back with none, and `prepareChild` then refused
+       * a parent with no budget, so **a restarted session could not split at
+       * all** — the whole of §4.3 stopping at a host restart. Found by a
+       * workflow run that resumed and could not spawn its next node.
+       *
+       * The refusal is gone; this restore is not, and it is load-bearing for a
+       * different reason now. A parent that has forgotten its ceiling reserves
+       * nothing for the children it spawns next, so a tree could be made to
+       * outspend its root's grant by restarting the host between two spawns.
        *
        * Absent stays absent, because unbudgeted is a real state and not a
        * degraded one: most sessions are a person working, and a ceiling nobody

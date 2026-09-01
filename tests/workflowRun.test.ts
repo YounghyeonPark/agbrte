@@ -148,6 +148,26 @@ describe('a run is an ordinary session tree', () => {
     // nothing half-made is left behind (§4.3: "a refused split leaves nothing").
     expect(titles(rootId)).toEqual(['a']);
   });
+
+  it('runs on a root with no ceiling, reserving nothing and refusing nothing', async () => {
+    /*
+     * The case that was impossible until §4.3 let the absence carry down, and
+     * the one almost every session here is: a person working, no budget, a
+     * workflow they want run. Before, `prepareChild` refused the first node and
+     * the run stopped at nothing having happened, so running a workflow at all
+     * meant first picking a token figure — a number chosen to satisfy the
+     * mechanism rather than because anybody had an opinion about it.
+     *
+     * Node ceilings stay in the document. They are what the author says each
+     * part is worth, and the same document run against a root that does hold a
+     * grant is checked and reserved in the usual way.
+     */
+    const session = await manager.createSession({ title: 'review and fix', goal: 'g' });
+    await manager.workflowRuns.start(session.sessionId, workflow([node('a'), node('b')]));
+
+    expect(titles(session.sessionId)).toEqual(['a', 'b']);
+    expect(manager.get(session.sessionId).budget).toBeUndefined();
+  });
 });
 
 describe('when a node fails', () => {

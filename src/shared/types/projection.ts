@@ -122,11 +122,12 @@ export interface SessionProjection {
    * What this session may spend, and what is already reserved (§4.3).
    *
    * Folded rather than remembered, and it had to become foldable: a budget lived
-   * only in memory, so a restarted session had none — and `prepareChild`
-   * correctly refuses a parent with no budget, which meant **a restarted session
-   * could not split**. The ceiling comes from `session.created` for a root and
-   * from the brief for a child; `reservedForChildren` is the sum of what each
-   * `session.spawned_child` took.
+   * only in memory, so a restarted session had none — which at the time meant
+   * **a restarted session could not split**, and now means its subtree comes
+   * back unbudgeted and can outspend what its root was actually granted. The
+   * ceiling comes from `session.created` for a root and from the brief for a
+   * child; `reservedForChildren` is the sum of what each `session.spawned_child`
+   * took.
    *
    * `spent` is folded as zero because that is what it is: nothing in the code
    * ever increments it. Real consumption is `usage` above, which the

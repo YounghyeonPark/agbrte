@@ -37,6 +37,13 @@ run, because that box has no model server.
 **Phase 7's acceptance sentence has run end to end**, with the agent local rather
 than remote and unable to see the picture.
 
+**A child on another machine has never been spawned by two real hosts.** The
+three-step that makes it possible — prepare on the parent's host, create on the
+target's, commit back on the parent's — is exercised over the session protocol,
+but through one host answering itself on an in-memory channel. What that cannot
+see is the pair disagreeing: two builds, two versions, and a field one of them
+does not send.
+
 **OCR is not built**, so the redaction sweep reports `scanned: false` rather than
 an empty match list.
 
