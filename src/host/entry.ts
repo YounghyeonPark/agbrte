@@ -39,6 +39,8 @@ import {
   OpenAiCompatibleProvider,
   OPENAI_COMPATIBLE_PROVIDER_ID,
 } from '@main/runtime/providers/openaiCompatible.js';
+import { AnthropicProvider } from '@main/runtime/providers/anthropic.js';
+import { ProviderRouter } from '@main/runtime/providers/router.js';
 import type { ModelCapabilityHint, ModelEndpoint, ModelProvider } from '@shared/types/index.js';
 
 /**
@@ -151,8 +153,22 @@ export async function buildHostRegistry(
    * follows it. Two instances would probe twice: once to draw a badge and again
    * on the first turn, which is two inference requests for one answer and, worse,
    * two answers that can disagree.
+   *
+   * Routed by `ModelEndpoint.providerId` since there are two adapters to choose
+   * between (§15 Phase 3). That field has been on the record since §3.8 and
+   * nothing read it, which is invisible while one adapter answers everything and
+   * is the first thing a second one runs into. `openai-compatible` stays the
+   * fallback, so an endpoint naming a provider nobody registered behaves exactly
+   * as every endpoint behaved before there was a router here.
+   *
+   * Still one instance, which is what the paragraph above requires: the router
+   * holds the adapters rather than making them, so each keeps its own cache and
+   * the picker's answer is the one the run uses.
    */
-  provider: ModelProvider = new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) }),
+  provider: ModelProvider = new ProviderRouter(
+    [new AnthropicProvider({ keyFor: (id) => endpoints.keyFor(id) })],
+    new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) }),
+  ),
   /**
    * Filled with one line per CLI that was looked for and not found.
    *
@@ -297,7 +313,26 @@ const endpoints = await loadEndpoints();
  * and the local one is unreachable whenever the laptop is elsewhere. One
  * endpoint being down is not a reason to have no answer about the others.
  */
-const provider = new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) });
+/*
+ * Routed, for the same reason the registry's is (§15 Phase 3).
+ *
+ * This is the listing and describing path, and it is the one that would have
+ * gone wrong most visibly: an endpoint declaring `providerId: 'anthropic'` asked
+ * for its models through the `openai-compatible` adapter gets a 404 at a URL
+ * that does not exist on that API, and the picker reports the endpoint as
+ * unreachable. Nothing about that message would mention the provider.
+ *
+ * A second router instance rather than the registry's, which is the arrangement
+ * that was already here — two `OpenAiCompatibleProvider`s existed before this
+ * change for the same two paths. The routers hold adapters rather than sharing
+ * them, so this does not make the probe-cache split worse than it was; it is
+ * noted because the comment on `buildHostRegistry`'s parameter argues for one
+ * instance, and this file has quietly had two the whole time.
+ */
+const provider = new ProviderRouter(
+  [new AnthropicProvider({ keyFor: (id) => endpoints.keyFor(id) })],
+  new OpenAiCompatibleProvider({ keyFor: (id) => endpoints.keyFor(id) }),
+);
 
 /**
  * How many models per endpoint are asked to describe themselves.

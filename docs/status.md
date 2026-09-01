@@ -9,7 +9,7 @@ only partly true. This page is the summary.
 | :-- | :-- | :-- |
 | ✅ | **1 · Skeleton** · **2 · Persistence hardening** · **4 · Multi-session + dashboard** · **6 · Multi-agent and session hierarchy** | done |
 | 🟡 | **5 · Remote execution and device independence** · **7 · Multimodal** | acceptance criteria met, with named substitutions |
-| 🟡 | **3 · Three-shape proof** | half validated |
+| ✅ | **3 · Three-shape proof** | done — four runtimes, and two provider wire formats |
 | 🔨 | **8 · Breadth + polish** | started |
 | ✅ | **9 · Workflows** | done — authored, validated, drawn, edited and run, and a run survives a host restart |
 
@@ -25,10 +25,13 @@ agent CLI you already have installed.
 
 ## What is not proven, named rather than glossed
 
-**The model-provider axis has exactly one implementation** (`openai-compatible`),
-so it describes one wire format rather than abstracting several; the runtime axis
-has four. An abstraction validated against one implementation is not validated,
-and this is the gap that says so.
+**The second model provider has never made a real request.** The `anthropic`
+adapter exists to validate the provider boundary — one implementation is not an
+abstraction — and every mapping it makes is tested against a stubbed transport:
+the tool-result coalescing, the thinking budget, the cache-token split, the stop
+reasons. None of that is the same as one live call, which needs a credential this
+machine does not have. What the boundary being sound does *not* tell you is
+whether the request is accepted.
 
 **The remote-detached mechanism is verified against a real server but its model
 half is not.** "An agent on a GPU box using that box's own model server" has never
