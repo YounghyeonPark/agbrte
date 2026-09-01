@@ -14,7 +14,13 @@ import { statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:net';
-import { connect, hostSocketPath, listen, SocketChannel } from '@shared/host/socketChannel.js';
+import {
+  connect,
+  hostSocketPath,
+  listen,
+  SocketChannel,
+  tooLongForSocket,
+} from '@shared/host/socketChannel.js';
 
 interface Ping {
   n: number;
@@ -228,6 +234,41 @@ describe('host socket paths', () => {
     } else {
       expect(path.endsWith('.sock')).toBe(true);
     }
+  });
+
+  it('names a path too long to bind, rather than letting bind truncate it', () => {
+    /*
+     * `sun_path` is a fixed array — 104 bytes on macOS, 108 on Linux — and over
+     * the limit `bind` does not fail. It **truncates**: the socket is created
+     * under a shortened name, the caller holds the name it asked for, and the
+     * first thing to touch that name reports the problem. That was the `chmod`
+     * that locks the socket down, coming back `ENOENT` on a socket that had
+     * apparently just been created — a length bug wearing a permissions error.
+     *
+     * Found on a macOS runner, where `TMPDIR` alone is a 48-byte
+     * `/var/folders/...`; the machine host's own socket fits there with six
+     * bytes to spare and nothing said so. Asserted as arithmetic rather than by
+     * binding, because the platform where it bites is not the platform this
+     * usually runs on.
+     */
+    expect(tooLongForSocket(join(tmpdir(), 'agbrte-x.sock'))).toBeNull();
+
+    const overlong = `/var/folders/df/djsxfhc17x95674wsm_g8s980000gn/T/agbrte-${'x'.repeat(60)}.sock`;
+    const why = tooLongForSocket(overlong);
+    expect(why).toContain('truncated');
+    // The number, so somebody reading the failure can do the subtraction the
+    // message is asking them to do.
+    expect(why).toContain(String(Buffer.byteLength(overlong)));
+  });
+
+  it('refuses to listen on one, rather than binding a name nothing else computes', async () => {
+    if (process.platform === 'win32') return; // a pipe name is a namespace entry, not a path
+
+    // The wiring, not the arithmetic above: this is the call that used to
+    // succeed and leave the caller holding a name with no socket at it. Only
+    // reachable off Windows, which is where CI covers it.
+    const overlong = join(tmpdir(), `agbrte-${'x'.repeat(200)}.sock`);
+    await expect(listen(overlong, () => undefined)).rejects.toThrow(/truncated/);
   });
 });
 

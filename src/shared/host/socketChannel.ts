@@ -306,11 +306,58 @@ function answers(target: ChannelTarget): Promise<boolean> {
   });
 }
 
+/**
+ * How many bytes a unix socket path may be, including its terminator.
+ *
+ * `sockaddr_un.sun_path` is a fixed array and the size differs: 104 on the BSDs
+ * and macOS, 108 on Linux. The real number is used rather than the smaller one
+ * everywhere, because refusing a 106-byte path that Linux would have bound is a
+ * regression invented to keep one constant.
+ */
+const SUN_PATH_MAX = process.platform === 'darwin' ? 104 : 108;
+
+/**
+ * Why this path cannot be a unix socket, or `null`.
+ *
+ * **Over the limit, `bind` does not fail — it truncates.** The socket is created
+ * at a shortened path, the caller holds the name it asked for, and the first
+ * thing to touch that name is what reports the problem. Here that is the `chmod`
+ * below, which came back `ENOENT` and read as a permissions failure on a socket
+ * that had, as far as anyone could see, just been created successfully. Found on
+ * a macOS CI runner, whose `TMPDIR` is a 48-byte `/var/folders/...` path — the
+ * machine host's own socket fits there with six bytes to spare, and nothing said
+ * so or would have noticed when it stopped being true.
+ *
+ * Exported for the test, because the interesting case cannot be reached on
+ * Windows and this is arithmetic rather than a syscall.
+ */
+export function tooLongForSocket(path: string): string | null {
+  const bytes = Buffer.byteLength(path);
+  if (bytes < SUN_PATH_MAX) return null;
+  return (
+    `socket path is ${bytes} bytes and this platform allows ${SUN_PATH_MAX - 1}: ${path}. ` +
+    'A longer path is silently truncated by bind rather than refused, so the socket ' +
+    'would be created under a name nothing else computes. Shorten TMPDIR or the id.'
+  );
+}
+
 function listenOnce<Out, In>(
   path: string,
   onConnection: (channel: SocketChannel<Out, In>) => void,
 ): Promise<Server> {
   return new Promise((resolve, reject) => {
+    // Before binding, because after binding the evidence is gone: the truncated
+    // path exists, the one we hold does not, and every later error names the
+    // wrong thing. Windows pipes are a namespace rather than a filesystem entry
+    // and have no such limit.
+    if (process.platform !== 'win32') {
+      const tooLong = tooLongForSocket(path);
+      if (tooLong !== null) {
+        reject(new Error(tooLong));
+        return;
+      }
+    }
+
     const server = createServer((socket) => onConnection(new SocketChannel<Out, In>(socket)));
     server.on('error', reject);
     server.listen(path, () => {
@@ -391,9 +438,15 @@ export function connect<Out, In>(
  *
  * Neither platform puts the socket inside a workspace. Windows named pipes live
  * in a global namespace, not the filesystem; and a unix socket path has a hard
- * length limit around 104 bytes, which a deep workspace path plus a filename can
- * exceed — an unusual failure to debug, and easy to avoid. `~/.agbrte` would
- * satisfy the first and not reliably the second, so `TMPDIR` keeps it.
+ * length limit — 104 bytes on macOS, 108 on Linux — which a deep workspace path
+ * plus a filename can exceed. `~/.agbrte` would satisfy the first and not
+ * reliably the second, so `TMPDIR` keeps it.
+ *
+ * "Easy to avoid" is what this used to say, and it was avoided by arithmetic
+ * nobody had done. A macOS `TMPDIR` is a 48-byte `/var/folders/...`, so the
+ * socket a real machine host names there fits with six bytes to spare — and over
+ * the limit `bind` truncates rather than refusing, which makes the failure
+ * arrive later and somewhere else. `tooLongForSocket` now says it at the bind.
  */
 export function hostSocketPath(machineId: string): string {
   if (process.platform === 'win32') {

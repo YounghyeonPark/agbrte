@@ -91,7 +91,21 @@ async function startHost(tag: string): Promise<Host> {
       runtimes: ['echo'],
     },
   });
-  const socket = hostSocketPath(`xhost-${tag}-${randomUUID()}`);
+  /*
+   * Short on purpose, and the first version of this file was not.
+   *
+   * A unix socket path has to fit in `sun_path` — 104 bytes on macOS — and a CI
+   * runner's `TMPDIR` there is a 48-byte `/var/folders/...`. A full uuid put
+   * this five bytes over, where `bind` truncates instead of refusing: the socket
+   * was created under a shortened name, and the `chmod` that followed reported
+   * `ENOENT` on the name we held, which reads as a permissions failure. Green on
+   * Windows and Linux, red only on macOS, and only in CI.
+   *
+   * `socketChannel` now refuses an over-long path and says why. This stays short
+   * anyway, because a test that depends on a guard to be correct is a test that
+   * stops working the day the guard moves.
+   */
+  const socket = hostSocketPath(`x${tag}${randomUUID().slice(0, 8)}`);
   servers.push(
     await listen<SessionMessage, SessionCommand>(socket, (channel) => server.accept(channel)),
   );
