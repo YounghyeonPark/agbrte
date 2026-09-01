@@ -6,7 +6,12 @@
  * traps already handled.
  */
 
-import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
+import {
+  _electron as electron,
+  test as playwrightTest,
+  type ElectronApplication,
+  type Page,
+} from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { mkdir, rm } from 'node:fs/promises';
 import { createServer as netCreateServer } from 'node:net';
@@ -96,15 +101,108 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
     cwd: ROOT,
   });
 
-  // Recorded before the first window, because the failure this guards against
-  // is an app that came up and then had to be abandoned — and a launch that
-  // never reaches `firstWindow` has left a process behind exactly the same way.
-  await recordProcess(app.process().pid);
+  /*
+   * Recorded before the first window, because the failure this guards against
+   * is an app that came up and then had to be abandoned — and a launch that
+   * never reaches `firstWindow` has left a process behind exactly the same way.
+   *
+   * With the test that started it. Exactly one app survives a full run, which is
+   * what rules out a race, and the ledger's launch order has been the only way
+   * to say which spec it belonged to — a manual count of lines that nobody
+   * performs. `test.info()` throws outside a test, and this harness is also
+   * called from places that are not one, so the label is best-effort and its
+   * absence is not worth failing a launch over.
+   */
+  let who = 'an app (no test context)';
+  try {
+    who = playwrightTest.info().titlePath.join(' › ');
+  } catch {
+    // Not in a test. The pid is still recorded, which is what actually matters.
+  }
+  await recordProcess(app.process().pid, who);
 
   const window = await app.firstWindow();
+
+  /*
+   * What the renderer said, kept in case it never renders.
+   *
+   * Attached before the wait rather than after it, which is the whole point: a
+   * page error thrown during the first render has already happened by the time
+   * a selector times out, and a listener added afterwards sees nothing.
+   *
+   * This exists because of a flake that reports the wrong fact. Roughly one run
+   * in seventy fails here with "waiting for locator('[data-testid=app]')" and
+   * passes on the rerun, and that message says only that a selector is absent.
+   * `App` has no early return — it renders that element unconditionally — so the
+   * element being absent means the component never rendered at all, which is a
+   * bundle that did not load or an exception during render, not a slow startup.
+   * Thirty seconds of waiting is the wrong instrument for either.
+   *
+   * **Not the hidden window**, which the wording invites: the failure says "to
+   * be *visible*", and `createWindow` makes the window `show: false` and shows
+   * it on `ready-to-show`, so a `ready-to-show` that never fired would fit the
+   * sentence exactly. It was measured instead of reasoned about — hiding the
+   * window from the main process leaves the element attached, laid out and
+   * still visible to Playwright at its full 1164×781. A hidden Electron window
+   * keeps compositing. That hypothesis is closed; this one is not, which is why
+   * what follows collects evidence rather than working around anything.
+   */
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  window.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  window.on('pageerror', (err) => pageErrors.push(err.stack ?? err.message));
+
   // `data-testid`, not a styling class: the previous `.app` selector broke on a
   // pure restyle and reported it as five failing tests.
-  await window.waitForSelector('[data-testid=app]');
+  try {
+    await window.waitForSelector('[data-testid=app]');
+  } catch (err) {
+    /*
+     * Everything that distinguishes the possible causes, in one message.
+     *
+     * Reading the page can itself fail — a window that has closed, a renderer
+     * that has crashed — and that answer is as useful as any of the others, so
+     * it is reported rather than allowed to replace the original failure.
+     */
+    let where = '(the page could not be read)';
+    try {
+      where = await window.evaluate(() => {
+        // Through `globalThis`, the way `attach.spec.ts` reaches into the page:
+        // this project compiles without the DOM lib, and pulling it in for one
+        // diagnostic would change how every other file typechecks.
+        const g = globalThis as unknown as {
+          location: { href: string };
+          document: {
+            readyState: string;
+            title: string;
+            body: { innerHTML: string };
+            getElementById(id: string): { childElementCount: number } | null;
+            querySelectorAll(sel: string): ArrayLike<{ getAttribute(n: string): string | null }>;
+          };
+        };
+        const root = g.document.getElementById('root');
+        return JSON.stringify({
+          url: g.location.href,
+          readyState: g.document.readyState,
+          title: g.document.title,
+          rootChildren: root === null ? 'no #root element' : root.childElementCount,
+          bodyHtml: g.document.body.innerHTML.slice(0, 400),
+          scripts: Array.from(g.document.querySelectorAll('script'), (s) => s.getAttribute('src')),
+        });
+      });
+    } catch (readErr) {
+      where = `(the page could not be read: ${readErr instanceof Error ? readErr.message : String(readErr)})`;
+    }
+    throw new Error(
+      `the app window never rendered [data-testid=app].\n` +
+        `page: ${where}\n` +
+        `pageerror: ${pageErrors.length === 0 ? 'none' : pageErrors.join('\n---\n')}\n` +
+        `console.error: ${consoleErrors.length === 0 ? 'none' : consoleErrors.join('\n')}\n` +
+        `original: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   return {
     app,

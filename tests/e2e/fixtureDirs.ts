@@ -122,10 +122,13 @@ function processLedger(ledger: string): string {
  * own work may also be running under, and a teardown that kills by name is one
  * that closes somebody's editor.
  */
-export async function recordProcess(pid: number | undefined): Promise<void> {
+export async function recordProcess(pid: number | undefined, who?: string): Promise<void> {
   const ledger = process.env[LEDGER_ENV];
   if (ledger === undefined || ledger === '' || pid === undefined) return;
-  await appendFile(processLedger(ledger), `${pid}\n`, 'utf8').catch(() => undefined);
+  // Tab-separated, and the label may be absent: a line is still a pid to
+  // anything that only wants pids, which is what this file was before.
+  const line = who === undefined || who === '' ? `${pid}` : `${pid}\t${who.replace(/\s+/g, ' ')}`;
+  await appendFile(processLedger(ledger), `${line}\n`, 'utf8').catch(() => undefined);
 }
 
 /**
@@ -145,33 +148,55 @@ export async function recordProcess(pid: number | undefined): Promise<void> {
  * enough to accept, and the alternative is matching on a process name, which is
  * worse in a way that cannot be bounded.
  */
-export async function reapRecorded(ledger: string): Promise<number> {
-  const pids = [...(await recordedPids(ledger)), ...(await hostPids(ledger))];
+export async function reapRecorded(ledger: string): Promise<{ killed: number; who: string[] }> {
+  const apps = await recordedApps(ledger);
+  const entries = [
+    ...apps,
+    ...(await hostPids(ledger)).map((pid) => ({ pid, who: 'a session host' })),
+  ];
   let killed = 0;
-  for (const pid of pids) {
+  const who: string[] = [];
+  for (const entry of entries) {
     try {
-      process.kill(pid, 0);
+      process.kill(entry.pid, 0);
     } catch {
       continue; // Already gone, which is what a green run mostly looks like.
     }
     try {
-      process.kill(pid, 'SIGKILL');
+      process.kill(entry.pid, 'SIGKILL');
       killed += 1;
+      who.push(entry.who);
     } catch {
       // Not ours to kill, or it exited between the two calls. Either way the
       // teardown has nothing useful to say and must not fail the run.
     }
   }
-  return killed;
+  return { killed, who };
 }
 
-/** The apps `launch` started. */
-async function recordedPids(ledger: string): Promise<number[]> {
+/**
+ * The apps `launch` started, each with the test that started it.
+ *
+ * The label is why this stopped being a list of numbers. Exactly one app
+ * survives a full run — reliably one, which is what rules out a race — and the
+ * note above says the ledger is in launch order so the survivor's *position*
+ * names the spec. That is true and it is a manual step nobody performs at the
+ * moment the information is free: the teardown can simply say which test, and
+ * then the next green run that leaks reports its own suspect instead of leaving
+ * somebody to count lines.
+ *
+ * Old lines with no label still parse, because a ledger written by a half-built
+ * checkout is not worth an exception.
+ */
+async function recordedApps(ledger: string): Promise<Array<{ pid: number; who: string }>> {
   try {
     return (await readFile(processLedger(ledger), 'utf8'))
       .split('\n')
-      .map((l) => Number(l.trim()))
-      .filter((n) => Number.isInteger(n) && n > 0);
+      .map((line) => {
+        const [rawPid, label] = line.split('\t');
+        return { pid: Number((rawPid ?? '').trim()), who: label?.trim() ?? 'an app (unlabelled)' };
+      })
+      .filter((entry) => Number.isInteger(entry.pid) && entry.pid > 0);
   } catch {
     return [];
   }

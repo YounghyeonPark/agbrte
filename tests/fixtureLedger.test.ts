@@ -83,7 +83,7 @@ describe('apps a run left running', () => {
     await recordProcess(child.pid);
 
     expect(alive(child.pid as number)).toBe(true);
-    expect(await reapRecorded(path)).toBe(1);
+    expect((await reapRecorded(path)).killed).toBe(1);
     // `kill` is asynchronous on both platforms, so this waits rather than
     // asserting on the instant after.
     for (let i = 0; i < 50 && alive(child.pid as number); i += 1) {
@@ -103,7 +103,7 @@ describe('apps a run left running', () => {
 
     // The ordinary path. A report of "killed 3 apps" on every green run would be
     // noise that teaches people to stop reading the line.
-    expect(await reapRecorded(path)).toBe(0);
+    expect((await reapRecorded(path)).killed).toBe(0);
   });
 
   it('touches nothing that was not recorded', async () => {
@@ -122,7 +122,7 @@ describe('apps a run left running', () => {
 
   it('is silent about a run that recorded nothing', async () => {
     const path = await ledger();
-    expect(await reapRecorded(path)).toBe(0);
+    expect((await reapRecorded(path)).killed).toBe(0);
   });
 
   it('ignores a line that is not a pid rather than throwing', async () => {
@@ -131,7 +131,38 @@ describe('apps a run left running', () => {
     // says about directories held open on Windows.
     const path = await ledger();
     await writeFile(join(path, '..', 'processes.txt'), 'not-a-number\n\n-1\n0\n', 'utf8');
-    expect(await reapRecorded(path)).toBe(0);
+    expect((await reapRecorded(path)).killed).toBe(0);
+  });
+
+  it('names the test that started a survivor, rather than its position in a list', async () => {
+    const path = await ledger();
+    const child = sleeper();
+    await recordProcess(child.pid, 'app.spec.ts › the shell › opens on the chosen workspace');
+
+    /*
+     * The reason the ledger stopped being a list of numbers.
+     *
+     * Exactly one app survives a full run — reliably one, which is what ruled
+     * out a race — and the note in `fixtureDirs.ts` said the launch order meant
+     * the survivor's *position* named the spec. True, and a manual count that
+     * nobody was going to do at 5am; the label costs nothing and the teardown
+     * can print it.
+     */
+    const reaped = await reapRecorded(path);
+    expect(reaped.killed).toBe(1);
+    expect(reaped.who).toEqual(['app.spec.ts › the shell › opens on the chosen workspace']);
+  });
+
+  it('still reads a ledger written without labels', async () => {
+    // A half-built checkout, or a ledger from before the label existed. A pid is
+    // the part that matters and it is still there.
+    const path = await ledger();
+    const child = sleeper();
+    await writeFile(join(path, '..', 'processes.txt'), `${child.pid}\n`, 'utf8');
+
+    const reaped = await reapRecorded(path);
+    expect(reaped.killed).toBe(1);
+    expect(reaped.who[0]).toContain('unlabelled');
   });
 });
 
@@ -160,7 +191,7 @@ describe('session hosts, which are what actually survives', () => {
     const child = sleeper();
     await recordFixture(await workspaceHolding(child.pid as number));
 
-    expect(await reapRecorded(path)).toBe(1);
+    expect((await reapRecorded(path)).killed).toBe(1);
     for (let i = 0; i < 50 && alive(child.pid as number); i += 1) {
       await new Promise((r) => setTimeout(r, 20));
     }
@@ -173,7 +204,7 @@ describe('session hosts, which are what actually survives', () => {
     const dir = await mkdtemp(join(tmpdir(), 'agbrte-ledgerws-'));
     dirs.push(dir);
     await recordFixture(dir);
-    expect(await reapRecorded(path)).toBe(0);
+    expect((await reapRecorded(path)).killed).toBe(0);
   });
 
   it('survives a half-written record without throwing', async () => {
@@ -185,7 +216,7 @@ describe('session hosts, which are what actually survives', () => {
     await mkdir(join(dir, '.agbrte'), { recursive: true });
     await writeFile(join(dir, '.agbrte', 'host.json'), '{"pid":', 'utf8');
     await recordFixture(dir);
-    expect(await reapRecorded(path)).toBe(0);
+    expect((await reapRecorded(path)).killed).toBe(0);
   });
 
   it('does not read a workspace nobody recorded', async () => {
@@ -198,7 +229,7 @@ describe('session hosts, which are what actually survives', () => {
     const child = sleeper();
     await workspaceHolding(child.pid as number); // made, deliberately not recorded
 
-    expect(await reapRecorded(path)).toBe(0);
+    expect((await reapRecorded(path)).killed).toBe(0);
     expect(alive(child.pid as number)).toBe(true);
   });
 });

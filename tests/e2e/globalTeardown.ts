@@ -89,14 +89,21 @@ export default async function globalTeardown(): Promise<void> {
    * a request to keep *files* and nobody has ever wanted a stray Electron.
    */
   const reaped = await reapRecorded(ledger);
-  if (reaped > 0) {
-    // States the fact and not a cause. An earlier version of this line said
-    // "a test that times out never runs its own cleanup", which was a guess and
-    // was wrong twice over: a single timing-out spec does not leak, and the
-    // first run this caught was green.
+  if (reaped.killed > 0) {
+    /*
+     * States the fact and not a cause. An earlier version of this line said "a
+     * test that times out never runs its own cleanup", which was a guess and was
+     * wrong twice over: a single timing-out spec does not leak, and the first
+     * run this caught was green.
+     *
+     * What it does now say is *which test* started each survivor, because that
+     * was the one thing the note in `fixtureDirs.ts` said to look at next and
+     * the only way to get it was to count lines in a ledger by hand.
+     */
     process.stdout.write(
-      `\n  killed ${reaped} app${reaped === 1 ? '' : 's'} the run left running` +
-        ` — see fixtureDirs.ts for what is and is not known about why\n`,
+      `\n  killed ${reaped.killed} process${reaped.killed === 1 ? '' : 'es'} the run left running` +
+        ` — see fixtureDirs.ts for what is and is not known about why\n` +
+        reaped.who.map((w) => `    · ${w}\n`).join(''),
     );
   }
 
