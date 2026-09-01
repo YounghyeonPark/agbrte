@@ -82,6 +82,55 @@ function processLedger(ledger: string): string {
 }
 
 /**
+ * Pids that were **watched out of existence** by the launch that started them.
+ *
+ * Separate from the ledger above because it answers a different question. That
+ * one asks "did the suite start this"; this one asks "did the suite see it go",
+ * and the gap between the two is where a pid the OS has since handed to somebody
+ * else lives.
+ */
+function exitedLedger(ledger: string): string {
+  return join(ledger, '..', 'exited.txt');
+}
+
+/**
+ * Record that a pid was observed to exit, so nothing kills it later.
+ *
+ * `reapRecorded`'s stated hazard, made real. Its comment allows that "a pid that
+ * has been reused by an unrelated process is the one real hazard here, and the
+ * window for it is the minutes between a test aborting and the teardown; small
+ * enough to accept" — and the window turns out not to be the interesting part.
+ * A full run starts hundreds of short-lived processes on a machine already
+ * running the developer's own, and a pid freed early is available for the rest
+ * of the run.
+ *
+ * The evidence is what forced this. Every app the suite launches is now watched
+ * for two seconds after `close()` and reports itself if it is still alive; three
+ * runs reaped one, three and two "survivors" and **not one of them reported**.
+ * The apps had gone. What the teardown found alive at those pids was something
+ * else, and SIGKILLed it.
+ */
+export async function recordExit(pid: number | undefined): Promise<void> {
+  const ledger = process.env[LEDGER_ENV];
+  if (ledger === undefined || ledger === '' || pid === undefined) return;
+  await appendFile(exitedLedger(ledger), `${pid}\n`, 'utf8').catch(() => undefined);
+}
+
+async function exitedPids(ledger: string): Promise<Set<number>> {
+  try {
+    const text = await readFile(exitedLedger(ledger), 'utf8');
+    return new Set(
+      text
+        .split('\n')
+        .map((l) => Number(l.trim()))
+        .filter((n) => Number.isInteger(n) && n > 0),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+/**
  * Remember an app the suite started, so the teardown can make sure it is gone.
  *
  * `launch` closes its own app, Playwright closes any it forgot, and between them
@@ -99,12 +148,26 @@ function processLedger(ledger: string): string {
  * **Two things survive a run, and for most of a day only one of them was
  * suspected.** The corrections are kept because each was believed on evidence.
  *
- * *Apps.* Two green full runs each left one behind — not a race, which would
- * sometimes leave none. Why is still unknown, and two guesses are ruled out: a
- * spec written to time out with an app open does not leak, Playwright closes it;
- * and the runs it was caught on were green, so it is not a worker torn down
- * between the live-model block's retries. The ledger is in launch order, so the
- * survivor's position names the spec, which is where to look next.
+ * *Apps.* **They were not leaking, and this paragraph was wrong for a week.** It
+ * used to reason from two green runs that each left one behind: "not a race,
+ * which would sometimes leave none". Two samples that agreed. Labelling the
+ * ledger with the test that started each app, and then watching every app for
+ * two seconds after its own `close()`, took three runs to overturn all of it —
+ * the count varies (one, three, two), the specs differ every run and even differ
+ * *within* a file, no spec leaks when run alone, and **not one of the reported
+ * survivors ever failed to exit**.
+ *
+ * So every app closed exactly as it should. What the teardown found alive at
+ * those pids was something else that the OS had handed the number to, and it
+ * SIGKILLed it. A run starts hundreds of short-lived processes beside whatever
+ * the developer is doing, so a pid freed in the first minute is available for
+ * the remaining six — the window is not "between a test aborting and the
+ * teardown", it is the whole run. `recordExit` closes it.
+ *
+ * Two older guesses stay ruled out and were never the point: a spec written to
+ * time out with an app open does not leak, Playwright closes it; and the runs it
+ * was caught on were green, so it was not a worker torn down between the
+ * live-model block's retries.
  *
  * *Hosts, which were the ones actually costing anything.* Every `electron.exe`
  * counted by hand was very likely one of these rather than an app: a host is
@@ -148,15 +211,40 @@ export async function recordProcess(pid: number | undefined, who?: string): Prom
  * enough to accept, and the alternative is matching on a process name, which is
  * worse in a way that cannot be bounded.
  */
-export async function reapRecorded(ledger: string): Promise<{ killed: number; who: string[] }> {
+export async function reapRecorded(
+  ledger: string,
+): Promise<{ killed: number; who: string[]; reused: number }> {
   const apps = await recordedApps(ledger);
   const entries = [
     ...apps,
     ...(await hostPids(ledger)).map((pid) => ({ pid, who: 'a session host' })),
   ];
+  const exited = await exitedPids(ledger);
   let killed = 0;
+  let reused = 0;
   const who: string[] = [];
   for (const entry of entries) {
+    /*
+     * A pid the launch watched exit is not ours any more, whatever is at it now.
+     *
+     * This is the hazard the comment above used to accept, and it was not
+     * theoretical: three consecutive runs reported one, three and two surviving
+     * apps while every one of those apps had been watched out of existence by
+     * its own `close()`. The teardown was finding the pids reassigned and
+     * SIGKILLing whatever now held them — which on a developer's machine is
+     * their own work, and is the exact outcome "never by process name" two
+     * paragraphs up exists to prevent. Matching a recycled number is no better
+     * than matching a name.
+     */
+    if (exited.has(entry.pid)) {
+      try {
+        process.kill(entry.pid, 0);
+        reused += 1; // Something is there, and it is not what we started.
+      } catch {
+        // Gone, as expected. The ordinary case, and nothing to say about it.
+      }
+      continue;
+    }
     try {
       process.kill(entry.pid, 0);
     } catch {
@@ -171,7 +259,7 @@ export async function reapRecorded(ledger: string): Promise<{ killed: number; wh
       // teardown has nothing useful to say and must not fail the run.
     }
   }
-  return { killed, who };
+  return { killed, who, reused };
 }
 
 /**

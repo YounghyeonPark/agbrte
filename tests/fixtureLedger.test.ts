@@ -30,6 +30,7 @@ import { join } from 'node:path';
 import {
   LEDGER_ENV,
   openLedger,
+  recordExit,
   recordFixture,
   recordProcess,
   reapRecorded,
@@ -151,6 +152,45 @@ describe('apps a run left running', () => {
     const reaped = await reapRecorded(path);
     expect(reaped.killed).toBe(1);
     expect(reaped.who).toEqual(['app.spec.ts › the shell › opens on the chosen workspace']);
+  });
+
+  it('leaves alone a pid whose app was watched out of existence', async () => {
+    const path = await ledger();
+    const stranger = sleeper();
+
+    /*
+     * The bug this file spent a week describing as an app leak.
+     *
+     * The suite recorded a pid, the app at it exited, the OS handed the number
+     * to something else, and the teardown found it alive and SIGKILLed it —
+     * then printed it as "an app the run left running", which is how two green
+     * runs produced a paragraph of confident reasoning about a race.
+     *
+     * Standing in for that here: the same number is recorded as an app and also
+     * recorded as having been seen to exit. Whatever holds it now is not ours,
+     * and matching a recycled number is no better than matching a process name,
+     * which this file already refuses to do.
+     */
+    await recordProcess(stranger.pid, 'a test whose app exited long ago');
+    await recordExit(stranger.pid);
+
+    const reaped = await reapRecorded(path);
+    expect(reaped.killed).toBe(0);
+    expect(reaped.reused).toBe(1);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(alive(stranger.pid as number)).toBe(true);
+  });
+
+  it('still kills one that was never seen to exit', async () => {
+    // The other half, so the guard above cannot be satisfied by never killing
+    // anything: an app the suite started and never watched go is still reaped.
+    const path = await ledger();
+    const child = sleeper();
+    await recordProcess(child.pid, 'a test that really did leak');
+
+    const reaped = await reapRecorded(path);
+    expect(reaped.killed).toBe(1);
+    expect(reaped.reused).toBe(0);
   });
 
   it('still reads a ledger written without labels', async () => {

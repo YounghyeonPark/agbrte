@@ -106,6 +106,22 @@ export default async function globalTeardown(): Promise<void> {
         reaped.who.map((w) => `    · ${w}\n`).join(''),
     );
   }
+  if (reaped.reused > 0) {
+    /*
+     * Said out loud rather than counted silently, because it is the thing that
+     * was being reported as a leak. Each of these is a pid the suite watched an
+     * app exit from, which something else now holds — and every one of them used
+     * to be SIGKILLed and printed above as an app the run left running.
+     *
+     * Worth a line even now that nothing is killed: a number climbing here means
+     * the machine is recycling pids fast, which is the condition that made the
+     * old behaviour dangerous.
+     */
+    process.stdout.write(
+      `\n  ${reaped.reused} pid${reaped.reused === 1 ? '' : 's'} of exited apps had been reused` +
+        ` by something else and ${reaped.reused === 1 ? 'was' : 'were'} left alone\n`,
+    );
+  }
 
   if (process.env['AGBRTE_KEEP_FIXTURES'] === '1') {
     process.stdout.write(`\n  fixtures kept, as asked — the list is ${ledger}\n`);

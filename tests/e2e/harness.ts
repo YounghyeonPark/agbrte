@@ -18,7 +18,7 @@ import { createServer as netCreateServer } from 'node:net';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { delimiter, join, resolve } from 'node:path';
-import { recordFixture, recordProcess, tempFixture } from './fixtureDirs.js';
+import { recordExit, recordFixture, recordProcess, tempFixture } from './fixtureDirs.js';
 
 export const ROOT = resolve(import.meta.dirname, '../..');
 
@@ -209,8 +209,62 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
     window,
     workspaces,
     workspace: workspaces[0]!,
+    /*
+     * Close, and say so when the process does not actually go.
+     *
+     * The teardown reaps survivors and now names the test that started each
+     * one, which showed the thing worth knowing next: the set differs every run
+     * — one, then three, then two, different specs each time and different tests
+     * within one file — and `attach.spec.ts` alone leaks nothing. So it is
+     * load-dependent, and a spec name is a symptom.
+     *
+     * That leaves two possibilities with different fixes, and one measurement
+     * between them. Either `close()` returns while the process is still alive,
+     * which means Playwright believes it is done and the app is refusing to
+     * exit; or `close()` itself is slow or throwing under load, which means the
+     * teardown is racing it. The duration and a liveness check after the fact
+     * separate them, at the moment it happens and with the test named.
+     *
+     * Reported, never fixed here. Killing the process would make the suite tidy
+     * and delete the evidence, and the reaper already keeps the machine clean.
+     */
     close: async () => {
-      await app.close();
+      const pid = app.process().pid;
+      const startedAt = Date.now();
+      let failure: string | null = null;
+      try {
+        await app.close();
+      } catch (err) {
+        failure = err instanceof Error ? err.message : String(err);
+      }
+      const closeMs = Date.now() - startedAt;
+
+      if (pid !== undefined) {
+        // A short grace period: exit is not instant on any platform, and a
+        // report that fires on every ordinary close teaches people to stop
+        // reading it.
+        let alive = true;
+        for (let i = 0; i < 20 && alive; i += 1) {
+          try {
+            process.kill(pid, 0);
+            await new Promise((r) => setTimeout(r, 100));
+          } catch {
+            alive = false;
+          }
+        }
+        if (alive) {
+          process.stdout.write(
+            `\n  [survivor] ${who}\n` +
+              `    close() ${failure === null ? 'returned' : `threw (${failure})`} after ${closeMs}ms; ` +
+              `pid ${pid} was still alive 2s later\n`,
+          );
+        } else {
+          // Watched out of existence, so the teardown must not kill whatever the
+          // OS hands this number to next. See `recordExit`.
+          await recordExit(pid);
+        }
+      }
+
       await rm(userDataDir, { recursive: true, force: true });
     },
   };
