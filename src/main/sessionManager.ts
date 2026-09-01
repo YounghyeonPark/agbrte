@@ -887,6 +887,9 @@ export class SessionManager extends EventEmitter {
     }, {
       ...(actor !== undefined ? { actor } : {}),
       ...(input.workflow !== undefined ? { workflow: input.workflow } : {}),
+      // The grant goes in the log, so a restart still has it (§4.3). A child's
+      // ceiling arrives with its brief instead and always did.
+      ...(input.budget !== undefined ? { budget: input.budget } : {}),
     });
 
     const session: Session = {
@@ -3667,10 +3670,25 @@ export class SessionManager extends EventEmitter {
       },
     };
 
+    /*
+     * What this spawn took, recorded beside the child it took it for (§4.3).
+     *
+     * Computed as the difference rather than read from the child, because the
+     * child's ceiling lives on the *child's* log and a parent rebuilding its own
+     * remainder cannot reach it. Without this a restarted parent came back
+     * believing nothing was reserved, so a tree could be made to outspend what
+     * its root was granted by restarting the host between two spawns.
+     */
+    const reserved = parentBudget.reservedForChildren - (parent.session.budget?.reservedForChildren ?? 0);
+
     parent.session.budget = parentBudget;
     parent.session.children.push(ref);
     await parent.store.append(
-      { type: 'session.spawned_child', child: ref },
+      {
+        type: 'session.spawned_child',
+        child: ref,
+        ...(reserved > 0 ? { reserved } : {}),
+      },
       { ...(actor !== undefined ? { actor } : {}) },
     );
 
@@ -4346,6 +4364,21 @@ export class SessionManager extends EventEmitter {
               parentSessionId: projection.parentSessionId,
             },
       children: projection.children,
+      /*
+       * The budget, restored (§4.3).
+       *
+       * A session used to come back with none, and `prepareChild` refuses a
+       * parent with no budget — correctly, since inventing a ceiling would put a
+       * number nobody agreed to at the root of a subtree. The consequence was
+       * that **a restarted session could not split at all**, which is the whole
+       * of §4.3 stopping at a host restart. Found by a workflow run that resumed
+       * and could not spawn its next node.
+       *
+       * Absent stays absent, because unbudgeted is a real state and not a
+       * degraded one: most sessions are a person working, and a ceiling nobody
+       * chose would stop turns for a reason nobody set.
+       */
+      ...(projection.budget !== undefined ? { budget: { ...projection.budget } } : {}),
       // Restored from the log, like the standing grant and the skills above: a
       // restart is still the same session, and one that had forgotten its group
       // would show peer messages in its own transcript with nobody to answer,

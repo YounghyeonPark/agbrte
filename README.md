@@ -117,11 +117,10 @@ after a restart are not three features but three consequences of that.
 
 ## Status
 
-**Phases 1, 2, 4 and 6 are done; 5, 7 and 9 met their criteria with named gaps; 3
+**Phases 1, 2, 4, 6 and 9 are done; 5 and 7 met their criteria with named gaps; 3
 is half validated; 8 is started.** The model-provider axis has exactly one
 implementation, and "an agent on a GPU box using that box's own model server" has
-never run, because that box has no model server. A workflow run does not yet
-survive its host restarting.
+never run, because that box has no model server.
 
 [The full status](docs/status.md) names the rest rather than glossing it, and
 [DESIGN.md §15](DESIGN.md) is the authority.

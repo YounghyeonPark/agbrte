@@ -93,6 +93,8 @@ export function reduceEvents(
         // a checkpoint from before this existed says the same thing by saying
         // nothing.
         if (ev.workflow !== undefined) p.workflow = ev.workflow;
+        // A root's grant. A child's arrives with its brief instead, below.
+        if (ev.budget !== undefined) p.budget = { ...ev.budget };
         break;
 
       // Last one wins, which is the whole of renaming.
@@ -203,11 +205,25 @@ export function reduceEvents(
 
       case 'session.spawned_child':
         upsertChild(p, ev.child);
+        /*
+         * The reservation this spawn took, summed back onto the parent.
+         *
+         * Absent on an event written before the field existed, which folds as
+         * zero — the old behaviour, where a restarted parent believed nothing
+         * was reserved and a tree could be made to outspend its root by
+         * restarting the host between spawns.
+         */
+        if (p.budget !== undefined && ev.reserved !== undefined) {
+          p.budget.reservedForChildren += ev.reserved;
+        }
         break;
 
       case 'session.brief_received':
         p.brief = ev.brief;
         p.parentSessionId = ev.parentSessionId;
+        // A child's ceiling has always been durable — it is part of the brief,
+        // which is where its whole scope lives. It simply was never read back.
+        p.budget = { ...ev.brief.budget };
         break;
 
       case 'session.child_result': {

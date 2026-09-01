@@ -244,18 +244,39 @@ describe('a run that outlives the host that started it', () => {
     expect(after.get(session.sessionId).children).toHaveLength(1);
 
     /*
-     * And the node it made came back as a child rather than as a root, which is
-     * what lets it report a result at all. `resumeSession` used to hardcode
-     * every resumed session as a root, so a child could not find its parent and
-     * `reportResult` refused — the parent then waited on work that had already
-     * finished. Asserted here because a workflow run is the first thing that
-     * noticed, and the bug was never about workflows.
+     * Three things had to become durable before this line could pass, and two
+     * of them were older bugs with nothing to do with workflows.
+     *
+     * The **parent link**: `resumeSession` used to hardcode every resumed
+     * session as a root, so a child could not report to a parent it no longer
+     * knew it had, and the parent waited forever on finished work.
+     *
+     * The **budget**: a resumed session had none, and `prepareChild` refuses a
+     * parent with no budget — correctly — so a restarted session could not
+     * split at all.
+     *
+     * And the **document id**, which is what this section was for.
      */
     const child = after.get(after.get(session.sessionId).children[0]!.sessionId);
     expect(child.tree.parentSessionId).toBe(session.sessionId);
-    await expect(
-      after.reportResult(child.sessionId, { summary: 'scan finished' }),
-    ).resolves.toBeDefined();
+    expect(after.get(session.sessionId).budget?.tokenCeiling).toBe(200_000);
+    // Reserved for `scan`, restored by folding the spawn rather than remembered.
+    expect(after.get(session.sessionId).budget?.reservedForChildren).toBe(5_000);
+
+    /*
+     * And it is *live*: finishing a node on the new host carries the run on.
+     * The old host never knew about these two.
+     */
+    await settle(after, session.sessionId, 'scan', 'done');
+    for (let i = 0; i < 80 && after.get(session.sessionId).children.length < 3; i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(
+      after
+        .get(session.sessionId)
+        .children.map((c) => c.title)
+        .sort(),
+    ).toEqual(['lint', 'scan', 'tests']);
   });
 
   it('does not re-spawn a node that already ran', async () => {

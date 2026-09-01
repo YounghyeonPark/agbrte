@@ -43,7 +43,10 @@ import { PRIVATE_DIR_MODE, checkpointName } from './layout.js';
 // children of a workflow run without knowing which workflow — it would then
 // spawn nothing further and the root would sit in `awaiting_children` forever,
 // which is exactly the hole this field was added to close.
-export const CHECKPOINT_VERSION = 6;
+// 7: the projection carries `budget` (§4.3). A v6 checkpoint has none, and a
+// session resumed from one cannot split at all — `prepareChild` refuses a parent
+// with no budget, correctly, so the whole of §4.3 stops working after a restart.
+export const CHECKPOINT_VERSION = 7;
 
 export interface Checkpoint {
   version: number;

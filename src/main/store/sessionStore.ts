@@ -19,6 +19,7 @@ import {
   emptyProjection,
   type EventBody,
   type InstanceId,
+  type SessionBudget,
   type AgbrteEvent,
   type SessionId,
   type SessionProjection,
@@ -115,7 +116,13 @@ export class SessionStore {
   static async create(
     workspaceRoot: string,
     meta: SessionMeta,
-    opts: { checkpointInterval?: number; actor?: Actor; workflow?: string } = {},
+    opts: {
+      checkpointInterval?: number;
+      actor?: Actor;
+      workflow?: string;
+      /** The grant this session was created with, so a restart still has it. */
+      budget?: SessionBudget;
+    } = {},
   ): Promise<SessionStore> {
     const layout = sessionLayout(workspaceRoot, meta.sessionId);
     await mkdir(layout.dir, { recursive: true, mode: PRIVATE_DIR_MODE });
@@ -137,6 +144,7 @@ export class SessionStore {
         // Only when there is one. An ordinary session's log must not gain a key
         // meaning 'not a workflow' — absent already says that (SS4.4).
         ...(opts.workflow !== undefined ? { workflow: opts.workflow } : {}),
+        ...(opts.budget !== undefined ? { budget: opts.budget } : {}),
       },
       { ...(opts.actor !== undefined ? { actor: opts.actor } : {}) },
     );

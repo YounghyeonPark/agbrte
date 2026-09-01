@@ -16,6 +16,7 @@ import type {
   ChecklistItem,
   ChildRef,
   SessionBrief,
+  SessionBudget,
   SessionState,
   SkillConfig,
   StandingGrant,
@@ -116,6 +117,22 @@ export interface SessionProjection {
    * which mean *not a run*.
    */
   workflow?: string;
+  /**
+   * What this session may spend, and what is already reserved (§4.3).
+   *
+   * Folded rather than remembered, and it had to become foldable: a budget lived
+   * only in memory, so a restarted session had none — and `prepareChild`
+   * correctly refuses a parent with no budget, which meant **a restarted session
+   * could not split**. The ceiling comes from `session.created` for a root and
+   * from the brief for a child; `reservedForChildren` is the sum of what each
+   * `session.spawned_child` took.
+   *
+   * `spent` is folded as zero because that is what it is: nothing in the code
+   * ever increments it. Real consumption is `usage` above, which the
+   * ModelGateway enforces against (§6.5). Said here so a reader does not take
+   * the zero for a fold that lost something.
+   */
+  budget?: SessionBudget;
   agents: ProjectedAgent[];
   /** Highest seq folded in. The resume point for an incremental fold. */
   lastSeq: number;

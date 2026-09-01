@@ -28,7 +28,14 @@ import type {
   StopReason,
 } from './runtime.js';
 import type { PermissionFidelity } from './policy.js';
-import type { Actor, ChildRef, SessionBrief, SessionState, SplitProposal } from './session.js';
+import type {
+  Actor,
+  ChildRef,
+  SessionBrief,
+  SessionBudget,
+  SessionState,
+  SplitProposal,
+} from './session.js';
 
 /** Provenance stamped on every event that came from a model or adapter. */
 export interface EventOrigin {
@@ -89,7 +96,30 @@ export type EventBody =
    * them, and absent from a log written before this existed. Both read as *not a
    * run*, which is what they are.
    */
-  | { type: 'session.created'; goal: string; title: string; workflow?: string }
+  | {
+      type: 'session.created';
+      goal: string;
+      title: string;
+      workflow?: string;
+      /**
+       * What this session was granted (§4.3).
+       *
+       * Here because it was nowhere: a budget lived only in memory, so a
+       * restarted session had none — and `prepareChild` correctly refuses a
+       * parent with no budget, which made **a restarted session unable to
+       * split at all**. Found by a workflow run that resumed and then could not
+       * spawn its next node.
+       *
+       * Only the root's grant is this event's business. A *child's* ceiling has
+       * always been durable and is carried by `session.brief_received` inside
+       * the brief, which is where a child's whole scope lives.
+       *
+       * Absent means unbudgeted, which §4.3 distinguishes from zero and which
+       * most sessions are: a person working under a ceiling nobody chose would
+       * be stopped for a reason nobody set.
+       */
+      budget?: SessionBudget;
+    }
   /**
    * Renamed by a person.
    *
@@ -290,7 +320,20 @@ export type EventBody =
   | { type: 'bus.message'; from: AgentId; to: AgentId | 'session'; kind: string; content: ContentBlock[] }
   | { type: 'memory.written'; slug: string; summary: string }
   // hierarchy (§4.3)
-  | { type: 'session.spawned_child'; child: ChildRef }
+  /**
+   * `reserved` is what this spawn took out of the parent's remainder (§4.3).
+   *
+   * On the *parent's* log, because the reservation is a fact about the parent —
+   * the child's own ceiling is on the child's log, and a parent cannot read it
+   * to rebuild its own remainder. Without this a restarted parent came back
+   * believing nothing was reserved, so a tree could be made to outspend what its
+   * root was granted simply by restarting the host between spawns, which is the
+   * one thing reserving at spawn exists to prevent.
+   *
+   * Absent from an event written before this existed, which folds as zero — the
+   * old behaviour, where nothing was restored at all.
+   */
+  | { type: 'session.spawned_child'; child: ChildRef; reserved?: number }
   | { type: 'session.brief_received'; brief: SessionBrief; parentSessionId: SessionId }
   | { type: 'session.child_result'; childSessionId: SessionId; summary: string; artifactIds: string[] }
   /**
