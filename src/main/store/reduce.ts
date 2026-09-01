@@ -221,6 +221,9 @@ export function reduceEvents(
       case 'session.brief_received':
         p.brief = ev.brief;
         p.parentSessionId = ev.parentSessionId;
+        // The whole position when the event carries one; older logs have only
+        // the parent, and a reader falls back to that.
+        if (ev.position !== undefined) p.tree = { ...ev.position };
         // A child's ceiling has always been durable — it is part of the brief,
         // which is where its whole scope lives. It simply was never read back.
         p.budget = { ...ev.brief.budget };
@@ -236,6 +239,10 @@ export function reduceEvents(
         // Cancelling a parent promotes children to roots rather than
         // destroying independently valuable work (§4.3).
         p.parentSessionId = null;
+        // Adopted as a root, so the position goes with the parent. Keeping a
+        // stale one would leave an orphan claiming a depth under a tree it is
+        // no longer in.
+        p.tree = null;
         break;
 
       case 'session.joined_group':

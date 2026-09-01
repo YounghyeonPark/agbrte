@@ -20,6 +20,7 @@ import type {
   SessionState,
   SkillConfig,
   StandingGrant,
+  TreePosition,
 } from './session.js';
 
 export interface UsageTotals {
@@ -206,6 +207,18 @@ export interface SessionProjection {
   /** Set on a child session; durable, so a late resume still knows why it exists. */
   brief: SessionBrief | null;
   parentSessionId: SessionId | null;
+  /**
+   * Where this session sits in its tree (§4.3), folded from
+   * .
+   *
+   *  above is the same fact narrowed and stays, because a log
+   * written before this carries only that — and one parent is enough for the
+   * thing a child most needs, which is somewhere to report its result.
+   *
+   * Null for a root, and for a child whose log predates the field. A reader
+   * meeting null falls back to the parent, which is what shipped.
+   */
+  tree: TreePosition | null;
 }
 
 export function emptyProjection(sessionId: SessionId): SessionProjection {
@@ -238,6 +251,7 @@ export function emptyProjection(sessionId: SessionId): SessionProjection {
     skippedLines: 0,
     brief: null,
     parentSessionId: null,
+    tree: null,
   };
 }
 

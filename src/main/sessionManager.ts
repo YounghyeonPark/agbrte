@@ -1025,6 +1025,11 @@ export class SessionManager extends EventEmitter {
         type: 'session.brief_received',
         brief: input.child.brief,
         parentSessionId: input.child.tree.ancestry.at(-1)!,
+        // The whole position, which was already here and only the parent was
+        // being taken out of it (§4.3). Without it a resumed grandchild says
+        // depth 1, and `maxDepth` under-counts for every split made from a
+        // session that has been through a restart.
+        position: input.child.tree,
       });
     }
 
@@ -4347,22 +4352,27 @@ export class SessionManager extends EventEmitter {
        * in `awaiting_children` forever with work that had actually finished.
        * Found by a workflow run that came back and could not settle a node.
        *
-       * **Depth and ancestry are not durable, and this does not pretend they
-       * are.** Only the parent is on the log, so a resumed grandchild says depth
-       * 1 rather than 2 — which under-counts `maxDepth` for a split made from a
-       * resumed session, and is a smaller wrong than claiming it is a root. The
-       * honest fix is the position in `session.brief_received` beside the parent
-       * it already carries; that is a shape change and is not this one.
+       * **The whole position, where the log has one.** `session.brief_received`
+       * carries it now, so depth and ancestry come back too — a resumed
+       * grandchild says depth 2, and `maxDepth` counts correctly for a split
+       * made from a session that has been through a restart.
+       *
+       * The parent-only fallback below is for logs written before that field,
+       * and it is deliberately imprecise in the safe direction: depth 1 rather
+       * than a claim about a chain the log does not record. It is a smaller
+       * wrong than the original, which was claiming every resumed session was a
+       * root — and then a child could not report its result at all.
        */
       tree:
-        projection.parentSessionId === null
+        projection.tree ??
+        (projection.parentSessionId === null
           ? { rootSessionId: sessionId, depth: 0, ancestry: [] }
           : {
               rootSessionId: projection.parentSessionId,
               depth: 1,
               ancestry: [projection.parentSessionId],
               parentSessionId: projection.parentSessionId,
-            },
+            }),
       children: projection.children,
       /*
        * The budget, restored (§4.3).

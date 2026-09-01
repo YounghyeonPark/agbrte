@@ -317,6 +317,40 @@ describe('a run that outlives the host that started it', () => {
     expect(after.get(children.find((c) => c.title === 'scan')!.sessionId).state).toBe('done');
   });
 
+  it('remembers how deep a resumed session is, not just whose child it is', async () => {
+    /*
+     * `maxDepth` counts from `parent.tree.depth`, so a resumed session that
+     * reports the wrong depth lets a tree grow past the limit — one restart at a
+     * time, which is the way nobody would notice.
+     *
+     * Restoring only the parent gave every resumed child depth 1 however deep it
+     * was. The whole position was at the write site all along, in
+     * `input.child.tree`, and only the parent was being taken out of it.
+     */
+    const rootId = await rootFor();
+    await manager.workflowRuns.start(rootId, workflow([node('scan')]));
+    const childId = manager.get(rootId).children[0]!.sessionId;
+
+    // A grandchild, made the ordinary way a split makes one.
+    const prepared = await manager.prepareChild(childId, {
+      title: 'deeper',
+      scope: 'a part of the part',
+      outOfScope: ['everything else'],
+      contract: { summaryMaxTokens: 400, artifacts: [] },
+      tokenCeiling: 1_000,
+    });
+    const grandchild = await manager.createSession(prepared.create);
+    await manager.recordChild(childId, grandchild, prepared.parentBudget, prepared.create.child!.contract!);
+    expect(grandchild.tree.depth).toBe(2);
+
+    const after = await restart();
+    const resumed = await after.resumeSession(grandchild.sessionId);
+    expect(resumed.tree.depth).toBe(2);
+    expect(resumed.tree.parentSessionId).toBe(childId);
+    expect(resumed.tree.rootSessionId).toBe(rootId);
+    expect(resumed.tree.ancestry).toEqual([rootId, childId]);
+  });
+
   it('leaves an ordinary session alone', async () => {
     // Almost every session is not a run, and one that gained a runner on resume
     // would be a session spawning children nobody asked for.

@@ -46,7 +46,11 @@ import { PRIVATE_DIR_MODE, checkpointName } from './layout.js';
 // 7: the projection carries `budget` (§4.3). A v6 checkpoint has none, and a
 // session resumed from one cannot split at all — `prepareChild` refuses a parent
 // with no budget, correctly, so the whole of §4.3 stops working after a restart.
-export const CHECKPOINT_VERSION = 7;
+// 8: the projection carries `tree`, a child's whole position (§4.3). A v7
+// checkpoint has only the parent, so a session resumed from one reports depth 1
+// however deep it is — and `maxDepth` then under-counts for any split made from
+// it, letting a tree grow past the limit one restart at a time.
+export const CHECKPOINT_VERSION = 8;
 
 export interface Checkpoint {
   version: number;

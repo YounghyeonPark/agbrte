@@ -35,6 +35,7 @@ import type {
   SessionBudget,
   SessionState,
   SplitProposal,
+  TreePosition,
 } from './session.js';
 
 /** Provenance stamped on every event that came from a model or adapter. */
@@ -334,7 +335,26 @@ export type EventBody =
    * old behaviour, where nothing was restored at all.
    */
   | { type: 'session.spawned_child'; child: ChildRef; reserved?: number }
-  | { type: 'session.brief_received'; brief: SessionBrief; parentSessionId: SessionId }
+  /**
+   * `position` is where this child sits in the tree (§4.3).
+   *
+   * `parentSessionId` beside it is the same fact narrowed, kept because logs
+   * written before this carry only that — and one parent is still enough to
+   * report a result, which is the thing a child cannot do without.
+   *
+   * The whole position is here because the rest of it was nowhere. `resumeSession`
+   * rebuilt every session as a root, and once that was fixed from
+   * `parentSessionId` alone a resumed grandchild still said depth 1: `maxDepth`
+   * then under-counts for any split made from a resumed session, so a tree could
+   * grow past the limit one restart at a time. It was already at the write site
+   * — `input.child.tree` — and only the parent was being taken out of it.
+   */
+  | {
+      type: 'session.brief_received';
+      brief: SessionBrief;
+      parentSessionId: SessionId;
+      position?: TreePosition;
+    }
   | { type: 'session.child_result'; childSessionId: SessionId; summary: string; artifactIds: string[] }
   /**
    * An agent asked to split, and is waiting for a person (§4.3).

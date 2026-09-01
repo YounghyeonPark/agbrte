@@ -1003,11 +1003,11 @@ Following the edges is neither, and the document already says which they are: a 
 
 Fixed, and the shape of the fix is worth recording because two of its three parts already existed. A **child's** ceiling was always durable: it is part of the brief, which `session.brief_received` carries, and it was simply never read back. **Spend** needed nothing at all — `usage` events are already folded, and the `spent` field on a budget is never incremented by anything, so folding it as zero loses nothing that was ever there. What was genuinely missing was two facts: a **root's grant**, now on `session.created` beside the workflow id; and **what each spawn reserved**, now on `session.spawned_child`. The second has to be on the *parent's* log — a child's ceiling lives on the child's, and a parent rebuilding its own remainder cannot reach it — and without it a tree could be made to outspend its root by restarting the host between two spawns.
 
+**A resumed session knows where it is, not just whose child it is.** `session.brief_received` carries the whole `TreePosition` beside the parent it already carried — and it was at the write site the entire time, in the `input.child.tree` the event was narrowing to one field. Restoring only the parent gave every resumed child depth 1 however deep it was, and `maxDepth` counts from the parent's depth, so a tree could grow past the limit one restart at a time. The parent-only fallback stays for logs written before the field, imprecise in the safe direction.
+
 #### Open, and known
 
-**Depth and ancestry are still not durable**, only the parent is. A resumed grandchild reports depth 1 rather than 2, which under-counts `maxDepth` for a split made from it. The fix is the whole `TreePosition` in `session.brief_received` beside the parent it already carries.
-
-**`reservedForChildren` is never released**, though this section says "released on completion". Nothing in the code decrements it, so a tree that finishes its children still holds their reservations against the root. The fold matches the code rather than this sentence, deliberately — a projection that released what the runtime does not would disagree with the live session it is meant to reproduce.
+**`reservedForChildren` is never released**, though this section says "released on completion". Nothing in the code decrements it, so a tree that finishes its children still holds their reservations against the root. The fold matches the code rather than this sentence, deliberately — a projection that released what the runtime does not would disagree with the live session it is meant to reproduce. Which of the two is wrong is a decision about budget semantics rather than about durability, and it has not been made.
 
 ---
 
