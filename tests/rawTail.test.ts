@@ -25,6 +25,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp } from 'node:fs/promises';
 import { removeTemp } from './support/tempDir.js';
+import { until } from './support/until.js';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +35,7 @@ import { EchoRuntime } from '@main/runtime/runtimes/echo.js';
 import { CliStdioRuntime, type CliRun, type SpawnCli } from '@main/runtime/runtimes/cliStdio.js';
 import { CLAUDE_CODE_MANIFEST } from '@main/runtime/cli/manifests.js';
 import { RawTailBuffer } from '@main/rawTail.js';
+import { loadRawTails } from '@main/store/rawTailFile.js';
 import { AgentHostServer } from '../src/host/server.js';
 import { SessionHostServer } from '../src/host/sessionServer.js';
 import { HostBackedRuntime, HostClient } from '@main/host/hostRuntime.js';
@@ -274,7 +276,29 @@ describe('and it survives the process that printed it', () => {
     const first = cliManager([run('before')]);
     const { sessionId, agentId } = await seat(first);
     await first.send(sessionId, agentId, TEXT('go'));
-    await new Promise((r) => setTimeout(r, 400));
+    /*
+     * Wait for the mirror on disk, not for 400ms and not for the tail in memory.
+     *
+     * It was a sleep, and it held everywhere except a loaded Windows CI runner,
+     * where the first run's lines had not been mirrored before `dispose()` — so
+     * the second manager restored nothing and the assertion reported the second
+     * run's output as though the first had never printed. `until`'s own header
+     * describes this exactly: a fixed sleep cannot be both quick on an idle
+     * machine and sufficient on a busy one.
+     *
+     * **The obvious condition is the wrong one**, which the first attempt at
+     * this used: `rawLog` reads the ring in memory and is true immediately, so
+     * waiting on it finishes before anything has been written and reproduces
+     * the failure on every machine rather than one. What the next manager reads
+     * is the file, which §3.12 mirrors on a 250ms beat — so the file is what
+     * there is to wait for, and the sleep had been standing in for that beat
+     * without saying so.
+     */
+    await until(async () =>
+      [...(await loadRawTails(root, sessionId)).values()].some((t) =>
+        t.lines.join('\n').includes('"text":"before"'),
+      ),
+    );
     first.dispose();
 
     const second = cliManager([run('after')]);
