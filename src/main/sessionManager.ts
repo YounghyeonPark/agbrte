@@ -19,6 +19,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import {
+  availableTokens,
   byAttentionThenRecency,
   TREE_LIMITS,
   isPaused,
@@ -81,7 +82,7 @@ import { openWorkspace, peekIdentity } from './store/identity.js';
 import { addCost } from '@shared/cost.js';
 import { ensureBlob } from './store/blobTransfer.js';
 import { compactionSizes, rehydrate } from './store/rehydrate.js';
-import { pumpAgent, stopReasonSummary } from './runtime/supervisor.js';
+import { pumpAgent, stateForStop, stopReasonSummary } from './runtime/supervisor.js';
 import { groupFor, QuotaScheduler } from './quota.js';
 import { cliIdOf } from './runtime/runtimes/cliStdio.js';
 
@@ -1605,6 +1606,33 @@ export class SessionManager extends EventEmitter {
 
     const runtime = this.deps.registry.get(spec.runtimeId);
 
+    /*
+     * The ceiling, enforced before the turn rather than reported after it (§6.5).
+     *
+     * §6.5 gives this to a ModelGateway, along with a tunnel and credential
+     * injection that this deployment has no use for — there is no API key to
+     * keep off a remote box, and §15 already said the gateway was worth checking
+     * against the deployment before building it. What was actually missing is
+     * this check: `spent` is real now, so a budget can be compared to something.
+     *
+     * **Before the request, because after it the tokens are gone.** The same
+     * argument §4.3 makes about reserving a child's ceiling at spawn — "by then
+     * the money is gone and the check is a report" — and it applies more
+     * directly here, where the thing being bounded is the spend itself.
+     *
+     * It **pauses** rather than failing. §4.1 is explicit that a ceiling *we*
+     * configured is not a breakage: nothing is wrong, the work is incomplete,
+     * and what happens next is a human decision — raise the ceiling, re-scope,
+     * split, or close it out. `limit_reached` is the stop reason for exactly
+     * that, and `limit: 'tokens'` has been in its union since it was written
+     * with nothing ever producing it.
+     */
+    const budget = live.session.budget;
+    if (budget !== undefined && availableTokens(budget) <= 0) {
+      await this.stopForLimit(live, agentId, budget);
+      return;
+    }
+
     // The handle is opened *before* this turn is logged. A rehydrated seed is
     // built from the log, so appending first would put the incoming turn into
     // the seed and then send it again — the agent would see it twice.
@@ -1722,6 +1750,20 @@ export class SessionManager extends EventEmitter {
     record.resumeToken = outcome.resumeToken;
     record.lastEventSeq = live.store.nextSeq - 1;
     record.usage = mergeUsage(record.usage, outcome.usage);
+    /*
+     * The same arithmetic the fold does, kept on the live session (§6.5).
+     *
+     * `reduce.ts` folds `spent` out of `usage` events so a restarted host reads
+     * the right figure, and this is the in-memory half — the two have to agree
+     * or a session enforces one ceiling before a restart and another after,
+     * which is the class of drift §5.1 keeps the log authoritative to avoid.
+     *
+     * Input plus output only, matching the fold: the cache fields are a
+     * breakdown of the input side, not tokens on top of it.
+     */
+    if (live.session.budget !== undefined) {
+      live.session.budget.spent += outcome.usage.inputTokens + outcome.usage.outputTokens;
+    }
     record.status = outcome.disposition === 'fail' ? 'stopped' : 'idle';
 
     // A finished turn releases the handle so the next send resumes cleanly;
@@ -3195,6 +3237,42 @@ export class SessionManager extends EventEmitter {
       `${summary} (machine: ${machine}, workspace: ${this.rootOf(live)}). ` +
       `Nothing is lost — the session is holding its work and picks this turn up when you send again.`
     );
+  }
+
+  /**
+   * Park a session that has spent its ceiling, before it spends past it.
+   *
+   * Deliberately the *same* path a runtime-reported limit takes: an
+   * `agent.stopped` carrying `limit_reached`, then the state `stateForStop`
+   * maps it to, with `stopReasonSummary`'s words. A second mechanism for the
+   * same idea would give one of them a different transcript and a different
+   * state, and §4.1's whole argument is that a pause must read as a pause
+   * wherever it came from.
+   *
+   * `awaiting_input`, via that mapping, and not `awaiting_quota` — the latter's
+   * contract is "resume at `resetsAt`", and a ceiling the user set has no window
+   * to reset. That mapping already existed and is the reason `limit_reached` was
+   * split from `quota_exhausted` in the first place; this is its first producer
+   * inside the app rather than from an adapter.
+   */
+  private async stopForLimit(
+    live: LiveSession,
+    agentId: AgentId,
+    budget: SessionBudget,
+  ): Promise<void> {
+    const stop: StopReason = {
+      kind: 'limit_reached',
+      limit: 'tokens',
+      // The numbers, because "token limit reached" alone leaves a person to go
+      // and find out how much of what — and the remedy is a decision about size.
+      detail:
+        `spent ${budget.spent.toLocaleString()} of ${budget.tokenCeiling.toLocaleString()}` +
+        (budget.reservedForChildren > 0
+          ? `, with ${budget.reservedForChildren.toLocaleString()} reserved for children`
+          : ''),
+    };
+    await live.store.append({ type: 'agent.stopped', stop }, { agentId });
+    await this.setState(live, stateForStop(stop), stopReasonSummary(stop));
   }
 
   private async setState(live: LiveSession, to: SessionState, reason?: string): Promise<void> {

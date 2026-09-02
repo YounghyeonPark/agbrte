@@ -44,12 +44,13 @@ run, because that box has no model server.
 **Phase 7's acceptance sentence has run end to end**, with the agent local rather
 than remote and unable to see the picture.
 
-**A session budget does not limit spending.** It bounds what a session may hand
-*downward* — the sum of the ceilings it gives its children, for its lifetime,
-since a reservation is never released. Nothing compares a session's actual
-consumption against its ceiling, because the ModelGateway that would is not
-built. A ceiling is a decomposition allowance, not a spend cap, and the name
-invites the other reading.
+**A session budget limits tokens, not money, and not per day.** A ceiling now
+bounds both what a session spends itself — a turn that would start with nothing
+left parks for a person instead — and what it may reserve for children, which is
+never released, so a tree cannot outspend its root. What is *not* enforced is
+anything denominated in currency or in time: §6.5's per-day and cost ceilings
+belong to the ModelGateway, which remains unbuilt because the four other things
+it does have no work in a deployment that uses no API key.
 
 **A child on another machine is spawned by two hosts in one process, not by two
 machines.** The three-step that makes it possible — prepare on the parent's host,

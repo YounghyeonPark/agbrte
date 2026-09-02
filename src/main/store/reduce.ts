@@ -172,6 +172,26 @@ export function reduceEvents(
         p.usage.outputTokens += ev.outputTokens;
         p.usage.cacheReadTokens += ev.cacheReadTokens ?? 0;
         p.usage.cacheWriteTokens += ev.cacheWriteTokens ?? 0;
+        /*
+         * And the budget's own counter, which is what makes it a budget (§6.5).
+         *
+         * `spent` was always zero — nothing anywhere incremented it — so
+         * `availableTokens` was `ceiling - reservedForChildren` and a session's
+         * ceiling bounded only what it could hand to children, never what it
+         * could use itself. §6.5 gives that job to a ModelGateway that §15 says
+         * is deliberately not built, and the half of it this deployment needs
+         * turns out not to require the gateway at all: the usage is already on
+         * the log, one line above.
+         *
+         * **Input plus output, and the cache fields deliberately not added.**
+         * They are a *breakdown* of the input side — tokens served from a cache
+         * or written to one are still the prompt — so adding them would charge a
+         * cached turn twice and make a ceiling arbitrarily strict for callers
+         * whose provider happens to report the detail. They are priced
+         * differently and stay separate in `usage` for exactly that reason; a
+         * token count is not a price.
+         */
+        if (p.budget !== undefined) p.budget.spent += ev.inputTokens + ev.outputTokens;
         // Absent is "this runtime said nothing about cost", which leaves the
         // total alone. `'unknown'` is a runtime saying a cost exists and cannot
         // be seen, and that is contagious (§10).

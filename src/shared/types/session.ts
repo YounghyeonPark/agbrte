@@ -177,14 +177,25 @@ export class AccessDenied extends Error {
 export interface SessionBudget {
   tokenCeiling: number;
   /**
-   * **Always zero.** Nothing increments it, here or anywhere in the codebase.
+   * Input plus output tokens this session has used, folded from `usage`.
    *
-   * What a session actually consumed is `usage`, which the log records per turn
-   * already; the ModelGateway that §6.5 has enforcing a ceiling against it is
-   * not built. The field stays because it is where that number goes on the day
-   * there is an enforcer, and because `availableTokens` subtracting it is a
-   * formula that keeps working when it stops being constant. It is said here so
-   * a reader does not take the zero for a fold that lost something.
+   * **This was always zero for most of the project's life**, and the comment
+   * here said so: nothing incremented it, because §6.5 gives the job to a
+   * ModelGateway that §15 records as deliberately not built. The consequence was
+   * that `availableTokens` reduced to `ceiling - reservedForChildren`, so a
+   * budget bounded only what a session could hand to *children* and never what
+   * it could use itself — a ceiling unreachable by working is not a ceiling.
+   *
+   * What closed it was noticing that the gateway is four jobs and this is the
+   * fifth. Routing by `providerId` exists, usage is already on the log, and the
+   * tunnel and credential injection answer a problem this deployment does not
+   * have — there is no API key to keep off a remote box. The comparison needed
+   * none of that.
+   *
+   * The cache fields in `usage` are deliberately **not** added: they are a
+   * breakdown of the input side, so counting them would charge a cached turn
+   * twice. They are priced differently, which is why `usage` keeps them apart;
+   * a token count is not a price.
    */
   spent: number;
   costCeiling?: number;
@@ -193,13 +204,22 @@ export interface SessionBudget {
    * Carved out at spawn and **never given back**, for the life of the parent.
    *
    * §4.3 said "released on completion" for a long time while nothing anywhere
-   * decremented this, and reading that as a missing feature is the trap. Since
-   * `spent` is always zero, this figure is the *only* quantity a budget bounds
-   * anything with — so releasing it on completion would let a 100,000-token
-   * root spawn 20,000-token children one after another forever, each finishing,
-   * each handing its allowance back, none ever debited for what it used. "A
-   * tree cannot spend more than its root was granted" would quietly become a
-   * sentence about how many children may run *at once*.
+   * decremented this, and reading that as a missing feature is the trap.
+   * Releasing it would let a 100,000-token root spawn 20,000-token children one
+   * after another forever, each finishing, each handing its allowance back, none
+   * ever debited for what it used — "a tree cannot spend more than its root was
+   * granted" quietly becoming a sentence about how many children may run *at
+   * once*.
+   *
+   * **The reason for that has narrowed, and is worth restating rather than
+   * leaving as it was.** It used to be that `spent` was always zero, so this was
+   * the only quantity bounding anything at all. `spent` is real now. What has
+   * not changed is that it is real *per session*: a child's consumption is folded
+   * into the child's own budget from the child's own log, and nothing carries it
+   * back — `session.child_result` returns a summary and artifact pointers, not a
+   * token count. So a parent still cannot know what a finished child cost, and
+   * releasing a reservation would still be handing back an allowance nobody
+   * debited.
    *
    * So a budget grants a **lifetime allowance of child ceilings**, and the
    * consequence is worth meeting here rather than in a surprise: running the

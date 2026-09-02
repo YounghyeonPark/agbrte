@@ -129,10 +129,12 @@ export interface SessionProjection {
    * child; `reservedForChildren` is the sum of what each `session.spawned_child`
    * took.
    *
-   * `spent` is folded as zero because that is what it is: nothing in the code
-   * ever increments it. Real consumption is `usage` above, which the
-   * ModelGateway enforces against (§6.5). Said here so a reader does not take
-   * the zero for a fold that lost something.
+   * `spent` is folded from the same `usage` events as the totals above — input
+   * plus output, with the cache fields left out because they are a breakdown of
+   * the input side rather than tokens on top of it. It used to be folded as a
+   * constant zero, correctly, because nothing incremented it anywhere; §6.5
+   * gives that job to a ModelGateway and §15 records the gateway as not built.
+   * The enforcement this deployment needed turned out not to require it.
    */
   budget?: SessionBudget;
   agents: ProjectedAgent[];

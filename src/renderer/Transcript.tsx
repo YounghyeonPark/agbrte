@@ -269,13 +269,25 @@ export function EventRow({
           className={`${META_ROW} border-line justify-center border-t pt-2 text-[11px]`}
         >
           {/* The kind is a taxonomy label, and for most stops it is also the
-              whole story. `auth` is the one where it is not: "auth" tells a
-              person that something is wrong with a credential and nothing about
-              what to do, which is how a turn that ended with the CLI asking to
-              be logged in read as ordinary output with no way forward. */}
+              whole story. Two are the exception, and both for the same reason:
+              the row is where a person learns what to *do*.
+
+              `auth` tells them something is wrong with a credential and nothing
+              about what, which is how a turn that ended with the CLI asking to
+              be logged in read as ordinary output with no way forward.
+
+              `limit_reached` is the other, and it arrived with this rendering
+              already wrong for it: "limit reached" names neither which ceiling
+              nor how close it was, and the remedy — raise it, re-scope, split,
+              or accept the work — is a decision about a number the row was
+              hiding. It carries `limit` and a `detail` holding the figures for
+              exactly that, and neither reached the screen. */}
           <span>
-            {event.stop.kind.replace(/_/g, ' ')}
-            {event.stop.kind === 'auth' && event.stop.detail !== undefined
+            {event.stop.kind === 'limit_reached'
+              ? `${event.stop.limit} limit reached`
+              : event.stop.kind.replace(/_/g, ' ')}
+            {(event.stop.kind === 'auth' || event.stop.kind === 'limit_reached') &&
+            event.stop.detail !== undefined
               ? ` — ${event.stop.detail}`
               : ''}
           </span>
