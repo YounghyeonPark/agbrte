@@ -112,6 +112,50 @@ export function stateTone(state: SessionState): string {
 }
 
 /**
+ * The three marks on a host row, drawn rather than typed.
+ *
+ * They were the characters `+`, `■` and `×`, and a character is not an icon: it
+ * is whatever the font has at that codepoint, at whatever size and baseline that
+ * font gives it. `■` rendered small and sat high, `×` rendered large, and the
+ * three buttons around them were different widths as a result — three controls
+ * that do the same *kind* of thing, none of them lining up.
+ *
+ * Geometry instead. One box, one stroke weight, one optical centre, so the row
+ * reads as three of a thing.
+ *
+ * **This does not answer the objection `Guide` answered**, and pretending it
+ * does would be the mistake. Relabelling `?` to `Guide` was on the grounds that
+ * a bare glyph "is the one control that cannot be read, and its meaning lived
+ * only in a `title` — which a touch screen never shows". That is still true of
+ * these; what is different is the width available. `New session` `Stop`
+ * `Detach` in a row that already holds a machine name does not fit 300px, and
+ * the fix for an unreadable control is not to make it unreachable. So they keep
+ * their `title`, gain an `aria-label` so assistive tech has a name rather than a
+ * tooltip, and the two destructive ones say so on hover — which is the part a
+ * glyph genuinely cannot carry: `■` stops a host and `×` detaches it, and
+ * nothing about either shape says which is which.
+ */
+function HostIcon({ name }: { name: 'add' | 'stop' | 'detach' }): JSX.Element {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className="size-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    >
+      {name === 'add' && <path d="M8 3.5v9M3.5 8h9" />}
+      {/* Filled, and inset to 4.5–11.5 so it carries the same visual weight as
+          two crossing strokes rather than dominating them. */}
+      {name === 'stop' && <rect x="4.5" y="4.5" width="7" height="7" rx="1" fill="currentColor" stroke="none" />}
+      {name === 'detach' && <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />}
+    </svg>
+  );
+}
+
+/**
  * A dot that breathes while a session is actually running.
  *
  * `stateTone` above gives `working` no hue, for a good reason it states — the
@@ -2019,8 +2063,9 @@ function HostGroup({
               named something other than its folder, or one built from a
               template. Removing it would trade a shortcut for a capability. */}
           <button
-            className="btn px-2 py-1 text-xs"
+            className="btn aspect-square px-0"
             data-testid="new-session"
+            aria-label="Another session on this host"
             title="Another session on this host"
             onClick={() =>
               setAdding((open) => {
@@ -2044,15 +2089,18 @@ function HostGroup({
               })
             }
           >
-            +
+            <HostIcon name="add" />
           </button>
           <button
-            className="btn px-2 py-1 text-xs"
+            /* The two destructive ones warn on hover. A glyph cannot say which
+               of stop and detach it is, and these sit side by side. */
+            className="btn aspect-square px-0 hover:border-state-fail hover:text-state-fail"
             data-testid="stop-host"
+            aria-label="Stop this host"
             title="Stop this host — refuses while work is running"
             onClick={() => void store.shutdownHost(host.instanceId)}
           >
-            ■
+            <HostIcon name="stop" />
           </button>
           {/*
             Shown only when the host says it is running older code.
@@ -2078,8 +2126,9 @@ function HostGroup({
             </button>
           )}
           <button
-            className="btn px-2 py-1 text-xs"
+            className="btn aspect-square px-0 hover:border-state-fail hover:text-state-fail"
             data-testid="remove-host"
+            aria-label="Detach this host"
             title="Detach this host — the run keeps going"
             onClick={() => {
               // Every folder it holds, because the row is the machine now (§8):
@@ -2088,7 +2137,7 @@ function HostGroup({
               for (const workspace of machine.workspaces) void store.removeHost(workspace.instanceId);
             }}
           >
-            ×
+            <HostIcon name="detach" />
           </button>
         </div>
       </div>
