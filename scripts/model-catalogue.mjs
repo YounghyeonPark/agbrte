@@ -22,6 +22,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { classify, mergeCatalogue } from './catalogueMerge.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = resolve(root, 'src/shared/models/catalogue.json');
@@ -83,29 +84,84 @@ const CANDIDATES = [
   { tag: 'smollm2:135m', label: 'SmolLM2 135M', note: 'Tiny. For checking the plumbing, not for work.' },
 ];
 
-/** Ask the registry whether a tag exists, and what it weighs. */
+/**
+ * Ask the registry whether a tag exists, and what it weighs.
+ *
+ * Three answers, not two. **A model that is gone and a registry that would not
+ * answer are different facts**, and this returned `ok: false` for both — so a
+ * `503` read as "this model no longer exists". Two consequences, and the
+ * quieter one is the worse: `--check` turns a red build on somebody who changed
+ * a stylesheet, and a plain run *rewrites the catalogue without those models*,
+ * silently deleting three perfectly good suggestions because a server had a bad
+ * minute.
+ *
+ * It is §3.3's rule in a different file. An unknown rendered as a `no` is the
+ * confusion that whole three-tier scheme exists to prevent, and the same
+ * mistake reappeared here where nobody was looking for it: measured on a
+ * Windows CI runner that got `503` for three tags while ubuntu and macos got
+ * all fifteen in the same minute.
+ */
 async function verify({ tag, label, note }) {
   const [name, version = 'latest'] = tag.split(':');
   const url = `https://registry.ollama.ai/v2/library/${name}/manifests/${version}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-  if (!res.ok) return { tag, label, note, ok: false, status: res.status };
-  const manifest = await res.json();
-  const bytes = (manifest.layers ?? []).reduce((n, l) => n + (l.size ?? 0), 0);
-  return { tag, label, note, ok: true, bytes };
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+    if (res.ok) {
+      const manifest = await res.json();
+      const bytes = (manifest.layers ?? []).reduce((n, l) => n + (l.size ?? 0), 0);
+      return { tag, label, note, state: 'found', bytes };
+    }
+    /*
+     * Only a 404 or a 410 says the tag is not there. Everything else — a 5xx, a
+     * 429, an auth wobble — is the registry declining to answer, which says
+     * nothing at all about the model.
+     */
+    return {
+      tag,
+      label,
+      note,
+      state: classify(res.status),
+      status: String(res.status),
+    };
+  } catch (err) {
+    // A timeout or a DNS failure is the most obvious "could not ask" of all, and
+    // it used to throw out of `Promise.all` and take the whole run with it.
+    return { tag, label, note, state: 'unreachable', status: err instanceof Error ? err.name : 'failed' };
+  }
 }
 
 const results = await Promise.all(CANDIDATES.map(verify));
-const found = results.filter((r) => r.ok);
-const missing = results.filter((r) => !r.ok);
+const found = results.filter((r) => r.state === 'found');
+const gone = results.filter((r) => r.state === 'gone');
+const unreachable = results.filter((r) => r.state === 'unreachable');
 
-for (const m of missing) console.log(`  dropped ${m.tag} — registry said ${m.status}`);
+for (const m of gone) console.log(`  dropped ${m.tag} — registry said ${m.status}`);
+for (const m of unreachable) console.log(`  could not ask about ${m.tag} — ${m.status}`);
+
+/**
+ * What the last run recorded, so an unanswered tag keeps what is known about it.
+ *
+ * Without this the two states collapse again one step later: a model correctly
+ * classed `unreachable` would still fall out of `models` and be deleted from the
+ * file. Carrying the previous entry forward is what makes "could not ask" mean
+ * the catalogue is *unchanged* rather than *smaller*.
+ */
+function previousEntries() {
+  try {
+    return JSON.parse(readFileSync(OUT, 'utf8')).models ?? [];
+  } catch {
+    return [];
+  }
+}
+
+const models = mergeCatalogue(CANDIDATES, results, previousEntries());
 
 const catalogue = {
   // Not a version of this file so much as a date on a claim: these tags existed
   // and had these sizes when somebody last asked.
   verifiedAt: new Date().toISOString().slice(0, 10),
   registry: 'registry.ollama.ai',
-  models: found.map(({ tag, label, note, bytes }) => ({ tag, label, note, bytes })),
+  models,
 };
 
 const text = `${JSON.stringify(catalogue, null, 2)}\n`;
@@ -138,6 +194,27 @@ if (process.argv.includes('--check')) {
   } else {
     console.log('catalogue is out of date — run `node scripts/model-catalogue.mjs`');
     process.exitCode = 1;
+  }
+
+  /*
+   * A registry that would not answer is reported and does **not** fail the run.
+   *
+   * This check exists to catch a tag that vanished, which is a fact about the
+   * world that somebody has to act on. A `503` is a fact about one minute on one
+   * runner, and failing on it turns an unrelated pull request red with a message
+   * about models — which is worse than useless, because the next person learns
+   * that this step's failures are noise.
+   *
+   * It is printed, because a tag that is unreachable on every run for a week is
+   * a different matter and the only way anyone sees that is if each run says so.
+   */
+  if (unreachable.length > 0) {
+    console.log(
+      `${unreachable.length} tag${unreachable.length === 1 ? '' : 's'} could not be checked, and ` +
+        'kept what the catalogue already said.\n' +
+        '  Not a failure: the registry declined to answer, which is not the same as\n' +
+        '  the model being gone. If the same tags go unanswered run after run, ask why.',
+    );
   }
 
   /*
