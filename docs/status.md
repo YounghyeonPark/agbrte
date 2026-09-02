@@ -25,13 +25,17 @@ agent CLI you already have installed.
 
 ## What is not proven, named rather than glossed
 
-**The second model provider has never made a real request.** The `anthropic`
-adapter exists to validate the provider boundary — one implementation is not an
-abstraction — and every mapping it makes is tested against a stubbed transport:
-the tool-result coalescing, the thinking budget, the cache-token split, the stop
-reasons. None of that is the same as one live call, which needs a credential this
-machine does not have. What the boundary being sound does *not* tell you is
-whether the request is accepted.
+**The second model provider has never called the vendor, and will not here.**
+The `anthropic` adapter exists to validate the provider boundary — one
+implementation is not an abstraction — and it did that, finding two places where
+`ModelEndpoint.providerId` was written and never read. Its mappings are tested
+two ways: against a stubbed transport for the shapes, and against a real HTTP
+server on loopback for the headers, the GET, the status codes and an abort in
+flight. What no credential is available for is the last step, so nobody has seen
+the service accept one of these requests. That is a permanent gap in this
+project rather than a task waiting its turn, and it is the sort a first live call
+closes in a minute — with whatever it finds being about the vendor's expectations
+rather than about the boundary.
 
 **The remote-detached mechanism is verified against a real server but its model
 half is not.** "An agent on a GPU box using that box's own model server" has never
