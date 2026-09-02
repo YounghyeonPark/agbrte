@@ -53,7 +53,16 @@ import {
 import { CapabilityBadges } from './CapabilityBadges.js';
 import { panelBadges, rowBadges, toolWarning, worthChecking } from './modelCapabilities.js';
 import { useAgbrte } from './store.js';
-import { Composer, EventRow, PermissionPrompt, SplitPrompt, Transcript, WorkingDots, summarize } from './Transcript.js';
+import {
+  Composer,
+  EventRow,
+  PermissionPrompt,
+  SplitPrompt,
+  Transcript,
+  WorkingDots,
+  summarize,
+} from './Transcript.js';
+import { pendingToolSeq } from './pendingTool.js';
 import { Preview } from './Preview.js';
 import { TerminalView } from './TerminalView.js';
 import { Shell, type ShellChoice } from './Shell.js';
@@ -100,6 +109,37 @@ export function stateTone(state: SessionState): string {
     default:
       return 'text-muted';
   }
+}
+
+/**
+ * A dot that breathes while a session is actually running.
+ *
+ * `stateTone` above gives `working` no hue, for a good reason it states — the
+ * accent is the only mark the eye has for *this one needs you*, and spending it
+ * on the ordinary case is how a screen of healthy sessions ends up as loud as a
+ * screen of stuck ones. The cost of that decision is what this repays: with no
+ * colour and no motion, a session grinding through a ten-minute turn looked
+ * exactly like one that finished an hour ago. The word `working` sat there
+ * unchanged, which reads as frozen precisely when the app is doing the most.
+ *
+ * So the signal is **motion, in the neutral tone**. Movement is the one channel
+ * that says "alive" without spending a hue, and it does not compete with amber
+ * because it is not a colour at all — a person scanning for something to answer
+ * still sees only the amber rows.
+ *
+ * `working` only. Every other state is settled or waiting, and a dot that
+ * pulsed on all of them would be the amber-everywhere mistake with a different
+ * mark.
+ */
+export function LiveDot({ state }: { state: SessionState }): JSX.Element | null {
+  if (state !== 'working') return null;
+  return (
+    <span
+      data-testid="live-dot"
+      aria-hidden="true"
+      className="live-pulse bg-muted size-1.5 shrink-0 self-center rounded-full"
+    />
+  );
 }
 
 /**
@@ -362,6 +402,15 @@ export function App(): JSX.Element {
   const [starting, setStarting] = useState<string | null>(null);
   const { hosts, runtimesByHost, conformanceByHost, inbox, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
     store;
+
+  /*
+   * Which tool call is still out, computed once per render.
+   *
+   * `renderRow` runs for every event in the transcript, so scanning inside it
+   * would be a backwards walk per row — quadratic on a session with a thousand
+   * events, to answer a question with one answer.
+   */
+  const pendingTool = useMemo(() => pendingToolSeq(events), [events]);
 
   /**
    * The seats this session actually runs (§4.2).
@@ -861,20 +910,27 @@ export function App(): JSX.Element {
           pane === 'hosts' && active === null ? 'flex' : 'hidden'
         }`}
       >
-        {/* Wraps as whole controls, never inside one.
+        {/*
+          The title has its own line, and the controls are a grid.
 
-            Relabelling `?` to `Guide` cost more width than a 300px column had,
-            and the row answered by breaking `Attach host…` across two lines
-            inside its own button — a control split mid-word reads as damage
-            rather than as a tight fit. `flex-wrap` with `shrink-0` on the group
-            moves a button down intact instead. */}
-        <header className="border-line flex flex-wrap items-center justify-between gap-y-2 border-b p-4">
+          This row has been fixed twice by widening what may wrap — first the
+          header, then the group inside it — and both times the result was the
+          same shape: a title and five buttons competing for 300px, breaking
+          wherever the text happened to run out. What came of it was `Inbox`
+          `Guide` `Workflows` on one line and `About` `Attach host…` on the
+          next, every button a different width, none of the edges lining up.
+          Wrapping decided the layout, and wrapping does not know what these
+          controls are.
+
+          A grid does. Three equal columns, `Attach host…` spanning two because
+          it is the long one, so both rows are full and every edge is shared.
+          The title stops competing for the same line, which is what was
+          generating the wrap in the first place — a heading and a toolbar are
+          not peers and were only side by side because there was room once.
+        */}
+        <header className="border-line grid gap-3 border-b p-4">
           <h1 className="text-base tracking-wide">Agbrte</h1>
-          {/* The group itself wraps too. It gained an About button and with
-              four controls it is wider than the 300px column, and a group that
-              can neither shrink nor wrap pokes past the sidebar border into
-              the main pane. Buttons still move down intact, never mid-word. */}
-          <div className="flex min-w-0 flex-wrap items-center gap-2 whitespace-nowrap">
+          <div className="grid grid-cols-3 gap-2 whitespace-nowrap [&>*]:min-w-0">
             {/* §11: the durable record of what the notifier could not deliver —
                 while focused, in a browser, or with the app closed entirely. */}
             <Inbox
@@ -931,7 +987,9 @@ export function App(): JSX.Element {
               About
             </button>
             <button
-              className="btn"
+              /* Two columns, because it is the long label — which fills the row
+                 instead of leaving the gap a fifth button would have sat in. */
+              className="btn col-span-2"
               data-testid="add-host"
               onClick={() => setAttaching((open) => (open === false ? 'local' : false))}
             >
@@ -952,7 +1010,7 @@ export function App(): JSX.Element {
               elements sharing a testid is a strict-mode failure in every test
               that reaches for it while both are on screen. */}
           <button
-            className="btn text-accent basis-full"
+            className="btn text-accent"
             data-testid="new-session-oneshot"
             title="Pick a folder and start working in it"
             disabled={starting !== null}
@@ -1033,7 +1091,7 @@ export function App(): JSX.Element {
           <div
             role="alert"
             data-testid="error"
-            className="border-state-fail mx-4 mt-3 flex items-center justify-between gap-3 rounded-[2px] border bg-panel px-3 py-3"
+            className="border-state-fail mx-4 mt-3 flex items-center justify-between gap-3 rounded-surface border bg-panel px-3 py-3"
           >
             <span>{error}</span>
             <button className="btn" onClick={() => store.dismissError()}>
@@ -1090,7 +1148,7 @@ export function App(): JSX.Element {
            */
           <div
             data-testid="update-ready"
-            className="border-line mx-4 mt-3 flex items-center justify-between gap-3 rounded-[2px] border px-3 py-3 text-xs"
+            className="border-line mx-4 mt-3 flex items-center justify-between gap-3 rounded-surface border px-3 py-3 text-xs"
           >
             <span className="text-muted">
               Version {update.version} is downloaded. Sessions keep running while the app restarts.
@@ -1112,7 +1170,7 @@ export function App(): JSX.Element {
              looks like a bug, so it says what happened. */
           <div
             data-testid="notice"
-            className="border-line mx-4 mt-3 flex items-center justify-between gap-3 rounded-[2px] border px-3 py-3 text-xs"
+            className="border-line mx-4 mt-3 flex items-center justify-between gap-3 rounded-surface border px-3 py-3 text-xs"
           >
             <span className="text-muted">{notice}</span>
             <button className="btn" onClick={() => store.dismissNotice()}>
@@ -1349,7 +1407,16 @@ export function App(): JSX.Element {
                             events.filter((e) => e.agentId === paneAgent)
                       }
                       renderRow={(e) => (
-                        <EventRow key={e.seq} event={e} by={agentLabel(active.agents, e.agentId)} />
+                        <EventRow
+                          key={e.seq}
+                          event={e}
+                          by={agentLabel(active.agents, e.agentId)}
+                          /* Only while the turn is actually in flight. A call
+                             left unanswered by a crashed turn is history, and a
+                             sweep on it would claim work is happening in a
+                             session nothing is running. */
+                          live={active.state === 'working' && e.seq === pendingTool}
+                        />
                       )}
                       /* Motion at the tail while the turn runs, so a long silence
                          reads as "busy" rather than "hung" (see WorkingDots). */
@@ -2190,7 +2257,7 @@ function HostGroup({
             key={s.sessionId}
             data-testid="session"
             data-title={s.title}
-            className={`grid w-full gap-1 rounded-[2px] border px-3 py-2 text-left ${
+            className={`grid w-full gap-1 rounded-surface border px-3 py-2 text-left ${
               s.sessionId === activeId ? 'bg-raised border-line' : 'hover:border-line border-transparent'
             }`}
             title={s.title}
@@ -2209,6 +2276,7 @@ function HostGroup({
             {/* Quiet: the sidebar is navigation, and the pane beside it has
                 already said this. See `quietTone`. */}
             <span className={`${LABEL} flex min-w-0 gap-2`}>
+              <LiveDot state={s.state} />
               <span className={quietTone(s.state)}>{s.state.replace(/_/g, ' ')}</span>
               <FolderTag name={folderOf(s.instanceId)} />
               {s.group !== undefined && <GroupTag name={s.group.name} />}
@@ -2225,7 +2293,7 @@ function HostGroup({
             key={d.sessionId}
             data-testid="session"
             data-title={d.title}
-            className="hover:border-line grid w-full gap-1 rounded-[2px] border border-transparent px-3 py-2 text-left"
+            className="hover:border-line grid w-full gap-1 rounded-surface border border-transparent px-3 py-2 text-left"
             title={d.title}
             /* The row's own folder, as above — and here it is the only answer
                there is: an unopened session is found by `listOnDisk`, which each
@@ -2481,7 +2549,7 @@ function CredentialsNotice({ advice }: { advice: string | undefined }): JSX.Elem
     <div
       role="status"
       data-testid="credentials-notice"
-      className="border-state-paused mx-4 mt-3 grid shrink-0 gap-1 rounded-[2px] border bg-panel px-4 py-3"
+      className="border-state-paused mx-4 mt-3 grid shrink-0 gap-1 rounded-surface border bg-panel px-4 py-3"
     >
       <strong className={`${LABEL} text-state-paused`}>Waiting on a login</strong>
       <p className="text-xs">
@@ -2521,7 +2589,26 @@ function SessionHeader({
      * under pressure it was compressed and the first transcript line (a red
      * failed-tool notice, typically) rendered on top of its chips.
      */
-    <div className="border-line safe-top flex shrink-0 items-start justify-between gap-4 border-b px-4 py-4">
+    <div
+      /*
+       * Two lines on a phone, one row from `md` up.
+       *
+       * Two separate problems met here and only the first was visible. The
+       * hamburger is `absolute right-3 top-3` over the main pane, so it is
+       * outside this row's flow and the row laid itself out as though the space
+       * were free — which painted it over `Export`, leaving a control that
+       * looked like a rendering fault and still took the press. Reserving the
+       * space with `pr-14` fixed that and exposed the second: a back arrow, a
+       * title, a state label and two buttons never fitted one 390px line, and
+       * the title had been absorbing the shortfall by truncating. With the
+       * hamburger's space taken out it truncated to `wh…`, which is not a title.
+       *
+       * So below `md` they stack: the title gets the full width of its line,
+       * the controls get theirs. The reserved padding stays because the
+       * hamburger overlaps the *first* line, which is the title's.
+       */
+      className="border-line safe-top flex shrink-0 flex-col gap-2 border-b py-4 pl-4 pr-14 md:flex-row md:items-start md:justify-between md:gap-4 md:pr-4"
+    >
       <div className="flex min-w-0 items-start gap-2">
         {/* Hidden from `md` up, where the list is already on screen and a back
             arrow would point at nothing. */}

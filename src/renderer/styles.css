@@ -79,6 +79,29 @@
 
   --color-user-bubble: #232320;
   --color-user-edge: #34342f;
+
+  /*
+   * ## Corner radius, as three tokens rather than twenty-four literals
+   *
+   * `rounded-[2px]` was written out at twenty-four call sites and the composer
+   * alone said `rounded-xl` — twelve pixels against two, on the two things a
+   * person looks at most. Nobody chose that; it is what a literal repeated by
+   * hand does over time, and it reads as the interface being drawn by two
+   * people who never met.
+   *
+   * Two pixels is also not a *restrained* radius, it is an absent one — at that
+   * size a corner is square with an artefact on it. The scale below keeps the
+   * geometry honest: small marks stay tight, controls get enough that the eye
+   * reads them as one object, and surfaces that hold other things get the most.
+   * Rams' rule is that nothing is added that does not do work, and a radius
+   * that groups content does work.
+   *
+   * Named by role rather than by size, so a later change means changing what a
+   * *card* is rather than finding every `rounded-[10px]`.
+   */
+  --radius-mark: 3px;
+  --radius-control: 6px;
+  --radius-surface: 10px;
 }
 
 @layer base {
@@ -108,13 +131,60 @@
   }
 }
 
+/*
+ * ## One height for everything that sits on a row together
+ *
+ * The composer's row was the clearest symptom and not the only one: `btn` is
+ * `py-2` and `btn-quiet` was `py-1`, so `Chat` `Agbrte CLI` `Shell` `Files` ran
+ * along at one height while `Read aloud` and `Screen` sat shorter beside them,
+ * and `no mic` was neither — a bare `<span>` in a row of controls. Three
+ * heights and two of them accidental.
+ *
+ * A shared height is what makes a row read as a row. The difference between a
+ * primary and a tertiary control belongs in its *weight* — fill, border, text
+ * colour — not in its size, because size in a horizontal run reads as
+ * misalignment rather than as hierarchy.
+ *
+ * `min-height` rather than a fixed one, so a control that wraps to two lines
+ * grows instead of clipping its own text.
+ *
+ * Declared in `@theme` and not at the top level of the file, which is where the
+ * first attempt put it. A custom property outside any selector is not a
+ * declaration — it parses, the build succeeds, `var(--control-height)` resolves
+ * to nothing, and every control silently loses its height. That is the same
+ * failure mode as the `btn-quiet` class that was inert for weeks: valid to every
+ * tool the project runs, visible only on screen. It was caught here in one
+ * screenshot, which is the argument for taking them.
+ */
+@theme {
+  --control-height: 2.125rem;
+}
+
 @utility field {
-  @apply bg-sunken border-line text-ink w-full rounded-[2px] border px-3 py-2;
+  @apply bg-sunken border-line text-ink w-full rounded-control border px-3 py-2;
+  min-height: var(--control-height);
 }
 
 @utility btn {
-  @apply bg-raised border-line text-ink cursor-pointer rounded-[2px] border px-3 py-2;
+  @apply bg-raised border-line text-ink cursor-pointer rounded-control border px-3;
+  @apply inline-flex items-center justify-center gap-1.5 leading-none;
   @apply hover:border-accent disabled:cursor-default disabled:opacity-45 disabled:hover:border-line;
+  min-height: var(--control-height);
+}
+
+/*
+ * A label that lives in a control row without being a control.
+ *
+ * `no mic` and `no voice` are the two: a client with no microphone or no speech
+ * synthesiser says so *in place of* the button, and they were bare spans, so
+ * the row's alignment broke exactly where a person is being told something.
+ * §3.5's rule about capabilities applies to the shape as well as the words — a
+ * thing that cannot be pressed must not look like it can, and must still hold
+ * its place in the line.
+ */
+@utility control-note {
+  @apply text-muted inline-flex items-center px-1 text-xs;
+  min-height: var(--control-height);
 }
 
 /*
@@ -139,9 +209,13 @@
  * restraint is in the weight of the mark, not in hiding it.
  */
 @utility btn-quiet {
-  @apply border-line text-muted cursor-pointer rounded-[2px] border bg-transparent px-2 py-1;
+  @apply border-line text-muted cursor-pointer rounded-control border bg-transparent px-2.5;
+  @apply inline-flex items-center justify-center gap-1.5 text-xs leading-none;
   @apply hover:text-ink hover:border-accent;
   @apply disabled:cursor-default disabled:opacity-45 disabled:hover:border-line disabled:hover:text-muted;
+  /* The same height as `btn`, deliberately. What makes this the quieter control
+     is that it is unfilled and its text is `muted`, not that it is smaller. */
+  min-height: var(--control-height);
 }
 
 /*
@@ -159,7 +233,7 @@
  * look broken.
  */
 @utility cap-badge {
-  @apply border-line rounded-[2px] border px-1 py-0 text-[10px] leading-4 whitespace-nowrap;
+  @apply border-line rounded-mark border px-1 py-0 text-[10px] leading-4 whitespace-nowrap;
 }
 
 @utility cap-plain {
@@ -233,6 +307,92 @@
 @media (prefers-reduced-motion: reduce) {
   .working-dots > span {
     animation: none;
+  }
+}
+
+/*
+ * ## Motion that says *this one is running*, and only while it is
+ *
+ * The dots above were the whole of it, and they sit at the tail of a transcript
+ * — so a session working away in the sidebar, or a tool call that has been out
+ * for thirty seconds, looked exactly like one that had finished. The app was
+ * busiest precisely where it looked most frozen.
+ *
+ * Two marks, because two different things are running and they are read at
+ * different distances.
+ *
+ * **`live-sweep`** is a slow highlight crossing a line of text, for a tool call
+ * that has gone out and not come back. It is a *process* indicator and it must
+ * end: the sweep is applied by the row itself only while the result is missing,
+ * and the row goes still the moment one arrives. A shimmer left running on
+ * finished work is the common way this pattern is got wrong — it stops meaning
+ * "working" and becomes decoration on everything.
+ *
+ * **`live-pulse`** is a small breathing dot for a session in the list. A list
+ * of twenty rows cannot carry twenty sweeps without becoming a light show, and
+ * at that size the eye reads presence rather than progress, which is the honest
+ * signal for a row you are not looking at.
+ *
+ * Both are CSS-only, for the reason the dots already give: twenty working
+ * sessions cost zero timers in the renderer. And both use the accent at low
+ * opacity rather than a new hue — §14's palette spends its one colour on *needs
+ * a person*, and something merely running does not.
+ */
+@keyframes live-sweep {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.live-sweep {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 35%,
+    color-mix(in oklab, var(--color-accent) 22%, transparent) 50%,
+    transparent 65%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: live-sweep 2.4s linear infinite;
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.live-pulse {
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+
+/*
+ * Reduced motion keeps the *state*, and drops only the movement.
+ *
+ * The sweep becomes a flat tint and the dot rests lit rather than disappearing,
+ * because both are carrying information — "this is still running" — and someone
+ * who has asked for less motion has not asked to be told less.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .live-sweep {
+    animation: none;
+    background-image: none;
+    background-color: color-mix(in oklab, var(--color-accent) 8%, transparent);
+  }
+  .live-pulse {
+    animation: none;
+    opacity: 0.9;
   }
 }
 

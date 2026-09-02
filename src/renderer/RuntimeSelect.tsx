@@ -138,7 +138,7 @@ export function RuntimeSelect({
            * is well past the edge. The height is a property of the viewport, so
            * it is read from Radix's own measurement rather than guessed at.
            */
-          className="bg-panel border-line z-50 max-h-[var(--radix-select-content-available-height)] overflow-hidden rounded-[2px] border shadow-lg"
+          className="bg-panel border-line z-50 max-h-[var(--radix-select-content-available-height)] overflow-hidden rounded-surface border shadow-lg"
         >
           {/* Radix gives the viewport `overflow: auto`; the cap above is what
               gives it something to scroll. */}

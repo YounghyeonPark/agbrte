@@ -106,7 +106,7 @@ export function McpServerFields({
           return (
             <div
               key={index}
-              className="border-line grid gap-1 rounded-[2px] border p-2"
+              className="border-line grid gap-1 rounded-surface border p-2"
               data-testid="mcp-row"
               data-index={index}
             >
@@ -238,7 +238,7 @@ export function McpServerFields({
   if (!folded) return body;
 
   return (
-    <details className="border-line rounded-[2px] border px-2 py-1" data-testid="mcp-fields">
+    <details className="border-line rounded-surface border px-2 py-1" data-testid="mcp-fields">
       <summary className={`${LABEL} text-muted cursor-pointer`}>
         tools from an MCP server{drafts.length > 0 ? ` — ${drafts.length}` : ''}
       </summary>
@@ -336,7 +336,7 @@ export function McpPanel({
   const ready = draft.id.trim() !== '' && draft.command.trim() !== '' && problem === null;
 
   return (
-    <details className="border-line rounded-[2px] border px-2 py-1" data-testid="mcp-panel">
+    <details className="border-line rounded-surface border px-2 py-1" data-testid="mcp-panel">
       <summary className={`${LABEL} text-muted cursor-pointer`}>
         mcp{attached.length > 0 ? ` — ${attached.length}` : ''}
       </summary>

@@ -174,7 +174,7 @@ export function WorkflowEditor({
       </div>
 
       {node !== null ? (
-        <div className="border-line grid gap-2 rounded-[2px] border p-3" data-testid="wf-node-form">
+        <div className="border-line grid gap-2 rounded-surface border p-3" data-testid="wf-node-form">
           <div className="flex items-baseline justify-between gap-2">
             <span className="text-ink text-[13px]">{node.id}</span>
             <button

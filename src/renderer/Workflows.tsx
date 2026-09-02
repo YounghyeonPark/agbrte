@@ -115,7 +115,7 @@ export function Workflows({
               {found.map((file) => (
                 <li
                   key={file.id}
-                  className="border-line grid gap-1 rounded-[2px] border p-3"
+                  className="border-line grid gap-1 rounded-surface border p-3"
                   data-testid="workflow-row"
                   data-id={file.id}
                   data-ok={file.problems.length === 0 ? 'yes' : 'no'}

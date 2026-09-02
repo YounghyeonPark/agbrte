@@ -458,7 +458,7 @@ function Row({
     <button
       data-testid={entry.kind === 'dir' ? 'file-tree-dir' : 'file-tree-file'}
       data-path={entry.path}
-      className={`flex h-5 w-full items-center gap-1 rounded-[2px] px-2 text-left text-[11px] ${
+      className={`flex h-5 w-full items-center gap-1 rounded-mark px-2 text-left text-[11px] ${
         selected ? 'bg-panel text-ink' : 'text-muted hover:text-ink'
       } ${openable ? '' : 'cursor-default opacity-60'}`}
       style={{ paddingLeft: `${8 + depth * 10}px` }}

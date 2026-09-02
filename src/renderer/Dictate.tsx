@@ -170,14 +170,14 @@ export function Dictate({
   if (status === null) return null;
   if (!status.available) {
     return (
-      <span className="text-muted shrink-0 self-center text-xs" title={status.reason}>
+      <span className="control-note shrink-0" title={status.reason}>
         no mic
       </span>
     );
   }
 
   return (
-    <span className="flex shrink-0 items-center gap-2 self-center">
+    <span className="flex shrink-0 items-center gap-2">
       {error !== null && (
         <span className="text-state-fail max-w-60 truncate text-xs" title={error}>
           {error}

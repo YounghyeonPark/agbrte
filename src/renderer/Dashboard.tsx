@@ -35,7 +35,7 @@ import type { HostInfo } from '../shared/ipc/contract.js';
 import { byAttentionThenRecency } from '../shared/types/index.js';
 import { formatCost, sumCost } from '../shared/cost.js';
 import type { AttentionReason, Session } from '../shared/types/index.js';
-import { LABEL, quietTone } from './App.js';
+import { LABEL, LiveDot, quietTone } from './App.js';
 
 /** What each `awaiting_*` reason is actually asking of the person reading it. */
 const ASKS: Record<AttentionReason, string> = {
@@ -190,7 +190,7 @@ function Card({
        * reader is already looking, still distinguishing an amber pause from a
        * red failure as §4.1 requires.
        */
-      className="bg-panel border-line hover:border-accent grid gap-2 rounded-[2px] border p-3 text-left"
+      className="bg-panel border-line hover:border-accent grid gap-2 rounded-surface border p-3 text-left"
       onClick={() => onOpen(session.sessionId, session.instanceId)}
     >
       {/* `min-w-0` on the row, not on the title.
@@ -226,6 +226,7 @@ function Card({
         )}
         {/* Quiet: this card is inside the section whose heading is the amber
             one. `failed` still shows red — see `quietTone`. */}
+        <LiveDot state={session.state} />
         <span className={`${LABEL} truncate-line ${quietTone(session.state)}`}>
           {attention !== null ? ASKS[attention.reason] : session.state.replace(/_/g, ' ')}
         </span>

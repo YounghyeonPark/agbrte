@@ -13,7 +13,7 @@ import { AttachmentChip, CapturePicker, type Attachment } from './Capture.js';
 import { Dictate } from './Dictate.js';
 
 const META_ROW = 'text-muted flex items-baseline gap-2 text-xs';
-const CODE = 'text-accent rounded-[2px] bg-raised px-2 py-px font-mono text-[11px]';
+const CODE = 'text-accent rounded-mark bg-raised px-2 py-px font-mono text-[11px]';
 
 /**
  * Three dots that light up in sequence: the mark that a turn is in flight.
@@ -122,8 +122,19 @@ export function Transcript({
 export function EventRow({
   event,
   by,
+  live = false,
 }: {
   event: AgbrteEvent;
+  /**
+   * This row is the thing currently happening.
+   *
+   * Only ever true for a tool call whose result has not arrived, and only while
+   * the session is working — a transcript being read back later has no live
+   * row, and a call left unfinished by a crashed turn must not sweep forever.
+   * A process indicator that outlives its process is the standard way this
+   * pattern goes wrong: it stops meaning "running" and becomes decoration.
+   */
+  live?: boolean;
   /**
    * Which agent produced this, when the roster has more than one (§4.2).
    *
@@ -145,7 +156,7 @@ export function EventRow({
       return (
         <div
           data-testid="row-user"
-          className="bg-user-bubble border-user-edge max-w-[78%] justify-self-end rounded-[2px] border px-3 py-2"
+          className="bg-user-bubble border-user-edge max-w-[78%] justify-self-end rounded-surface border px-3 py-2"
         >
           {event.content.map((block, i) =>
             block.type === 'text' ? (
@@ -163,7 +174,7 @@ export function EventRow({
       return (
         <div
           data-testid="row-agent"
-          className="bg-panel border-line max-w-[82%] rounded-[2px] border px-3 py-2"
+          className="bg-panel border-line max-w-[82%] rounded-surface border px-3 py-2"
         >
           {who}
           <p className="wrap-anywhere">{event.text}</p>
@@ -172,7 +183,14 @@ export function EventRow({
 
     case 'agent.tool_use':
       return (
-        <div data-testid="row-tool" className={META_ROW}>
+        <div
+          data-testid="row-tool"
+          /* The sweep sits on the row rather than on the tool name, because what
+             is running is the call — reading a file, waiting on a shell — and
+             the argument beside it is part of what you are waiting on. */
+          className={`${META_ROW} ${live ? 'live-sweep rounded-mark' : ''}`}
+          {...(live ? { 'data-live': 'true' } : {})}
+        >
           {who}
           <code className={CODE}>{event.tool}</code>
           {/* `min-w-0`, because a flex item will not shrink below its content —
@@ -370,7 +388,7 @@ export function PermissionPrompt({
       role="alertdialog"
       aria-label={`Permission requested for ${tool}`}
       data-testid="prompt"
-      className="border-state-paused mx-4 flex shrink-0 items-center justify-between gap-4 rounded-[2px] border bg-panel px-4 py-3"
+      className="border-state-paused mx-4 flex shrink-0 items-center justify-between gap-4 rounded-surface border bg-panel px-4 py-3"
     >
       <div className="grid min-w-0 gap-1">
         <strong data-testid="prompt-tool">{tool}</strong>
@@ -431,7 +449,7 @@ export function SplitPrompt({
       aria-label={`Split proposed: ${proposal.title}`}
       data-testid="split-prompt"
       data-proposal={proposal.proposalId}
-      className="border-accent mx-4 grid shrink-0 gap-2 rounded-[2px] border bg-panel px-4 py-3"
+      className="border-accent mx-4 grid shrink-0 gap-2 rounded-surface border bg-panel px-4 py-3"
     >
       <div className="grid gap-1">
         <strong data-testid="split-title">Split off: {proposal.title}</strong>
@@ -539,7 +557,7 @@ export function Composer({
        * `shrink-0` for the same reason as every fixed row around the transcript
        * (see SessionHeader): it must not be the row the column crushes.
        */
-      className="border-line focus-within:border-accent/60 relative flex shrink-0 flex-col gap-2 rounded-xl border px-3 py-2 transition-colors"
+      className="border-line focus-within:border-accent/60 relative flex shrink-0 flex-col gap-2 rounded-surface border px-3 py-2 transition-colors"
       onSubmit={(e) => {
         e.preventDefault();
         submit();
@@ -674,7 +692,7 @@ function Speak({ agentText }: { agentText?: string }): JSX.Element | null {
 
   if (mute) {
     return (
-      <span className="text-muted shrink-0 self-center text-xs" title="No speech synthesis here">
+      <span className="control-note shrink-0" title="No speech synthesis here">
         no voice
       </span>
     );
@@ -684,7 +702,7 @@ function Speak({ agentText }: { agentText?: string }): JSX.Element | null {
     <button
       type="button"
       data-testid="speak-replies"
-      className={`btn-quiet shrink-0 self-center text-xs ${on ? 'text-accent' : ''}`}
+      className={`btn-quiet shrink-0 ${on ? 'text-accent border-accent/50' : ''}`}
       title="Read replies aloud. Off by default, and only for this session."
       onClick={() => {
         // Turning it off stops mid-sentence rather than finishing: the reason to

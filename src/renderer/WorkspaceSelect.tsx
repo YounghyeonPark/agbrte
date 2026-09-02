@@ -97,7 +97,7 @@ export function WorkspaceSelect({
              the reason `RuntimeSelect` documents: laid out at full height, a
              list of thirty paths is placed past the edge of the window and its
              first entries can be seen and not clicked. */
-          className="bg-panel border-line z-50 max-h-[var(--radix-select-content-available-height)] overflow-hidden rounded-[2px] border shadow-lg"
+          className="bg-panel border-line z-50 max-h-[var(--radix-select-content-available-height)] overflow-hidden rounded-surface border shadow-lg"
         >
           <Select.Viewport className="p-1">
             {GROUPS.map(({ kind, title }) => {
