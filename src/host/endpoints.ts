@@ -46,6 +46,7 @@ import { machineRoot } from './machine.js';
 import { restrictToOwner } from './ownerOnly.js';
 import type { ModelEndpoint } from '@shared/types/index.js';
 import { OPENAI_COMPATIBLE_PROVIDER_ID } from '@main/runtime/providers/openaiCompatible.js';
+import { ANTHROPIC_PROVIDER_ID } from '@main/runtime/providers/anthropic.js';
 
 /** An endpoint as advertised to clients: everything except the secret. */
 export interface PublicEndpoint {
@@ -91,11 +92,55 @@ export class EndpointsInvalid extends Error {
 
 interface Entry {
   id: string;
-  baseUrl: string;
+  /**
+   * Optional when `api` names a provider that has a default.
+   *
+   * `ModelEndpoint.baseUrl` has always documented "omitted uses the provider's
+   * default", and this file was stricter than the type for no stated reason —
+   * harmless while every endpoint was a local server that must be named, and
+   * pure friction for a single hosted API whose URL is a constant.
+   */
+  baseUrl?: string;
   label?: string;
+  /**
+   * Who receives the code, for the disclosure §13 requires. **Free text, and not
+   * routing** — see `api`.
+   */
   provider?: string;
+  /**
+   * Which adapter speaks to this endpoint (§3.8).
+   *
+   * Absent means `openai-compatible`, which is what every endpoint got when
+   * `providerId` was hardcoded here and nothing read it. So an existing file
+   * keeps behaving exactly as it did.
+   *
+   * **Deliberately not called `provider`,** which is the obvious name and is
+   * taken by the field above. Those two would differ by three characters and
+   * mean unrelated things: one is a sentence shown to a person about where their
+   * source code goes, free text and possibly `"Anthropic (EU)"`; this one must
+   * match an adapter id exactly or nothing routes. A config where the routing
+   * field looks like a label is a config where somebody writes the label and
+   * wonders why their turns went to the wrong API.
+   */
+  api?: string;
   apiKey?: string;
 }
+
+/**
+ * The adapters an endpoint may name, checked when the file is read.
+ *
+ * Refused rather than tolerated, which is the opposite of what `ProviderRouter`
+ * does with the same value, and the two are consistent because they know
+ * different things. Here the whole set is in hand and a typo can be answered
+ * with the list — the same reasoning the `id`/`baseUrl` check above states, that
+ * "a typo that silently drops an endpoint sends the turn somewhere else instead
+ * of failing", and sending source code to the wrong vendor is the worst version
+ * of somewhere else (§13). The router receives endpoints from anywhere, including
+ * files written by an older build, and must not turn an unknown id into a
+ * session that cannot start. Refuse where the remedy can be named; tolerate
+ * where it cannot.
+ */
+const KNOWN_APIS = new Set([OPENAI_COMPATIBLE_PROVIDER_ID, ANTHROPIC_PROVIDER_ID]);
 
 export function endpointsPath(): string {
   // Through `machineRoot` rather than joined here, so the machine's install area
@@ -140,6 +185,21 @@ async function readIfPresent(path: string): Promise<string | null> {
  * Kept so a machine with a local Ollama works with no file at all, which is the
  * setup most people start from and the one the tests use.
  */
+/**
+ * The URL a provider uses when the file names none.
+ *
+ * Only for adapters where there is one right answer. `openai-compatible` has
+ * none by design — the whole point of that adapter is that it is pointed at
+ * whatever is running — so an entry using it still has to say where.
+ */
+function defaultBaseUrlFor(api: string | undefined): string | undefined {
+  return api === ANTHROPIC_PROVIDER_ID ? 'https://api.anthropic.com/v1' : undefined;
+}
+
+function baseUrlFor(entry: Entry): string | undefined {
+  return entry.baseUrl ?? defaultBaseUrlFor(entry.api);
+}
+
 function fallback(): Entry {
   return {
     id: 'local',
@@ -182,10 +242,22 @@ export async function loadEndpoints(
       throw new EndpointsInvalid(path, 'expected { "endpoints": [ … ] } with at least one entry');
     }
     for (const entry of parsed.endpoints) {
-      if (typeof entry?.id !== 'string' || typeof entry?.baseUrl !== 'string') {
+      if (typeof entry?.id !== 'string') {
         // Refused rather than skipped: a typo that silently drops an endpoint
         // sends the turn somewhere else instead of failing.
-        throw new EndpointsInvalid(path, 'each endpoint needs an "id" and a "baseUrl"');
+        throw new EndpointsInvalid(path, 'each endpoint needs an "id"');
+      }
+      if (entry.api !== undefined && !KNOWN_APIS.has(entry.api)) {
+        throw new EndpointsInvalid(
+          path,
+          `endpoint "${entry.id}" names api "${entry.api}", which nothing here speaks — ` +
+            `known: ${[...KNOWN_APIS].join(', ')}`,
+        );
+      }
+      if (typeof entry.baseUrl !== 'string' && defaultBaseUrlFor(entry.api) === undefined) {
+        // Only the endpoints with nowhere to default to. A hosted API's URL is a
+        // constant and making somebody retype it is how a typo gets introduced.
+        throw new EndpointsInvalid(path, `endpoint "${entry.id}" needs a "baseUrl"`);
       }
     }
     entries = parsed.endpoints;
@@ -197,8 +269,16 @@ export async function loadEndpoints(
 
   const build = (entry: Entry): ModelEndpoint => ({
     endpointId: entry.id,
-    providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
-    baseUrl: entry.baseUrl,
+    /*
+     * Read from the file at last (§3.8, §15 Phase 3).
+     *
+     * This was the constant `OPENAI_COMPATIBLE_PROVIDER_ID`, which was true of
+     * every endpoint and hid a hole: a second adapter and a router that
+     * dispatches on `providerId` are both useless while nothing can produce an
+     * endpoint that names one. The abstraction was validated and unreachable.
+     */
+    providerId: entry.api ?? OPENAI_COMPATIBLE_PROVIDER_ID,
+    ...(baseUrlFor(entry) !== undefined ? { baseUrl: baseUrlFor(entry)! } : {}),
     // `ModelEndpoint.auth` says what *kind* of credential this needs; the id is
     // the endpoint's own. `AgentSpec.auth` is the union that names one — two
     // different types that share a word.
@@ -218,7 +298,11 @@ export async function loadEndpoints(
         id: entry.id,
         label: entry.label ?? entry.id,
         provider: entry.provider ?? (entry.apiKey === undefined ? 'local' : entry.id),
-        baseUrl: entry.baseUrl,
+        // The resolved one, not the written one. A picker showing an empty URL
+        // for an endpoint that has a perfectly good default would read as
+        // misconfigured, and §13's requirement is that a client can *say* where
+        // a turn went.
+        baseUrl: baseUrlFor(entry) ?? '',
         authenticated: entry.apiKey !== undefined,
       })),
     resolve: (endpointId) => {

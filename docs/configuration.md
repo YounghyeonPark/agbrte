@@ -17,9 +17,21 @@ transcript.
 ```json
 { "endpoints": [{ "id": "local", "baseUrl": "http://127.0.0.1:11434/v1" },
                 { "id": "vendor", "baseUrl": "https://api.example.com/v1",
-                  "provider": "Example AI", "apiKey": "sk-..." }],
+                  "provider": "Example AI", "apiKey": "sk-..." },
+                { "id": "claude", "api": "anthropic", "apiKey": "sk-ant-..." }],
   "default": "local" }
 ```
+
+`api` picks which adapter speaks to the endpoint: `openai-compatible` (the
+default, and what every endpoint used before this field existed) or `anthropic`.
+An unknown value is refused when the file is read, with the known ones listed —
+a typo that fell back to the default would send your source code to an API you
+did not name. `baseUrl` may be omitted when `api` names a service with one URL,
+which is why the `claude` entry above has none.
+
+`provider` is **not** routing. It is the disclosure shown wherever a turn's
+destination is displayed, it is free text, and `"Anthropic (EU)"` is a perfectly
+good value for it. `api` has to match an adapter's id exactly.
 
 ## `<workspace>/.agbrte/access.json` — watching rather than driving
 

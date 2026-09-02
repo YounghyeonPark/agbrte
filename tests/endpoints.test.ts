@@ -79,6 +79,82 @@ describe('the file this had before the rename', () => {
   });
 });
 
+describe('which adapter an endpoint reaches', () => {
+  it('defaults to openai-compatible, which is what every endpoint used to get', async () => {
+    await write({ endpoints: [{ id: 'local', baseUrl: 'http://127.0.0.1:11434/v1' }] });
+    const registry = await loadEndpoints(file());
+
+    // `providerId` was a hardcoded constant here until there were two adapters.
+    // An existing file has no `api`, and must go on behaving exactly as it did.
+    expect(registry.resolve('local').providerId).toBe('openai-compatible');
+  });
+
+  it('routes to the adapter the file names', async () => {
+    await write({
+      endpoints: [{ id: 'claude', api: 'anthropic', apiKey: 'sk-x' }],
+    });
+    const registry = await loadEndpoints(file());
+
+    /*
+     * The hole this closes. A second provider and a router that dispatches on
+     * `providerId` are both unreachable while nothing can produce an endpoint
+     * that names one — the abstraction was validated and had no way in.
+     */
+    expect(registry.resolve('claude').providerId).toBe('anthropic');
+  });
+
+  it('fills in a hosted API’s own url rather than making somebody retype it', async () => {
+    await write({ endpoints: [{ id: 'claude', api: 'anthropic', apiKey: 'k' }] });
+    const registry = await loadEndpoints(file());
+
+    // `ModelEndpoint.baseUrl` has always documented "omitted uses the provider's
+    // default"; this file was stricter than the type for no stated reason.
+    expect(registry.resolve('claude').baseUrl).toBe('https://api.anthropic.com/v1');
+    expect(registry.list()[0]?.baseUrl).toBe('https://api.anthropic.com/v1');
+  });
+
+  it('still demands a url from an adapter that has no default', async () => {
+    // `openai-compatible` is pointed at whatever is running, so there is no
+    // right answer to default to.
+    await expect(loadEndpoints(file())).resolves.toBeDefined(); // no file: the local fallback
+    await write({ endpoints: [{ id: 'somewhere' }] });
+    await expect(loadEndpoints(file())).rejects.toThrow(EndpointsInvalid);
+  });
+
+  it('refuses an api nobody speaks, and says which are known', async () => {
+    await write({ endpoints: [{ id: 'x', baseUrl: 'http://h/v1', api: 'anthropc' }] });
+
+    /*
+     * The typo that matters most. Tolerated, it would fall back to
+     * `openai-compatible` and send source code to an API the user did not name —
+     * which is the same failure the `id` check guards, in its worst form (§13).
+     *
+     * `ProviderRouter` tolerates the same value, and the two are consistent:
+     * here the whole set is in hand and the remedy can be named, while the
+     * router meets endpoints from files written by older builds and must not
+     * turn an unknown id into a session that cannot start.
+     */
+    await expect(loadEndpoints(file())).rejects.toThrow(/anthropc/);
+    await expect(loadEndpoints(file())).rejects.toThrow(/openai-compatible, anthropic/);
+  });
+
+  it('keeps the routing field apart from the disclosure one', async () => {
+    await write({
+      endpoints: [
+        { id: 'claude', api: 'anthropic', provider: 'Anthropic (EU)', apiKey: 'k' },
+      ],
+    });
+    const registry = await loadEndpoints(file());
+
+    // Two fields, three characters apart, meaning unrelated things: one is a
+    // sentence shown to a person about where their code goes, the other must
+    // match an adapter id exactly. Writing the label into the routing field is
+    // the mistake the names exist to prevent.
+    expect(registry.resolve('claude').providerId).toBe('anthropic');
+    expect(registry.resolve('claude').dataHandling.provider).toBe('Anthropic (EU)');
+  });
+});
+
 describe('reading the file', () => {
   it('offers every endpoint, and keeps the keys to itself', async () => {
     await write({
