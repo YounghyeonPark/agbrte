@@ -43,8 +43,17 @@ let root: string;
 let instanceId: InstanceId;
 const managers: SessionManager[] = [];
 
-/** Each turn reports a fixed, known spend, so the arithmetic is checkable. */
-function manager(inputTokens = 100, outputTokens = 50): SessionManager {
+/**
+ * Each turn reports a fixed, known spend, so the arithmetic is checkable.
+ *
+ * **Priced by default, and that is not the echo runtime's own answer.** Echo
+ * declares `pricing: 'free'`, which is correct — it bills nobody — and a free
+ * seat is exempt from the ceiling, so every test here was measuring the exemption
+ * rather than the enforcement until this override existed. Seven of them went
+ * red the moment free seats stopped counting, which is the mechanism working and
+ * the fixture being wrong about what it was standing in for.
+ */
+function manager(inputTokens = 100, outputTokens = 50, pricing: 'free' | 'opaque' = 'opaque'): SessionManager {
   const registry = new RuntimeRegistry();
   registry.register(
     new EchoRuntime({
@@ -53,6 +62,7 @@ function manager(inputTokens = 100, outputTokens = 50): SessionManager {
         { kind: 'usage', inputTokens, outputTokens },
         { kind: 'stop', stop: { kind: 'end_turn' } },
       ],
+      capabilities: { pricing },
     }),
     { label: 'Echo', model: 'none' },
   );
@@ -284,5 +294,104 @@ describe('and something reads it before spending more', () => {
     // precisely so this stays true — and the absence of a limit stop is the way
     // to say it, since a finished turn parks in `awaiting_input` regardless.
     expect(await limitStops(m, sessionId)).toEqual([]);
+  });
+});
+
+describe('free tokens, which a ceiling has no business bounding', () => {
+  it('does not charge a budget for a model that bills nobody', async () => {
+    const m = manager(100, 50, 'free');
+    const { sessionId, agentId } = await seat(m, { budget: budget(10_000) });
+
+    await m.send(sessionId, agentId, TEXT);
+    await m.send(sessionId, agentId, TEXT);
+
+    /*
+     * A ceiling bounds *cost*, and a local model incurs none —
+     * `openai-compatible` reports `pricing: 'free'` for any endpoint that is not
+     * `cloud`, and the echo runtime says so outright. Charging a budget for it
+     * would stop a long local run at a figure chosen for money never spent,
+     * which is the shape of limit §4.3 refuses elsewhere: one imposed by the
+     * mechanism rather than by anybody's intent.
+     */
+    expect(m.get(sessionId).budget?.spent).toBe(0);
+  });
+
+  it('still records what was used, because that is true either way', async () => {
+    const m = manager(100, 50, 'free');
+    const { sessionId, agentId } = await seat(m, { budget: budget(10_000) });
+    await m.send(sessionId, agentId, TEXT);
+
+    // The totals are what a person reads to see what the session did; the budget
+    // is what it cost. Free tokens belong in the first and not the second.
+    const projection = await m.projection(sessionId);
+    expect(projection.usage.inputTokens).toBe(100);
+    expect(projection.usage.outputTokens).toBe(50);
+    expect(projection.budget?.spent).toBe(0);
+  });
+
+  it('runs on past a ceiling that is already spent', async () => {
+    const m = manager(100, 50, 'free');
+    // Nothing left before the first turn even starts.
+    const { sessionId, agentId } = await seat(m, {
+      budget: { tokenCeiling: 10, spent: 10, reservedForChildren: 0 },
+    });
+
+    await m.send(sessionId, agentId, TEXT);
+
+    expect(await limitStops(m, sessionId)).toEqual([]);
+  });
+
+  it('is read from the seat, which can be replaced by a paid one', async () => {
+    /*
+     * §4.2 caps a session at one agent, so "free and paid at once" is not a
+     * state this system has — the first version of this test asserted it and was
+     * refused by `SecondAgentRefused`, correctly.
+     *
+     * What *does* happen over time is a seat being retired and replaced when
+     * somebody changes the model. A session can run free for a week and hosted
+     * afterwards, and the figure that matters for a turn is what *that* turn
+     * costs — a property of whoever is about to take it, not of the session's
+     * history.
+     */
+    const registry = new RuntimeRegistry();
+    const script = [
+      { kind: 'usage' as const, inputTokens: 100, outputTokens: 50 },
+      { kind: 'stop' as const, stop: { kind: 'end_turn' as const } },
+    ];
+    registry.register(
+      new EchoRuntime({ script, id: 'echo-free', capabilities: { pricing: 'free' } }),
+      { label: 'Free', model: 'none' },
+    );
+    registry.register(new EchoRuntime({ script, capabilities: { pricing: 'opaque' } }), {
+      label: 'Paid',
+      model: 'none',
+    });
+    const m = new SessionManager({ registry, workspaceRoot: root, instanceId, stallAfterMs: 0 });
+    managers.push(m);
+
+    const session = await m.createSession({ title: 's', goal: 'g', budget: budget(150) });
+    const gratis = await m.addAgent(session.sessionId, {
+      role: 'worker',
+      runtimeId: 'echo-free',
+    });
+
+    // Free turns cost the budget nothing, however many of them there are.
+    await m.send(session.sessionId, gratis.agentId, TEXT);
+    await m.send(session.sessionId, gratis.agentId, TEXT);
+    expect(m.get(session.sessionId).budget?.spent).toBe(0);
+
+    // The model changes; the seat is retired and a paid one takes over.
+    const paid = await m.addAgent(session.sessionId, {
+      role: 'worker',
+      runtimeId: 'echo',
+      replacing: gratis.agentId,
+    });
+
+    await m.send(session.sessionId, paid.agentId, TEXT);
+    expect(m.get(session.sessionId).budget?.spent).toBe(150);
+
+    // And now the ceiling bites, on a session that had been running freely.
+    await m.send(session.sessionId, paid.agentId, TEXT);
+    expect(await limitStops(m, session.sessionId)).toHaveLength(1);
   });
 });

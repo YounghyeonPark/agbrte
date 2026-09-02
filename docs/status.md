@@ -44,13 +44,16 @@ run, because that box has no model server.
 **Phase 7's acceptance sentence has run end to end**, with the agent local rather
 than remote and unable to see the picture.
 
-**A session budget limits tokens, not money, and not per day.** A ceiling now
-bounds both what a session spends itself — a turn that would start with nothing
-left parks for a person instead — and what it may reserve for children, which is
-never released, so a tree cannot outspend its root. What is *not* enforced is
-anything denominated in currency or in time: §6.5's per-day and cost ceilings
-belong to the ModelGateway, which remains unbuilt because the four other things
-it does have no work in a deployment that uses no API key.
+**A session budget limits billable tokens, not money, and not per day.** A
+ceiling bounds what a session spends itself — a turn that would start with
+nothing left parks for a person — and what it may reserve for children, which is
+never released, so a tree cannot outspend its root. **Free tokens are not
+counted**: a local model bills nobody, and stopping a long local run at a figure
+chosen for a cost never incurred would be a limit imposed by the mechanism rather
+than by anyone's intent. What is *not* enforced is anything denominated in
+currency or in time: §6.5's per-day and cost ceilings belong to the ModelGateway,
+which remains unbuilt because the four other things it does have no work in a
+deployment that uses no API key.
 
 **A child on another machine is spawned by two hosts in one process, not by two
 machines.** The three-step that makes it possible — prepare on the parent's host,

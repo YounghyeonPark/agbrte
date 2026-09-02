@@ -33,6 +33,14 @@ export interface PumpOptions {
   onProgress?: (p: ProgressSignal) => void;
   /** Called for each durable event written, for live UI forwarding. */
   onEvent?: (e: RuntimeEvent) => void;
+  /**
+   * Whether this seat's tokens cost anything, stamped onto every `usage` event.
+   *
+   * Passed in rather than looked up: the caller holds the agent record and its
+   * resolved capabilities, and this function is handed a handle and a store with
+   * no route to either.
+   */
+  free?: boolean;
 }
 
 export interface PumpOutcome {
@@ -183,6 +191,9 @@ export async function pumpAgent(
             ...(ev.cacheReadTokens !== undefined ? { cacheReadTokens: ev.cacheReadTokens } : {}),
             ...(ev.cacheWriteTokens !== undefined ? { cacheWriteTokens: ev.cacheWriteTokens } : {}),
             ...(ev.cost !== undefined ? { cost: ev.cost } : {}),
+            // Absent means billable, so only a free seat says anything. Every
+            // event written before this field existed has to read as billable.
+            ...(opts.free === true ? { free: true } : {}),
           },
           meta,
         );

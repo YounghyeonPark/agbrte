@@ -317,6 +317,28 @@ export type EventBody =
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
       cost?: number | 'unknown';
+      /**
+       * Whether these tokens cost anything, so a budget can ignore the ones that
+       * do not (§4.3, §6.5).
+       *
+       * A ceiling exists to bound spending, and a local model spends nothing —
+       * `RuntimeCapabilities.pricing` already says `'free'` for an endpoint that
+       * is not `cloud`, and for the echo runtime. Counting those against a
+       * budget would stop a long local run at a number chosen for a cost that
+       * was never incurred, which is the shape of limit §4.3 refuses elsewhere:
+       * one imposed by the mechanism rather than by anybody's intent.
+       *
+       * **On the event, not derived at read time.** Which endpoint a seat used
+       * is a fact about the moment the turn ran — an endpoint can be
+       * reconfigured, a model swapped from local to hosted — and a fold that
+       * looked up today's pricing would re-price last week's tokens. §5.1's rule
+       * is that the log records what established a thing; this is that rule
+       * applied to a number somebody may later be charged for.
+       *
+       * Absent means billable, which is what every event written before this
+       * field existed has to mean: the safe direction is to keep counting.
+       */
+      free?: boolean;
     }
   | { type: 'content.downgraded'; note: DowngradeNote }
   | { type: 'capture.attached'; sha256: Sha256; mime: string }

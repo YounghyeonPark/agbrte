@@ -190,8 +190,17 @@ export function reduceEvents(
          * whose provider happens to report the detail. They are priced
          * differently and stay separate in `usage` for exactly that reason; a
          * token count is not a price.
+         *
+         * **And free tokens are not counted at all.** A ceiling bounds spending,
+         * and a local model spends nothing; charging a budget for it would stop
+         * a long local run at a figure chosen for a cost never incurred. The
+         * totals above still record them, because what a session *used* is true
+         * either way and the UI shows it — this is the budget, which is about
+         * what it cost.
          */
-        if (p.budget !== undefined) p.budget.spent += ev.inputTokens + ev.outputTokens;
+        if (p.budget !== undefined && ev.free !== true) {
+          p.budget.spent += ev.inputTokens + ev.outputTokens;
+        }
         // Absent is "this runtime said nothing about cost", which leaves the
         // total alone. `'unknown'` is a runtime saying a cost exists and cannot
         // be seen, and that is contagious (§10).

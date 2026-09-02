@@ -1626,9 +1626,23 @@ export class SessionManager extends EventEmitter {
      * split, or close it out. `limit_reached` is the stop reason for exactly
      * that, and `limit: 'tokens'` has been in its union since it was written
      * with nothing ever producing it.
+     *
+     * **Free seats are exempt.** A ceiling bounds cost; a local model costs
+     * nothing, which is what `pricing: 'free'` reports for any endpoint that is
+     * not `cloud` and what the echo runtime says outright. Charging a budget for
+     * it would stop a long local run at a figure chosen for money never spent —
+     * the shape of limit §4.3 refuses elsewhere, imposed by the mechanism rather
+     * than by anybody's intent.
+     *
+     * Read from the **seat**, not from the session, and that is not the same
+     * thing over time even though §4.2 caps a session at one agent: a seat is
+     * retired and replaced when somebody changes the model, so a session can run
+     * free for a week and hosted afterwards. The figure that matters is what
+     * this turn will cost, which is a property of whoever is about to take it.
      */
     const budget = live.session.budget;
-    if (budget !== undefined && availableTokens(budget) <= 0) {
+    const free = record.resolvedCapabilities.pricing === 'free';
+    if (budget !== undefined && !free && availableTokens(budget) <= 0) {
       await this.stopForLimit(live, agentId, budget);
       return;
     }
@@ -1730,7 +1744,15 @@ export class SessionManager extends EventEmitter {
 
     let outcome;
     try {
-      const pumped = pumpAgent(handle, live.store, { origin: this.originFor(spec), agentId });
+      const pumped = pumpAgent(handle, live.store, {
+        origin: this.originFor(spec),
+        agentId,
+        // What this seat's tokens cost, recorded on each `usage` event so the
+        // budget can ignore the ones that cost nothing. `'free'` is what
+        // `openai-compatible` reports for any endpoint that is not `cloud`, and
+        // what the echo runtime reports outright.
+        ...(record.resolvedCapabilities.pricing === 'free' ? { free: true } : {}),
+      });
       await handle.send({ content: fitted.content });
       outcome = await pumped;
     } finally {
@@ -1759,9 +1781,11 @@ export class SessionManager extends EventEmitter {
      * which is the class of drift §5.1 keeps the log authoritative to avoid.
      *
      * Input plus output only, matching the fold: the cache fields are a
-     * breakdown of the input side, not tokens on top of it.
+     * breakdown of the input side, not tokens on top of it. And nothing at all
+     * for a free seat, for the same reason the fold skips it — a ceiling bounds
+     * spending, and a local model spends nothing.
      */
-    if (live.session.budget !== undefined) {
+    if (live.session.budget !== undefined && record.resolvedCapabilities.pricing !== 'free') {
       live.session.budget.spent += outcome.usage.inputTokens + outcome.usage.outputTokens;
     }
     record.status = outcome.disposition === 'fail' ? 'stopped' : 'idle';
