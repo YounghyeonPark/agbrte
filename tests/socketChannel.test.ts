@@ -152,6 +152,9 @@ describe('disconnection', () => {
     const channel = await accepted;
 
     channel.close();
+    // A duration establishing the precondition, like the one above: the peer has
+    // to have *already gone* before the handler attaches, which is the whole
+    // case. Polling for it would be polling for the thing the test then asserts.
     await new Promise((r) => setTimeout(r, 30));
 
     // Registering late must not mean never hearing about it — that is what left

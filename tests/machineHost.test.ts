@@ -25,6 +25,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
 import { useOwnMachine } from './support/machineHome.js';
+import { until } from './support/until.js';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -526,7 +527,9 @@ describe('a client that goes away takes its terminals with it', () => {
 
     expect(reaped).toEqual([]);
     client.disconnect();
-    await new Promise((r) => setTimeout(r, 50));
+    // The reap is a fact to wait for, not a duration: 50ms was enough on an
+    // idle machine and is exactly the shape `until` replaces.
+    await until(() => reaped.length > 0);
     expect(reaped, 'a departing client left its terminals running').toEqual([root]);
   });
 });

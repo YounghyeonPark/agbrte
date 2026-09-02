@@ -11,6 +11,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { until } from './support/until.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -253,9 +254,23 @@ describe('a run that outlives the host that started it', () => {
      */
     const after = await restart();
     await after.resumeSession(session.sessionId);
-    // `resume` is not awaited by `resumeSession` — deliberately, since it spawns
-    // — so this waits rather than assuming.
-    await new Promise((r) => setTimeout(r, 100));
+    /*
+     * `resume` is not awaited by `resumeSession` — deliberately, since it spawns
+     * — so this waits for the spawn rather than assuming one.
+     *
+     * A 100ms sleep, until it was not enough: this is the test that timed out on
+     * a loaded machine, and a sleep sized for an idle one is exactly what
+     * `until` exists to replace.
+     *
+     * The condition is `isRun`, not the child count — which the first attempt
+     * used and which is **already true** before the restart, since the run had
+     * spawned `scan` before the host went away. A condition that holds before
+     * the thing you are waiting for is a sleep of zero wearing a poll, and it
+     * failed on an idle machine rather than a busy one, which at least made it
+     * obvious. `isRun` becomes true when the resumed host has read the document
+     * and adopted the run, which is the fact this test is about.
+     */
+    await until(() => after.workflowRuns.isRun(session.sessionId));
 
     // The run came back: the new host knows this session is a run of that
     // document, which is what `session.created` now carries and what nothing
@@ -323,6 +338,12 @@ describe('a run that outlives the host that started it', () => {
 
     const after = await restart();
     await after.resumeSession(session.sessionId);
+    /*
+     * A duration, and correctly so: the claim is that the resumed run spawns
+     * **nothing further**, and an absence only means something if you waited for
+     * it. There is nothing to poll for when the expected outcome is that no new
+     * fact appears — see the header of `support/until.ts`.
+     */
     await new Promise((r) => setTimeout(r, 120));
 
     /*
@@ -377,6 +398,8 @@ describe('a run that outlives the host that started it', () => {
     const session = await manager.createSession({ title: 'just work', goal: 'do a thing' });
     const after = await restart();
     await after.resumeSession(session.sessionId);
+    // A duration: the claim is that an ordinary session spawns nothing, and
+    // nothing is not a fact to poll for.
     await new Promise((r) => setTimeout(r, 60));
     expect(after.get(session.sessionId).children).toEqual([]);
     expect(after.workflowRuns.isRun(session.sessionId)).toBe(false);
@@ -401,6 +424,8 @@ describe('a run that outlives the host that started it', () => {
 
     const after = await restart();
     await expect(after.resumeSession(session.sessionId)).resolves.toBeDefined();
+    // A duration, for the same reason: no run starts, and an absence needs
+    // waiting rather than polling.
     await new Promise((r) => setTimeout(r, 60));
     expect(after.workflowRuns.isRun(session.sessionId)).toBe(false);
   });

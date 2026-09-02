@@ -156,6 +156,8 @@ describe('how far the install has got', () => {
     const installer = new ModelInstaller(counting);
     installer.start('local', 'http://x/v1', 'demo:1b');
     installer.start('local', 'http://x/v1', 'demo:1b');
+    // A duration: the claim is that the second `start` did **nothing**, and an
+    // absence only means something if you waited for it.
     await new Promise((r) => setTimeout(r, 30));
 
     expect(calls).toBe(1);

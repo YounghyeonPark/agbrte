@@ -223,7 +223,17 @@ describe('the tail belongs to the session, not to the turn', () => {
     await sm.send(sessionId, agentId, TEXT('again'));
     const second = sm.rawLog(sessionId, agentId);
     expect(second?.lines.length).toBeGreaterThan(first?.lines.length ?? 0);
-  });
+    /*
+     * Its own timeout, like the real-process cases in `machineHost.test.ts`.
+     *
+     * This one spawns **two** node subprocesses through the real runtime, and
+     * vitest's 5s default is sized for a test that touches nothing. It is not a
+     * sleep and it is not slow work being papered over — it is two process
+     * starts on a machine that may be running the rest of the suite in
+     * parallel, which is exactly what `--no-file-parallelism` would hide and
+     * what this suite runs in parallel on purpose.
+     */
+  }, 30_000);
 
   it('refuses a seat that does not exist rather than answering null', async () => {
     // `null` means "no raw side". Letting it also mean "no such agent" would
@@ -250,9 +260,14 @@ describe('and it survives the process that printed it', () => {
 
     const printed = first.rawLog(sessionId, agentId);
     expect(printed?.lines).toContain('npm notice a new version of claude is available');
-    // The mirror is coalesced, so give the beat a chance to land. Nothing waits
-    // on it in production either — see `mirrorRaw`.
-    await new Promise((r) => setTimeout(r, 400));
+    // The mirror is coalesced, so wait for it to land rather than for a
+    // duration — the same 250ms beat, and the same reasoning, as the test
+    // below. Nothing waits on it in production either; see `mirrorRaw`.
+    await until(async () =>
+      [...(await loadRawTails(root, sessionId)).values()].some((t) =>
+        t.lines.join('\n').includes('"session_id":"s1"'),
+      ),
+    );
     first.dispose();
 
     // A different manager over the same workspace: a restarted host, a second
