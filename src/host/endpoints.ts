@@ -81,6 +81,20 @@ export interface EndpointRegistry {
   resolve(endpointId?: string): ModelEndpoint;
   /** The secret behind an endpoint. Called only where the request is made. */
   keyFor(endpointId: string): string | undefined;
+  /**
+   * Where a turn goes when this endpoint will not take it (§3.9, §6.5).
+   *
+   * `undefined` at the end of the chain, and for an endpoint the chain does not
+   * mention — which is the ordinary case and not a misconfiguration. A machine
+   * with one model server has nowhere to fall back to, and saying so by
+   * answering nothing is better than inventing an order nobody wrote.
+   *
+   * **Declared here rather than per session**, beside `default`, because it is
+   * the same kind of fact: which of this machine's endpoints to use is a
+   * property of the machine, not a choice a person makes per turn. A GPU box
+   * being down is true for every session on that host at once.
+   */
+  nextAfter(endpointId: string): string | undefined;
 }
 
 export class EndpointsInvalid extends Error {
@@ -221,6 +235,8 @@ export async function loadEndpoints(
 ): Promise<EndpointRegistry> {
   let entries: Entry[];
   let fallbackId: string;
+  /** The order to try, in order. Empty on a machine that declared none. */
+  let chain: string[] = [];
 
   let text = await readIfPresent(path);
   if (text === null && legacy !== null) {
@@ -232,7 +248,7 @@ export async function loadEndpoints(
     entries = [fallback()];
     fallbackId = entries[0]!.id;
   } else {
-    let parsed: { endpoints?: Entry[]; default?: string };
+    let parsed: { endpoints?: Entry[]; default?: string; fallback?: string[] };
     try {
       parsed = JSON.parse(text) as typeof parsed;
     } catch (err) {
@@ -265,6 +281,22 @@ export async function loadEndpoints(
     if (!entries.some((e) => e.id === fallbackId)) {
       throw new EndpointsInvalid(path, `"default" names ${fallbackId}, which is not in the list`);
     }
+    /*
+     * Every name in the chain has to be an endpoint, checked here for the same
+     * reason `default` is: a chain that names a typo silently ends one step
+     * early, so a turn that should have moved to the local server stops instead
+     * — and the failure looks like the fallback not working rather than like a
+     * misspelled id.
+     */
+    for (const id of parsed.fallback ?? []) {
+      if (!entries.some((e) => e.id === id)) {
+        throw new EndpointsInvalid(
+          path,
+          `"fallback" names ${id}, which is not in the list — available: ${entries.map((e) => e.id).join(', ')}`,
+        );
+      }
+    }
+    chain = parsed.fallback ?? [];
   }
 
   const build = (entry: Entry): ModelEndpoint => ({
@@ -305,6 +337,26 @@ export async function loadEndpoints(
         baseUrl: baseUrlFor(entry) ?? '',
         authenticated: entry.apiKey !== undefined,
       })),
+    /**
+     * The next endpoint in the declared order, or nothing.
+     *
+     * Three answers, and the two that are `undefined` mean different things to a
+     * reader even though the caller treats them the same: an endpoint the chain
+     * does not name has no successor because nobody said what should follow it,
+     * and the last entry has none because there is nothing after it. Neither is
+     * an error — a machine with one model server is the ordinary case, and
+     * inventing an order nobody wrote is how a turn ends up at a vendor the
+     * person did not choose (§13).
+     *
+     * Not filtered by reachability. Whether the next one answers is a fact about
+     * this minute, and finding out means a request; this returns where to look
+     * and the caller finds out by asking.
+     */
+    nextAfter: (endpointId) => {
+      const at = chain.indexOf(endpointId);
+      if (at === -1) return undefined;
+      return chain[at + 1];
+    },
     resolve: (endpointId) => {
       const wanted = endpointId ?? fallbackId;
       const entry = entries.find((e) => e.id === wanted);

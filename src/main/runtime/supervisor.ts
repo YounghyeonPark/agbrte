@@ -200,6 +200,29 @@ export async function pumpAgent(
         eventsWritten += 1;
         break;
 
+      case 'endpoint_switched':
+        /*
+         * Durable, because it is the only account of a discontinuity a reader
+         * will otherwise find inexplicable (§3.9).
+         *
+         * The model changed mid-turn and its predecessor's reasoning was dropped
+         * at the boundary — §3.9 requires that drop be recorded so "the
+         * transcript explains any discontinuity". A progress signal would not
+         * do: this has to survive the app being closed, because the person who
+         * reads the transcript tomorrow is the one asking why the voice changed.
+         */
+        await store.append(
+          {
+            type: 'model.endpoint_switched',
+            from: ev.from,
+            to: ev.to,
+            reason: ev.reason,
+          },
+          meta,
+        );
+        eventsWritten += 1;
+        break;
+
       case 'stopped':
         stop = ev.stop;
         await store.append({ type: 'agent.stopped', stop: ev.stop }, meta);

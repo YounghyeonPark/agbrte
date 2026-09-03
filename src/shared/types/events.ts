@@ -340,6 +340,17 @@ export type EventBody =
        */
       free?: boolean;
     }
+  /**
+   * A turn moved to another endpoint mid-flight (§3.9).
+   *
+   * Durable rather than a progress signal, because it is the only account of a
+   * discontinuity a reader meets later: the model changed, and §3.9's caveat
+   * means the new one continued without the working-out the old one had. §3.9
+   * requires the drop be recorded 'so the transcript explains any
+   * discontinuity', and a signal that vanishes with the window explains nothing
+   * tomorrow.
+   */
+  | { type: 'model.endpoint_switched'; from: string; to: string; reason: string }
   | { type: 'content.downgraded'; note: DowngradeNote }
   | { type: 'capture.attached'; sha256: Sha256; mime: string }
   | { type: 'checklist.updated'; itemId: string; state: string; text?: string }
@@ -581,6 +592,7 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'mcp.failed',
   'skill.attached',
   'usage',
+  'model.endpoint_switched',
   'content.downgraded',
   'capture.attached',
   'checklist.updated',

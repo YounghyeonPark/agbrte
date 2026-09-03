@@ -207,6 +207,10 @@ export async function buildHostRegistry(
       // request is actually made. The endpoint it resolves carries no secret.
       provider,
       endpointFor: (endpointId) => endpoints.resolve(endpointId),
+      // The order declared in `endpoints.json`, which is where it belongs: which
+      // of this machine's endpoints to use is a fact about the machine, and this
+      // process is the only one that reads that file (§3.9, §6.5).
+      nextEndpoint: (endpointId) => endpoints.nextAfter(endpointId),
       ...(isPublicHost() ? { tools: PUBLIC_TOOLS } : {}),
     }),
     { label: 'Agbrte harness', model: 'required' },

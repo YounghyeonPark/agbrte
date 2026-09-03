@@ -30,6 +30,7 @@ import {
   type NormalizedToolCall,
   type NormalizedTurn,
   type ProviderMessage,
+  type ProviderResult,
   type RuntimeCapabilities,
   type RuntimeContext,
   type RuntimeEvent,
@@ -37,6 +38,7 @@ import {
   type StopReason,
   type UserTurn,
 } from '@shared/types/index.js';
+import { couldMoveEndpoint, moveReason } from '../failover.js';
 import { DEFAULT_TOOLS, toolByName, type ToolDefinition } from '../../tools/index.js';
 import { LeaseTables, type WorkspaceLeases } from '../../tools/leases.js';
 import { fitContent } from '../../content/fit.js';
@@ -68,6 +70,17 @@ export interface AgbrteHarnessOptions {
    * being true the first time it is not.
    */
   endpointFor: (endpointId?: string) => ModelEndpoint;
+  /**
+   * Where a turn goes when this endpoint will not take it (§3.9).
+   *
+   * Optional, and absent means no failover — which is what a machine with one
+   * model server should do, and what every existing caller gets without change.
+   * The order is declared in `endpoints.json` beside `default`, because which of
+   * a machine's endpoints to use is a fact about the machine rather than a
+   * choice made per turn: a GPU box being down is true for every session on that
+   * host at once.
+   */
+  nextEndpoint?: (endpointId: string) => string | undefined;
   tools?: ToolDefinition[];
   /**
    * The lease tables, one per workspace root (§9).
@@ -152,7 +165,7 @@ export class AgbrteHarnessRuntime implements AgentRuntime {
 
 class AgbrteHarnessHandle implements AgentHandle {
   private readonly queue: RuntimeEvent[] = [];
-  private readonly messages: ProviderMessage[] = [];
+  private messages: ProviderMessage[] = [];
   private readonly tools: ToolDefinition[];
   private readonly leases: WorkspaceLeases;
   private closed = false;
@@ -301,18 +314,7 @@ class AgbrteHarnessHandle implements AgentHandle {
         return this.stopAtLimit('wallclock', `${Math.round(elapsed / 1000)}s elapsed`);
       }
 
-      const result = await this.opts.provider.invoke(
-        {
-          endpoint: this.opts.endpointFor(this.spec.model?.endpointId),
-          modelId: this.spec.model?.modelId ?? '',
-          messages: this.messages,
-          maxOutputTokens: this.caps.maxOutputTokens,
-          ...(this.spec.systemPrompt !== undefined ? { system: this.spec.systemPrompt } : {}),
-          ...(declared.length > 0 ? { tools: declared } : {}),
-          ...(this.spec.reasoning !== undefined ? { reasoning: this.spec.reasoning } : {}),
-        },
-        { signal: this.ctx.abortSignal },
-      );
+      const result = await this.askWithFailover(declared);
 
       /**
        * A cost on every turn, including `'unknown'` (§10).
@@ -402,6 +404,112 @@ class AgbrteHarnessHandle implements AgentHandle {
     }
 
     this.stopAtLimit('turns', `${maxIterations} iterations`);
+  }
+
+  /**
+   * Ask the model, and move to the next endpoint if this one will not answer.
+   *
+   * §3.9: *"an agent stopped by `refused`, `unavailable`, persistent
+   * `rate_limited`, or `quota_exhausted` can be restarted on a different
+   * provider with its task intact"* — which is nearly free here because the
+   * conversation is `this.messages`, reconstructed from our own log rather than
+   * held as provider state. Nothing has to be migrated; the next endpoint is
+   * simply asked the same thing.
+   *
+   * **Inside the request rather than around the turn.** The alternative is for
+   * the owner to notice the stop and restart the seat, which is where §3.9's
+   * sentence sounds like it belongs — but the endpoint list lives in the *forked
+   * agent host* (see `hostMain.ts`), so the session host cannot see the chain at
+   * all. Here it is one function away, and the turn continues rather than being
+   * replayed.
+   *
+   * **Capabilities are re-probed, and a shortfall stops the move.** §3.3 exists
+   * because "the capability spread across these is enormous" — two servers can
+   * speak the same wire and differ on tools and schema profile. Moving a session
+   * that is mid-tool-loop onto a server that cannot call tools would produce a
+   * model quietly ignoring instructions, which §3.5 names as the failure that
+   * reads like the feature being broken. So a next endpoint that cannot do what
+   * this one was doing is not used, and the original stop stands.
+   *
+   * **Reasoning is dropped at the boundary and the drop is recorded** — §3.9's
+   * caveat, and the reason `dropOpaqueReasoning` exists. A `thinking` block is
+   * provider-shaped and cannot be replayed into a different one.
+   */
+  private async askWithFailover(declared: DegradedTool[]): Promise<ProviderResult> {
+    const ask = (endpointId: string | undefined): Promise<ProviderResult> =>
+      this.opts.provider.invoke(
+        {
+          endpoint: this.opts.endpointFor(endpointId),
+          modelId: this.spec.model?.modelId ?? '',
+          messages: this.messages,
+          maxOutputTokens: this.caps.maxOutputTokens,
+          ...(this.spec.systemPrompt !== undefined ? { system: this.spec.systemPrompt } : {}),
+          ...(declared.length > 0 ? { tools: declared } : {}),
+          ...(this.spec.reasoning !== undefined ? { reasoning: this.spec.reasoning } : {}),
+        },
+        { signal: this.ctx.abortSignal },
+      );
+
+    /*
+     * Every turn starts where the seat was pointed, not where the last one
+     * ended up.
+     *
+     * This kept the moved endpoint on the handle at first, so a session that
+     * failed over once stayed moved. `lint:race` refused it — read, await,
+     * write, which two overlapping turns would collide on — and the fix turned
+     * out to be the better behaviour rather than a workaround for the linter.
+     *
+     * A GPU box that comes back is picked up on the next turn with nothing to
+     * notice it, where sticky state would keep a session on the fallback until
+     * somebody restarted it. The cost is one failed request per turn while the
+     * box stays down, which is small and self-correcting; the cost of the other
+     * way is silent and open-ended. And what the person chose stays what the
+     * seat says, which is the second reason the spec is not overwritten.
+     */
+    let current = this.spec.model?.endpointId;
+    let result = await ask(current);
+
+    /*
+     * Bounded by the chain, and a visited set on top of it.
+     *
+     * The chain is finite and `nextAfter` walks forward, so a cycle is not
+     * expressible — but a chain is a config file somebody edits, and the cost of
+     * being wrong here is an endpoint loop spending real turns. The set costs
+     * nothing and makes the bound a property of the code.
+     */
+    const tried = new Set<string>([current ?? '']);
+    while (this.opts.nextEndpoint !== undefined && couldMoveEndpoint(result.stop)) {
+      const next = this.opts.nextEndpoint(current ?? '');
+      if (next === undefined || tried.has(next)) break;
+
+      const caps = await this.opts.provider
+        .probe(this.opts.endpointFor(next), this.spec.model?.modelId ?? '')
+        .catch(() => null);
+      // Unreachable, or unable to do what this seat is doing. Either way the
+      // original stop is the honest answer — a move that degrades the session
+      // silently is worse than the failure it was avoiding (§3.5).
+      if (caps === null) break;
+      if (declared.length > 0 && caps.tools === 'none') break;
+
+      this.emit({
+        type: 'endpoint_switched',
+        from: current ?? '',
+        to: next,
+        reason: moveReason(result.stop, current ?? '', next),
+      });
+      // §3.9's caveat: a provider's own reasoning cannot be replayed into
+      // another one, so it goes at the boundary rather than being sent as if it
+      // were the new model's.
+      this.messages = this.messages.map((m) =>
+        m.role === 'assistant' && 'reasoning' in m ? { ...m, reasoning: undefined } : m,
+      );
+
+      tried.add(next);
+      current = next;
+      result = await ask(current);
+    }
+
+    return result;
   }
 
   /**

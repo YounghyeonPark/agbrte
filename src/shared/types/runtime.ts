@@ -699,6 +699,21 @@ export type RuntimeEvent =
       cacheWriteTokens?: number;
       cost?: number | 'unknown';
     }
+  /**
+   * The turn moved to another endpoint mid-flight (§3.9).
+   *
+   * §3.9 allows a stopped agent to be "restarted on a different provider with
+   * its task intact", and states the caveat that makes this event necessary:
+   * opaque reasoning blocks cannot cross a provider boundary, so **they are
+   * dropped at the handoff and the drop is recorded, so the transcript explains
+   * any discontinuity**. Without a row saying the endpoint changed, a reader
+   * meets a reply in a different voice, with the working-out missing, and
+   * nothing anywhere accounting for either.
+   *
+   * `reason` is a sentence rather than a stop reason, because the question it
+   * answers is "why does this look different" and not "what is the taxonomy".
+   */
+  | { type: 'endpoint_switched'; from: string; to: string; reason: string }
   | { type: 'stopped'; stop: StopReason };
 
 export interface AgentRuntime {

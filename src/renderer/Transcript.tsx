@@ -210,6 +210,20 @@ export function EventRow({
         </div>
       );
 
+    case 'model.endpoint_switched':
+      return (
+        <div
+          data-testid="row-endpoint-switched"
+          className={`${META_ROW} border-line justify-center border-t pt-2 text-[11px]`}
+        >
+          {/* The reason, not just the fact. A row saying "moved to local" invites
+              the question this answers — and §3.9 requires the transcript to
+              explain the discontinuity, which includes the reasoning dropped at
+              the boundary. */}
+          <span className="text-state-paused">{event.reason}</span>
+        </div>
+      );
+
     case 'agent.reasoning':
       /*
        * Folded by default, because it is evidence rather than an answer.

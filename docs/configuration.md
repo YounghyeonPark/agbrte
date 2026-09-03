@@ -33,6 +33,29 @@ which is why the `claude` entry above has none.
 destination is displayed, it is free text, and `"Anthropic (EU)"` is a perfectly
 good value for it. `api` has to match an adapter's id exactly.
 
+### Falling back when one will not answer
+
+```json
+{ "endpoints": [ … ], "default": "gpubox", "fallback": ["gpubox", "nim", "local"] }
+```
+
+`fallback` is the order to try. A turn stopped by a refusal, an unreachable
+server, a rate limit or a spent allowance moves to the next name and carries on —
+the conversation is rebuilt from the log rather than held by the server, so
+nothing is lost in the move. The transcript records it with the reason, because
+the model changed and its predecessor's reasoning could not come with it.
+
+It does **not** move on everything. A malformed request, a token ceiling you set,
+a filtered response and a missing credential all stay put: retrying those
+elsewhere either repeats the same failure more slowly or answers a configuration
+problem by sending your code to a vendor you did not name. And a next endpoint
+that cannot do what the session is doing — no tool calling, when the agent is
+mid-tool-loop — is skipped, because a silent downgrade is worse than the failure
+it avoids.
+
+Every name must be an endpoint in the list above; a typo is refused when the file
+is read rather than ending the chain one step early.
+
 **You do not have to edit this file.** The model picker's *Use a model API…* row
 opens a form with the same four fields plus the API choice, and writes the entry
 on whichever machine that host runs on — which is the point, since the file lives
