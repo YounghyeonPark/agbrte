@@ -29,7 +29,7 @@ import { Fleet, type FleetRuntime } from './fleet.js';
 import { connectOrSpawnHost } from './host/connectOrSpawn.js';
 import { connectRemoteHost } from './host/connectRemote.js';
 import { RouteRefused, runSetup } from './host/provision.js';
-import { localRunner, probeLocal } from './host/localRunner.js';
+import { localProbeRunner, localRunner, probeLocal } from './host/localRunner.js';
 import { transportFor, TransportUnsupported } from './host/transports.js';
 import { PreviewForwards } from './preview/forwards.js';
 import {
@@ -276,6 +276,58 @@ function buildFleet(): Fleet {
       throw new RouteRefused(
         `${transportFor(target).label} cannot be set up from here yet — attach it and install ` +
           `what you need on it directly.`,
+      );
+    },
+    /*
+     * The same two routes as `provision`, asking instead of installing (§3.8).
+     *
+     * `probeLocal()` reports `platform` as `win32` unchanged on Windows, where
+     * the remote probe's `uname -s` never answers — so the platform is
+     * normalised here rather than inside the readiness rules, which should not
+     * have to know that two probes spell one fact differently.
+     */
+    readiness: async ({ target }, server) => {
+      const { probeMachine, vllmReadiness, nimReadiness } = await import(
+        './host/serverReadiness.js'
+      );
+      const judge = server === 'vllm' ? vllmReadiness : nimReadiness;
+
+      if (target.kind === 'ssh') {
+        const alias = target.alias ?? target.host;
+        const runner = systemSshRunner();
+        const probe = await probeRemote(runner, alias);
+        if (!probe.reachable) throw new RouteRefused(describeSshFailure(alias, probe.detail));
+        /*
+         * An empty `platform` is how a non-POSIX remote answers a POSIX probe —
+         * `cmd.exe` prints the script back and exits 0 (§6.2). `runSetup`
+         * refuses it by name; here it has to be refused too, and for a sharper
+         * reason: the checklist branches on Windows, so passing an unknown
+         * platform through would hand a Windows box the Linux list, complete
+         * with a `pip install` it cannot run and no mention of the WSL it needs.
+         * A confident wrong answer, which is the one thing this feature exists
+         * to stop producing.
+         */
+        if (probe.platform === '') {
+          throw new RouteRefused(
+            `${alias} did not answer \`uname\`, so Agbrte cannot tell what it runs — and what a ` +
+              `machine needs for ${server === 'vllm' ? 'vLLM' : 'NIM'} depends on that. ` +
+              `Attaching such a machine works; look at it directly to see what is missing.`,
+          );
+        }
+        return judge(await probeMachine(runner, alias, probe.platform));
+      }
+      if (target.kind === 'local') {
+        const platform =
+          process.platform === 'win32'
+            ? 'Windows'
+            : process.platform === 'darwin'
+              ? 'Darwin'
+              : 'Linux';
+        return judge(await probeMachine(localProbeRunner(), 'this machine', platform));
+      }
+      throw new RouteRefused(
+        `${transportFor(target).label} cannot be inspected from here yet — attach it and look ` +
+          `on the machine directly.`,
       );
     },
   });

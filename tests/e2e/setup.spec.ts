@@ -508,6 +508,76 @@ test.describe('one list, one button', () => {
     }
   });
 
+  /*
+   * The one route that installs nothing, driven end to end (§3.8).
+   *
+   * Worth an e2e rather than a unit test because the value is in the wiring: the
+   * plan is chosen in the renderer, the call crosses the preload, main asks a
+   * machine, and the answer comes back as a list somebody copies into a terminal
+   * on the other side of the world. A unit test on `vllmReadiness` proves the
+   * sentences and none of that.
+   *
+   * The steps here are shaped like a real Windows answer, because the Windows
+   * answer is the one with a reason attached — and `why` is the field that
+   * stops a list of manual commands from reading as an unfinished feature.
+   */
+  test('says what a machine still needs for vLLM, without promising to install it', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      await stubModels(agbrte, { before: [], after: [], canInstall: false });
+      await agbrte.app.evaluate(async ({ ipcMain }) => {
+        ipcMain.removeHandler('agbrte:hosts.serverReadiness');
+        ipcMain.handle('agbrte:hosts.serverReadiness', (_e, _id: string, server: string) => {
+          (globalThis as unknown as { __asked?: string }).__asked = server;
+          return {
+            ready: false,
+            summary: 'WSL is not installed, and vLLM needs it on Windows.',
+            steps: [
+              {
+                what: 'Install WSL, then reboot.',
+                command: 'wsl --install',
+                why: 'This needs administrator rights and a restart, which the app will not do to your machine on its own.',
+              },
+              { what: 'Inside WSL, install vLLM.', command: 'pip install vllm' },
+            ],
+          };
+        });
+      });
+
+      const page = agbrte.window;
+      await createSession(page, 'checking for vllm');
+      await choose(page, 'install::vllm');
+
+      // The label is the promise. "Install vLLM" over a list whose first item is
+      // a reboot would be a promise the next screen immediately breaks.
+      await expect(page.locator('[data-testid=add-agent]')).toHaveText('Check this machine');
+
+      await page.click('[data-testid=add-agent]');
+      await expect(page.locator('[data-testid=readiness-summary]')).toContainText(
+        'WSL is not installed',
+        { timeout: 20_000 },
+      );
+
+      const steps = page.locator('[data-testid=readiness-steps]');
+      // The command, verbatim and selectable: it is going to be copied into a
+      // terminal, and one that is paraphrased is one somebody retypes wrong.
+      await expect(steps).toContainText('wsl --install');
+      // And the answer to "why isn't this a button", where it is asked.
+      await expect(steps).toContainText('administrator rights');
+
+      expect(await agbrte.app.evaluate(() => (globalThis as { __asked?: string }).__asked)).toBe(
+        'vllm',
+      );
+      // Nothing was installed, and nothing claimed to be: the install pane
+      // belongs to a route that acts, and this one only reports.
+      await expect(page.locator('[data-testid=setup-outcome]')).toHaveCount(0);
+    } finally {
+      await agbrte.close();
+    }
+  });
+
   test('sends the API key to setUp and to nothing else', async () => {
     const repo = await makeRepo();
     const agbrte = await launch(repo);

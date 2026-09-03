@@ -23,6 +23,7 @@ import {
   entryNote,
   plainName,
   sizeOf,
+  type AgentEntry,
   type CatalogueModel,
   type EndpointAnswer,
   type RuntimeSummary,
@@ -447,5 +448,47 @@ describe('the names the picker uses', () => {
     // A label that is *only* a parenthetical would strip to the empty string,
     // and a nameless row is worse than an ugly one.
     expect(plainName('(installed CLI)')).toBe('(installed CLI)');
+  });
+});
+
+/*
+ * The two entries that install nothing (DESIGN.md §3.8).
+ *
+ * They exist because the alternative was what shipped before them: somebody
+ * with a GPU box types a vLLM address into the endpoint form, gets a connection
+ * failure, and is told nothing about the WSL that was never installed. So the
+ * list names the two servers it cannot install, and the button reads the
+ * machine instead of pretending it can act on it.
+ *
+ * What is worth pinning is exactly that: the label must not promise an install.
+ */
+describe('the servers this app cannot install', () => {
+  const list = (): ReturnType<typeof buildEntries> =>
+    buildEntries([HARNESS], THIS_MACHINE, ENDPOINT, CATALOGUE, [], labelOf);
+
+  it('offers vLLM and NIM, under the heading that means "not here yet"', () => {
+    const servers = list().filter((e) => e.plan.kind === 'server');
+    expect(servers.map((e) => (e.plan.kind === 'server' ? e.plan.server : null))).toEqual([
+      'vllm',
+      'nim',
+    ]);
+    expect(servers.every((e) => e.group === 'install')).toBe(true);
+  });
+
+  it('promises a check rather than an install', () => {
+    // The button reports and changes nothing. A label reading "Install vLLM"
+    // would be a promise the next screen immediately breaks — and on Windows it
+    // would be a promise no button could keep, since the step it lands on is a
+    // reboot.
+    expect(actionLabel({ kind: 'server', server: 'vllm' })).toBe('Check this machine');
+    expect(actionLabel({ kind: 'server', server: 'nim' })).not.toMatch(/install/i);
+  });
+
+  it('does not push a download that never happens into the note', () => {
+    const vllm = list().find((e) => e.plan.kind === 'server');
+    expect(vllm).toBeDefined();
+    // `pull` and `cli` both say what will land on the machine. This one lands
+    // nothing, and a byte count under it would be a lie about what the click does.
+    expect(entryNote(vllm as AgentEntry, 'this machine') ?? '').not.toMatch(/onto this machine/);
   });
 });

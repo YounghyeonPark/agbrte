@@ -48,7 +48,7 @@
  */
 
 import type { JSX } from 'react';
-import type { SetupOutcomeDto } from '../shared/ipc/contract.js';
+import type { ReadinessDto, SetupOutcomeDto } from '../shared/ipc/contract.js';
 
 /** The endpoint form's four values, held by whoever renders it. */
 export interface EndpointDraft {
@@ -308,6 +308,102 @@ export function SetupProgress({
             </p>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What this machine still needs before vLLM or NIM could serve on it.
+ *
+ * ## Why a list of commands, and not a button
+ *
+ * Every other route on this screen ends in the app doing the work. This one
+ * ends in a person doing it, and the reason is written into the steps
+ * themselves: vLLM has no native Windows build and its own docs name WSL2,
+ * which wants administrator rights and a restart; NIM's images are behind an
+ * NGC account whose key `docker login nvcr.io` authenticates with. An app that
+ * reboots somebody's machine or that could conjure an NVIDIA account is not the
+ * remedy. Knowing *which* of those is in the way is.
+ *
+ * So the honest thing is a diagnosis, and the value in it is the ordering: a
+ * missing GPU makes every later step pointless and is said alone, and the NGC
+ * key is named even on a machine that already has Docker and the toolkit, so
+ * somebody who cannot get one finds out here rather than after two installs.
+ *
+ * `why` is rendered only where it exists, and it exists only on the steps the
+ * app is *choosing* not to automate. "Why isn't this a button" is the question a
+ * list of manual commands provokes, and leaving it unanswered reads as the
+ * feature being unfinished rather than as a decision.
+ */
+export function ServerReadiness({
+  server,
+  where,
+  busy,
+  answer,
+}: {
+  server: 'vllm' | 'nim';
+  where: string;
+  busy: boolean;
+  answer: ReadinessDto | null;
+}): JSX.Element | null {
+  if (!busy && answer === null) return null;
+  const name = server === 'vllm' ? 'vLLM' : 'NIM';
+
+  if (busy) {
+    return (
+      <p className="text-accent m-0 text-[11px]" data-testid="readiness-busy">
+        Looking at {where} — GPU, WSL, Docker, and whether anything is serving already…
+      </p>
+    );
+  }
+  if (answer === null) return null;
+
+  return (
+    <div className="grid gap-1" data-testid="readiness">
+      <p
+        className={
+          answer.ready ? 'text-accent m-0 text-[11px]' : 'text-state-paused m-0 text-[11px]'
+        }
+        data-testid="readiness-summary"
+      >
+        {name} on {where}: {answer.summary}
+      </p>
+
+      {answer.steps.length > 0 && (
+        /*
+          Numbered, unlike the progress list above it, and the difference is who
+          acts. That one is a log of what already happened, where an order is
+          implied by the sequence. This one is instructions somebody carries to
+          another window and comes back from — "I did two, what was three" is a
+          question it should be able to answer.
+        */
+        <ol className="text-muted m-0 list-decimal pl-4 text-[11px]" data-testid="readiness-steps">
+          {answer.steps.map((step, i) => (
+            /*
+              The grid is on the inner element, not on the `li`, and that is not
+              cosmetic bookkeeping: `display: grid` on a list item drops its
+              marker, and so does making the `ol` itself a grid — a browser
+              generates no `::marker` for a grid item. Both were tried, and both
+              produced a numbered list with no numbers on it.
+            */
+            <li key={`${i}-${step.what}`} className="mb-1.5 last:mb-0">
+              <div className="grid gap-0.5">
+                <span>{step.what}</span>
+                {step.command !== undefined && (
+                  /*
+                    Selectable, and wrapping. These are meant to be copied into a
+                    terminal on another machine, and a command truncated at the
+                    pane's edge is one somebody retypes by eye — which is how a
+                    `--password-stdin` turns into a key in a shell history.
+                  */
+                  <code className="control-note break-all select-text">{step.command}</code>
+                )}
+                {step.why !== undefined && <span className="opacity-70">{step.why}</span>}
+              </div>
+            </li>
+          ))}
+        </ol>
       )}
     </div>
   );

@@ -68,37 +68,87 @@ export function localRunner(): ProvisionRunner {
               'endpoint works here.',
           );
         }
-        const child = spawn('/bin/sh', ['-c', command], {
-          stdio: ['ignore', 'pipe', 'pipe'],
-          windowsHide: true,
-        });
-        let stdout = '';
-        let stderr = '';
-        let cutShort = false;
-        child.stdout.setEncoding('utf8');
-        child.stderr.setEncoding('utf8');
-        child.stdout.on('data', (d: string) => {
-          stdout += d;
-          opts?.onData?.(d);
-        });
-        child.stderr.on('data', (d: string) => (stderr += d));
-        // The same contract `systemSshRunner` documents: code 124 means cut
-        // short, and whatever had already arrived is still returned.
-        const timer =
-          opts?.timeoutMs === undefined
-            ? undefined
-            : setTimeout(() => {
-                cutShort = true;
-                child.kill();
-              }, opts.timeoutMs);
-        const done = (result: { code: number; stdout: string; stderr: string }): void => {
-          if (timer !== undefined) clearTimeout(timer);
-          resolve(result);
-        };
-        child.on('error', (err) => done({ code: 127, stdout, stderr: err.message }));
-        child.on('close', (code) =>
-          done(cutShort ? { code: 124, stdout, stderr } : { code: code ?? 1, stdout, stderr }),
-        );
+        resolve(shellOut('/bin/sh', ['-c', command], opts));
       }),
   };
+}
+
+/**
+ * The same runner, for asking rather than for installing — and it works on
+ * Windows, where `localRunner` refuses.
+ *
+ * The refusal above is right and stays: `runSetup`'s scripts are `sh`, and
+ * `cmd.exe` given one prints parts of it back while exiting 0, which is the
+ * failure §6.2 records from the first Windows probe. But `serverReadiness` sends
+ * no scripts. It sends `nvidia-smi`, `wsl --status` and `docker info` — programs
+ * that exist on Windows, are already platform-branched by their caller, and
+ * change nothing on the machine.
+ *
+ * Refusing them cost a measurement to notice: `probeMachine` on this Windows
+ * machine reported no GPU, on a box with an RTX 4090 in it, because every
+ * command came back refused and "could not ask" was rendered as "there is none".
+ * §3.3 spends three confidence tiers on exactly that, and the remedy has two
+ * halves — this runner, so the question can be asked at all, and the rethrow in
+ * `probeMachine`, so a machine that still cannot answer says so.
+ *
+ * **Reads only.** Nothing here should be handed a command that changes the
+ * machine; that path is `localRunner` and it is refused on Windows on purpose.
+ */
+export function localProbeRunner(): ProvisionRunner {
+  return {
+    exec: (_alias, command, opts) =>
+      platform === 'win32'
+        ? // `/d` skips AutoRun, which is somebody's `cd` in the registry and
+          // would otherwise prepend output to every answer parsed here.
+          shellOut(process.env['ComSpec'] ?? 'cmd.exe', ['/d', '/s', '/c', command], opts)
+        : shellOut('/bin/sh', ['-c', command], opts),
+  };
+}
+
+/**
+ * Spawn, collect, and honour the timeout — shared so the two runners above
+ * cannot drift apart in how they report a failure.
+ *
+ * Never rejects: a command that could not start is `code: 127` with the reason
+ * in `stderr`, and a command cut short is `code: 124` with whatever had already
+ * arrived, which is the contract `systemSshRunner` documents.
+ */
+function shellOut(
+  bin: string,
+  args: string[],
+  opts: Parameters<ProvisionRunner['exec']>[2],
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    let stdout = '';
+    let stderr = '';
+    let cutShort = false;
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (d: string) => {
+      stdout += d;
+      opts?.onData?.(d);
+    });
+    child.stderr.on('data', (d: string) => (stderr += d));
+    // The same contract `systemSshRunner` documents: code 124 means cut
+    // short, and whatever had already arrived is still returned.
+    const timer =
+      opts?.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            cutShort = true;
+            child.kill();
+          }, opts.timeoutMs);
+    const done = (result: { code: number; stdout: string; stderr: string }): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      resolve(result);
+    };
+    child.on('error', (err) => done({ code: 127, stdout, stderr: err.message }));
+    child.on('close', (code) =>
+      done(cutShort ? { code: 124, stdout, stderr } : { code: code ?? 1, stdout, stderr }),
+    );
+  });
 }

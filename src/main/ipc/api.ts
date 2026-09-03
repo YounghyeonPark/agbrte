@@ -41,6 +41,7 @@ import {
   type ShellChunk,
   type ShellDto,
   type ShellExitDto,
+  type ServerKind,
   type SetupPlanDto,
   type SetupProgressDto,
   type SshHostInfo,
@@ -471,6 +472,17 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     fleet.setUpHost(instanceId as InstanceId, plan, (step) =>
       deps.broadcast(PUSH.setup, { instanceId, step } satisfies SetupProgressDto),
     ),
+  );
+
+  /*
+   * A read, so it is not gated the way `setUp` is (§3.8).
+   *
+   * It runs a handful of read-only probes and changes nothing, and knowing why a
+   * box cannot serve is what somebody watching one most needs — refusing it
+   * would make the answer available only to whoever can already change it.
+   */
+  handle(CH.hostsServerReadiness, (instanceId: string, server: ServerKind) =>
+    fleet.serverReadiness(instanceId as InstanceId, server),
   );
 
   handle(CH.appAbout, (): AboutInfo =>

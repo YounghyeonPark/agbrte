@@ -43,7 +43,13 @@ import { Welcome } from './Welcome.js';
 import { About } from './About.js';
 import { Workflows, type WorkspaceWorkflows } from './Workflows.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
-import { EMPTY_ENDPOINT, SetUpEndpoint, SetupProgress, type EndpointDraft } from './SetUpMachine.js';
+import {
+  EMPTY_ENDPOINT,
+  ServerReadiness,
+  SetUpEndpoint,
+  SetupProgress,
+  type EndpointDraft,
+} from './SetUpMachine.js';
 import {
   actionLabel,
   buildEntries,
@@ -70,6 +76,8 @@ import { FileBrowser, FileViewer, VIEWER_DEFAULT } from './FileBrowser.js';
 import type {
   EndpointModelsDto,
   ModelInstallDto,
+  ReadinessDto,
+  ServerKind,
   SessionTemplateDto,
   SetupOutcomeDto,
   SetupPlanDto,
@@ -2894,11 +2902,13 @@ function machineFor(
 ): {
   where: string;
   setUp: (plan: SetupPlanDto) => Promise<SetupOutcomeDto>;
+  serverReadiness: (server: ServerKind) => Promise<ReadinessDto>;
   subscribeProgress: (cb: (step: string) => void) => () => void;
 } {
   return {
     where: host === undefined || host.targetKind === 'local' ? 'this machine' : host.label,
     setUp: (plan) => window.agbrte.hosts.setUp(instanceId, plan),
+    serverReadiness: (server) => window.agbrte.hosts.serverReadiness(instanceId, server),
     subscribeProgress: (cb) =>
       window.agbrte.on.setup((p) => {
         if (p.instanceId === instanceId) cb(p.step);
@@ -2990,6 +3000,7 @@ function AgentPicker({
   machine: {
     where: string;
     setUp: (plan: SetupPlanDto) => Promise<SetupOutcomeDto>;
+    serverReadiness: (server: ServerKind) => Promise<ReadinessDto>;
     subscribeProgress: (cb: (step: string) => void) => () => void;
   };
   onAdd: (runtimeId: string, modelId: string | null, endpointId?: string) => Promise<void>;
@@ -3041,6 +3052,15 @@ function AgentPicker({
   const [steps, setSteps] = useState<string[]>([]);
   const [outcome, setOutcome] = useState<SetupOutcomeDto | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  /**
+   * What a machine answered when asked what it still needs for a GPU server.
+   *
+   * Held beside `outcome` rather than folded into it because it is a different
+   * kind of answer: `outcome` is what an install *did*, and this is what nobody
+   * has done yet. Cleared on every new run of the button, so a checklist for
+   * vLLM never lingers under a summary about NIM.
+   */
+  const [readiness, setReadiness] = useState<ReadinessDto | null>(null);
 
   /**
    * Probes this picker has paid for, keyed `endpoint::model`.
@@ -3322,6 +3342,7 @@ function AgentPicker({
     setSteps([]);
     setOutcome(null);
     setFailure(null);
+    setReadiness(null);
     try {
       switch (entry.plan.kind) {
         case 'ready':
@@ -3359,6 +3380,17 @@ function AgentPicker({
           // the list itself that answers it.
           await refreshModels();
           setChosen(null);
+          return;
+        }
+
+        case 'server': {
+          /*
+           * The one branch that installs nothing (§3.8). It asks the machine six
+           * questions and prints what they mean; a refusal — an unreachable
+           * host, a transport that cannot run a command — arrives from main as a
+           * sentence and lands in `failure` with every other refusal.
+           */
+          setReadiness(await machine.serverReadiness(entry.plan.server));
           return;
         }
 
@@ -3570,6 +3602,15 @@ function AgentPicker({
             ? (submitLabel ?? 'Add agent')
             : actionLabel(current.plan, submitLabel)}
       </button>
+
+      {current?.plan.kind === 'server' && (
+        <ServerReadiness
+          server={current.plan.server}
+          where={machine.where}
+          busy={running}
+          answer={readiness}
+        />
+      )}
 
       <SetupProgress
         where={machine.where}

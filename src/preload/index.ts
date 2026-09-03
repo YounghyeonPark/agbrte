@@ -30,6 +30,7 @@ import {
   type HostInfo,
   type AgbrteApi,
   type SendRequest,
+  type ServerKind,
   type SetupPlanDto,
   type SetupProgressDto,
   type ShellChunk,
@@ -79,6 +80,8 @@ const api: AgbrteApi = {
     installProgress: (instanceId: string) => ipcRenderer.invoke(CH.hostsInstallProgress, instanceId),
     setUp: (instanceId: string, plan: SetupPlanDto) =>
       ipcRenderer.invoke(CH.hostsSetUp, instanceId, plan),
+    serverReadiness: (instanceId: string, server: ServerKind) =>
+      ipcRenderer.invoke(CH.hostsServerReadiness, instanceId, server),
   },
   app: {
     about: () => ipcRenderer.invoke(CH.appAbout),

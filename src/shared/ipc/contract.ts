@@ -575,6 +575,23 @@ export interface EndpointModelsDto {
  * travels renderer → main → host and stops; nothing sends it back, and
  * `SetupOutcomeDto` is deliberately incapable of holding it.
  */
+/** Which model server a readiness check is about. A closed set, like SetupPlan. */
+export type ServerKind = 'vllm' | 'nim';
+
+/**
+ * What a machine still needs, as it crosses to the renderer.
+ *
+ * Sentences rather than a machine-readable shape, because the reader is a
+ * person and the next thing they do is type one of the commands. A structured
+ * answer would be re-rendered into these sentences by the only consumer there
+ * is.
+ */
+export interface ReadinessDto {
+  ready: boolean;
+  summary: string;
+  steps: Array<{ what: string; command?: string; why?: string }>;
+}
+
 export type SetupPlanDto =
   | { kind: 'cli'; cli: 'claude-code' | 'gemini-cli' }
   | { kind: 'ollama' }
@@ -758,6 +775,17 @@ export interface AgbrteApi {
      * otherwise would be a lie about somebody's machine.
      */
     setUp(instanceId: string, plan: SetupPlanDto): Promise<SetupOutcomeDto>;
+    /**
+     * What a machine still needs before it can serve vLLM or NIM (§3.8).
+     *
+     * A diagnosis rather than an install, and the distinction is the feature:
+     * each of those has a prerequisite the app cannot supply — vLLM has no
+     * native Windows build and needs WSL, which is administrator rights and a
+     * reboot; NIM images are gated behind an NGC account key. Somebody who
+     * types a vLLM address into the endpoint form today gets a connection
+     * failure and no mention of the missing WSL that caused it.
+     */
+    serverReadiness(instanceId: string, server: ServerKind): Promise<ReadinessDto>;
     /**
      * Ask a host to exit. It is allowed to refuse.
      *
@@ -1329,6 +1357,7 @@ export const CH = {
   hostsInstallModel: 'agbrte:hosts.installModel',
   hostsInstallProgress: 'agbrte:hosts.installProgress',
   hostsSetUp: 'agbrte:hosts.setUp',
+  hostsServerReadiness: 'agbrte:hosts.serverReadiness',
   updateState: 'agbrte:update.state',
   updateInstall: 'agbrte:update.install',
   appAbout: 'agbrte:app.about',

@@ -39,6 +39,8 @@ import {
   RouteRefused,
   type SetupPlan,
 } from './host/provision.js';
+import type { Readiness } from './host/serverReadiness.js';
+import type { ServerKind } from '@shared/ipc/contract.js';
 import { SplitRefused } from './sessionManager.js';
 import type { SearchHit } from './store/searchSessions.js';
 import type { ListeningPort } from './preview/ports.js';
@@ -136,6 +138,15 @@ export interface FleetDeps {
     plan: SetupPlan,
     onProgress: (step: string) => void,
   ) => Promise<void>;
+  /**
+   * Ask a machine what it still needs before it can serve vLLM or NIM (§3.8).
+   *
+   * Injected beside `provision` and for the same reason: reaching the machine is
+   * transport-specific, and this asks its questions over the same runner an
+   * install would use. What stays here is refusing a client that may not look,
+   * and naming the host it looked at.
+   */
+  readiness?: (location: HostLocation, server: ServerKind) => Promise<Readiness>;
 }
 
 /**
@@ -1286,6 +1297,26 @@ export class Fleet extends EventEmitter {
         }`,
       };
     }
+  }
+
+  /**
+   * What this host still needs before it can serve one of the other servers.
+   *
+   * A **read**, deliberately, and that is the difference from `setUpHost` beside
+   * it: it asks a handful of questions and changes nothing, so a read-only
+   * client may ask. Knowing why a machine cannot serve is exactly what somebody
+   * watching a build box needs, and gating it would make the answer available
+   * only to whoever can already change that machine.
+   */
+  async serverReadiness(instanceId: InstanceId, server: ServerKind): Promise<Readiness> {
+    const entry = this.require(instanceId);
+    const ask = this.deps.readiness;
+    if (ask === undefined) {
+      // Named rather than answered with an empty list, which would read as "this
+      // machine is ready" — the opposite of what is true.
+      throw new Error('this client cannot inspect a machine for model servers');
+    }
+    return ask({ target: entry.target, workspaceRoot: entry.workspaceRoot }, server);
   }
 
   async detachAll(): Promise<void> {

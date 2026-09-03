@@ -65,7 +65,18 @@ export type EntryPlan =
   /** Install a vendor CLI, which brings its own model and its own sign-in. */
   | { kind: 'cli'; cli: 'claude-code' | 'gemini-cli' }
   /** Take a key and write an endpoint on that machine. */
-  | { kind: 'endpoint' };
+  | { kind: 'endpoint' }
+  /**
+   * Ask what this machine still needs before a GPU server could run on it.
+   *
+   * The one plan that installs nothing. vLLM and NIM each have a prerequisite
+   * the app cannot supply on somebody's behalf — a reboot after `wsl --install`,
+   * an NGC account — so the button reports rather than acts (`serverReadiness`).
+   * It is in the list anyway because the alternative was what shipped before it:
+   * typing a vLLM address into the endpoint form, getting a connection failure,
+   * and no mention of the missing WSL that caused it.
+   */
+  | { kind: 'server'; server: 'vllm' | 'nim' };
 
 /**
  * One line in the only list on the screen.
@@ -396,6 +407,21 @@ export function buildEntries(
     });
   }
 
+  for (const it of [
+    { server: 'vllm' as const, label: 'Serve with vLLM…' },
+    { server: 'nim' as const, label: 'Serve with NVIDIA NIM…' },
+  ]) {
+    install.push({
+      value: `install::${it.server}`,
+      runtimeId: modelRuntime?.id ?? 'agbrte-harness',
+      modelId: null,
+      label: it.label,
+      hint: 'needs a GPU — check what is missing',
+      plan: { kind: 'server', server: it.server },
+      group: 'install',
+    });
+  }
+
   install.push({
     value: 'install::endpoint',
     runtimeId: modelRuntime?.id ?? 'agbrte-harness',
@@ -434,6 +460,10 @@ export function actionLabel(plan: EntryPlan, fallback = 'Add agent'): string {
       return `Install ${plan.cli === 'claude-code' ? 'Claude Code' : 'Gemini CLI'} and add`;
     case 'endpoint':
       return 'Add endpoint';
+    case 'server':
+      // Not "Install vLLM". The button reads the machine and prints a list; a
+      // label promising an install would be a promise the next screen breaks.
+      return 'Check this machine';
   }
 }
 

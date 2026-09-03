@@ -255,6 +255,7 @@ const api: AgbrteApi = {
     installModel: call(CH.hostsInstallModel),
     installProgress: call(CH.hostsInstallProgress),
     setUp: call(CH.hostsSetUp),
+    serverReadiness: call(CH.hostsServerReadiness),
   },
 
   // Routed to the server: what the About page describes is the program serving
