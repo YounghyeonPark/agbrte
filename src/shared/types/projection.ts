@@ -26,6 +26,15 @@ import type {
 export interface UsageTotals {
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Every endpoint a turn actually reached, in first-use order (§13).
+   *
+   * Folded rather than read from the seat, because a turn that failed over was
+   * answered by an endpoint the seat does not name. Empty for a runtime with no
+   * endpoint — the echo runtime, a vendor CLI — which is *no endpoint* rather
+   * than an unknown one.
+   */
+  endpoints: string[];
   /** Separate because they are priced separately (§3.6a, §10). */
   cacheReadTokens: number;
   cacheWriteTokens: number;
@@ -235,7 +244,14 @@ export function emptyProjection(sessionId: SessionId): SessionProjection {
     checklist: [],
     artifacts: [],
     children: [],
-    usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 },
+    usage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      cost: 0,
+      endpoints: [],
+    },
     needsAttention: null,
     pendingPermissions: [],
     stats: {

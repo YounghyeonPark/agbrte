@@ -1257,7 +1257,14 @@ export class SessionManager extends EventEmitter {
       isolation,
       resumeToken: null,
       lastEventSeq: 0,
-      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0 },
+      usage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        cost: 0,
+        endpoints: [],
+      },
     };
 
     /*
@@ -4660,6 +4667,7 @@ export class SessionManager extends EventEmitter {
             cacheReadTokens: 0,
             cacheWriteTokens: 0,
             cost: 0,
+            endpoints: [],
           },
         });
         continue;
@@ -4700,6 +4708,10 @@ export class SessionManager extends EventEmitter {
           cacheReadTokens: projectedUsage.cacheReadTokens,
           cacheWriteTokens: projectedUsage.cacheWriteTokens,
           cost: projectedUsage.cost,
+          // Copied, not shared: this array is folded in place by `reduce`, and a
+          // record reaching back into the projection it was built from is the
+          // failure §5.4's invariant 8 names for the seats beside it.
+          endpoints: [...projectedUsage.endpoints],
         },
       });
     }
@@ -4795,6 +4807,9 @@ function mergeUsage(a: AgentRecord['usage'], b: AgentRecord['usage']): AgentReco
     // The one rule for adding costs (§10): not knowing is contagious, because a
     // total that quietly drops an unobservable agent is smaller than the truth.
     cost: addCost(a.cost, b.cost),
+    // First-use order, deduped. Concatenating would grow one entry per turn on
+    // a long session — the field answers *which*, not *how often*.
+    endpoints: [...new Set([...a.endpoints, ...b.endpoints])],
   };
 }
 

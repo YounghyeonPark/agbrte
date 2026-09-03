@@ -205,6 +205,23 @@ export function reduceEvents(
         // total alone. `'unknown'` is a runtime saying a cost exists and cannot
         // be seen, and that is contagious (§10).
         if (ev.cost !== undefined) p.usage.cost = addCost(p.usage.cost, ev.cost);
+        /*
+         * Which endpoint answered, kept as a set in first-use order (§13).
+         *
+         * The durable half of the same fact the live session tracks. Without
+         * this, a host restart would answer "which endpoints did this agent
+         * use" with the seat's own — the one endpoint a failed-over turn did
+         * *not* reach — and the answer would silently improve as new turns ran.
+         *
+         * Absent means no endpoint rather than an unknown one: the echo runtime
+         * and a vendor CLI both spend tokens against nothing this names.
+         */
+        if (ev.endpointId !== undefined) {
+          // Same defaulting as `cloneProjection`: a base from an older build
+          // reaches the fold with no array here.
+          p.usage.endpoints ??= [];
+          if (!p.usage.endpoints.includes(ev.endpointId)) p.usage.endpoints.push(ev.endpointId);
+        }
         break;
 
       case 'content.downgraded':
@@ -390,7 +407,18 @@ function cloneProjection(p: SessionProjection): SessionProjection {
     checklist: p.checklist.map((i) => ({ ...i })),
     artifacts: p.artifacts.map((a) => ({ ...a })),
     children: p.children.map((c) => ({ ...c, lastKnown: { ...c.lastKnown } })),
-    usage: { ...p.usage },
+    /*
+     * `endpoints` copied rather than shared, and defaulted rather than spread
+     * blind.
+     *
+     * Copied because the fold pushes into it and a checkpoint continued from is
+     * a *base* (§5.4, invariant 8). Defaulted because a checkpoint written
+     * before this field existed has no array to copy, and `[...undefined]`
+     * throws — a crash on resume, on exactly the sessions that predate the
+     * feature. The house rule applies here too: a checkpoint from before this
+     * existed says "no endpoint recorded" by saying nothing.
+     */
+    usage: { ...p.usage, endpoints: [...(p.usage.endpoints ?? [])] },
     stats: { ...p.stats },
     needsAttention: p.needsAttention ? { ...p.needsAttention } : null,
     standingGrant: p.standingGrant ? { ...p.standingGrant } : null,

@@ -215,6 +215,39 @@ describe('a turn that moves', () => {
     expect(moved && 'reason' in moved ? moved.reason : '').toContain('allowance');
   });
 
+  it('bills the turn to the endpoint that answered, not to the seat', async () => {
+    const { provider } = providerOver({
+      gpubox: answer('', { kind: 'unavailable' }),
+      local: answer('carried on'),
+    });
+
+    const seen = await turn(provider, 'gpubox', { gpubox: 'local' });
+
+    /*
+     * The only durable account of *where a turn went* (§13).
+     *
+     * `endpoint_switched` records moves and not returns, and it cannot record
+     * returns: every turn starts where the seat was pointed, so a session whose
+     * GPU box is refusing bounces between two providers turn by turn and emits
+     * one `switched` row for each move down and nothing on the way back. A
+     * reader could see "moved to the hosted API" once and had no way to learn
+     * whether the next four turns went back — or that the fifth did not.
+     *
+     * Reading the seat instead would have been the easy version and is exactly
+     * wrong: `gpubox` is the one endpoint this turn did not reach.
+     */
+    expect(seen.find((e) => e.type === 'usage')).toMatchObject({ endpointId: 'local' });
+  });
+
+  it('names the seat on a turn that never had to move', async () => {
+    // The ordinary case, and it must be recorded too — a field present only on
+    // the interesting turns would make "no endpoint" and "the usual endpoint"
+    // the same absence.
+    const { provider } = providerOver({ gpubox: answer('fine') });
+    const seen = await turn(provider, 'gpubox', {});
+    expect(seen.find((e) => e.type === 'usage')).toMatchObject({ endpointId: 'gpubox' });
+  });
+
   it('walks the whole chain rather than one step', async () => {
     const { provider, asked } = providerOver({
       gpubox: answer('', { kind: 'unavailable' }),

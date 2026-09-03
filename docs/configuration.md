@@ -56,6 +56,13 @@ which shows what is in force and lets it be rearranged. The host restarts onto a
 saved order, because the process that walks the chain reads this file when it
 starts.
 
+**A move is not permanent.** The next turn starts at the top of the list again,
+so a box that comes back is picked up with nothing to notice it — the cost is one
+failed request per turn while it stays down, which is small and self-correcting.
+Because coming back is silent, each turn records the endpoint that answered it:
+the roster says *also sent to X* for anything the seat does not name, and an
+export names every provider the conversation reached.
+
 It does **not** move on everything. A malformed request, a token ceiling you set,
 a filtered response and a missing credential all stay put: retrying those
 elsewhere either repeats the same failure more slowly or answers a configuration

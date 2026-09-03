@@ -698,6 +698,22 @@ export type RuntimeEvent =
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
       cost?: number | 'unknown';
+      /**
+       * Which endpoint answered *this* turn (§3.9, §13).
+       *
+       * On the event because it varies turn to turn now. Every turn starts where
+       * the seat was pointed, so a session whose GPU box is refusing can bounce
+       * between two providers turn by turn — and the only account of that in the
+       * log was `endpoint_switched`, which records moves and not returns. A
+       * reader could see "moved to the hosted API" once and had no way to learn
+       * that the next four turns went back to the local box, or that the fifth
+       * did not.
+       *
+       * Absent from a runtime that has no endpoint to name: the echo runtime, and
+       * a vendor CLI, which brings its own model and its own sign-in. Absent is
+       * *no endpoint*, not an unknown one.
+       */
+      endpointId?: string;
     }
   /**
    * The turn moved to another endpoint mid-flight (§3.9).

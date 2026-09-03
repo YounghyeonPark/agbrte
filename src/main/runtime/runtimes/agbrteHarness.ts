@@ -336,6 +336,9 @@ class AgbrteHarnessHandle implements AgentHandle {
 
       this.emit({
         type: 'usage',
+        // Never `this.spec.model?.endpointId`: after a failover those differ,
+        // and the seat's is the one place the answer did *not* come from.
+        ...(result.answeredBy !== undefined ? { endpointId: result.answeredBy } : {}),
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
         ...(result.usage.cacheReadTokens !== undefined
@@ -435,7 +438,9 @@ class AgbrteHarnessHandle implements AgentHandle {
    * caveat, and the reason `dropOpaqueReasoning` exists. A `thinking` block is
    * provider-shaped and cannot be replayed into a different one.
    */
-  private async askWithFailover(declared: DegradedTool[]): Promise<ProviderResult> {
+  private async askWithFailover(
+    declared: DegradedTool[],
+  ): Promise<ProviderResult & { answeredBy: string | undefined }> {
     const ask = (endpointId: string | undefined): Promise<ProviderResult> =>
       this.opts.provider.invoke(
         {
@@ -509,7 +514,17 @@ class AgbrteHarnessHandle implements AgentHandle {
       result = await ask(current);
     }
 
-    return result;
+    /*
+     * Which endpoint answered, back out with the answer.
+     *
+     * `current` is local to this call by design — see the paragraph above about
+     * why nothing sticks to the handle — so the caller cannot ask afterwards
+     * and there is no field to read it from. Returning it is what lets the
+     * `usage` event name the endpoint that turn was actually billed to, which
+     * is the only durable account of *where a turn went* now that returning to
+     * the preferred endpoint is silent by design.
+     */
+    return { ...result, answeredBy: current };
   }
 
   /**

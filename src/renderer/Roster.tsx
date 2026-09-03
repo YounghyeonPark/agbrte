@@ -123,6 +123,14 @@ export function Roster({
         const gate = GATE[agent.resolvedCapabilities.permissionFidelity];
         const isOpen = selected === agent.agentId;
         const takesEffort = agent.resolvedCapabilities.reasoningControl === 'effort';
+        // Everything its turns reached that the seat does not name. See the
+        // block that renders it for why only the difference is shown.
+        const elsewhere = (agent.usage.endpoints ?? []).filter(
+          // A session recorded before this field existed carries no array, and
+          // the renderer is the one place where that is a blank screen rather
+          // than a wrong number.
+          (id) => id !== agent.spec.model?.endpointId,
+        );
         return (
           /*
            * The row and its effort control are siblings, not nested.
@@ -188,6 +196,40 @@ export function Roster({
                   </span>
                 </span>
               </div>
+            )}
+
+            {/*
+              * Where this agent's turns went that the seat does not name (§13).
+              *
+              * Shown only when it *differs*. The seat's own endpoint was
+              * disclosed when the agent was seated — the picker says "your code
+              * and prompts go to X, over the network" above the button that
+              * seats it — so repeating it on every row would be noise on a
+              * roster that already carries role, model, auth and gate. What was
+              * never disclosed anywhere is a fallback: a second recipient
+              * chosen in advance, reached only when the first refused, and
+              * §13's rule is about the recipient being legible rather than
+              * about it being announced once.
+              *
+              * A set, not a count. The question is whether any of this code
+              * left for somewhere else, and one turn out of two hundred is the
+              * same answer as all of them.
+              *
+              * Folded from `usage` events rather than from `endpoint_switched`,
+              * which records moves and not returns: every turn starts where the
+              * seat was pointed, so a session bouncing between two providers
+              * emits one `switched` row and keeps going. Before this, a reader
+              * could see "moved to the hosted API" once and had no way to learn
+              * whether the next four turns went back.
+              */}
+            {elsewhere.length > 0 && (
+              <span
+                className="text-state-paused text-[11px]"
+                data-testid="roster-fell-back"
+                title="Turns that the first endpoint refused were answered here instead."
+              >
+                also sent to {elsewhere.join(', ')}
+              </span>
             )}
 
             {/*

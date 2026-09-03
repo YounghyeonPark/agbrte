@@ -512,6 +512,24 @@ export interface AgentUsage {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   cost: number | 'unknown';
+  /**
+   * Every endpoint this agent's turns actually reached, in first-use order
+   * (§13).
+   *
+   * A set rather than a count, because the question it answers is *did any of
+   * my code leave this machine* — and one turn out of two hundred is the same
+   * answer as all of them. §13 says the session view shows which endpoints an
+   * agent used; before failover, the seat's own endpoint was that answer and
+   * this was not needed. It is now: every turn starts where the seat was
+   * pointed, so a session whose GPU box is refusing bounces between two
+   * providers turn by turn, and the seat names only one of them.
+   *
+   * Folded from `usage` events, so it survives a restart and describes what
+   * happened rather than what is configured. Empty for a runtime with no
+   * endpoint to name — the echo runtime, a vendor CLI — which is *no endpoint*
+   * and not an unknown one.
+   */
+  endpoints: string[];
 }
 
 export interface AgentRecord {

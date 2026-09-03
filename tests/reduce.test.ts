@@ -73,12 +73,17 @@ describe('reduceEvents', () => {
     expect(p.needsAttention).toBeNull();
   });
 
-  it('accumulates usage', () => {
+  it('accumulates usage, and keeps every endpoint the turns reached', () => {
     const p = reduceEvents(
       SID,
       log(
-        { type: 'usage', inputTokens: 100, outputTokens: 20, cost: 0.5 },
-        { type: 'usage', inputTokens: 50, outputTokens: 10, cost: 0.25 },
+        { type: 'usage', inputTokens: 100, outputTokens: 20, cost: 0.5, endpointId: 'gpubox' },
+        // Failed over, then came home. Both are on the log because they are
+        // both true of what was spent, and the return is otherwise silent by
+        // design — every turn starts where the seat was pointed, so nothing
+        // emits a `switched` row on the way back.
+        { type: 'usage', inputTokens: 50, outputTokens: 10, cost: 0.25, endpointId: 'claude' },
+        { type: 'usage', inputTokens: 0, outputTokens: 0, endpointId: 'gpubox' },
       ),
     );
     expect(p.usage).toEqual({
@@ -90,7 +95,22 @@ describe('reduceEvents', () => {
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
       cost: 0.75,
+      /*
+       * First-use order, deduped, and this is what §13 asks the session view to
+       * be able to say: some of this agent's code went to a hosted API. The
+       * third turn does not add a fourth entry — the question is *which*, and
+       * one turn out of two hundred is the same answer as all of them.
+       */
+      endpoints: ['gpubox', 'claude'],
     });
+  });
+
+  it('says no endpoint rather than an unknown one, for a runtime that has none', () => {
+    // The echo runtime and a vendor CLI both spend tokens against nothing this
+    // field names. Empty is the honest answer, and it must not read as "we did
+    // not look" — which is why nothing here ever writes a placeholder.
+    const p = reduceEvents(SID, log({ type: 'usage', inputTokens: 5, outputTokens: 1 }));
+    expect(p.usage.endpoints).toEqual([]);
   });
 
   it("treats 'unknown' cost as absorbing rather than reporting a partial sum", () => {
@@ -176,6 +196,26 @@ describe('reduceEvents', () => {
     const twice = reduceEvents(SID, events, once);
     expect(twice.usage).toEqual(once.usage);
     expect(twice.lastSeq).toBe(2);
+  });
+
+  it('resumes from a checkpoint written before the endpoint field existed', () => {
+    /*
+     * A checkpoint is a file on disk from whatever build wrote it (§5.4), so
+     * every field added here arrives one day as `undefined` on a base. This one
+     * is an array, and `[...undefined]` throws — a crash on resume, on exactly
+     * the sessions that predate the feature and none of the ones being tested
+     * while it is written.
+     *
+     * The house rule covers the value too: a checkpoint from before this existed
+     * says "no endpoint recorded" by saying nothing.
+     */
+    const old = reduceEvents(SID, log({ type: 'usage', inputTokens: 1, outputTokens: 1 }));
+    delete (old.usage as { endpoints?: string[] }).endpoints;
+
+    const p = reduceEvents(SID, log({ type: 'usage', inputTokens: 1, outputTokens: 1, endpointId: 'claude' }), old);
+
+    expect(p.usage.endpoints).toEqual(['claude']);
+    expect(p.usage.inputTokens).toBe(2);
   });
 
   it('folding from a base equals folding from zero', () => {

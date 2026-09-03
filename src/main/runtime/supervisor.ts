@@ -131,6 +131,15 @@ export async function pumpAgent(
   let cacheReadTokens = 0;
   let cacheWriteTokens = 0;
   let cost: Cost = 0;
+  /*
+   * Which endpoints answered, in the order they first did (§13).
+   *
+   * A Set rather than a list: the question §13 asks is "where did this agent's
+   * code go", and one turn out of two hundred is the same answer as all of
+   * them. Insertion-ordered, so the seat's own endpoint is first on a session
+   * that fell back and came home again — which is the order somebody reads it in.
+   */
+  const endpoints = new Set<string>();
 
   for await (const ev of handle.events) {
     opts.onEvent?.(ev);
@@ -183,6 +192,7 @@ export async function pumpAgent(
         // the event, a case that could not happen until turns started reporting
         // one. One rule, in one place (§10).
         cost = ev.cost === undefined ? cost : addCost(cost, ev.cost);
+        if (ev.endpointId !== undefined) endpoints.add(ev.endpointId);
         await store.append(
           {
             type: 'usage',
@@ -194,6 +204,16 @@ export async function pumpAgent(
             // Absent means billable, so only a free seat says anything. Every
             // event written before this field existed has to read as billable.
             ...(opts.free === true ? { free: true } : {}),
+            /*
+             * From the event, not from the seat.
+             *
+             * `free` above is a property of the seat and is right to come from
+             * `opts`; this one is not. A turn that failed over was answered by
+             * an endpoint the seat does not name, and taking it from the spec
+             * would record the recipient the code chose over the one it reached
+             * — which is the one thing §13 asks this field to make legible.
+             */
+            ...(ev.endpointId !== undefined ? { endpointId: ev.endpointId } : {}),
           },
           meta,
         );
@@ -239,7 +259,16 @@ export async function pumpAgent(
     nextState: stateForStop(finalStop),
     eventsWritten,
     resumeToken: handle.resumeToken(),
-    usage: { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, cost },
+    usage: {
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
+      cost,
+      // First-use order and deduped, so a hundred turns on one endpoint is one
+      // entry. The question is *which*, never how often.
+      endpoints: [...endpoints],
+    },
   };
 }
 

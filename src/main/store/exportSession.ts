@@ -104,6 +104,8 @@ export function exportSessionMarkdown(
   // -------------------------------------------------------------------- body
   let usage = { input: 0, output: 0 };
   let cost: Cost = 0;
+  /** Every endpoint a turn reached, in first-use order. See the totals below. */
+  const endpoints = new Set<string>();
 
   /**
    * Agent ids are UUIDs, and a transcript headed `### 🤖 019fe9dc-a82f-…` is not
@@ -121,6 +123,9 @@ export function exportSessionMarkdown(
         input: usage.input + event.inputTokens,
         output: usage.output + event.outputTokens,
       };
+      // Absent means this runtime has no endpoint to name — the echo runtime, a
+      // vendor CLI — rather than an unknown one.
+      if (event.endpointId !== undefined) endpoints.add(event.endpointId);
       if (event.cost !== undefined) {
         cost = cost === 'unknown' || event.cost === 'unknown' ? 'unknown' : cost + event.cost;
       }
@@ -132,6 +137,19 @@ export function exportSessionMarkdown(
   out.push(
     `**${usage.input.toLocaleString()} in / ${usage.output.toLocaleString()} out tokens · ${formatCost(cost)}**`,
   );
+  if (endpoints.size > 0) {
+    /*
+     * Where this conversation was sent (§13).
+     *
+     * An export is the artefact that leaves the machine — handed to a colleague,
+     * attached to a ticket, read by somebody who was not there — and "which
+     * providers saw this repository" is the §13 question at its sharpest in that
+     * setting. It cannot be answered from the rows above: a fallback is recorded
+     * as a move and never as a return, so a reader counting `switched` lines
+     * would conclude the session ended wherever it last went.
+     */
+    out.push('', `Sent to: ${[...endpoints].join(', ')}.`);
+  }
   out.push('', `${events.length} events. Exported from Agbrte.`);
 
   return out.join('\n');

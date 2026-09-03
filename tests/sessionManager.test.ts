@@ -175,6 +175,10 @@ describe('SessionManager — turns', () => {
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
       cost: 0.04,
+      // The echo runtime has no endpoint to name, and empty says that rather
+      // than standing in for one. The fold that fills this is exercised in
+      // reduce.test.ts, where a turn can be given one.
+      endpoints: [],
     });
   });
 

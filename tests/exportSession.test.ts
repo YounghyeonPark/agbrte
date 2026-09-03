@@ -213,6 +213,32 @@ describe('totals', () => {
     expect(out).toContain('cost not visible to Agbrte');
     expect(out).not.toContain('$0.50');
   });
+
+  it('names every provider this conversation was sent to', () => {
+    /*
+     * §13, at its sharpest: an export is the artefact that leaves the machine,
+     * and "which providers saw this repository" is what somebody reading it
+     * later needs. It cannot be answered from the transcript rows — a fallback
+     * is recorded as a move and never as a return, so counting `switched` lines
+     * concludes the session ended wherever it last went.
+     */
+    const out = md([
+      ev({ type: 'usage', inputTokens: 10, outputTokens: 5, endpointId: 'gpubox' }),
+      ev({ type: 'usage', inputTokens: 10, outputTokens: 5, endpointId: 'claude' }),
+      // Home again on the third turn, which adds no second mention.
+      ev({ type: 'usage', inputTokens: 10, outputTokens: 5, endpointId: 'gpubox' }),
+    ]);
+
+    expect(out).toContain('Sent to: gpubox, claude.');
+  });
+
+  it('says nothing about endpoints for a runtime that has none', () => {
+    // The echo runtime and a vendor CLI spend tokens against nothing this
+    // names. A line reading `Sent to: ` would be worse than no line — it would
+    // look like the answer went missing rather than like there was none.
+    const out = md([ev({ type: 'usage', inputTokens: 10, outputTokens: 5 })]);
+    expect(out).not.toContain('Sent to:');
+  });
 });
 
 describe('what it leaves out', () => {
