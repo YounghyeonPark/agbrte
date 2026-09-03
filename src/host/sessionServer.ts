@@ -652,9 +652,6 @@ export class SessionHostServer {
           ...(this.opts.identity.endpoints !== undefined
             ? { endpoints: this.opts.identity.endpoints }
             : {}),
-          ...(this.opts.identity.endpointChain !== undefined
-            ? { endpointChain: this.opts.identity.endpointChain }
-            : {}),
           /*
            * Copied by name, like everything else in this object.
            *
@@ -665,7 +662,15 @@ export class SessionHostServer {
            * set" over a file that named one, and every layer type-checked. The
            * same shape as the `api` field one release ago (see v29), and the
            * reason `snapshot` in `fleet.ts` carries the warning it does.
+           *
+           * The behavioural guard is in machineHost.test.ts, and it exists
+           * because a first attempt that grepped this file for field *names*
+           * passed with the bug reintroduced — this very comment kept the name
+           * present. Values are harder to fake than names.
            */
+          ...(this.opts.identity.endpointChain !== undefined
+            ? { endpointChain: this.opts.identity.endpointChain }
+            : {}),
           ...(this.opts.identity.unavailableReason !== undefined
             ? { unavailableReason: this.opts.identity.unavailableReason }
             : {}),
