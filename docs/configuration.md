@@ -33,6 +33,25 @@ which is why the `claude` entry above has none.
 destination is displayed, it is free text, and `"Anthropic (EU)"` is a perfectly
 good value for it. `api` has to match an adapter's id exactly.
 
+### How hard to think, per endpoint
+
+```json
+{ "id": "gpubox", "baseUrl": "http://127.0.0.1:8000/v1", "defaultReasoning": { "mode": "max" } }
+```
+
+`mode` is one of `off`, `auto`, `low`, `medium`, `high`, `max`, and a value that
+is not one of those is refused when the file is read rather than ignored.
+
+It applies to a new agent that did not ask for an effort itself, and only where
+the model takes one at all — a model that cannot be asked to think is asked for
+nothing, because the request would be rejected outright rather than downgraded.
+An agent that *did* choose keeps its choice, and so does one you change
+afterwards from the roster.
+
+The reason this is per endpoint: `max` on a box you own costs time nobody is
+billed for, and the same `max` on a hosted API is a bill. Absent means `max`,
+which is what every seat got before this could be written down.
+
 ### Falling back when one will not answer
 
 ```json

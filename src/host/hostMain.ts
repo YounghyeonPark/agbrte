@@ -249,6 +249,22 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     runtimes: RUNTIMES,
   });
 
+  /*
+   * Declared here rather than beside the read below, which is the same rule
+   * `port` states further down: the manager built next closes over `endpoints`
+   * to answer "what effort does this endpoint default to", and a `let` declared
+   * after the closure that reads it is legal and reads like a bug.
+   *
+   * Empty until the agent host's handshake lands, and empty for good if it
+   * fails — which is the honest starting value either way. No client can seat
+   * anything until the server exists, and that is created long after the read.
+   */
+  let available: string[] = [];
+  let endpoints: Awaited<ReturnType<typeof supervisor.endpoints>> = [];
+  let endpointChain: string[] = [];
+  let runtimeNotes: Array<{ id: string; label: string; reason: string }> = [];
+  let unavailableReason: string | undefined;
+
   const registry = new RuntimeRegistry();
   for (const entry of supervisor.runtimes()) {
     registry.register(entry.runtime, { label: entry.label, model: entry.model });
@@ -264,6 +280,18 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     registry,
     workspaceRoot,
     instanceId: identity.instanceId,
+    /*
+     * Read through the closure rather than passed as a map.
+     *
+     * The endpoints come from the *forked agent host*'s handshake, which has not
+     * landed when this manager is built — the read is below, and the server that
+     * lets a client seat anything is created well after it. So the manager is
+     * given a way to ask rather than an answer, and a handshake that failed
+     * leaves the list empty, which reads as "no endpoint declared a default":
+     * exactly what every seat got before this field was read at all.
+     */
+    defaultReasoningFor: (endpointId) =>
+      endpoints.find((e) => e.id === endpointId)?.defaultReasoning,
   });
 
   /*
@@ -286,11 +314,6 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
    * Failing to start the agent host must not stop this one: transcripts still
    * load and read, which is the whole reason the log is the source of truth.
    */
-  let available: string[] = [];
-  let endpoints: Awaited<ReturnType<typeof supervisor.endpoints>> = [];
-  let endpointChain: string[] = [];
-  let runtimeNotes: Array<{ id: string; label: string; reason: string }> = [];
-  let unavailableReason: string | undefined;
   try {
     for (const entry of await supervisor.advertisedRuntimes()) {
       registry.register(entry.runtime, { label: entry.label, model: entry.model });

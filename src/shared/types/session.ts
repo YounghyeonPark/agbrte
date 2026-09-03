@@ -5,7 +5,7 @@
 import type { AgentId, InstanceId, SessionId } from './ids.js';
 import type { ToolPolicy } from './policy.js';
 import type { NormalizedTurn } from './content.js';
-import type { AgentRole, AgentSpec, ModelRef, RuntimeCapabilities } from './runtime.js';
+import type { AgentRole, AgentSpec, RuntimeCapabilities } from './runtime.js';
 import type { ExecutionTarget } from './target.js';
 import type { PermissionDecision } from './policy.js';
 import type { WorkspacePath } from './paths.js';
@@ -722,14 +722,6 @@ export const TREE_LIMITS = {
   maxChildrenPerSession: 8,
   maxOpenDescendants: 24,
 } as const;
-
-export interface ModelChip {
-  agentId: AgentId;
-  model: ModelRef | null;
-  runtimeId: string;
-  authKind: 'api-key' | 'vendor-cli-session' | 'none';
-  fidelity: RuntimeCapabilities['permissionFidelity'];
-}
 
 /*
  * Moved here from `SessionManager` when a child became creatable on another

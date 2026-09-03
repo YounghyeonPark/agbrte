@@ -44,7 +44,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { machineRoot } from './machine.js';
 import { restrictToOwner } from './ownerOnly.js';
-import type { ModelEndpoint } from '@shared/types/index.js';
+import type { ModelEndpoint, ReasoningRequest } from '@shared/types/index.js';
 import { OPENAI_COMPATIBLE_PROVIDER_ID } from '@main/runtime/providers/openaiCompatible.js';
 import { ANTHROPIC_PROVIDER_ID } from '@main/runtime/providers/anthropic.js';
 
@@ -64,6 +64,19 @@ export interface PublicEndpoint {
   baseUrl: string;
   /** Whether a credential is attached. The credential itself never leaves here. */
   authenticated: boolean;
+  /**
+   * How hard a model should think on turns sent here, absent a seat's own
+   * choice (§3.6, §3.8).
+   *
+   * Advertised because the *session host* decides a new seat's effort and the
+   * endpoints file is read in the forked agent host (§8). Not a secret and not
+   * a capability: it is a preference the machine's owner wrote down, which is
+   * why it travels beside `provider` rather than inside
+   * `RuntimeCapabilities` — §3.3's type is about what a target *can* do, and
+   * mixing a preference into it would make "cannot" and "would rather not"
+   * the same answer.
+   */
+  defaultReasoning?: ReasoningRequest;
 }
 
 export interface EndpointRegistry {
@@ -153,6 +166,26 @@ interface Entry {
    */
   api?: string;
   apiKey?: string;
+  /**
+   * How hard a model should think on turns sent here, when a seat asks for
+   * nothing (§3.6, §3.8).
+   *
+   * `ModelEndpoint.defaultReasoning` has been on the record since §3.8 and
+   * **nothing read it** — the field was declared in the type and in the design
+   * and the seat's default came from a constant, so writing it here changed
+   * nothing and reported nothing. §16's shape: a configuration that is
+   * plumbed, documented, and silent.
+   *
+   * It earns its place because the answer differs per endpoint rather than per
+   * session: `max` on a local box costs time nobody is billed for, and the same
+   * `max` on a hosted API is a bill. A person with both wants different answers
+   * and had to change the seat by hand on every session.
+   *
+   * A seat that *asks* still wins. This is the value used when nobody chose,
+   * which is what "default" has to mean for the roster's effort control to keep
+   * telling the truth about what was chosen.
+   */
+  defaultReasoning?: ReasoningRequest;
 }
 
 /**
@@ -170,6 +203,20 @@ interface Entry {
  * where it cannot.
  */
 const KNOWN_APIS = new Set([OPENAI_COMPATIBLE_PROVIDER_ID, ANTHROPIC_PROVIDER_ID]);
+
+/**
+ * The efforts a `defaultReasoning` may name, checked when the file is read.
+ *
+ * Refused rather than tolerated, for the reason `api` above is: the whole set
+ * is in hand here and a typo can be answered with the list. And the cost of
+ * tolerating one is the exact failure this field was added to fix — a value
+ * written in the file that changes nothing and reports nothing, which is worse
+ * the second time because somebody has now been told the field works.
+ *
+ * Kept as a literal rather than derived from `ReasoningRequest`, since a type
+ * is not a value at runtime. The pairing is asserted below.
+ */
+const REASONING_MODES = new Set(['off', 'auto', 'low', 'medium', 'high', 'max']);
 
 export function endpointsPath(): string {
   // Through `machineRoot` rather than joined here, so the machine's install area
@@ -278,6 +325,14 @@ export async function loadEndpoints(
         // sends the turn somewhere else instead of failing.
         throw new EndpointsInvalid(path, 'each endpoint needs an "id"');
       }
+      const effort = entry.defaultReasoning?.mode;
+      if (effort !== undefined && !REASONING_MODES.has(effort)) {
+        throw new EndpointsInvalid(
+          path,
+          `endpoint "${entry.id}" asks for reasoning "${effort}", which is not an effort — ` +
+            `known: ${[...REASONING_MODES].join(', ')}`,
+        );
+      }
       if (entry.api !== undefined && !KNOWN_APIS.has(entry.api)) {
         throw new EndpointsInvalid(
           path,
@@ -335,6 +390,9 @@ export async function loadEndpoints(
     // `app-local` would be the sort of quiet reclassification §13 forbids.
     locality: entry.apiKey === undefined ? 'target-local' : 'cloud',
     dataHandling: { provider: entry.provider ?? (entry.apiKey === undefined ? 'local' : entry.id) },
+    ...(entry.defaultReasoning !== undefined
+      ? { defaultReasoning: entry.defaultReasoning }
+      : {}),
   });
 
   const keys = new Map(entries.map((e) => [e.id, e.apiKey]));
@@ -351,6 +409,9 @@ export async function loadEndpoints(
         // a turn went.
         baseUrl: baseUrlFor(entry) ?? '',
         authenticated: entry.apiKey !== undefined,
+        ...(entry.defaultReasoning !== undefined
+          ? { defaultReasoning: entry.defaultReasoning }
+          : {}),
       })),
     /**
      * The next endpoint in the declared order, or nothing.

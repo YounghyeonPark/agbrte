@@ -381,6 +381,15 @@ export type HostMessage =
         provider: string;
         baseUrl: string;
         authenticated: boolean;
+        /**
+         * The effort a seat on this endpoint gets when it asks for none.
+         *
+         * Announced by this process because it is this one that reads the
+         * endpoints file (§8), and consumed by the session host, which is where
+         * a new seat's effort is decided. It travels no further: no client needs
+         * it, and the *result* — the seat's own `reasoning` — already does.
+         */
+        defaultReasoning?: { mode: 'off' | 'auto' | 'low' | 'medium' | 'high' | 'max' };
       }>;
       /**
        * The order those are tried in, most preferred first (§3.9).

@@ -17,6 +17,7 @@
 import type {
   AgentHandle,
   CompactedHistory,
+  ReasoningRequest,
   PeerDelivery,
   PeerHistory,
   AgentRuntime,
@@ -146,6 +147,8 @@ export interface HostAdvertisement {
     provider: string;
     baseUrl: string;
     authenticated: boolean;
+    /** The effort a seat here gets when it asks for none (§3.6, §3.8). */
+    defaultReasoning?: ReasoningRequest;
   }>;
   /**
    * The order to try, most preferred first (§3.9).

@@ -500,6 +500,16 @@ export interface SessionManagerDeps {
    */
   machineName?: string;
   now?: () => Date;
+  /**
+   * What effort an endpoint asks for, when a seat asks for nothing (§3.6, §3.8).
+   *
+   * A function rather than a map because the endpoints are read from the
+   * *forked agent host*'s handshake and this manager is built before that
+   * handshake has landed. Absent — a manager built without one, a test — falls
+   * back to `DEFAULT_REASONING`, which is what every seat got before this
+   * existed.
+   */
+  defaultReasoningFor?: (endpointId: string) => ReasoningRequest | undefined;
 }
 
 /** Five minutes of complete silence from something that streams as it goes. */
@@ -1245,7 +1255,30 @@ export class SessionManager extends EventEmitter {
      * model rather than degrade on it.
      */
     if (spec.reasoning === undefined && admission.capabilities.reasoningControl === 'effort') {
-      spec.reasoning = { mode: DEFAULT_REASONING };
+      /*
+       * The endpoint's own answer first, and `DEFAULT_REASONING` only if it has
+       * none.
+       *
+       * `ModelEndpoint.defaultReasoning` had been on the record since §3.8 and
+       * **nothing read it**: the constant below was the whole of the decision,
+       * so a `defaultReasoning` written into `endpoints.json` changed nothing
+       * and said nothing about it. §16's shape, and the second time this exact
+       * field has been found declared-and-unread — `providerId` was the first.
+       *
+       * It matters because the right answer differs per endpoint rather than
+       * per session: `max` on a local box costs time nobody is billed for, and
+       * the same `max` on a hosted API is a bill. Somebody with both was
+       * changing every new seat by hand.
+       *
+       * Applied *here* and not at invoke time, which was the shorter route and
+       * the wrong one. The roster's effort control shows `spec.reasoning`, so a
+       * default resolved later would leave the screen saying `max` while the
+       * request carried something else — a quiet divergence between what a
+       * person is shown and what is sent.
+       */
+      const asked = spec.model?.endpointId;
+      const declared = asked === undefined ? undefined : this.deps.defaultReasoningFor?.(asked);
+      spec.reasoning = declared ?? { mode: DEFAULT_REASONING };
     }
 
     const record: AgentRecord = {

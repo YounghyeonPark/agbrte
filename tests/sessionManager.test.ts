@@ -10,6 +10,7 @@ import { AgbrteHarnessRuntime } from '@main/runtime/runtimes/agbrteHarness.js';
 import { openWorkspace } from '@main/store/identity.js';
 import { defaultLocalPolicy, evaluatePolicy } from '@main/policy/evaluate.js';
 import type {
+  AgentRecord,
   InstanceId,
   ModelEndpoint,
   ModelProvider,
@@ -664,6 +665,88 @@ describe('SessionManager — reasoning effort', () => {
 
     const projection = await sm.projection(session.sessionId);
     expect(projection.agents[0]?.reasoning, 'the log did not carry it').toEqual({ mode: 'max' });
+  });
+});
+
+/**
+ * What an endpoint asks for, when a seat asks for nothing (§3.6, §3.8).
+ *
+ * `ModelEndpoint.defaultReasoning` had been on the record since §3.8 and
+ * **nothing read it**. The constant was the whole of the decision, so a
+ * `defaultReasoning` written into `endpoints.json` changed nothing and reported
+ * nothing — §16's shape, and the second time this exact field has been found
+ * declared-and-unread. `providerId` was the first, and it took a second adapter
+ * to notice.
+ *
+ * The answer differs per endpoint rather than per session, which is why it
+ * belongs on the endpoint: `max` on a local box costs time nobody is billed
+ * for, and the same `max` on a hosted API is a bill.
+ */
+describe('SessionManager — the effort an endpoint asks for', () => {
+  const seat = async (
+    defaultReasoningFor?: (id: string) => { mode: 'off' | 'low' | 'max' } | undefined,
+  ): Promise<AgentRecord | undefined> => {
+    const registry = new RuntimeRegistry();
+    registry.register(
+      new AgbrteHarnessRuntime({
+        provider: {
+          invoke: () =>
+            Promise.resolve({
+              content: [],
+              toolCalls: [],
+              stop: { kind: 'end_turn' as const },
+              usage: { inputTokens: 0, outputTokens: 0 },
+              raw: {},
+            }),
+          probe: () => Promise.resolve({ reasoningControl: 'effort' as const }),
+        } as never,
+        endpointFor: () => ({
+          endpointId: 'gpubox',
+          providerId: 'x',
+          auth: { kind: 'none' },
+          locality: 'target-local',
+          dataHandling: { provider: 'local' },
+        }),
+      }),
+      { label: 'Harness', model: 'required' },
+    );
+    const sm = new SessionManager({
+      registry,
+      workspaceRoot: root,
+      instanceId,
+      ...(defaultReasoningFor ? { defaultReasoningFor } : {}),
+    });
+    const session = await sm.createSession({ title: 's', goal: 'g' });
+    await sm.addAgent(session.sessionId, {
+      role: 'worker',
+      runtimeId: 'agbrte-harness',
+      model: { providerId: 'x', modelId: 'm', endpointId: 'gpubox' },
+    });
+    return sm.get(session.sessionId).agents[0];
+  };
+
+  it('uses what the endpoint declared', async () => {
+    const record = await seat((id) => (id === 'gpubox' ? { mode: 'low' } : undefined));
+    expect(record?.spec.reasoning).toEqual({ mode: 'low' });
+  });
+
+  it('honours `off`, which a blanket default would have overridden', async () => {
+    /*
+     * The case that makes `??` the wrong operator if written carelessly: `off`
+     * is a choice somebody made, and falling through to `max` on it would be
+     * the mechanism overruling the person — the shape §4.3 refuses for budgets
+     * and this refuses for effort.
+     */
+    const record = await seat(() => ({ mode: 'off' }));
+    expect(record?.spec.reasoning).toEqual({ mode: 'off' });
+  });
+
+  it('falls back to the constant where no endpoint declared one', async () => {
+    // The behaviour of every seat before this field was read at all, kept
+    // exactly: a host whose handshake failed answers nothing here, and must
+    // not thereby stop asking a model to think.
+    expect((await seat(() => undefined))?.spec.reasoning).toEqual({ mode: 'max' });
+    expect((await seat())?.spec.reasoning).toEqual({ mode: 'max' });
   });
 });
 

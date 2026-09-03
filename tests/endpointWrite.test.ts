@@ -517,3 +517,58 @@ describe('the order to try endpoints in', () => {
     expect(registry.nextAfter('local')).toBe('nim');
   });
 });
+
+describe('the effort an endpoint declares', () => {
+  it('reaches both the resolved endpoint and the advertised one', async () => {
+    const path = await scratch();
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(
+      path,
+      JSON.stringify({
+        endpoints: [
+          { id: 'gpubox', baseUrl: 'http://gpu:8000/v1', defaultReasoning: { mode: 'max' } },
+          { id: 'claude', baseUrl: 'http://api/v1', defaultReasoning: { mode: 'low' } },
+          { id: 'plain', baseUrl: 'http://plain/v1' },
+        ],
+      }),
+      'utf8',
+    );
+
+    const registry = await loadEndpoints(path, null);
+
+    /*
+     * Both, because they are read by different processes for different reasons.
+     * `resolve` answers the agent host, which is where `ModelEndpoint` declared
+     * the field in the first place; `list` answers the *session host*, which is
+     * where a new seat's effort is actually decided — the endpoints file is read
+     * in the forked agent host (§8), so the deciding process has to be told.
+     */
+    expect(registry.resolve('claude').defaultReasoning).toEqual({ mode: 'low' });
+    expect(registry.list().find((e) => e.id === 'gpubox')?.defaultReasoning).toEqual({
+      mode: 'max',
+    });
+    // Absent stays absent: an endpoint that declares nothing must not read as
+    // one that declared the constant, or nobody could tell the two apart.
+    expect(registry.list().find((e) => e.id === 'plain')?.defaultReasoning).toBeUndefined();
+  });
+
+  it('refuses an effort that is not one, and says what is', async () => {
+    const path = await scratch();
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(
+      path,
+      JSON.stringify({
+        endpoints: [{ id: 'gpubox', baseUrl: 'http://gpu/v1', defaultReasoning: { mode: 'MAX' } }],
+      }),
+      'utf8',
+    );
+
+    /*
+     * Refused rather than dropped, and the reason is this field's own history:
+     * it sat in the type unread, so writing it changed nothing and said nothing.
+     * Tolerating a typo now would reproduce exactly that — silence over a value
+     * somebody wrote on purpose — and this time they have been told it works.
+     */
+    await expect(loadEndpoints(path, null)).rejects.toThrow(/not an effort.*off, auto, low/s);
+  });
+});
