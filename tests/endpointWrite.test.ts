@@ -21,7 +21,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { addEndpoint, EndpointRejected, loadEndpoints } from '../src/host/endpoints.js';
+import { addEndpoint, EndpointRejected, loadEndpoints, setChain } from '../src/host/endpoints.js';
 import { SessionHostServer } from '../src/host/sessionServer.js';
 import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
@@ -397,5 +397,123 @@ describe('who may add one', () => {
     // Nothing on disk: a refusal that still wrote the file would be worse than
     // no gate at all, because it would look enforced.
     await expect(readFile(file, 'utf8')).rejects.toThrow();
+  });
+});
+
+/*
+ * Setting the order, which had no command until now (§3.9).
+ *
+ * The mechanism that walks the chain has worked for a while. What could not
+ * happen was a person changing it: `endpoints.add` was the only endpoint write
+ * on the wire, so the order every turn on a machine follows could be edited in
+ * exactly one way — by opening `endpoints.json` on that machine, which for the
+ * remote GPU box the feature exists for means an ssh session and hand-edited
+ * JSON.
+ */
+describe('the order to try endpoints in', () => {
+  const three = async (path: string): Promise<void> => {
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(
+      path,
+      JSON.stringify({
+        endpoints: [
+          { id: 'gpubox', baseUrl: 'http://gpu:8000/v1' },
+          { id: 'nim', baseUrl: 'http://nim:8000/v1' },
+          { id: 'local', baseUrl: 'http://127.0.0.1:11434/v1' },
+        ],
+      }),
+      'utf8',
+    );
+  };
+
+  it('writes an order the chain-walker actually follows', async () => {
+    const path = await scratch();
+    await three(path);
+
+    await setChain(['gpubox', 'nim', 'local'], path);
+
+    /*
+     * Through `loadEndpoints` rather than by reading the JSON. The two fields in
+     * that file are only worth writing if the thing that routes turns agrees
+     * about what they mean, and the meaning is not obvious from the names: the
+     * chain is the *whole* order, with the default as its first entry, so
+     * `nextAfter` of the default is the second name rather than nothing.
+     */
+    const registry = await loadEndpoints(path, null);
+    expect(registry.resolve().endpointId).toBe('gpubox');
+    expect(registry.nextAfter('gpubox')).toBe('nim');
+    expect(registry.nextAfter('nim')).toBe('local');
+    expect(registry.nextAfter('local')).toBeUndefined();
+  });
+
+  it('cannot produce a first endpoint that failover never leaves', async () => {
+    const path = await scratch();
+    await three(path);
+
+    await setChain(['nim', 'local'], path);
+    const written = JSON.parse(await readFile(path, 'utf8')) as {
+      default: string;
+      fallback: string[];
+    };
+
+    /*
+     * The trap this command exists to make unreachable. The file format permits
+     * a `default` that is absent from `fallback`, and that combination is not a
+     * feature: `nextAfter` finds the starting endpoint nowhere in the chain and
+     * answers nothing, so the one endpoint every turn begins on is the one
+     * endpoint a refusal can never move off. Deriving both from one order means
+     * a client cannot ask for it.
+     */
+    expect(written.fallback[0]).toBe(written.default);
+    expect((await loadEndpoints(path, null)).nextAfter('nim')).toBe('local');
+  });
+
+  it('keeps the endpoints, which is the failure the add side already had', async () => {
+    const path = await scratch();
+    await three(path);
+    // `addEndpoint` once wrote `{ endpoints: [...] }` and deleted `default`.
+    // This is the same write from the other direction, and the same mistake
+    // available: writing only the two fields it owns would delete the endpoints
+    // the order refers to.
+    await setChain(['local'], path);
+
+    const registry = await loadEndpoints(path, null);
+    expect(registry.list().map((e) => e.id)).toEqual(['gpubox', 'nim', 'local']);
+  });
+
+  it('refuses a name that is not an endpoint, and says what is', async () => {
+    const path = await scratch();
+    await three(path);
+    // Refused where somebody can still fix it. A typo does not fail loudly at
+    // the next session: the chain ends one step early, so a turn that should
+    // have moved to the local server stops, and it reads as the fallback being
+    // broken rather than as a misspelling.
+    await expect(setChain(['gpubox', 'nimm'], path)).rejects.toThrow(
+      /"nimm" is not an endpoint.*gpubox, nim, local/s,
+    );
+  });
+
+  it('refuses a name twice, and an empty order', async () => {
+    const path = await scratch();
+    await three(path);
+    await expect(setChain(['nim', 'nim'], path)).rejects.toThrow(/appears twice/);
+    // Not "clear it": an empty order leaves `default` naming nothing, and
+    // `loadEndpoints` then picks `entries[0]` — an endpoint chosen by file
+    // position rather than by anyone, which is §13's quiet change of recipient.
+    await expect(setChain([], path)).rejects.toThrow(/at least one/);
+  });
+
+  it('leaves the file alone when it refuses', async () => {
+    const path = await scratch();
+    await three(path);
+    await setChain(['local', 'nim'], path);
+
+    await expect(setChain(['gpubox', 'nope'], path)).rejects.toThrow();
+
+    // A rejected write that had already truncated the file would take the
+    // working order down with the bad one.
+    const registry = await loadEndpoints(path, null);
+    expect(registry.resolve().endpointId).toBe('local');
+    expect(registry.nextAfter('local')).toBe('nim');
   });
 });

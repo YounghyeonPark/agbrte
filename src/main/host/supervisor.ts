@@ -138,6 +138,11 @@ export class HostSupervisor {
     return (await this.current().ready).endpoints;
   }
 
+  /** The order those are tried in, from the process that walks it (§3.9). */
+  async endpointChain(): Promise<string[]> {
+    return (await this.current().ready).endpointChain;
+  }
+
   /** Begin pulling a model into an endpoint that can take one. */
   async installModel(endpointId: string, tag: string): Promise<void> {
     const client = this.current();

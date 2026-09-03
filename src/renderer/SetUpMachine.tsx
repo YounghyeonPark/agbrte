@@ -48,7 +48,12 @@
  */
 
 import type { JSX } from 'react';
-import type { ReadinessDto, SetupOutcomeDto } from '../shared/ipc/contract.js';
+import { useState } from 'react';
+import type {
+  EndpointChainDto,
+  ReadinessDto,
+  SetupOutcomeDto,
+} from '../shared/ipc/contract.js';
 
 /** The endpoint form's four values, held by whoever renders it. */
 export interface EndpointDraft {
@@ -406,5 +411,174 @@ export function ServerReadiness({
         </ol>
       )}
     </div>
+  );
+}
+
+/**
+ * The order this machine tries its endpoints in, and a way to change it (§3.9).
+ *
+ * ## Why this is a screen at all
+ *
+ * The order has routed turns for a while: `nextAfter` answers it,
+ * `askWithFailover` walks it, and a move writes `model.endpoint_switched` into
+ * the transcript with the reason it moved. What no client could do was *see* it,
+ * let alone set it — `endpoints.add` was the only endpoint write on the wire, so
+ * the order every turn on a machine follows could be changed in exactly one way:
+ * by opening `endpoints.json` on that machine. For the remote GPU box the
+ * feature exists for, that is an ssh session and hand-edited JSON.
+ *
+ * The invisible half was the worse one. §13 requires that where source code goes
+ * be legible before it is sent, and a fallback is a *second* recipient chosen in
+ * advance: somebody whose turns had moved to a hosted API could read the reason
+ * in the transcript and could not read the configuration that put it there.
+ *
+ * ## Up and down, not drag and drop
+ *
+ * Two buttons per row, which is the whole interaction. Dragging is nicer with a
+ * mouse and unusable with a keyboard, poor on a phone — where §7 says this app
+ * has to work — and it is a lot of code for a list that is realistically three
+ * items long. Reordering is also the kind of thing people do once.
+ *
+ * ## Nothing is written until it is asked for
+ *
+ * The order is local until *Save* — so a two-step rearrangement is not two
+ * writes, two host restarts and two windows during which a turn would have gone
+ * somewhere half-chosen. It also makes cancelling free: leave the panel.
+ */
+export function EndpointOrder({
+  endpoints,
+  chain,
+  where,
+  busy,
+  outcome,
+  onSave,
+}: {
+  endpoints: Array<{ id: string; label: string; provider: string }>;
+  /** What the host says is in force. Empty when it has no order to report. */
+  chain: string[];
+  where: string;
+  busy: boolean;
+  outcome: EndpointChainDto | null;
+  onSave: (order: string[]) => void;
+}): JSX.Element | null {
+  /*
+   * The host's order first, then anything it does not mention.
+   *
+   * An endpoint absent from the chain is not an error and is common: adding one
+   * does not put it in the order, so a machine can have four endpoints and an
+   * order over two of them. Leaving those rows out would make them look deleted;
+   * showing them at the end, after the ordered ones, is what they are — reachable
+   * by name, never reached by a fallback.
+   */
+  const initial = [
+    ...chain.filter((id) => endpoints.some((e) => e.id === id)),
+    ...endpoints.filter((e) => !chain.includes(e.id)).map((e) => e.id),
+  ];
+  const [order, setOrder] = useState<string[] | null>(null);
+  const current = order ?? initial;
+
+  // Nothing to order. Said by rendering nothing rather than by a panel
+  // explaining that a list of one has no order.
+  if (endpoints.length < 2) return null;
+
+  const move = (from: number, to: number): void => {
+    if (to < 0 || to >= current.length) return;
+    const next = [...current];
+    const [taken] = next.splice(from, 1);
+    if (taken !== undefined) next.splice(to, 0, taken);
+    setOrder(next);
+  };
+
+  const changed = order !== null && order.join(' ') !== initial.join(' ');
+  const labelOf = (id: string): { label: string; provider: string } => {
+    const found = endpoints.find((e) => e.id === id);
+    return { label: found?.label ?? id, provider: found?.provider ?? '' };
+  };
+
+  return (
+    <details className="border-line rounded-surface border" data-testid="endpoint-order">
+      <summary className="text-muted cursor-pointer px-2 py-1.5 text-[11px]">
+        {chain.length === 0
+          ? 'Fallback order — not set'
+          : `Fallback order — ${labelOf(current[0] ?? '').label} first`}
+      </summary>
+
+      <div className="grid gap-1.5 px-2 pt-1 pb-2">
+        <p className="text-muted m-0 text-[11px]">
+          A turn refused, rate-limited or sent to an unreachable server moves down this list and
+          carries on. A missing credential and a malformed request stay put.
+        </p>
+
+        <ol className="m-0 grid list-decimal gap-1 pl-4" data-testid="endpoint-order-list">
+          {current.map((id, i) => {
+            const { label, provider } = labelOf(id);
+            return (
+              <li key={id} className="min-w-0">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="min-w-0 grow truncate text-xs" data-testid="endpoint-order-row">
+                    {label}
+                    {/* §13's disclosure, on the row that decides where a turn
+                        goes second. A fallback is a recipient chosen in advance,
+                        and choosing one without seeing the provider is the quiet
+                        change this rule exists to stop. */}
+                    <span className="text-muted"> · {provider}</span>
+                  </span>
+                  <button
+                    className="btn-quiet"
+                    aria-label={`move ${label} up`}
+                    data-testid={`endpoint-up-${id}`}
+                    disabled={busy || i === 0}
+                    onClick={() => move(i, i - 1)}
+                  >
+                    Up
+                  </button>
+                  <button
+                    className="btn-quiet"
+                    aria-label={`move ${label} down`}
+                    data-testid={`endpoint-down-${id}`}
+                    disabled={busy || i === current.length - 1}
+                    onClick={() => move(i, i + 1)}
+                  >
+                    Down
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+
+        <div className="flex items-center gap-2">
+          <button
+            className="btn text-accent"
+            data-testid="endpoint-order-save"
+            disabled={busy || !changed}
+            onClick={() => onSave(current)}
+          >
+            {busy ? 'Saving…' : 'Save order'}
+          </button>
+          {changed && !busy && (
+            <button className="btn-quiet" onClick={() => setOrder(null)}>
+              Cancel
+            </button>
+          )}
+        </div>
+
+        {outcome !== null && (
+          <p
+            className={
+              outcome.inForce ? 'text-muted m-0 text-[11px]' : 'text-state-paused m-0 text-[11px]'
+            }
+            data-testid="endpoint-order-outcome"
+          >
+            {outcome.inForce
+              ? `Saved to ${outcome.path} on ${where}, and the host restarted onto it.`
+              : /* The half that happened, named as the half it is. The remedy is
+                   a restart rather than another write, and saying "failed" would
+                   send somebody to write the same order again. */
+                outcome.detail}
+          </p>
+        )}
+      </div>
+    </details>
   );
 }

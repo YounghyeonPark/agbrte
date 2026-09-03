@@ -47,7 +47,7 @@ import {
 } from './discovery.js';
 import { refuseIfHeldElsewhere } from './legacyHost.js';
 import { readKnownWorkspaces, writeKnownWorkspaces } from './workspaces.js';
-import { addEndpoint } from './endpoints.js';
+import { addEndpoint, setChain } from './endpoints.js';
 import { addManagedToolsToPath } from './managedTools.js';
 
 /**
@@ -288,6 +288,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
    */
   let available: string[] = [];
   let endpoints: Awaited<ReturnType<typeof supervisor.endpoints>> = [];
+  let endpointChain: string[] = [];
   let runtimeNotes: Array<{ id: string; label: string; reason: string }> = [];
   let unavailableReason: string | undefined;
   try {
@@ -297,6 +298,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     available = (await supervisor.advertised()).filter((id) => registry.has(id));
     runtimeNotes = await supervisor.detectionNotes();
     endpoints = await supervisor.endpoints();
+    endpointChain = await supervisor.endpointChain();
   } catch (err) {
     unavailableReason = err instanceof Error ? err.message : String(err);
   }
@@ -545,6 +547,10 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       runtimes: available,
       ...(runtimeNotes.length > 0 ? { runtimeNotes } : {}),
       endpoints,
+      // Omitted when empty rather than sent as `[]`, so a host that has no order
+      // to report and one built before the field look the same to a client —
+      // which they are, and the client renders both as "no order set".
+      ...(endpointChain.length > 0 ? { endpointChain } : {}),
       ...(identity.origin === 'relocated' && identity.movedFrom !== undefined
         ? { movedFrom: identity.movedFrom }
         : {}),
@@ -582,6 +588,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
      * being sent. `Fleet.setUpHost` restarts the host afterwards and says so.
      */
     addEndpoint: (input) => addEndpoint(input),
+    setChain: (order) => setChain(order),
     /*
      * The machine's answer, for a connection bound to no workspace.
      *

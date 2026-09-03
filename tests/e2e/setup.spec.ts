@@ -31,7 +31,7 @@
  */
 
 import { expect, test, type Page } from '@playwright/test';
-import { launch, makeRepo, type LaunchedApp } from './harness.js';
+import { launch, launchWith, makeRepo, type LaunchedApp } from './harness.js';
 import { createSession } from './actions.js';
 
 /** Replace the setup handler, and record what it was given. */
@@ -577,6 +577,110 @@ test.describe('one list, one button', () => {
       await agbrte.close();
     }
   });
+
+/*
+ * Seeing the fallback order, and changing it (DESIGN.md §3.9, §13).
+ *
+ * The order has routed turns for a while — `nextAfter` answers it,
+ * `askWithFailover` walks it, a move writes `model.endpoint_switched` with its
+ * reason. What no client could do was see it or set it: `endpoints.add` was the
+ * only endpoint write on the wire, so the order every turn on a machine follows
+ * could be changed in exactly one way, by opening `endpoints.json` on that
+ * machine. For the remote GPU box the feature exists for, that is an ssh
+ * session and hand-edited JSON.
+ *
+ * An e2e rather than a unit test because the value is entirely in the wiring:
+ * the order comes from the *agent host* (§8), crosses two processes and the
+ * preload to be displayed, and the write goes back the other way and restarts
+ * the host. Nothing about that is visible from either end alone.
+ */
+test('shows the order endpoints are tried in, and writes a new one', async () => {
+  const repo = await makeRepo();
+  const agbrte = await launchWith(
+    {
+      endpoints: {
+        endpoints: [
+          { id: 'gpubox', label: 'GPU box', provider: 'local', baseUrl: 'http://127.0.0.1:8000/v1' },
+          { id: 'local', label: 'Ollama here', provider: 'local', baseUrl: 'http://127.0.0.1:11434/v1' },
+        ],
+        default: 'gpubox',
+        fallback: ['gpubox', 'local'],
+      },
+    },
+    repo,
+  );
+
+  try {
+    await stubModels(agbrte, { before: [], after: [], canInstall: false });
+    await agbrte.app.evaluate(async ({ ipcMain }) => {
+      const scope = globalThis as unknown as { __order?: string[] };
+      ipcMain.removeHandler('agbrte:hosts.setEndpointChain');
+      ipcMain.handle('agbrte:hosts.setEndpointChain', (_e, _id: string, order: string[]) => {
+        scope.__order = order;
+        return {
+          path: '/home/dev/.agbrte/endpoints.json',
+          default: order[0],
+          fallback: order,
+          inForce: true,
+        };
+      });
+    });
+
+    const page = agbrte.window;
+    await createSession(page, 'ordering endpoints');
+
+    const panel = page.locator('[data-testid=endpoint-order]');
+    /*
+     * Present at all, which is the point. The fixture host has two endpoints; a
+     * machine with one renders nothing here, because a list of one has no order
+     * and a panel saying so would be a control that does nothing.
+     */
+    await expect(panel).toBeVisible({ timeout: 20_000 });
+    /*
+     * The order the *host* reports, before it is opened — and this assertion is
+     * the one that would have caught what shipped broken.
+     *
+     * `endpointChain` was threaded through the agent host handshake, the
+     * advertisement, the supervisor, the session host identity, the DTO and the
+     * picker, and stopped at `sessionServer`'s hello, which copies its identity
+     * field by field. Every layer type-checked; the app showed "not set" over a
+     * file that named an order. Naming the first endpoint here fails if any one
+     * of those hops drops it, which is what the panel existing does not.
+     */
+    await expect(panel.locator('summary')).toContainText('GPU box first');
+    await panel.locator('summary').click();
+
+    const rows = page.locator('[data-testid=endpoint-order-row]');
+    await expect(rows).toHaveCount(2);
+    const before = (await rows.allTextContents()).map((t) => t.trim());
+
+    // Nothing is written until it is asked for: a rearrangement in progress is
+    // not a sequence of host restarts.
+    await expect(page.locator('[data-testid=endpoint-order-save]')).toBeDisabled();
+
+    // The second row's "up", by name. Reaching for the last button in the list
+    // finds the last row's "down", which is correctly disabled — the assertion
+    // would have been about the wrong control.
+    await page.click('[data-testid=endpoint-up-local]');
+    const after = (await rows.allTextContents()).map((t) => t.trim());
+    expect(after).not.toEqual(before);
+
+    await page.click('[data-testid=endpoint-order-save]');
+    await expect(page.locator('[data-testid=endpoint-order-outcome]')).toContainText(
+      'the host restarted onto it',
+      { timeout: 20_000 },
+    );
+
+    // Ids, and only ids. §13's boundary: reordering must never be a route to
+    // changing what an endpoint *is*, so nothing else may be on this wire.
+    const sent = await agbrte.app.evaluate(() => (globalThis as { __order?: string[] }).__order);
+    expect(sent).toBeDefined();
+    expect(sent?.every((id) => typeof id === 'string')).toBe(true);
+    expect(sent?.length).toBe(2);
+  } finally {
+    await agbrte.close();
+  }
+});
 
   test('sends the API key to setUp and to nothing else', async () => {
     const repo = await makeRepo();

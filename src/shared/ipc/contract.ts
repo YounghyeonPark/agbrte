@@ -131,6 +131,19 @@ export interface HostInfo {
     authenticated: boolean;
   }>;
   /**
+   * The order those are tried in, most preferred first (§3.9).
+   *
+   * Empty from a host older than v30 and from one whose file names no order,
+   * which are rendered the same way: the endpoint list with nothing said about
+   * order. A machine with one model server has none to show, and that is the
+   * ordinary case rather than something to warn about.
+   *
+   * Refreshed with the rest of this record on reconnect, which matters more here
+   * than for the list beside it: the order is *editable* from the app now, and a
+   * stale copy would show somebody the order they replaced.
+   */
+  endpointChain: string[];
+  /**
    * Runtimes this host looked for and did not find, with why (§3.12).
    *
    * The other half of `available`, and the half that was missing. A runtime that
@@ -586,6 +599,26 @@ export type ServerKind = 'vllm' | 'nim';
  * answer would be re-rendered into these sentences by the only consumer there
  * is.
  */
+/**
+ * What a chain write did, in the two halves that fail separately (§3.9).
+ *
+ * The order is written by the session host and used by the *forked agent host*,
+ * which read it when it started (§8). So the write and the restart that makes it
+ * route are different operations with unrelated failures, and `inForce` is which
+ * of them happened. `false` means the file is right and the running host is
+ * still on the previous order — fixed by restarting it, not by writing again.
+ */
+export interface EndpointChainDto {
+  path: string;
+  /** Where a turn now starts. Always `fallback[0]`. */
+  default: string;
+  /** The order in the file now, most preferred first. */
+  fallback: string[];
+  inForce: boolean;
+  /** Why it is not in force, when it is not. Verbatim. */
+  detail?: string;
+}
+
 export interface ReadinessDto {
   ready: boolean;
   summary: string;
@@ -786,6 +819,24 @@ export interface AgbrteApi {
      * failure and no mention of the missing WSL that caused it.
      */
     serverReadiness(instanceId: string, server: ServerKind): Promise<ReadinessDto>;
+    /**
+     * Set the order this host tries its endpoints in (§3.9, §13).
+     *
+     * Ids only, and never a credential or a URL — reordering must not become a
+     * second route to changing what an endpoint *is*, which is the quiet change
+     * of recipient §13 forbids. `add` is the command for that, and the two stay
+     * separate all the way down to the host.
+     *
+     * The whole order, not a move: two clients on one host cannot interleave
+     * into an order neither asked for. The reply is what was written, so the UI
+     * shows what the host stored rather than what it hoped it would.
+     *
+     * **The host has to restart for it to route.** `loadEndpoints` runs in the
+     * forked agent host (§8) and re-reading it mid-turn would let a request
+     * change destination between the decision and the call. Same as `add`, and
+     * the reason the reply names the file.
+     */
+    setEndpointChain(instanceId: string, order: string[]): Promise<EndpointChainDto>;
     /**
      * Ask a host to exit. It is allowed to refuse.
      *
@@ -1357,6 +1408,7 @@ export const CH = {
   hostsInstallModel: 'agbrte:hosts.installModel',
   hostsInstallProgress: 'agbrte:hosts.installProgress',
   hostsSetUp: 'agbrte:hosts.setUp',
+  hostsSetEndpointChain: 'agbrte:hosts.setEndpointChain',
   hostsServerReadiness: 'agbrte:hosts.serverReadiness',
   updateState: 'agbrte:update.state',
   updateInstall: 'agbrte:update.install',

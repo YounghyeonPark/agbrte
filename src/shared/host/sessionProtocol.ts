@@ -229,6 +229,20 @@ export interface HostIdentity {
     baseUrl: string;
     authenticated: boolean;
   }>;
+  /**
+   * The order those are tried in, most preferred first (§3.9).
+   *
+   * Absent from a host older than v30, and absent from one whose file names no
+   * order — the same rendering for both, which is the endpoint list with no
+   * order on it. A machine with one model server has no order to show, and that
+   * is ordinary rather than something to warn about.
+   *
+   * Reported by the agent host rather than read from the file beside this one.
+   * `loadEndpoints` runs there (§8), and an order re-read here would disagree
+   * with the order actually routing whenever a write had landed since the fork
+   * — which is exactly the moment somebody is looking at it.
+   */
+  endpointChain?: string[];
   /** Set when the agent host could not start. Sessions still load read-only. */
   unavailableReason?: string;
   /**
@@ -292,6 +306,27 @@ export interface HostIdentity {
  * ignores the extra `hello` field and reports `protocol: 1` exactly as it always
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
+ *
+ * ## v30 adds `endpoints.chain`, which is the write half of a read that shipped
+ *
+ * The fallback order has been enforced since the failover work: `nextAfter`
+ * answers it, `askWithFailover` walks it, and a move writes
+ * `model.endpoint_switched` into the transcript with the reason it moved. What
+ * had no command was *setting* it. `endpoints.add` was the only endpoint write
+ * on the wire, so the order every turn on a machine follows could be changed in
+ * exactly one way: by editing `endpoints.json` on that machine — which, for the
+ * remote GPU box the feature exists for, means opening an ssh session to
+ * hand-edit JSON.
+ *
+ * A working mechanism nothing can reach is §16's shape, and this one had the
+ * extra sting of being invisible: nothing in the app said which endpoint was the
+ * default, so somebody whose turns had moved to a second provider could not see
+ * the order that sent them there.
+ *
+ * `COMMAND_SINCE` gains a row, so a v29 host is told "too old for this" by name.
+ * That is the whole degradation: the chain such a host already has keeps working
+ * exactly as before, because reading it never needed this command. Only editing
+ * it from a client is refused, and the refusal names the file to edit instead.
  *
  * ## v29 adds a field to `endpoints.add`, and it is v6's case
  *
@@ -661,7 +696,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 29;
+export const SESSION_PROTOCOL_VERSION = 30;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -738,6 +773,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'session.attachMcp': 24,
   'workflow.list': 25,
   'workflow.save': 26,
+  'endpoints.chain': 30,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -893,6 +929,34 @@ export type SessionCommand =
         api?: string;
       };
     }
+  /**
+   * Set which endpoint a turn goes to first, and where it goes next (§3.9).
+   *
+   * A write and gated as one, for the same reason `endpoints.add` is: it decides
+   * where this host's source code is sent and whose money is spent sending it. A
+   * `read-only` client must not be able to move a build box onto a paid API.
+   *
+   * **Ids only, and that is a boundary rather than a convenience.** Ordering
+   * endpoints can never become a route to changing what one of them *is* — no
+   * `baseUrl`, no provider, no credential travels here — because a command that
+   * could do both would be a command that quietly changes the recipient while
+   * appearing to reorder a list (§13).
+   *
+   * Whole rather than incremental: no "move up", no "promote". The client sends
+   * the order it wants and the host stores it, so two clients racing on the same
+   * host cannot interleave into an order neither of them asked for. The loser
+   * overwrites the winner, which is visible and correctable, rather than
+   * producing a third order nobody chose.
+   *
+   * **One list, where the file has `default` and `fallback`.** The host derives
+   * both from this order. A file may name a `default` that is not in `fallback`,
+   * and that combination is a trap rather than a feature — `nextAfter` finds the
+   * starting endpoint nowhere in the chain, so the one endpoint every turn
+   * begins on is the one endpoint failover never leaves. Sending an order makes
+   * that state unreachable through a client; hand-editing the file still reaches
+   * everything it always did.
+   */
+  | { t: 'endpoints.chain'; id: RequestId; order: string[] }
   | { t: 'template.delete'; id: RequestId; templateId: string }
   | { t: 'preview.ports'; id: RequestId }
   /**

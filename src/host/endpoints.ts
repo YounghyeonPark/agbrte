@@ -95,6 +95,21 @@ export interface EndpointRegistry {
    * being down is true for every session on that host at once.
    */
   nextAfter(endpointId: string): string | undefined;
+  /**
+   * The order in force, most preferred first — for showing, not for routing.
+   *
+   * `nextAfter` is what a turn asks; this is what a person is shown. Answered by
+   * the same object for a reason: the app used to display nothing about the
+   * order at all, so somebody whose turns had moved to a second provider could
+   * not see the configuration that sent them there. Deriving it in a second
+   * place would let the picture and the routing disagree, which is a worse
+   * version of showing nothing.
+   *
+   * Empty when the file names no order. That is the ordinary state of a machine
+   * with one endpoint and not a misconfiguration, so it renders as "no fallback"
+   * rather than as a warning.
+   */
+  chain(): string[];
 }
 
 export class EndpointsInvalid extends Error {
@@ -357,6 +372,10 @@ export async function loadEndpoints(
       if (at === -1) return undefined;
       return chain[at + 1];
     },
+    // A copy, because the caller sends this over a wire and a returned
+    // reference to the array `nextAfter` indexes is one splice away from a
+    // routing table edited by a display.
+    chain: () => [...chain],
     resolve: (endpointId) => {
       const wanted = endpointId ?? fallbackId;
       const entry = entries.find((e) => e.id === wanted);
@@ -526,8 +545,8 @@ export async function addEndpoint(
   if (process.platform !== 'win32') await chmod(dir, 0o700);
 
   const existing = await readEntries(path);
-  // Read before the write, so  and  survive it. See
-  //  for what happened when they did not.
+  // Read before the write, so `default` and `fallback` survive it. See
+  // `readSettings` for what happened when they did not.
   const settings = await readSettings(path);
   if (existing.some((e) => e.id === input.id)) {
     // Refused rather than replaced. An endpoint id is what an agent's `AuthMode`
@@ -562,12 +581,103 @@ export async function addEndpoint(
 }
 
 /**
- * The entries currently in force, as entries rather than as a registry.
+ * Set the order this machine tries its endpoints in (§3.8, §3.9, §13).
  *
- * Reads through the same legacy fallback `loadEndpoints` does. A malformed file
- * throws, which is right: rewriting a file we could not parse would destroy
- * whatever the user meant by it.
+ * ## Why this needed a command at all
+ *
+ * The order has been enforced end to end for some time — `nextAfter` answers it,
+ * `askWithFailover` walks it, and a move writes `model.endpoint_switched` into
+ * the transcript with the reason it moved. What there was no way to do was *set*
+ * it. `endpoints.add` was the only endpoint write on the wire, so the order
+ * every turn on a machine follows could be changed in exactly one way: by
+ * editing `endpoints.json` on the machine itself, which for the remote GPU box
+ * this feature exists for means opening an ssh session to hand-edit JSON.
+ *
+ * A mechanism that works and cannot be reached is §16's shape, and this one had
+ * the extra sting of being invisible: nothing in the app said which endpoint was
+ * first, so somebody whose turns had moved to a second provider could not see
+ * the order that sent them there.
+ *
+ * ## One list, where the file has two fields
+ *
+ * The file carries `default` — where a turn starts when nothing names an
+ * endpoint — and `fallback`, which is the **whole order to try** with the
+ * default as its first name. A file may legally set a `default` that is absent
+ * from `fallback`, and that combination is a trap: `nextAfter` finds the
+ * starting endpoint nowhere in the chain and answers `undefined`, so the one
+ * endpoint every turn begins on is the one endpoint failover never leaves.
+ *
+ * So this command takes the order and derives both, which makes that state
+ * unreachable through the app. Hand-editing the file still reaches everything it
+ * always did; what the app offers is the coherent subset, and a `default` that
+ * cannot fall back is not something anybody is choosing on purpose.
+ *
+ * A single name is meaningful and is not a mistake: start here, and stay here.
+ * That is the ordinary shape of a machine with one model server.
+ *
+ * ## Every name is checked against the list
+ *
+ * The same rule `loadEndpoints` applies on read, applied where somebody can
+ * still fix it rather than at the next session start. A chain naming a typo does
+ * not fail loudly — it ends one step early, so a turn that should have moved to
+ * the local server stops instead, and the failure looks like the fallback not
+ * working rather than like a misspelling.
+ *
+ * ## What this deliberately cannot do
+ *
+ * It writes ids and nothing else. No credential, no `baseUrl`, no provider — so
+ * ordering endpoints can never be a route to changing what one of them *is*,
+ * which is the quiet change of recipient §13 forbids. Adding and reordering stay
+ * separate commands for that reason.
  */
+export async function setChain(
+  /** The order to try, most preferred first. Never empty. */
+  order: string[],
+  path = endpointsPath(),
+): Promise<{ path: string; default: string; fallback: string[] }> {
+  const existing = await readEntries(path);
+  const known = new Set(existing.map((e) => e.id));
+  const names = existing.map((e) => e.id).join(', ');
+
+  if (order.length === 0) {
+    // Refused rather than treated as "clear it". An empty order would leave
+    // `default` naming nothing, and `loadEndpoints` would then fall back to
+    // `entries[0]` — a different endpoint, chosen by file position rather than
+    // by anybody, which is §13's quiet change of recipient.
+    throw new EndpointRejected('an endpoint order needs at least one endpoint in it');
+  }
+
+  const seen = new Set<string>();
+  for (const id of order) {
+    if (!known.has(id)) {
+      throw new EndpointRejected(`"${id}" is not an endpoint on this machine — available: ${names}`);
+    }
+    if (seen.has(id)) {
+      // Either a mistake or a request to ask a refusing endpoint twice. Not
+      // worth guessing between, and cheap to say.
+      throw new EndpointRejected(`"${id}" appears twice in the order`);
+    }
+    seen.add(id);
+  }
+
+  /*
+   * The same read-then-merge `addEndpoint` does, and for the same recorded
+   * reason: a write of only the fields this command owns deletes whatever else
+   * is in the file. There it was `default` being lost by an add; here it would
+   * be the entries themselves.
+   */
+  const settings = await readSettings(path);
+  const chosen = { default: order[0]!, fallback: order };
+  await writeFile(
+    path,
+    `${JSON.stringify({ ...settings, endpoints: existing, ...chosen }, null, 2)}\n`,
+    { encoding: 'utf8', mode: 0o600 },
+  );
+  await restrictToOwner(path, 'model API keys');
+
+  return { path, ...chosen };
+}
+
 /**
  * Everything in the file except the entries, so a write does not discard it.
  *
@@ -602,6 +712,13 @@ async function readSettings(path: string): Promise<Record<string, unknown>> {
   }
 }
 
+/**
+ * The entries currently in force, as entries rather than as a registry.
+ *
+ * Reads through the same legacy fallback `loadEndpoints` does. A malformed file
+ * throws, which is right: rewriting a file we could not parse would destroy
+ * whatever the user meant by it.
+ */
 async function readEntries(path: string): Promise<Entry[]> {
   const text =
     (await readIfPresent(path)) ??

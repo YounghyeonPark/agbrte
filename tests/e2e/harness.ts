@@ -13,7 +13,7 @@ import {
   type Page,
 } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer as netCreateServer } from 'node:net';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -50,8 +50,29 @@ export interface LaunchedApp {
  * to that profile directory.
  */
 export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
+  return launchWith({}, ...workspaces);
+}
+
+/**
+ * The same launch, with the machine directory seeded first.
+ *
+ * Separate rather than an extra parameter on `launch` because the seed has to
+ * land *before* the app starts: the host reads `endpoints.json` once, at
+ * startup, in the forked agent host (§8), so a file written after the window
+ * opens is a file nothing has read. Twenty callers take the plain form and none
+ * of them care.
+ */
+export async function launchWith(
+  seed: { endpoints?: unknown },
+  ...workspaces: string[]
+): Promise<LaunchedApp> {
   if (workspaces.length === 0) throw new Error('launch needs at least one workspace');
   const userDataDir = await tempFixture('agbrte-e2e-profile-');
+  if (seed.endpoints !== undefined) {
+    const machine = join(userDataDir, 'machine');
+    await mkdir(machine, { recursive: true });
+    await writeFile(join(machine, 'endpoints.json'), JSON.stringify(seed.endpoints), 'utf8');
+  }
 
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {

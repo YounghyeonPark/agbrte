@@ -254,6 +254,10 @@ describe('handshake and capabilities', () => {
       // has nothing to report*, which is what a client renders as silence.
       runtimeNotes: [],
       endpoints: [],
+      // Same reading as the empty `endpoints` above it: no order to report, not
+      // an order of nothing. A machine with one model server has none, and the
+      // client renders that as the list with nothing said about order.
+      endpointChain: [],
     });
   });
 

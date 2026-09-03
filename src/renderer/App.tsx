@@ -45,6 +45,7 @@ import { Workflows, type WorkspaceWorkflows } from './Workflows.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import {
   EMPTY_ENDPOINT,
+  EndpointOrder,
   ServerReadiness,
   SetUpEndpoint,
   SetupProgress,
@@ -76,6 +77,7 @@ import { FileBrowser, FileViewer, VIEWER_DEFAULT } from './FileBrowser.js';
 import type {
   EndpointModelsDto,
   ModelInstallDto,
+  EndpointChainDto,
   ReadinessDto,
   ServerKind,
   SessionTemplateDto,
@@ -1375,6 +1377,12 @@ export function App(): JSX.Element {
                     notes={notesHere}
                     conformance={conformanceHere}
                     endpoints={hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []}
+                    endpointChain={
+                      hosts.find((h) => h.instanceId === active.instanceId)?.endpointChain ?? []
+                    }
+                    setEndpointChain={(order) =>
+                      window.agbrte.hosts.setEndpointChain(active.instanceId, order)
+                    }
                     // Bound to the open session's host: "which models" is a question
                     // about a machine, and the picker does not know which one it is
                     // looking at.
@@ -1572,6 +1580,12 @@ export function App(): JSX.Element {
                       conformance={conformanceHere}
                       endpoints={
                         hosts.find((h) => h.instanceId === active.instanceId)?.endpoints ?? []
+                      }
+                      endpointChain={
+                        hosts.find((h) => h.instanceId === active.instanceId)?.endpointChain ?? []
+                      }
+                      setEndpointChain={(order) =>
+                        window.agbrte.hosts.setEndpointChain(active.instanceId, order)
                       }
                       listModels={() => window.agbrte.hosts.models(active.instanceId)}
                       checkModel={(endpointId, modelId) =>
@@ -2952,6 +2966,8 @@ function AgentPicker({
   notes,
   conformance,
   endpoints,
+  endpointChain,
+  setEndpointChain,
   listModels,
   checkModel,
   installModel,
@@ -2975,6 +2991,10 @@ function AgentPicker({
   /** The support matrix for this host, so the choice is informed (§3.13). */
   conformance: MatrixCell[];
   endpoints: HostInfo['endpoints'];
+  /** The order those are tried in, as the host reports it (§3.9). */
+  endpointChain: string[];
+  /** Set that order. The host restarts onto it; see `Fleet.setEndpointChain`. */
+  setEndpointChain: (order: string[]) => Promise<EndpointChainDto>;
   /** Asks the host this picker belongs to what its endpoints serve now (§3.8). */
   listModels: () => Promise<EndpointModelsDto[]>;
   /**
@@ -3061,6 +3081,16 @@ function AgentPicker({
    * vLLM never lingers under a summary about NIM.
    */
   const [readiness, setReadiness] = useState<ReadinessDto | null>(null);
+  /*
+   * The order write's own busy flag and its own outcome, not `running`.
+   *
+   * `running` belongs to the one button and swaps this pane for a progress area;
+   * an order save is a small write inside a panel somebody has open, and
+   * borrowing that state would blank the list being edited at the moment it is
+   * saved.
+   */
+  const [ordering, setOrdering] = useState(false);
+  const [orderOutcome, setOrderOutcome] = useState<EndpointChainDto | null>(null);
 
   /**
    * Probes this picker has paid for, keyed `endpoint::model`.
@@ -3602,6 +3632,33 @@ function AgentPicker({
             ? (submitLabel ?? 'Add agent')
             : actionLabel(current.plan, submitLabel)}
       </button>
+
+      <EndpointOrder
+        endpoints={endpoints}
+        chain={endpointChain}
+        where={machine.where}
+        busy={ordering}
+        outcome={orderOutcome}
+        onSave={(order) => {
+          setOrdering(true);
+          setOrderOutcome(null);
+          void setEndpointChain(order)
+            .then(setOrderOutcome)
+            .catch((err: unknown) => {
+              // Shaped like the outcome rather than thrown away, so a refusal —
+              // a read-only client, a host too old for the command — lands in
+              // the same sentence as a write that half worked.
+              setOrderOutcome({
+                path: '',
+                default: order[0] ?? '',
+                fallback: order,
+                inForce: false,
+                detail: err instanceof Error ? err.message : String(err),
+              });
+            })
+            .finally(() => setOrdering(false));
+        }}
+      />
 
       {current?.plan.kind === 'server' && (
         <ServerReadiness

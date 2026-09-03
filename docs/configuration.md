@@ -39,11 +39,22 @@ good value for it. `api` has to match an adapter's id exactly.
 { "endpoints": [ … ], "default": "gpubox", "fallback": ["gpubox", "nim", "local"] }
 ```
 
+`default` is where a turn starts and `fallback` is the order to try, with that
+default as its first name — a `default` missing from `fallback` gets no failover
+at all, since the chain has nowhere to continue from. The app writes both from
+one ordered list so that combination cannot be produced by mistake; editing this
+file by hand still reaches it.
+
 `fallback` is the order to try. A turn stopped by a refusal, an unreachable
 server, a rate limit or a spent allowance moves to the next name and carries on —
 the conversation is rebuilt from the log rather than held by the server, so
 nothing is lost in the move. The transcript records it with the reason, because
 the model changed and its predecessor's reasoning could not come with it.
+
+The order is also editable from the app — *Fallback order* under `Add an agent`,
+which shows what is in force and lets it be rearranged. The host restarts onto a
+saved order, because the process that walks the chain reads this file when it
+starts.
 
 It does **not** move on everything. A malformed request, a token ceiling you set,
 a filtered response and a missing credential all stay put: retrying those

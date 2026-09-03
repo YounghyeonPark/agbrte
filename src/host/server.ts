@@ -74,6 +74,8 @@ export class AgentHostServer {
     private readonly registry: RuntimeRegistry,
     /** Advertised so a client can offer them. Secrets are already stripped. */
     endpoints: PublicEndpoint[] = [],
+    /** The order to try, from the registry that will walk it. See `chain()`. */
+    endpointChain: string[] = [],
     /**
      * Asks each endpoint what models it has, now.
      *
@@ -125,6 +127,7 @@ export class AgentHostServer {
       runtimes: registry.list().map((d) => ({ id: d.id, label: d.label, model: d.model })),
       ...(runtimeNotes.length > 0 ? { runtimeNotes } : {}),
       endpoints,
+      endpointChain,
     });
   }
 

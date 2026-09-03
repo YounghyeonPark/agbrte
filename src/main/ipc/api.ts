@@ -269,6 +269,7 @@ function toInfo(host: AttachedHost, shipping?: string): HostInfo {
     label: labelFor(host),
     available: host.available,
     endpoints: host.endpoints,
+    endpointChain: host.endpointChain,
     runtimeNotes: host.runtimeNotes,
     ...(host.bundleVersion !== undefined ? { bundleVersion: host.bundleVersion } : {}),
     ...(host.shells !== undefined ? { shells: host.shells } : {}),
@@ -483,6 +484,12 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
    */
   handle(CH.hostsServerReadiness, (instanceId: string, server: ServerKind) =>
     fleet.serverReadiness(instanceId as InstanceId, server),
+  );
+
+  // A write, and gated as one by the host it reaches — §7 puts enforcement
+  // there, because a client cannot police itself.
+  handle(CH.hostsSetEndpointChain, (instanceId: string, order: string[]) =>
+    fleet.setEndpointChain(instanceId as InstanceId, order),
   );
 
   handle(CH.appAbout, (): AboutInfo =>

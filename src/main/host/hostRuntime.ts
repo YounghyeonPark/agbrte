@@ -147,6 +147,20 @@ export interface HostAdvertisement {
     baseUrl: string;
     authenticated: boolean;
   }>;
+  /**
+   * The order to try, most preferred first (§3.9).
+   *
+   * From the process that will actually walk it. `loadEndpoints` runs in the
+   * *agent host* (§8), so the session host beside it holds no registry and
+   * cannot answer this — and deriving it there by re-reading the file would let
+   * the order shown disagree with the order routing, whenever a write has
+   * happened since the fork. Which is exactly when somebody is looking.
+   *
+   * Empty from a host that predates the field, and empty from a file that names
+   * no order. Both mean *nothing to show*, which the UI renders as the endpoint
+   * list with no order on it rather than as a warning.
+   */
+  endpointChain: string[];
 }
 
 export interface HostClientOptions {
@@ -215,6 +229,7 @@ export class HostClient {
           runtimes: message.runtimes ?? [],
           runtimeNotes: message.runtimeNotes ?? [],
           endpoints: message.endpoints ?? [],
+          endpointChain: message.endpointChain ?? [],
         });
         return;
 

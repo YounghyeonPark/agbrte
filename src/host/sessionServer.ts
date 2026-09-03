@@ -115,6 +115,8 @@ export interface HostSelfDescription {
   runtimes: string[];
   runtimeNotes?: Array<{ id: string; label: string; reason: string }>;
   endpoints?: HostIdentity['endpoints'];
+  /** The order those are tried in (§3.9). Absent when this host has none. */
+  endpointChain?: string[];
   unavailableReason?: string;
   bundleVersion?: string;
 }
@@ -222,7 +224,28 @@ export interface SessionHostOptions {
     provider: string;
     baseUrl: string;
     apiKey?: string;
+    /**
+     * Which adapter speaks to it. Absent means `openai-compatible`.
+     *
+     * Missing here for a release while the field travelled correctly at runtime,
+     * which is the worse half of the v29 hazard rather than a milder one: the
+     * value arrived, so nothing failed, and the type said it could not. A
+     * refactor that rebuilt this object from its declared fields would have
+     * dropped `api` silently and sent Anthropic traffic to the OpenAI adapter.
+     */
+    api?: string;
   }) => Promise<EndpointAdded>;
+  /**
+   * Set which endpoint is tried first and what follows it (§3.9).
+   *
+   * Separate from `addEndpoint` rather than folded into it, because the two are
+   * separated on the wire for a reason worth keeping here: ordering endpoints
+   * must never be a route to changing what one of them is (§13). Absent on a
+   * server with nowhere to write, said by name like the one above.
+   */
+  setChain?: (
+    order: string[],
+  ) => Promise<{ path: string; default: string; fallback: string[] }>;
   /**
    * Called whenever this server stops serving, for any reason.
    *
@@ -628,6 +651,20 @@ export class SessionHostServer {
               })()),
           ...(this.opts.identity.endpoints !== undefined
             ? { endpoints: this.opts.identity.endpoints }
+            : {}),
+          /*
+           * Copied by name, like everything else in this object.
+           *
+           * That is what makes this list the place a new field goes missing:
+           * `endpointChain` was threaded through the agent host's handshake, the
+           * advertisement, the supervisor, the session host's identity, the DTO
+           * and the picker, and stopped here — so the app rendered "no order
+           * set" over a file that named one, and every layer type-checked. The
+           * same shape as the `api` field one release ago (see v29), and the
+           * reason `snapshot` in `fleet.ts` carries the warning it does.
+           */
+          ...(this.opts.identity.endpointChain !== undefined
+            ? { endpointChain: this.opts.identity.endpointChain }
             : {}),
           ...(this.opts.identity.unavailableReason !== undefined
             ? { unavailableReason: this.opts.identity.unavailableReason }
@@ -1104,6 +1141,28 @@ export class SessionHostServer {
             );
           }
           return add(command.endpoint);
+        }
+
+        case 'endpoints.chain': {
+          /*
+           * The same gate as the add above, and the same argument: this decides
+           * where a turn is sent and therefore whose account pays for it. A
+           * `read-only` client watching a build box must not be able to move
+           * that box onto a paid API by reordering a list.
+           *
+           * No credential can reach here — the command carries ids and nothing
+           * else — so unlike `endpoints.add` there is nothing to be careful
+           * about in what gets echoed. The reply names the file, because the
+           * next question after "did it work" is "where did it go".
+           */
+          this.requireWrite(client, 'change the endpoint order');
+          const set = this.opts.setChain;
+          if (set === undefined) {
+            throw new Error(
+              'this host cannot write endpoints — it was started without a place to keep them',
+            );
+          }
+          return set(command.order);
         }
 
         case 'models.list': {

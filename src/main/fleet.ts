@@ -279,6 +279,19 @@ export interface AttachedHost {
     authenticated: boolean;
   }>;
   /**
+   * The order those are tried in, most preferred first (§3.9).
+   *
+   * Empty from a host older than v30 and from one whose file names no order,
+   * which are rendered the same way: the endpoint list with nothing said about
+   * order. A machine with one model server has none to show, and that is the
+   * ordinary case rather than something to warn about.
+   *
+   * Refreshed with the rest of this record on reconnect, which matters more here
+   * than for the list beside it: the order is *editable* from the app now, and a
+   * stale copy would show somebody the order they replaced.
+   */
+  endpointChain: string[];
+  /**
    * Runtimes this host looked for and did not find, with why (§3.12).
    *
    * Carried so a picker can say *Claude Code: not detected on this host (…)*
@@ -511,6 +524,7 @@ export class Fleet extends EventEmitter {
       target,
       available: [],
       endpoints: [],
+      endpointChain: [],
       runtimeNotes: [],
       role: connection.role,
       pid: identity.pid,
@@ -600,6 +614,7 @@ export class Fleet extends EventEmitter {
       baseUrl: e.baseUrl,
       authenticated: e.authenticated,
     }));
+    entry.endpointChain = [...(identity.endpointChain ?? [])];
     entry.runtimeNotes = (identity.runtimeNotes ?? []).map((n) => ({ ...n }));
     if (identity.shells !== undefined) entry.shells = identity.shells;
     if (identity.shellsReason === undefined) delete entry.shellsReason;
@@ -1317,6 +1332,55 @@ export class Fleet extends EventEmitter {
       throw new Error('this client cannot inspect a machine for model servers');
     }
     return ask({ target: entry.target, workspaceRoot: entry.workspaceRoot }, server);
+  }
+
+  /**
+   * Set the order this host tries its endpoints in (§3.9).
+   *
+   * The command is gated *there*, which is right and is the opposite of the CLI
+   * and Ollama routes in `setUpHost` above. Those never reach the host at all —
+   * they go over the transport from this process, so the host's gate is not on
+   * their path and the role has to be checked here. This one is a command on the
+   * session socket, and §7 puts enforcement where the knowledge is: the host
+   * granted this client its role and is the only side that cannot be lied to
+   * about it.
+   *
+   * A host older than v30 refuses by name through `require('endpoints.chain')`,
+   * so the sentence names the host being too old rather than nothing happening.
+   *
+   * ## The restart is not optional, and it is why this returns an outcome
+   *
+   * `loadEndpoints` runs in the *forked agent host* (§8), which read the order
+   * when it started. Writing the file changes what the next fork will do and
+   * nothing about the process currently routing turns — so without the restart
+   * the app would show a new order, the host would keep using the old one, and
+   * the only visible symptom would be a fallback going somewhere nobody had
+   * chosen. `setUpHost` restarts for exactly this reason after writing an
+   * endpoint, and an order is the same kind of change to the same file.
+   *
+   * Half-success is an outcome rather than an exception, on the same reasoning
+   * `setUpHost` records: the write and the restart fail for unrelated reasons,
+   * and collapsing them produces the worst available sentence — "setting the
+   * order failed" about a machine whose file now holds the new order.
+   */
+  async setEndpointChain(
+    instanceId: InstanceId,
+    order: string[],
+  ): Promise<EndpointChainOutcome> {
+    const entry = this.require(instanceId);
+    const written = await entry.connection.setEndpointChain(order);
+    try {
+      await this.updateHost(instanceId);
+      return { ...written, inForce: true };
+    } catch (err) {
+      return {
+        ...written,
+        inForce: false,
+        detail:
+          `The order is written to ${written.path}, but the host did not restart, so it is ` +
+          `still using the previous one: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   async detachAll(): Promise<void> {
@@ -2424,6 +2488,31 @@ function sameOrigin(a: string, b: string): boolean {
   }
 }
 
+/**
+ * What a chain write did, in the two halves that fail separately (§3.9).
+ *
+ * Shaped like `SetupOutcome` beside it and for the same reason: writing the
+ * order and getting the host to use it are different operations with unrelated
+ * failures, and one thrown error covering both would say "setting the order
+ * failed" about a machine whose file now holds the new order.
+ *
+ * `inForce` is the half that decides what a person should do next. `false` means
+ * the file is right and the running host is still on the previous order, which
+ * is fixed by restarting it — not by writing again.
+ */
+export interface EndpointChainOutcome {
+  /** The file it landed in, so it can be found and edited by hand. */
+  path: string;
+  /** Where a turn now starts. Always `fallback[0]`. */
+  default: string;
+  /** The order in the file now, most preferred first. */
+  fallback: string[];
+  /** Whether the host restarted and is actually using it. */
+  inForce: boolean;
+  /** Why it is not, when it is not. Verbatim. */
+  detail?: string;
+}
+
 function snapshot(entry: Entry): AttachedHost {
   return {
     // Copied, for the reason `bundleVersion` documents below: this function is
@@ -2436,6 +2525,7 @@ function snapshot(entry: Entry): AttachedHost {
     target: entry.target,
     available: [...entry.available],
     endpoints: entry.endpoints.map((e) => ({ ...e })),
+    endpointChain: [...entry.endpointChain],
     runtimeNotes: entry.runtimeNotes.map((n) => ({ ...n })),
     ...(entry.shells !== undefined ? { shells: entry.shells } : {}),
     ...(entry.shellsReason !== undefined ? { shellsReason: entry.shellsReason } : {}),

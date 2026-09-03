@@ -82,6 +82,8 @@ const api: AgbrteApi = {
       ipcRenderer.invoke(CH.hostsSetUp, instanceId, plan),
     serverReadiness: (instanceId: string, server: ServerKind) =>
       ipcRenderer.invoke(CH.hostsServerReadiness, instanceId, server),
+    setEndpointChain: (instanceId: string, order: string[]) =>
+      ipcRenderer.invoke(CH.hostsSetEndpointChain, instanceId, order),
   },
   app: {
     about: () => ipcRenderer.invoke(CH.appAbout),

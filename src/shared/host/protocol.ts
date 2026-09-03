@@ -382,6 +382,22 @@ export type HostMessage =
         baseUrl: string;
         authenticated: boolean;
       }>;
+      /**
+       * The order those are tried in, most preferred first (§3.9).
+       *
+       * Announced by this process because this is the process that walks it:
+       * `loadEndpoints` runs here (§8), and the session host beside it holds no
+       * registry. Re-reading the file over there to display an order would let
+       * the picture disagree with the routing whenever a write had happened
+       * since the fork — which is precisely when somebody is looking at it.
+       *
+       * Optional, so an agent host built before the field still handshakes. Its
+       * absence and an empty array mean the same thing and are rendered the
+       * same way: the endpoint list with no order on it. A machine with one
+       * model server has no order to show, and that is ordinary rather than a
+       * misconfiguration.
+       */
+      endpointChain?: string[];
     };
 
 // ------------------------------------------------------------------- channel

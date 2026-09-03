@@ -461,6 +461,9 @@ new AgentHostServer(
   // capability shown in the picker is the capability the run was started with.
   await buildHostRegistry(endpoints, provider, runtimeNotes),
   endpoints.list(),
+  // The order from the registry that will walk it, not a second reading of the
+  // file: this process is the one `nextAfter` answers in.
+  endpoints.chain(),
   modelLister,
   modelInstaller,
   modelCapabilities,

@@ -569,6 +569,28 @@ export class HostConnection extends EventEmitter {
     return this.call<EndpointAdded>({ t: 'endpoints.add', endpoint });
   }
 
+  /**
+   * Set which endpoint a turn is tried against first, and what follows it.
+   *
+   * Ids only — no URL, no provider, no credential — so this cannot become a
+   * second route to changing what an endpoint is (§13). The two commands stay
+   * separate on the wire for that reason and stay separate here.
+   *
+   * `require` names `endpoints.chain`, so meeting a host older than v30 costs
+   * this feature and not the connection: that host's chain keeps working
+   * exactly as it did, because reading one never needed a command. Only editing
+   * it from here is refused.
+   */
+  async setEndpointChain(
+    order: string[],
+  ): Promise<{ path: string; default: string; fallback: string[] }> {
+    this.require('endpoints.chain');
+    return this.call<{ path: string; default: string; fallback: string[] }>({
+      t: 'endpoints.chain',
+      order,
+    });
+  }
+
   async saveTemplate(
     sessionId: SessionId,
     name: string,
