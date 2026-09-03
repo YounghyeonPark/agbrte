@@ -652,6 +652,9 @@ export class SessionHostServer {
           ...(this.opts.identity.endpoints !== undefined
             ? { endpoints: this.opts.identity.endpoints }
             : {}),
+          ...(this.opts.identity.endpointChain !== undefined
+            ? { endpointChain: this.opts.identity.endpointChain }
+            : {}),
           /*
            * Copied by name, like everything else in this object.
            *
@@ -663,9 +666,6 @@ export class SessionHostServer {
            * same shape as the `api` field one release ago (see v29), and the
            * reason `snapshot` in `fleet.ts` carries the warning it does.
            */
-          ...(this.opts.identity.endpointChain !== undefined
-            ? { endpointChain: this.opts.identity.endpointChain }
-            : {}),
           ...(this.opts.identity.unavailableReason !== undefined
             ? { unavailableReason: this.opts.identity.unavailableReason }
             : {}),

@@ -705,3 +705,104 @@ describe('the folders a machine has served', () => {
     await expect(access(notAWorkspace)).rejects.toThrow();
   });
 });
+
+/*
+ * Everything a host knows about itself reaches the client (§6.4, §13).
+ *
+ * Three fields have now gone missing at a layer that copies a record field by
+ * field, and none was visible to the compiler:
+ *
+ *  - `endpointChain` reached this host's identity and stopped at the `welcome`,
+ *    so the app showed *Fallback order — not set* over a file that named one.
+ *  - `api` on an endpoint reached `HostConnection.addEndpoint`, whose parameter
+ *    type lacked it — and the caller passes a variable, so the excess-property
+ *    check never fired.
+ *  - `baseUrl` was dropped at three separate layers, which `AttachedHost` still
+ *    records in its own comment.
+ *
+ * The compiler cannot see any of them, and it is right not to: the target field
+ * has to be optional, because a host older than the field genuinely does not
+ * send it and making it required would refuse those hosts to catch a mistake in
+ * ours. So the type system does the correct thing and the mistake lives exactly
+ * in the gap it leaves.
+ *
+ * This fills the gap by *asking* rather than by reading source. An earlier
+ * version of this test scanned `sessionServer.ts` for each field name, and it
+ * passed with the bug reintroduced — the comment explaining the field was still
+ * there, so the name was still in the file. Values are harder to fake than
+ * names.
+ */
+describe('what a host tells a client about itself', () => {
+  it('carries every field of its self-description', async () => {
+    const root = await tempDir('carried');
+    const identity = await openWorkspace(root);
+    const registry = new RuntimeRegistry();
+    registry.register(new EchoRuntime(), { label: 'Echo', model: 'none' });
+    const manager = new SessionManager({
+      registry,
+      workspaceRoot: root,
+      instanceId: identity.instanceId,
+    });
+    managers.push(manager);
+
+    /*
+     * Every optional field populated with a value nothing else would produce.
+     * A field that arrives by luck — copied from a neighbour, defaulted — reads
+     * as present and would hide the drop this test exists for.
+     */
+    const server = new SessionHostServer({
+      manager,
+      identity: {
+        machineId: 'machine-under-test',
+        instanceId: identity.instanceId,
+        lineageId: identity.lineageId,
+        workspaceRoot: root,
+        runtimes: ['echo'],
+        runtimeNotes: [{ id: 'cli:claude-code', label: 'Claude Code', reason: 'not on the PATH' }],
+        endpoints: [
+          {
+            id: 'gpubox',
+            label: 'GPU box',
+            provider: 'local',
+            baseUrl: 'http://127.0.0.1:8000/v1',
+            authenticated: false,
+          },
+        ],
+        endpointChain: ['gpubox', 'local'],
+        unavailableReason: 'the agent host would not start',
+        bundleVersion: '9.9.9+deadbeefcafe',
+      },
+      openWorkspace: async (r) => {
+        const added = await manager.addWorkspace(r);
+        return { info: { instanceId: added.instanceId, lineageId: 'l' as LineageId, root: added.root } };
+      },
+    });
+
+    const pair = memoryChannelPair<SessionCommand, SessionMessage>();
+    server.accept(pair.host);
+    const client = new HostConnection({ channel: pair.main, workspace: root });
+    const told = await client.ready;
+
+    expect(told.machineId).toBe('machine-under-test');
+    expect(told.runtimes).toEqual(['echo']);
+    expect(told.runtimeNotes?.[0]?.reason).toBe('not on the PATH');
+    // Not just the endpoint: the `baseUrl` on it, which is the field that was
+    // dropped at three layers and could only be recovered by a round trip.
+    expect(told.endpoints?.[0]?.baseUrl).toBe('http://127.0.0.1:8000/v1');
+    expect(told.endpointChain).toEqual(['gpubox', 'local']);
+    expect(told.unavailableReason).toBe('the agent host would not start');
+    expect(told.bundleVersion).toBe('9.9.9+deadbeefcafe');
+
+    /*
+     * The per-workspace facts, which since v21 travel *inside* `workspaces`
+     * rather than beside them — a host describes a machine holding workspaces
+     * and used to describe one workspace. Asserted here so the move stays a
+     * move: a future edit that drops them has nowhere left to hide.
+     */
+    expect(resolve(told.workspace?.root ?? '')).toBe(resolve(root));
+    expect(told.workspace?.instanceId).toBe(identity.instanceId);
+    expect(told.workspaces.length).toBeGreaterThan(0);
+
+    client.disconnect();
+  });
+});
