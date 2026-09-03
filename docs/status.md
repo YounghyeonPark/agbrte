@@ -66,6 +66,19 @@ show it, and are blocked on something real — a split begins with an agent call
 `propose_split`, which has no command on the wire by design, so nothing outside a
 host process can make a session inside it propose anything.
 
+**Nobody has followed the vLLM or NIM checklist to a running server.** Picking
+either now reads the machine — GPU, WSL, Docker, the container runtime, and
+whether something already answers on the port — and prints what is left to do.
+The probes are exercised against this machine, where the answer is *WSL is not
+installed*, and against stubbed runners for the branches this machine cannot
+reach. What has never happened is the end of the list: no box available here has
+vLLM or NIM on it, so the last step — add it as an endpoint and run a turn
+through it — is unwalked, and with it the `alreadyServing: true` path that says
+a machine is ready. Two confident wrong answers were already found by running
+the probes rather than reasoning about them (a missing GPU reported on an RTX
+4090; a port reported busy because `cmd.exe` echoed the script asking about it),
+which is the reason to distrust the rest until somebody walks it.
+
 **OCR is not built**, so the redaction sweep reports `scanned: false` rather than
 an empty match list.
 

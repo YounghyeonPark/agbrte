@@ -29,7 +29,12 @@ import { Fleet, type FleetRuntime } from './fleet.js';
 import { connectOrSpawnHost } from './host/connectOrSpawn.js';
 import { connectRemoteHost } from './host/connectRemote.js';
 import { RouteRefused, runSetup } from './host/provision.js';
-import { localProbeRunner, localRunner, probeLocal } from './host/localRunner.js';
+import {
+  localPlatform,
+  localProbeRunner,
+  localRunner,
+  probeLocal,
+} from './host/localRunner.js';
 import { transportFor, TransportUnsupported } from './host/transports.js';
 import { PreviewForwards } from './preview/forwards.js';
 import {
@@ -281,10 +286,9 @@ function buildFleet(): Fleet {
     /*
      * The same two routes as `provision`, asking instead of installing (§3.8).
      *
-     * `probeLocal()` reports `platform` as `win32` unchanged on Windows, where
-     * the remote probe's `uname -s` never answers — so the platform is
-     * normalised here rather than inside the readiness rules, which should not
-     * have to know that two probes spell one fact differently.
+     * The platform is normalised by `localPlatform()` rather than inside the
+     * readiness rules, which should not have to know that `probeLocal` says
+     * `win32` where a remote `uname -s` says nothing at all.
      */
     readiness: async ({ target }, server) => {
       const { probeMachine, vllmReadiness, nimReadiness } = await import(
@@ -317,13 +321,7 @@ function buildFleet(): Fleet {
         return judge(await probeMachine(runner, alias, probe.platform));
       }
       if (target.kind === 'local') {
-        const platform =
-          process.platform === 'win32'
-            ? 'Windows'
-            : process.platform === 'darwin'
-              ? 'Darwin'
-              : 'Linux';
-        return judge(await probeMachine(localProbeRunner(), 'this machine', platform));
+        return judge(await probeMachine(localProbeRunner(), 'this machine', localPlatform()));
       }
       throw new RouteRefused(
         `${transportFor(target).label} cannot be inspected from here yet — attach it and look ` +

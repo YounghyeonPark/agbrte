@@ -49,6 +49,20 @@ export function probeLocal(): RemoteProbe {
 }
 
 /**
+ * This machine's platform, spelled the way a remote probe spells it.
+ *
+ * `probeLocal` reports `win32` unchanged, because the two consumers it was
+ * written for — `nodeTarballUrl` and `ollamaAsset` — never see a Windows machine
+ * and `runSetup` refuses one by not matching `linux` or `darwin` either way.
+ * `serverReadiness` is the first caller for which Windows is a *branch* rather
+ * than a refusal, and it has two callers of its own. One function, so the
+ * spelling cannot drift between them and hand a Windows box the Linux answer.
+ */
+export function localPlatform(): string {
+  return platform === 'win32' ? 'Windows' : platform === 'darwin' ? 'Darwin' : 'Linux';
+}
+
+/**
  * Run a shell command on this machine, with the same shape `ssh` has.
  *
  * `sh -c` and not `shell: true`: on Windows the latter would be `cmd.exe`, which

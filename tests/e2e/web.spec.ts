@@ -131,6 +131,86 @@ test('answers nothing on a socket that has not shown the token', async () => {
 });
 
 /**
+ * The read a served client is allowed to make, over the real socket (§3.8, §7).
+ *
+ * `Fleet.serverReadiness` argues that this is a *read* and therefore not gated
+ * the way `setUp` is — somebody watching a GPU box from their phone is exactly
+ * who needs to know why it cannot serve. That argument was true in a comment and
+ * false in the wiring for one commit: the desktop app injected the dependency
+ * and `agbrte serve` did not, so the browser client got "this client cannot
+ * inspect a machine" for a call the design says it may make.
+ *
+ * Driven over the socket rather than through the page, because the page is not
+ * where it broke. What is under test is that the channel is routed, the fleet
+ * has its dependency, and a real machine answers.
+ */
+test('lets a served client ask what this machine needs for a model server', async () => {
+  const web = await serveWebFixture();
+
+  try {
+    const socketUrl = `${web.url.split('#')[0]!.replace('http://', 'ws://')}__agbrte/socket`;
+    const token = web.url.split('#t=')[1]!;
+    const { WebSocket } = await import('ws');
+
+    const reply = await new Promise<Record<string, unknown>>((done, fail) => {
+      const socket = new WebSocket(socketUrl);
+      const timer = setTimeout(() => fail(new Error('no reply in 30s')), 30_000);
+      let instanceId: string | null = null;
+      socket.on('open', () => socket.send(JSON.stringify({ t: 'auth', token })));
+      socket.on('message', (raw: unknown) => {
+        // `value`, not `result` — see the reply post in `web/server.ts`.
+        const frame = JSON.parse(String(raw)) as {
+          t?: string;
+          id?: number;
+          value?: unknown;
+          error?: unknown;
+        };
+        if (frame.t === 'auth-ok') {
+          socket.send(JSON.stringify({ id: 1, channel: 'agbrte:hosts.list', args: [] }));
+          return;
+        }
+        if (frame.id === 1) {
+          const hosts = (frame.value ?? []) as { instanceId: string }[];
+          instanceId = hosts[0]?.instanceId ?? null;
+          socket.send(
+            JSON.stringify({
+              id: 2,
+              channel: 'agbrte:hosts.serverReadiness',
+              args: [instanceId, 'vllm'],
+            }),
+          );
+          return;
+        }
+        if (frame.id === 2) {
+          clearTimeout(timer);
+          socket.close();
+          done(frame as Record<string, unknown>);
+        }
+      });
+      socket.on('error', fail);
+    });
+
+    // Not a refusal: the wiring is the whole point, and "this client cannot
+    // inspect a machine for model servers" is what a missing dependency says.
+    expect(reply['error'] ?? null).toBeNull();
+    const answer = reply['value'] as { ready: boolean; summary: string; steps: unknown[] };
+    expect(typeof answer.summary).toBe('string');
+    expect(answer.summary).not.toBe('');
+    /*
+     * A real machine answered, so what it *said* depends on the machine this
+     * runs on — a CI box with no GPU, a developer's laptop, a GPU workstation.
+     * Asserting on the sentence would be asserting on the hardware. What holds
+     * everywhere is the shape, and that `ready` and the list agree with each
+     * other: nothing left to do is the only thing that means ready.
+     */
+    expect(Array.isArray(answer.steps)).toBe(true);
+    expect(answer.ready).toBe(answer.steps.length === 0);
+  } finally {
+    await web.stop();
+  }
+});
+
+/**
  * The app's own files, served by something that is not a host.
  *
  * This is what a published copy *is*: assembled the way `pages.yml` assembles the

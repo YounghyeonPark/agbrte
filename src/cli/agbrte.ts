@@ -513,6 +513,43 @@ async function main(): Promise<number> {
           // above reached nothing. `connectOrSpawn` explains why at length.
           ...(isPublic ? { mustSpawn: true } : {}),
         }),
+      /*
+       * The one set-up route a served client may take, and only on a private
+       * host (§3.8, §7).
+       *
+       * `provision` is deliberately absent here — installing something on the
+       * machine from a page is not a thing this command offers — but readiness
+       * is a *read*, and `Fleet.serverReadiness` argues that a read should not
+       * be gated: somebody watching a GPU box from their phone is exactly who
+       * needs to know why it cannot serve. Leaving the dep out would have made
+       * that argument true in a comment and false in the wiring.
+       *
+       * Withdrawn on `--public` with everything else that reaches past the
+       * workspace. `nvidia-smi` and `docker info` describe the *machine*, not
+       * the folder being served, and a visitor to a demo is owed neither.
+       */
+      ...(isPublic
+        ? {}
+        : {
+            readiness: async ({ target }, server) => {
+              const { probeMachine, vllmReadiness, nimReadiness } = await import(
+                '@main/host/serverReadiness.js'
+              );
+              const { localPlatform, localProbeRunner } = await import(
+                '@main/host/localRunner.js'
+              );
+              if (target.kind !== 'local') {
+                // A fleet of one, and that one is the folder this command was
+                // pointed at. Attaching another machine from the page is what
+                // `hosts.add` refuses; the same sentence belongs here.
+                throw new Error(
+                  'this command serves one machine — look at another one where its filesystem is',
+                );
+              }
+              const judge = server === 'vllm' ? vllmReadiness : nimReadiness;
+              return judge(await probeMachine(localProbeRunner(), 'this machine', localPlatform()));
+            },
+          }),
     });
     /*
      * Attached when it can be, and served empty when it cannot.
