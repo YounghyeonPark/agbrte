@@ -37,9 +37,28 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      # v7 rather than v4, and the two of these are the only actions moved.
+      #
+      # v4 targets Node 20, which the runner no longer provides: it forces them
+      # onto Node 24 and annotates every run to say so. Running on an engine an
+      # action was not built for is a warning today and a broken release
+      # workflow whenever the forcing stops, and this repo already has two tags
+      # with failed builds behind them.
+      #
+      # The artifact and Pages actions are deliberately left where they are.
+      # Nothing warns about them, they are several majors back, and one of those
+      # majors changed how download-artifact resolves paths — the release
+      # workflow is the wrong place to find that out. They move on their own
+      # evidence, not on this one.
+      #
+      # The behaviour changes across these majors do not reach here: v5 of
+      # setup-node caches automatically from a `packageManager` field this
+      # project does not have and `cache: npm` below already asks for, and v7 of
+      # checkout blocks fork checkouts under `pull_request_target` and
+      # `workflow_run`, neither of which triggers anything here.
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           # Matches `REMOTE_NODE_VERSION`, so a bug that depends on the runtime
           # shows up here rather than only on a remote host.

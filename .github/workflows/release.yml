@@ -65,7 +65,7 @@ jobs:
             id: mac
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # electron-builder derives the version from package.json, but a release
         # built from a shallow clone cannot describe where it came from.
         with:
@@ -89,7 +89,7 @@ jobs:
           fi
           echo "building $pkg"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -181,7 +181,7 @@ jobs:
       attestations: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # Full history and tags, because the notes are now *derived* from them.
         # A shallow clone has neither, so `git describe` finds no previous tag
         # and the changelog silently comes out empty — which reads exactly like
