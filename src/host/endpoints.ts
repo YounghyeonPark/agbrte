@@ -526,6 +526,9 @@ export async function addEndpoint(
   if (process.platform !== 'win32') await chmod(dir, 0o700);
 
   const existing = await readEntries(path);
+  // Read before the write, so  and  survive it. See
+  //  for what happened when they did not.
+  const settings = await readSettings(path);
   if (existing.some((e) => e.id === input.id)) {
     // Refused rather than replaced. An endpoint id is what an agent's `AuthMode`
     // names, so overwriting one silently redirects every agent already pointing
@@ -548,10 +551,11 @@ export async function addEndpoint(
     ...(input.api !== undefined && input.api !== '' ? { api: input.api } : {}),
   };
 
-  await writeFile(path, `${JSON.stringify({ endpoints: [...existing, entry] }, null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
+  await writeFile(
+    path,
+    `${JSON.stringify({ ...settings, endpoints: [...existing, entry] }, null, 2)}\n`,
+    { encoding: 'utf8', mode: 0o600 },
+  );
   await restrictToOwner(path, 'model API keys');
 
   return { endpointId: entry.id, path, authenticated: entry.apiKey !== undefined };
@@ -564,6 +568,40 @@ export async function addEndpoint(
  * throws, which is right: rewriting a file we could not parse would destroy
  * whatever the user meant by it.
  */
+/**
+ * Everything in the file except the entries, so a write does not discard it.
+ *
+ * **`addEndpoint` used to write `{ endpoints: [...] }` and nothing else**, so
+ * adding an endpoint through the app silently deleted `default` — and then
+ * `loadEndpoints` fell back to `entries[0]`, which is a *different endpoint*.
+ * Every turn afterwards went somewhere the person had not chosen, with nothing
+ * anywhere saying the default had moved. That is precisely the quiet change of
+ * recipient §13 forbids, produced by the one command written to avoid making
+ * people edit this file by hand.
+ *
+ * It survived because the test asserting "the endpoints that were already in
+ * force survive the write" checked the *entries*, and the fields beside them are
+ * what decide which entry is used.
+ *
+ * Returned as a whole object rather than field by field: the next thing added to
+ * this file should be preserved by having been written, not by somebody
+ * remembering to add it here too.
+ */
+async function readSettings(path: string): Promise<Record<string, unknown>> {
+  const text =
+    (await readIfPresent(path)) ??
+    (path === endpointsPath() ? await readIfPresent(legacyEndpointsPath()) : null);
+  if (text === null) return {};
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const { endpoints: _entries, ...rest } = parsed;
+    return rest;
+  } catch {
+    // A malformed file is reported by `readEntries` below, which parses it too.
+    return {};
+  }
+}
+
 async function readEntries(path: string): Promise<Entry[]> {
   const text =
     (await readIfPresent(path)) ??

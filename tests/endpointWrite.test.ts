@@ -272,6 +272,43 @@ describe('which API the endpoint speaks', () => {
 });
 
 describe('what the write preserves', () => {
+  it('keeps the settings beside the entries, which decide which entry is used', async () => {
+    const path = await scratch();
+    await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(
+      path,
+      JSON.stringify({
+        endpoints: [
+          { id: 'gpubox', baseUrl: 'http://gpubox/v1' },
+          { id: 'local', baseUrl: 'http://127.0.0.1:11434/v1' },
+        ],
+        default: 'gpubox',
+        fallback: ['gpubox', 'local'],
+      }),
+      'utf8',
+    );
+
+    await addEndpoint({ id: 'nim', provider: 'nvidia', baseUrl: 'http://nim/v1' }, path);
+
+    /*
+     * This wrote `{ endpoints: [...] }` and nothing else, so adding an endpoint
+     * through the app **deleted `default`** — and `loadEndpoints` then fell back
+     * to `entries[0]`, a different endpoint. Every turn afterwards went
+     * somewhere the person had not chosen, with nothing saying the default had
+     * moved: the quiet change of recipient §13 forbids, produced by the one
+     * command written so nobody would have to edit this file by hand.
+     *
+     * The neighbouring test asserting that "the endpoints already in force
+     * survive the write" is why it lasted. It checked the *entries*, and the
+     * fields beside them are what decide which entry is used.
+     */
+    const registry = await loadEndpoints(path, null);
+    expect(registry.resolve().endpointId).toBe('gpubox');
+    expect(registry.nextAfter('gpubox')).toBe('local');
+    // And the new one is there, which is what the write was for.
+    expect(registry.list().map((e) => e.id)).toContain('nim');
+  });
+
   it('materialises the implicit local endpoint rather than removing it', async () => {
     const path = await scratch();
     // With no file, a host falls back to a local Ollama. Writing a file stops
