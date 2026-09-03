@@ -33,6 +33,15 @@ which is why the `claude` entry above has none.
 destination is displayed, it is free text, and `"Anthropic (EU)"` is a perfectly
 good value for it. `api` has to match an adapter's id exactly.
 
+**You do not have to edit this file.** The model picker's *Use a model API…* row
+opens a form with the same four fields plus the API choice, and writes the entry
+on whichever machine that host runs on — which is the point, since the file lives
+next to the host and not next to you. A vLLM, an NVIDIA NIM, an Ollama on another
+box: name it, give it the URL, leave the key empty if it needs none. Editing the
+file by hand stays available and is the only way to change an endpoint that
+already exists, because the write path refuses to redirect an id an agent may
+already be pointing at.
+
 ## `<workspace>/.agbrte/access.json` — watching rather than driving
 
 A seatbelt and not a lock, since the label is self-reported and anyone who can

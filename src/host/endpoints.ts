@@ -341,6 +341,14 @@ export interface EndpointInput {
   baseUrl: string;
   /** Absent for a server that needs none — a local vLLM, an unauthenticated proxy. */
   apiKey?: string;
+  /**
+   * Which adapter speaks to it. Absent means `openai-compatible`.
+   *
+   * Validated here rather than trusted: this is the one route that writes an
+   * endpoint without anybody reading the file afterwards, so an unknown value
+   * would sit there until a turn was sent to it.
+   */
+  api?: string;
 }
 
 /** What happened, with nothing in it that could not be shown on a screen. */
@@ -382,6 +390,20 @@ function validate(input: EndpointInput): void {
     // §13: the provider is what the UI shows before a turn is sent, so an empty
     // one is a recipient nobody can name.
     throw new EndpointRejected('an endpoint needs a provider, so the UI can say where code goes');
+  }
+  if (input.api !== undefined && input.api !== '' && !KNOWN_APIS.has(input.api)) {
+    /*
+     * The same refusal `loadEndpoints` makes, at the other door.
+     *
+     * This route writes an endpoint that nobody reads back first, so an unknown
+     * adapter would sit in the file until a turn was sent to it — and then fall
+     * through the router to `openai-compatible`, which means source code going
+     * to an API the person did not name (§13). Refused here for the same reason
+     * it is refused there: the whole set is in hand, so the remedy can be named.
+     */
+    throw new EndpointRejected(
+      `"${input.api}" is not an API this host speaks — known: ${[...KNOWN_APIS].join(', ')}`,
+    );
   }
   let url: URL;
   try {
@@ -469,6 +491,9 @@ export async function addEndpoint(
     provider: input.provider,
     ...(input.label !== undefined && input.label !== '' ? { label: input.label } : {}),
     ...(input.apiKey !== undefined && input.apiKey !== '' ? { apiKey: input.apiKey } : {}),
+    // Absent stays absent, so an entry written by the app reads the same as one
+    // typed by hand with no `api` — both mean `openai-compatible`.
+    ...(input.api !== undefined && input.api !== '' ? { api: input.api } : {}),
   };
 
   await writeFile(path, `${JSON.stringify({ endpoints: [...existing, entry] }, null, 2)}\n`, {

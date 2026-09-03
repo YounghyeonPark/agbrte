@@ -580,7 +580,24 @@ export type SetupPlanDto =
   | { kind: 'ollama' }
   | {
       kind: 'endpoint';
-      endpoint: { id: string; label?: string; provider: string; baseUrl: string; apiKey?: string };
+      endpoint: {
+        id: string;
+        label?: string;
+        provider: string;
+        baseUrl: string;
+        apiKey?: string;
+        /**
+         * Which adapter speaks to it — `openai-compatible` or `anthropic`.
+         *
+         * Absent means `openai-compatible`, which is what every endpoint written
+         * before this field got and what a vLLM, an NIM, an Ollama, LM Studio or
+         * anything else speaking `/v1/chat/completions` needs. Carried through
+         * because the endpoints file grew the field and this form was the one
+         * way of writing an endpoint that could not set it — so an endpoint
+         * added through the app could only ever be one of the two.
+         */
+        api?: string;
+      };
     };
 
 /** One step, as it happens. Broadcast so a slow install is not a frozen panel. */

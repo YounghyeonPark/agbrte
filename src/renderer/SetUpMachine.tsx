@@ -57,13 +57,37 @@ export interface EndpointDraft {
   baseUrl: string;
   /** Never read back for display, never logged, cleared on success. */
   apiKey: string;
+  /**
+   * Which adapter speaks to it — `openai-compatible` or `anthropic`.
+   *
+   * On the draft because the endpoints file grew the field and this form was the
+   * only way of writing an endpoint that could not set it, so anything added
+   * through the app was `openai-compatible` whatever it actually was.
+   */
+  api: string;
 }
 
+/**
+ * What the form opens on, and it is a local server rather than a hosted API.
+ *
+ * It used to be `openai` / `https://api.openai.com/v1`, which made the whole
+ * panel read as "paste a cloud key" — and the row that leads here still says
+ * "a key kept on that machine". But the keyless case is not an exception here:
+ * a vLLM or an NVIDIA NIM on the GPU box next to the agent is exactly what §3.8
+ * calls `target-local`, the arrangement with *nothing to hold* and the lowest
+ * exposure in §6.5's table. Opening on the highest-exposure row and leaving the
+ * lowest to be discovered is the wrong way round.
+ *
+ * The port is vLLM's and NIM's default. Ollama has its own entry elsewhere and
+ * is already the implicit fallback when no file exists, so it is not what a
+ * person comes to this form to add.
+ */
 export const EMPTY_ENDPOINT: EndpointDraft = {
-  id: 'openai',
-  provider: 'openai',
-  baseUrl: 'https://api.openai.com/v1',
+  id: 'gpubox',
+  provider: 'local',
+  baseUrl: 'http://127.0.0.1:8000/v1',
   apiKey: '',
+  api: 'openai-compatible',
 };
 
 /**
@@ -88,17 +112,35 @@ export function SetUpEndpoint({
   return (
     <div className="grid gap-1" data-testid="setup-endpoint">
       {/*
-        §6.5's table, in one line, at the moment of the decision.
+        §6.5's table, in one line — but only the row this endpoint is actually on.
 
-        This is the *remote-resident credential* row: highest exposure, and the
-        only arrangement in which a detached run keeps going with this app
-        closed. Both halves of that trade are in the sentence, because reading
-        only one of them leads to the wrong choice.
+        It used to say the credential sentence unconditionally, which is the
+        *remote-resident credential* row: highest exposure, and the only
+        arrangement in which a detached run keeps going with this app closed.
+        Both halves of that trade have to be read together or the choice goes
+        wrong, so the sentence is right — for an endpoint with a key.
+
+        For one without, it was describing a key that does not exist. A vLLM or
+        an NIM on the agent's own box is §6.5's `target-local` row: *nothing to
+        hold*, lowest exposure, and a detached run keeps going because there was
+        never a tunnel. Telling somebody adding one that "anyone who can read
+        your home directory can use it" is a warning about a file that will not
+        contain anything worth reading.
       */}
       <p className="text-muted m-0 text-[11px]">
-        The key is written to <code>~/.agbrte/endpoints.json</code> on {where} and not kept here —
-        which is what lets a run continue with this app closed, and means anyone who can read your
-        home directory there can use it.
+        {value.apiKey === '' ? (
+          <>
+            A server on {where} with no key to hold — a vLLM, an NVIDIA NIM, anything speaking the
+            OpenAI shape. Nothing is stored, and a run keeps going with this app closed because
+            there is no tunnel to lose.
+          </>
+        ) : (
+          <>
+            The key is written to <code>~/.agbrte/endpoints.json</code> on {where} and not kept here
+            — which is what lets a run continue with this app closed, and means anyone who can read
+            your home directory there can use it.
+          </>
+        )}
       </p>
       <label className="text-muted grid gap-1 text-xs">
         Name
@@ -120,6 +162,31 @@ export function SetUpEndpoint({
           placeholder="openai"
         />
       </label>
+      {/*
+        Which wire it speaks, which is not the same question as who receives it.
+
+        `Provider` above is §13's disclosure — free text, shown wherever a turn's
+        destination is displayed, and `"NVIDIA (on-prem)"` is a good value for
+        it. This one must match an adapter id exactly or nothing routes, which is
+        why the two are not one field: a config where the routing looks like a
+        label is one somebody fills in with a label.
+
+        A `select` rather than a text input, because unlike every other field
+        here the set is closed and known — an unknown value is refused by the
+        host, and offering a box to type a refusal into is offering a mistake.
+      */}
+      <label className="text-muted grid gap-1 text-xs">
+        API
+        <select
+          className="field"
+          data-testid="setup-endpoint-api"
+          value={value.api}
+          onChange={(e) => set({ api: e.target.value })}
+        >
+          <option value="openai-compatible">OpenAI-compatible — vLLM, NIM, Ollama, LM Studio</option>
+          <option value="anthropic">Anthropic</option>
+        </select>
+      </label>
       <label className="text-muted grid gap-1 text-xs">
         Base URL
         <input
@@ -127,7 +194,7 @@ export function SetUpEndpoint({
           data-testid="setup-endpoint-url"
           value={value.baseUrl}
           onChange={(e) => set({ baseUrl: e.target.value })}
-          placeholder="https://api.example.com/v1"
+          placeholder="http://127.0.0.1:8000/v1"
         />
       </label>
       <label className="text-muted grid gap-1 text-xs">

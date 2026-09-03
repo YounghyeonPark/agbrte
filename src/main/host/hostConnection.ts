@@ -553,6 +553,17 @@ export class HostConnection extends EventEmitter {
     provider: string;
     baseUrl: string;
     apiKey?: string;
+    /**
+     * Which adapter speaks to it. Absent means `openai-compatible`.
+     *
+     * Spelled out here and not only upstream, because this signature is where a
+     * field goes missing quietly: the caller passes a *variable*, so TypeScript's
+     * excess-property check does not fire and a field the plan carries is simply
+     * dropped on the way to the wire. That is CLAUDE.md's first hazard — the
+     * remote path forgetting what the local path passes — and it type-checked
+     * clean while doing it.
+     */
+    api?: string;
   }): Promise<EndpointAdded> {
     this.require('endpoints.add');
     return this.call<EndpointAdded>({ t: 'endpoints.add', endpoint });

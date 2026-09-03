@@ -88,7 +88,15 @@ export type SetupPlan =
   | { kind: 'ollama' }
   | {
       kind: 'endpoint';
-      endpoint: { id: string; label?: string; provider: string; baseUrl: string; apiKey?: string };
+      endpoint: {
+        id: string;
+        label?: string;
+        provider: string;
+        baseUrl: string;
+        apiKey?: string;
+        /** Which adapter speaks to it. Absent means `openai-compatible`. */
+        api?: string;
+      };
     };
 
 /**

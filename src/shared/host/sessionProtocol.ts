@@ -293,6 +293,30 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  *
+ * ## v29 adds a field to `endpoints.add`, and it is v6's case
+ *
+ * `endpoint.api` names which adapter speaks to an endpoint —
+ * `openai-compatible` or `anthropic`. The endpoints *file* grew the field a
+ * release ago and this command was the one way of writing an endpoint that
+ * could not set it, so anything added through the app was `openai-compatible`
+ * whatever it actually was. Harmless while that was the only adapter; not
+ * harmless once there are two.
+ *
+ * A v28 host ignores it and writes the endpoint without, which is the same
+ * endpoint it wrote before the field existed and reads back as
+ * `openai-compatible`. That is the old behaviour rather than a broken one, so
+ * `COMMAND_SINCE` gains nothing — no command was added — and the number moves
+ * because §17 Q16 says it moves whenever the shape does.
+ *
+ * **What is worth recording is how nearly it was dropped instead.** The field
+ * was threaded from the form through the DTO and the plan, and stopped at
+ * `HostConnection.addEndpoint`, whose parameter type did not have it. The caller
+ * passes a variable rather than an object literal, so TypeScript's
+ * excess-property check never fired: it type-checked clean and silently sent an
+ * endpoint without the field. That is CLAUDE.md's first hazard — the remote path
+ * forgetting what the local path passes — arriving through a signature rather
+ * than through a transport, and nothing in the build would have said so.
+ *
  * ## v28 makes a field optional, and the pairing is what makes that safe
  *
  * `PreparedChild.parentBudget` and `session.recordChild`'s copy of it may now be
@@ -637,7 +661,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 28;
+export const SESSION_PROTOCOL_VERSION = 29;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -858,6 +882,15 @@ export type SessionCommand =
         baseUrl: string;
         /** Absent for a server needing none. Never logged, never echoed. */
         apiKey?: string;
+        /**
+         * Which adapter speaks to it. Absent means `openai-compatible`.
+         *
+         * A v28 host ignores it and writes the endpoint without — which is the
+         * same endpoint it wrote before the field existed and reads back as
+         * `openai-compatible`. Degrades to the old behaviour rather than a
+         * broken one, so this is v6's case rather than v16's.
+         */
+        api?: string;
       };
     }
   | { t: 'template.delete'; id: RequestId; templateId: string }

@@ -536,10 +536,29 @@ test.describe('one list, one button', () => {
       await page.fill('[data-testid=setup-endpoint-id]', 'acme');
       await page.fill('[data-testid=setup-endpoint-provider]', 'acme');
       await page.fill('[data-testid=setup-endpoint-url]', 'https://api.acme.test/v1');
+      /*
+       * The form opens on a keyless local server — a vLLM or an NIM on the
+       * agent's own box, which is §6.5's lowest-exposure row and what somebody
+       * adding an endpoint most often has. So the warning below is not shown
+       * yet: it describes a credential, and there is not one until the next line.
+       */
+      await expect(page.locator('[data-testid=setup-endpoint]')).not.toContainText(
+        'anyone who can read your home directory',
+      );
+      // Which wire it speaks, which is a different question from who receives
+      // it — `provider` above is §13's disclosure and this must match an adapter.
+      await expect(page.locator('[data-testid=setup-endpoint-api]')).toHaveValue(
+        'openai-compatible',
+      );
       const field = page.locator('[data-testid=setup-endpoint-key]');
       // A password field, so a screen share or a screenshot does not carry it.
       await expect(field).toHaveAttribute('type', 'password');
       await field.fill(KEY);
+      // And once there is a key, §6.5's trade appears — both halves of it,
+      // because reading only one leads to the wrong choice.
+      await expect(page.locator('[data-testid=setup-endpoint]')).toContainText(
+        'anyone who can read your home directory',
+      );
       await page.click('[data-testid=add-agent]');
 
       await expect(page.locator('[data-testid=setup-outcome-summary]')).toContainText(
@@ -547,7 +566,16 @@ test.describe('one list, one button', () => {
         { timeout: 20_000 },
       );
 
-      // It reached main exactly once, on exactly the channel meant to carry it.
+      /*
+       * It reached main exactly once, on exactly the channel meant to carry it.
+       *
+       * Compared whole rather than field by field, which is the point: a plan
+       * that grew a field would otherwise pass unexamined, and this is the one
+       * message in the app that carries a secret. `api` is here because the plan
+       * gained it — the form can now say which adapter speaks to the endpoint,
+       * so an endpoint added through the app is no longer always
+       * `openai-compatible`.
+       */
       expect(await plansSeen(agbrte)).toEqual([
         {
           kind: 'endpoint',
@@ -556,6 +584,7 @@ test.describe('one list, one button', () => {
             provider: 'acme',
             baseUrl: 'https://api.acme.test/v1',
             apiKey: KEY,
+            api: 'openai-compatible',
           },
         },
       ]);

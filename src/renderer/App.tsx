@@ -3345,6 +3345,9 @@ function AgentPicker({
               // Omitted rather than sent empty, so "no credential" is a shape
               // the host can see rather than a string it has to interpret.
               ...(draft.apiKey === '' ? {} : { apiKey: draft.apiKey }),
+              // Same rule: absent means `openai-compatible`, which is what an
+              // endpoints file written by hand without the field also means.
+              ...(draft.api === '' ? {} : { api: draft.api }),
             },
           });
           setOutcome(result);

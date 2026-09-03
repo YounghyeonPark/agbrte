@@ -163,6 +163,114 @@ describe('writing an endpoint', () => {
   });
 });
 
+describe('which API the endpoint speaks', () => {
+  it('writes the adapter the caller named, and reads back as that', async () => {
+    const path = await scratch();
+    await addEndpoint(
+      { id: 'claude', provider: 'Anthropic', baseUrl: 'https://api.anthropic.com/v1', api: 'anthropic', apiKey: KEY },
+      path,
+    );
+
+    /*
+     * Through `loadEndpoints` rather than by reading the JSON, because the field
+     * is only worth writing if the thing that routes turns can see it. The two
+     * halves were built a release apart — the file grew `api` while this command
+     * could not set it — so an endpoint added through the app was
+     * `openai-compatible` whatever it actually was.
+     */
+    const registry = await loadEndpoints(path, null);
+    expect(registry.resolve('claude').providerId).toBe('anthropic');
+  });
+
+  it('defaults to openai-compatible, which is what vLLM and NIM need', async () => {
+    const path = await scratch();
+    // No `api`, no key: a model server on the agent's own box, which is §6.5's
+    // `target-local` row and the case this form exists for as much as any cloud.
+    await addEndpoint({ id: 'gpubox', provider: 'local', baseUrl: 'http://127.0.0.1:8000/v1' }, path);
+
+    const registry = await loadEndpoints(path, null);
+    expect(registry.resolve('gpubox').providerId).toBe('openai-compatible');
+    expect(registry.keyFor('gpubox')).toBeUndefined();
+  });
+
+  it('refuses an adapter this host does not speak, naming the ones it does', async () => {
+    const path = await scratch();
+    /*
+     * The same refusal `loadEndpoints` makes, at the other door — and this door
+     * needs it more: nothing reads the file back before a turn is sent, so an
+     * unknown value would sit there until it fell through the router to
+     * `openai-compatible`. That is source code going to an API the person did
+     * not name (§13), which is the worst version of the silent misroute the id
+     * and URL checks already guard.
+     */
+    await expect(
+      addEndpoint(
+        { id: 'x', provider: 'x', baseUrl: 'http://127.0.0.1:8000/v1', api: 'anthropc' },
+        path,
+      ),
+    ).rejects.toThrow(/anthropc/);
+    await expect(
+      addEndpoint(
+        { id: 'x', provider: 'x', baseUrl: 'http://127.0.0.1:8000/v1', api: 'anthropc' },
+        path,
+      ),
+    ).rejects.toThrow(/openai-compatible, anthropic/);
+  });
+
+  it('carries the field across the wire, where it was silently dropped', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agbrte-endpoint-api-'));
+    scratches.push(dir);
+    const file = join(dir, 'endpoints.json');
+    const identity = await openWorkspace(dir);
+    const registry = new RuntimeRegistry();
+    registry.register(new EchoRuntime(), { label: 'Echo', model: 'none' });
+
+    // What the host was actually handed, which is the thing under test.
+    const received: Array<Record<string, unknown>> = [];
+    const server = new SessionHostServer({
+      manager: new SessionManager({ registry, workspaceRoot: dir, instanceId: identity.instanceId }),
+      identity: {
+        instanceId: identity.instanceId,
+        lineageId: identity.lineageId,
+        workspaceRoot: dir,
+        runtimes: ['echo'],
+      },
+      addEndpoint: (input) => {
+        received.push(input as unknown as Record<string, unknown>);
+        return addEndpoint(input, file);
+      },
+    });
+
+    const pair = memoryChannelPair<SessionCommand, SessionMessage>();
+    server.accept(pair.host);
+    const connection = new HostConnection({ channel: pair.main });
+    await connection.ready;
+
+    await connection.addEndpoint({
+      id: 'gpubox',
+      provider: 'local',
+      baseUrl: 'http://127.0.0.1:8000/v1',
+      api: 'anthropic',
+    });
+
+    /*
+     * Asserted on what crossed, because this is exactly where it went missing.
+     * `HostConnection.addEndpoint`'s parameter type did not carry the field, and
+     * its caller passes a *variable* rather than an object literal — so
+     * TypeScript's excess-property check never fired, the build was clean, and
+     * the endpoint went over the wire without it. CLAUDE.md's first hazard
+     * arriving through a signature rather than a transport.
+     *
+     * `anthropic` rather than the default, so a version that drops the field
+     * fails instead of accidentally agreeing.
+     */
+    expect(received).toHaveLength(1);
+    expect(received[0]?.['api']).toBe('anthropic');
+    const written = await loadEndpoints(file, null);
+    expect(written.resolve('gpubox').providerId).toBe('anthropic');
+  });
+});
+
 describe('what the write preserves', () => {
   it('materialises the implicit local endpoint rather than removing it', async () => {
     const path = await scratch();
