@@ -345,7 +345,32 @@ jobs:
           prev="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
           : > changelog.txt
           if [ -n "$prev" ]; then
-            git log "$prev..$VERSION" --format='- %s' --no-merges | grep -vE '^- v?[0-9]+\.[0-9]' >> changelog.txt || true
+            # The bump is dropped by what it *did*, never by how it was worded.
+            #
+            # This was a pattern on the title, and it has now been wrong twice
+            # for the same reason. It matched `v0.0.26`; `0.0.27, and the
+            # package stops being private` broke it, and the fix was to make the
+            # `v` optional — with a comment saying a rule must not depend on a
+            # habit nobody wrote down. The habit then changed again at `0.0.29`
+            # to `Release 0.0.29`, where the version is no longer at the front,
+            # and the filter has matched nothing since. Five releases listed
+            # themselves as one of their own changes before anybody read one.
+            #
+            # A bump is not a wording, it is a commit that changes the version in
+            # `package.json`, and that is a question git can answer. Only the
+            # *tagged* commit is considered, so nothing in the middle of a series
+            # can vanish for touching that line — the failure this filter would
+            # otherwise trade for its old one.
+            bump=""
+            if git show "$VERSION" -- package.json | grep -q '^+  "version":'; then
+              bump="$(git rev-parse "${VERSION}^{commit}")"
+            fi
+            git log "$prev..$VERSION" --format='%H %s' --no-merges > titles.txt
+            while read -r sha subject; do
+              if [ "$sha" != "$bump" ]; then
+                echo "- $subject" >> changelog.txt
+              fi
+            done < titles.txt
             # `echo`, not `printf '%s\n'`, and the reason is this file's own
             # history rather than a preference. The `printf` version was written
             # from Windows through a tool that eats backslashes (CLAUDE.md
