@@ -1020,3 +1020,71 @@ test.describe('reasoning effort', () => {
     }
   });
 });
+
+/*
+ * Nothing in the sidebar is cut off, whatever a machine is called (§7).
+ *
+ * Reported from a real remote: the row for `cbk_ws_one` showed the machine and
+ * two of its four controls, and *Update* and *Detach* were simply not there —
+ * on the row for the machine that most needs them.
+ *
+ * The cause was one grid column. The rail is `display: grid`, and a bare `1fr`
+ * is `minmax(auto, 1fr)`, so the column is at least the min-content of its
+ * widest item. A host row's min-content includes four `shrink-0` buttons, which
+ * cannot give anything back — so the column sized itself to 361px inside a
+ * 300px rail and `overflow-x-hidden` cut off the difference.
+ *
+ * Invisible to everything this project runs. It type-checks, the classes all
+ * exist so `lint:classes` is quiet, and every existing e2e assertion is about a
+ * control being *present in the DOM* — which these were. Only a measurement
+ * catches a control that is present and off-screen, so this measures.
+ *
+ * The label is set from the page rather than by attaching a remote, because
+ * what is under test is the layout at a width, not the transport that produced
+ * the name. A name long enough to need truncating is included for the same
+ * reason the short one is: the fix is that the *label* yields and the controls
+ * do not, and asserting only the easy case would pass on the version that
+ * truncated the buttons instead.
+ */
+test('keeps every host control on screen, however long the machine is called', async () => {
+  const agbrte = await launch(await makeRepo(), await makeRepo());
+
+  try {
+    const page = agbrte.window;
+    await page.waitForSelector('[data-testid=host]', { timeout: 30_000 });
+
+    for (const name of ['x', 'cbk_ws_one', 'build-box-frankfurt-gpu-04.internal.example.com']) {
+      // Through a locator rather than `document`: these specs compile without
+      // the DOM lib (see tsconfig.json), and the whole span is replaced because
+      // what is measured is its width.
+      await page
+        .locator('[data-testid=host] .truncate-line')
+        .evaluateAll((els, label: string) => {
+          for (const el of els) el.textContent = label;
+        }, name);
+
+      const measured = await page
+        .locator('[data-testid=host]')
+        .first()
+        .evaluate((el) => {
+          const rail = el.parentElement!;
+          const edge = rail.getBoundingClientRect().right;
+          return {
+            overflow: rail.scrollWidth - rail.clientWidth,
+            past: [...el.querySelectorAll('button')].filter(
+              (b) => b.getBoundingClientRect().right > edge + 1,
+            ).length,
+            buttons: el.querySelectorAll('button').length,
+          };
+        });
+
+      // The rail scrolls vertically and hides horizontally, so anything wider
+      // than it is not clipped politely — it is gone.
+      expect(measured.overflow, `"${name}" made the rail overflow`).toBeLessThanOrEqual(0);
+      expect(measured.past, `"${name}" pushed controls past the rail`).toBe(0);
+      expect(measured.buttons).toBeGreaterThan(2);
+    }
+  } finally {
+    await agbrte.close();
+  }
+});

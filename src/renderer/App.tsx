@@ -1099,7 +1099,22 @@ export function App(): JSX.Element {
             full-width horizontal scrollbar across the sidebar. Nothing here is
             meant to scroll sideways, so hide the axis rather than chase the
             rounding. */}
-        <nav className="grid min-h-0 content-start gap-4 overflow-x-hidden overflow-y-auto p-2">
+        {/*
+          `minmax(0,1fr)`, not `1fr`, and that one column is the whole bug.
+          
+          A bare `1fr` is `minmax(auto,1fr)`, so the column is at least the
+          *min-content* of its widest item — and a host row's min-content
+          includes four `shrink-0` buttons, which cannot give anything back. The
+          rail is 300px and the column sized itself to 361, then
+          `overflow-x-hidden` above cut the difference off: Update and Detach
+          simply were not there, on the row for a machine that most needs them.
+          
+          Invisible locally, because `This machine` is short enough that the
+          column lands under 300 anyway. It took a real remote — `cbk_ws_one`,
+          three folders — to push it over, which is the class of defect
+          CLAUDE.md says only a real host shows.
+        */}
+        <nav className="grid min-h-0 grid-cols-[minmax(0,1fr)] content-start gap-4 overflow-x-hidden overflow-y-auto p-2">
           {hosts.length === 0 && (
             <p className="text-muted p-2 text-xs">No hosts attached yet.</p>
           )}
@@ -2038,7 +2053,7 @@ function HostGroup({
      * a machine could hold two.
      */
     <section data-testid="host" data-instance={host.instanceId} data-label={machine.label}>
-      <div className="mb-1 flex items-center justify-between gap-2 px-2">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-2">
         <div className="flex min-w-0 items-baseline gap-2">
           {/* The badge answers "where is this running" at a glance (§10). */}
           <span
@@ -2048,7 +2063,22 @@ function HostGroup({
             {host.targetKind}
           </span>
           <span
-            className="truncate-line text-xs"
+            /*
+              `min-w-0` as well as on the wrapper, and both are needed.
+              
+              A flex item's default `min-width` is `auto`, which for a nowrap
+              span is the width of its whole text — so `truncate-line` had
+              nothing to truncate *to* and the row grew instead. The wrapper's
+              own `min-w-0` let the wrapper shrink and stopped there, one level
+              short of the element that decides.
+              
+              Measured on a real remote: the rail is 299px and the row was 348,
+              which put `Update` and `Detach` past the edge — the two controls
+              somebody reaches for when a host is out of date or in the way. A
+              local host reads `This machine` and fits, so this only appeared
+              once a machine had a name of its own.
+            */
+            className="truncate-line min-w-0 text-xs"
             /* The bundle too, because "no Update button" says two different
                things — this host is current, or it is too old to say — and which
                one it is decides what somebody does next. */
