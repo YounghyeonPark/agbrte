@@ -337,3 +337,114 @@ test.describe('a session says which group it is in', () => {
     }
   });
 });
+
+/*
+ * Grouping from the rail, which is where somebody looking at several sessions
+ * already is (DESIGN.md §17 Q22, §7, §3.5).
+ *
+ * Before this, a group was made from *inside* an open session: open one, find
+ * the group panel, pick a second from a dropdown, repeat. The sessions being
+ * grouped are all sitting in the sidebar together, and that is where the
+ * gesture belongs.
+ *
+ * Three ways in and one place they arrive: modifier-click for a mouse,
+ * right-click for the menu habit, and a long press for touch — because §7 puts
+ * this app on a phone and the first two do not exist there. A feature reachable
+ * only through a pointer half the clients do not have is §3.5's shape.
+ *
+ * **Rows are addressed by title, never by index.** The rail re-sorts as
+ * sessions change — `byAttentionThenRecency` — so `nth(0)` is a different
+ * session before and after almost anything. An index-based first draft of this
+ * test clicked the same row twice, toggled it back off, and reported a
+ * selection of two where three were expected: the assertion was wrong about the
+ * app rather than the app being wrong.
+ */
+test('groups sessions picked in the rail, and ungroups them again', async () => {
+  const agbrte = await launch(await makeRepo());
+
+  try {
+    const page = agbrte.window;
+    for (const title of ['alpha', 'beta', 'gamma']) await createSession(page, title);
+    await page.waitForSelector('[data-testid=session]', { timeout: 30_000 });
+
+    const row = (title: string) =>
+      page.locator(`[data-testid=host] [data-testid=session][data-title="${title}"]`);
+    const bar = page.locator('[data-testid=selection-bar]');
+    // Nothing until something is picked: the rail is navigation first, and a
+    // bar over an empty selection is a control with no subject.
+    await expect(bar).toHaveCount(0);
+
+    /*
+     * The touch way in, and the one that had to be built rather than borrowed.
+     * A press that selects must not also open — a phone has no second button to
+     * mean "not that" with, so the click it generates is swallowed once.
+     */
+    await row('alpha').dispatchEvent('pointerdown', { pointerType: 'touch', button: 0 });
+    await page.waitForTimeout(700);
+    await row('alpha').dispatchEvent('pointerup', { pointerType: 'touch', button: 0 });
+    await expect(bar).toContainText('1 selected');
+    /*
+     * And the press did not *also* open what it picked.
+     *
+     * Asserted as "the open session is still the one that was open", not as
+     * "nothing is open": `createSession` leaves its session open, so a check for
+     * an empty pane would pass whatever this gesture did.
+     */
+    await expect(page.locator('[data-testid=session-title]')).toHaveText('gamma');
+
+    // Ctrl or cmd adds one; shift takes the range and *keeps* what was picked,
+    // which is the half that differs from a file manager. See `pick`.
+    await row('beta').click({ modifiers: ['ControlOrMeta'] });
+    await expect(bar).toContainText('2 selected');
+    await row('gamma').click({ modifiers: ['Shift'] });
+    await expect(bar).toContainText('3 selected');
+
+    // A new group needs a name, and there is nowhere to ask for one but here:
+    // the renderer has no `window.prompt` under Electron.
+    await page.click('[data-testid=group-selected]');
+    await page.fill('[data-testid=group-name]', 'the sweep');
+    await page.click('[data-testid=group-confirm]');
+
+    const tags = page.locator('[data-testid=host] [data-testid=session-group]');
+    await expect(tags).toHaveCount(3, { timeout: 20_000 });
+    // One command carried the whole set. Grouping them one at a time could stop
+    // halfway and leave a group whose other half never joined — which is why the
+    // wire takes a list, and why this asserts on all three rather than on one.
+    for (const text of await tags.allTextContents()) expect(text).toContain('the sweep');
+
+    /*
+     * Right-click picks the row it lands on when that row is not already in the
+     * selection — the one thing a context menu must never get wrong is acting on
+     * a set the pointer is not over.
+     */
+    await row('beta').click({ button: 'right' });
+    await expect(bar).toContainText('1 selected');
+    // With a group in the selection the bar offers to join it by name, rather
+    // than asking for a name that would quietly rename what already exists.
+    await expect(bar).toContainText('Add to the sweep');
+
+    await page.click('[data-testid=ungroup-selected]');
+    await expect(tags).toHaveCount(2, { timeout: 20_000 });
+
+    /*
+     * And a mouse held on a row still opens it.
+     *
+     * Holding a button for half a second is not a gesture anybody performs on
+     * purpose with a mouse, and is one people perform by accident constantly.
+     * It also made this suite flaky: under parallel load the gap between
+     * `pointerdown` and `click` can pass the threshold, so a test that meant to
+     * open a session picked it instead.
+     */
+    // `delay` rather than a hand-driven down/up pair: the rail re-sorts after
+    // the ungroup above, and coordinates taken before that settles land on
+    // whichever row moved into them.
+    await row('alpha').click({ delay: 700 });
+    await expect(page.locator('[data-testid=session-title]')).toHaveText('alpha', {
+      timeout: 15_000,
+    });
+    // Opening clears what was picked, so the bar goes rather than going stale.
+    await expect(bar).toHaveCount(0);
+  } finally {
+    await agbrte.close();
+  }
+});

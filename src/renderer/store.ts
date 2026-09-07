@@ -211,6 +211,37 @@ export interface AgbrteState {
   /** Take the open session out of its group. */
   leaveGroup(): Promise<void>;
   /**
+   * Group several sessions at once, from the sidebar (§17 Q22).
+   *
+   * Distinct from `groupWith`, which is the open session inviting one other
+   * from a picker. This is a set somebody selected in the rail, and none of them
+   * need be open — so there is no "active" session to anchor on and the group is
+   * made from the selection alone.
+   *
+   * One command with the whole list, which the wire already takes: a client that
+   * grouped members one at a time could stop halfway and leave a group whose
+   * other half never joined.
+   *
+   * `into` joins an existing group instead of starting one, so adding two more
+   * sessions to a group somebody already named does not silently rename it.
+   */
+  groupMany(sessionIds: string[], name: string, into?: string): Promise<void>;
+  /**
+   * Take several sessions out of their groups (§17 Q22).
+   *
+   * A loop, because `sessions.ungroup` takes one id and widening the wire to
+   * take a list is a protocol change this does not need yet: the half-done
+   * state it would prevent is *some sessions left in the group*, which is
+   * visible in the rail on the next list and fixable by pressing the same
+   * control again. That is not true of the grouping direction — a group whose
+   * other half never joined is invisible until somebody opens one of them —
+   * which is why that one is a single command and this one is not.
+   *
+   * Stops at the first refusal rather than pressing on, so what the host said
+   * is what reaches the banner.
+   */
+  ungroupMany(sessionIds: string[]): Promise<void>;
+  /**
    * Rename a session, from wherever it is listed.
    *
    * Takes the id rather than acting on the active session: the sidebar renames
@@ -700,6 +731,37 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
       return true;
     });
     return done === true;
+  },
+
+  async groupMany(sessionIds, name, into) {
+    if (sessionIds.length === 0) return;
+    await guard(set, async () => {
+      await agbrte().sessions.group(sessionIds, name, into);
+      // Re-listed rather than patched: the sidebar's tags are read from this
+      // list, and the reply covers only the sessions named.
+      set({ sessions: await agbrte().sessions.list() });
+      const open = get().activeId;
+      // And the open session too, when it was one of them — the group panel
+      // beside the transcript reads the snapshot, not the list.
+      if (open !== null && sessionIds.includes(open)) {
+        applySnapshot(set, get, await agbrte().sessions.snapshot(open));
+      }
+    });
+  },
+
+  async ungroupMany(sessionIds) {
+    if (sessionIds.length === 0) return;
+    await guard(set, async () => {
+      // In order, and a refusal stops the loop rather than being collected:
+      // whatever the host said about the first one it would not do is the
+      // sentence somebody needs, and carrying on would bury it under the rest.
+      for (const sessionId of sessionIds) await agbrte().sessions.ungroup(sessionId);
+      set({ sessions: await agbrte().sessions.list() });
+      const open = get().activeId;
+      if (open !== null && sessionIds.includes(open)) {
+        applySnapshot(set, get, await agbrte().sessions.snapshot(open));
+      }
+    });
   },
 
   async leaveGroup() {

@@ -223,6 +223,27 @@ export const LABEL = 'text-[10px] uppercase tracking-wider';
 
 export function App(): JSX.Element {
   const store = useAgbrte();
+  /**
+   * Sessions picked out of the rail, and the machine they were picked on.
+   *
+   * Held here rather than inside each `HostGroup`, and that is the whole of the
+   * same-machine rule: a group is delivered inside one host (§17 Q22, and
+   * `Fleet.group` refuses across machines by name), so a selection that could
+   * span two sections would be a selection whose only outcome is a refusal.
+   * One `machine` field makes spanning unrepresentable rather than validated —
+   * picking a row on another machine moves the selection there.
+   *
+   * `machine` is the row's key, not an `instanceId`: one machine holds several
+   * folders (§8) and the rail groups by machine, so that is the boundary a
+   * person can actually see. Folders *within* it can still be refused by the
+   * host — a group is delivered by one host process and two folders may be
+   * served by two — and that refusal arrives with its own remedy, which is
+   * better than a rule here that guesses at how they were attached.
+   */
+  const [picked, setPicked] = useState<{ machine: string; ids: string[] }>({
+    machine: '',
+    ids: [],
+  });
   const [attaching, setAttaching] = useState<false | 'local' | 'remote'>(false);
   /**
    * Whether the "where should this work" panel is open (§8).
@@ -1131,6 +1152,8 @@ export function App(): JSX.Element {
                   !sessions.some((s) => s.sessionId === d.sessionId),
               )}
               activeId={active?.sessionId ?? null}
+              picked={picked.machine === machine.key ? picked.ids : []}
+              onPicked={(ids) => setPicked({ machine: machine.key, ids })}
               /*
                * On the dashboard these rows are the dashboard, printed again in
                * a 300px column: the same four titles, the same four states, in a
@@ -1868,6 +1891,8 @@ function HostGroup({
   sessions,
   unloaded,
   activeId,
+  picked,
+  onPicked,
   showLoaded,
 }: {
   machine: MachineRow;
@@ -1879,6 +1904,10 @@ function HostGroup({
     group?: { groupId: string; name: string };
   }>;
   activeId: string | null;
+  /** The sessions picked in this section, empty when the selection is elsewhere. */
+  picked: string[];
+  /** Replace this section's selection. Picking here takes it from any other. */
+  onPicked: (ids: string[]) => void;
   /** False while the dashboard is showing them. See the call site. */
   showLoaded: boolean;
 }): JSX.Element {
@@ -1893,6 +1922,67 @@ function HostGroup({
    * question this row stopped asking when it became a machine.
    */
   const host = machine.workspaces[0]!;
+  /**
+   * What a modified click does to the selection, in the order people expect.
+   *
+   * `shift` extends from the last row touched, which is why `anchor` exists at
+   * all: a range needs somewhere to start, and it is the *last* row picked
+   * rather than the first of the current set, so shift-clicking twice in a row
+   * re-ranges from where the cursor was instead of growing forever.
+   *
+   * Over `rows` — this section's sessions in the order they are drawn — so the
+   * range is what somebody sees between two rows and not what an id order would
+   * make of it.
+   */
+  const [anchor, setAnchor] = useState<string | null>(null);
+  /** Open only while a *new* group is being named; joining one needs no field. */
+  const [naming, setNaming] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const rows: string[] = (showLoaded ? sessions : []).map((s) => s.sessionId);
+
+  const pick = (sessionId: string, mods: { shift: boolean; toggle: boolean }): void => {
+    if (mods.shift && anchor !== null) {
+      const from = rows.indexOf(anchor);
+      const to = rows.indexOf(sessionId);
+      if (from !== -1 && to !== -1) {
+        const [lo, hi] = from < to ? [from, to] : [to, from];
+        /*
+         * The range is *added*, where a file manager would replace.
+         *
+         * That idiom — shift replaces, ctrl-shift adds — is the one people know,
+         * and it is not the one that was asked for: "hold shift and click
+         * several sessions" reads as each click keeping the last, and a gesture
+         * that silently drops what somebody already picked is worse than one
+         * that is merely unfamiliar. Taking a row back out stays possible
+         * through ctrl-click, so nothing becomes unreachable by this.
+         *
+         * In row order rather than click order, because the only thing built
+         * from this is a set and the rail is where it will be read back.
+         */
+        const range = new Set(rows.slice(lo, hi + 1));
+        onPicked(rows.filter((id) => range.has(id) || picked.includes(id)));
+        return;
+      }
+    }
+    setAnchor(sessionId);
+    if (mods.toggle) {
+      onPicked(picked.includes(sessionId) ? picked.filter((id) => id !== sessionId) : [...picked, sessionId]);
+      return;
+    }
+    onPicked([sessionId]);
+  };
+
+  /** The picked sessions themselves, for deciding what the bar may offer. */
+  const chosen = sessions.filter((s) => picked.includes(s.sessionId));
+  /**
+   * The groups represented in the selection, if any.
+   *
+   * One group and some loose sessions is *join that group*; none is *start
+   * one*; two is neither, because merging groups is not a thing the wire does
+   * and pretending otherwise would be a control that fails on press.
+   */
+  const groups = [...new Map(chosen.filter((s) => s.group !== undefined).map((s) => [s.group!.groupId, s.group!])).values()];
+
   /** Shown per session only where there is something to tell apart. */
   const manyFolders = machine.workspaces.length > 1;
   const folderOf = (instanceId: string): string | null => {
@@ -2352,14 +2442,126 @@ function HostGroup({
         </form>
       )}
 
+      {picked.length > 0 && (
+        /*
+          The bar, and the reason there is one rather than only a menu.
+
+          A right-click menu is the gesture this was asked for and it does not
+          exist on a phone — §7 puts this app on one, and `phone.spec.ts` keeps
+          it there. A control reachable only through a pointer that half the
+          clients do not have is §3.5's shape: a capability the UI implies and
+          the device cannot supply. So the modifiers and the right-click are
+          accelerators, a long press is the way in on touch, and this bar is
+          where all three arrive.
+        */
+        <div
+          className="mb-1 flex flex-wrap items-center gap-1 px-2"
+          data-testid="selection-bar"
+        >
+          <span className={`${LABEL} text-accent`}>{picked.length} selected</span>
+
+          {groups.length > 1 ? (
+            /* Said rather than offered. Merging two groups is not on the wire,
+               and a button that fails on press teaches the opposite of what it
+               says (§3.5). */
+            <span className="control-note">two groups — ungroup one first</span>
+          ) : naming ? (
+            <form
+              className="flex items-center gap-1"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const wanted = groupName.trim();
+                if (wanted === '') return;
+                void store.groupMany(picked, wanted);
+                setNaming(false);
+                setGroupName('');
+                onPicked([]);
+              }}
+            >
+              <input
+                className="field px-1 py-0 text-xs"
+                data-testid="group-name"
+                autoFocus
+                placeholder="name this group"
+                value={groupName}
+                onChange={(e) => setGroupName(e.target.value)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === 'Escape') setNaming(false);
+                }}
+              />
+              <button className="btn text-accent" type="submit" data-testid="group-confirm">
+                Group
+              </button>
+            </form>
+          ) : (
+            <button
+              className="btn"
+              type="button"
+              data-testid="group-selected"
+              onClick={() => {
+                const into = groups[0];
+                if (into === undefined) {
+                  // A new group needs a name, and there is nowhere to ask for
+                  // one but here: Electron's renderer has no `window.prompt`.
+                  setNaming(true);
+                  return;
+                }
+                // Joining one that exists keeps its name, so adding two more
+                // sessions does not quietly rename what somebody called it.
+                void store.groupMany(picked, into.name, into.groupId);
+                onPicked([]);
+              }}
+            >
+              {groups[0] === undefined ? 'Group…' : `Add to ${groups[0].name}`}
+            </button>
+          )}
+
+          {groups.length > 0 && (
+            <button
+              className="btn hover:border-state-fail hover:text-state-fail"
+              type="button"
+              data-testid="ungroup-selected"
+              onClick={() => {
+                // Only the ones actually in a group: asking the host to remove a
+                // session from nothing is a refusal that says nothing useful.
+                void store.ungroupMany(chosen.filter((s) => s.group !== undefined).map((s) => s.sessionId));
+                onPicked([]);
+              }}
+            >
+              Ungroup
+            </button>
+          )}
+
+          <button
+            className="btn-quiet"
+            type="button"
+            data-testid="clear-selection"
+            onClick={() => onPicked([])}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       <div className="grid gap-1">
         {(showLoaded ? sessions : []).map((s) => (
           <SessionRow
             key={s.sessionId}
             data-testid="session"
             data-title={s.title}
+            /* Picked reads as the accent border, which is what "chosen" already
+               means everywhere else here; open stays the filled row. The two can
+               be true at once and must not fight — an open session that is also
+               picked shows both. */
             className={`grid w-full gap-1 rounded-surface border px-3 py-2 text-left ${
-              s.sessionId === activeId ? 'bg-raised border-line' : 'hover:border-line border-transparent'
+              s.sessionId === activeId ? 'bg-raised' : ''
+            } ${
+              picked.includes(s.sessionId)
+                ? 'border-accent'
+                : s.sessionId === activeId
+                  ? 'border-line'
+                  : 'hover:border-line border-transparent'
             }`}
             title={s.title}
             /* Its **own** workspace, not the machine's first.
@@ -2371,7 +2573,15 @@ function HostGroup({
                workspace holding it whoever asks: the record came back right
                while `owners` recorded the wrong folder, which is what routes
                everything afterwards. */
-            onOpen={() => void store.openSession(s.sessionId, s.instanceId)}
+            onOpen={() => {
+              // Opening clears the selection: a plain click is the gesture that
+              // means "this one", and leaving a set behind would put the bar
+              // above a row somebody has moved on from.
+              onPicked([]);
+              void store.openSession(s.sessionId, s.instanceId);
+            }}
+            onPick={(mods) => pick(s.sessionId, mods)}
+            selected={picked.includes(s.sessionId)}
             onRename={(title) => void store.renameSession(s.sessionId, title)}
           >
             {/* Quiet: the sidebar is navigation, and the pane beside it has
@@ -2523,12 +2733,23 @@ function SessionRow({
   title,
   onRename,
   onOpen,
+  onPick,
+  selected,
   children,
   ...rest
 }: {
   title: string;
   onRename: (title: string) => void;
   onOpen: () => void;
+  /**
+   * Picking this row instead of opening it.
+   *
+   * Absent on a row that cannot be picked — an unopened session found on disk
+   * has no group and nothing to group with — and the row then behaves exactly
+   * as it did before any of this existed.
+   */
+  onPick?: (mods: { shift: boolean; toggle: boolean }) => void;
+  selected?: boolean;
   children: React.ReactNode;
   className?: string;
   'data-testid'?: string;
@@ -2536,6 +2757,28 @@ function SessionRow({
 }): JSX.Element {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
+  /**
+   * The touch way into a selection, since none of the others exist there.
+   *
+   * Shift, ctrl and right-click are a pointer and a keyboard, and §7 puts this
+   * app on a phone — `phone.spec.ts` keeps it there. Building only the modifier
+   * gestures would have made this whole feature invisible on half the clients,
+   * which is §3.5's shape: a capability the interface implies and the device
+   * cannot supply.
+   *
+   * A press that becomes a selection must not *also* open the session, so the
+   * click that follows is swallowed once. `pointermove` cancels, because a
+   * finger that started on a row and travelled is a scroll — treating it as a
+   * press would make the rail impossible to scroll on the one device that has
+   * to scroll it.
+   */
+  const held = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const swallow = useRef(false);
+
+  const stopHold = (): void => {
+    if (held.current !== null) clearTimeout(held.current);
+    held.current = null;
+  };
 
   const save = (): void => {
     setEditing(false);
@@ -2545,7 +2788,95 @@ function SessionRow({
 
   return (
     <div className="group/row relative min-w-0">
-      <button {...rest} onClick={onOpen}>
+      <button
+        {...rest}
+        data-selected={selected === true ? 'yes' : undefined}
+        aria-pressed={onPick === undefined ? undefined : selected === true}
+        /*
+          A modified click picks; a plain one opens.
+          
+          That way the gesture costs nothing to anybody not using it — the row
+          is still one click to the session it names — and the modifiers are the
+          ones every file manager and mail client already taught: shift for a
+          range, ctrl or cmd to add one.
+          
+          `metaKey` as well as `ctrlKey`, because on macOS ctrl-click *is* a
+          right-click: treating it as a toggle would make the menu below
+          unreachable there.
+        */
+        onPointerDown={(e) => {
+          /*
+           * Touch and pen only. A mouse already has three ways in.
+           *
+           * Without this, holding the left button for half a second selected
+           * instead of opening — which is not a gesture anybody performs on
+           * purpose with a mouse, and is one people perform by accident all the
+           * time. It also made the suite flaky: under parallel load the gap
+           * between `pointerdown` and `click` can pass the threshold, so a test
+           * that meant to open a session picked it instead.
+           *
+           * `!== 'mouse'` rather than `=== 'touch'`, so a stylus — which has no
+           * modifier keys and no second button either — is not left without a
+           * way in.
+           */
+          /*
+           * Cleared for *every* pointer, before anything else decides to leave.
+           *
+           * A press that selects swallows the click it generates, and on a real
+           * device that click always arrives. It does not arrive when the
+           * finger travels, or when the press came from a dispatched event —
+           * and a flag left standing then eats the next click this row sees,
+           * whenever that is. Clearing it below the mouse check left exactly
+           * that: long-press a row, come back later, click it, and nothing
+           * happens once.
+           */
+          swallow.current = false;
+          if (onPick === undefined || e.button !== 0 || e.pointerType === 'mouse') return;
+          const start = onPick;
+          held.current = setTimeout(() => {
+            held.current = null;
+            swallow.current = true;
+            // Toggling, so a second long press takes it back out — the only
+            // undo a finger has.
+            start({ shift: false, toggle: true });
+          }, 450);
+        }}
+        onPointerUp={stopHold}
+        onPointerLeave={stopHold}
+        onPointerCancel={stopHold}
+        onPointerMove={stopHold}
+        onClick={(e) => {
+          if (swallow.current) {
+            // The press already did something. Opening as well would leave the
+            // session it selected behind, in the pane.
+            swallow.current = false;
+            e.preventDefault();
+            return;
+          }
+          if (onPick !== undefined && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            onPick({ shift: e.shiftKey, toggle: e.metaKey || (e.ctrlKey && !e.shiftKey) });
+            return;
+          }
+          onOpen();
+        }}
+        /*
+          Right-click picks the row it lands on, unless it is already picked.
+          
+          Without that, right-clicking a row outside the selection would act on
+          a set the pointer is not over — the one thing a context menu must
+          never do. There is no menu element: the selection bar above the rows
+          *is* the menu, and this is what puts a row into it.
+        */
+        onContextMenu={
+          onPick === undefined
+            ? undefined
+            : (e) => {
+                e.preventDefault();
+                if (selected !== true) onPick({ shift: false, toggle: false });
+              }
+        }
+      >
         {editing ? (
           <input
             className="field min-w-0 px-1 py-0 text-sm"
