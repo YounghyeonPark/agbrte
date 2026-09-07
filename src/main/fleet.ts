@@ -2043,7 +2043,26 @@ export class Fleet extends EventEmitter {
       owners.set(owner.instanceId, owner);
     }
 
-    if (owners.size > 1) {
+    /*
+     * Refused across **machines**, not across entries — which is what the
+     * paragraph above always claimed and what the code did not do.
+     *
+     * The fleet keeps one entry per attached *workspace*, so two folders on one
+     * machine are two entries. §8 gives that machine one host process, and a
+     * host holds all its workspaces in one `SessionManager` — so it can group
+     * across them, and does. The check counted entries, refused before asking,
+     * and told somebody that "both folders have to be open on the same one"
+     * when they already were: a remedy nobody could act on, describing a state
+     * that was already true.
+     *
+     * An unreported `machineId` still counts as its own machine. §6.7's rule
+     * for absence is *cannot tell*, and folding an unknown in with a known one
+     * would make the more confident of the two refusals out of a fact nobody
+     * established — keyed on the entry's own `instanceId` there, which is
+     * exactly as strong as the whole check used to be.
+     */
+    const machineOf = (entry: Entry): string => entry.machineId ?? `instance:${entry.instanceId}`;
+    if (new Set([...owners.values()].map(machineOf)).size > 1) {
       const entries = [...owners.values()];
       const where = entries.map(labelOf).sort();
       /*
@@ -2056,21 +2075,21 @@ export class Fleet extends EventEmitter {
        * `instanceId` in that case, which is what this check used before and is
        * exactly as strong as it ever was.
        */
-      const machines = new Set(entries.map((e) => e.machineId ?? `instance:${e.instanceId}`));
-      if (machines.size > 1) {
-        throw new AttachRefused(
-          `those sessions are on ${machines.size} machines (${where.join(', ')}), and sessions ` +
-            'in a group message each other, which does not cross machines yet. Group the ones ' +
-            'on each machine separately.',
-        );
-      }
+      const machines = new Set(entries.map(machineOf));
       throw new AttachRefused(
-        `those sessions are in ${owners.size} workspaces on one machine (${where.join(', ')}), ` +
-          'served by separate hosts — a group is delivered inside one host, so both folders ' +
-          'have to be open on the same one.',
+        `those sessions are on ${machines.size} machines (${where.join(', ')}), and sessions ` +
+          'in a group message each other, which does not cross machines yet. Group the ones ' +
+          'on each machine separately.',
       );
     }
 
+    /*
+     * Any of them, because on one machine they all reach the same host (§8).
+     *
+     * The first is as good as any for the same reason a host row's acts route
+     * through its first workspace: which entry answered is not a fact about the
+     * group, only about which socket carried the request.
+     */
     const [entry] = [...owners.values()];
     if (entry === undefined) throw new AttachRefused('no attached host owns those sessions');
     if (!entry.connection.supports('session.group')) {
@@ -2078,6 +2097,19 @@ export class Fleet extends EventEmitter {
         `the host for ${labelOf(entry)} is too old to group sessions. Update it and try again.`,
       );
     }
+
+    /*
+     * Nothing is resumed first, and that was tried.
+     *
+     * `groupSessions` looks in the host's memory, and a host loads a session on
+     * demand — so grouping one nobody has opened looked like the next thing to
+     * solve. It is not reachable: `owners` is filled by `sessions.list`, the
+     * host lists only what it has loaded, and the rail offers no way to pick a
+     * row it found on disk. A resume loop here would be a round trip per
+     * session for a case nothing can produce, which is the kind of code this
+     * project keeps deleting rather than writing.
+     */
+
     return entry.connection.groupSessions(sessionIds, name, groupId);
   }
 

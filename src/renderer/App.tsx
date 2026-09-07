@@ -233,12 +233,11 @@ export function App(): JSX.Element {
    * One `machine` field makes spanning unrepresentable rather than validated —
    * picking a row on another machine moves the selection there.
    *
-   * `machine` is the row's key, not an `instanceId`: one machine holds several
-   * folders (§8) and the rail groups by machine, so that is the boundary a
-   * person can actually see. Folders *within* it can still be refused by the
-   * host — a group is delivered by one host process and two folders may be
-   * served by two — and that refusal arrives with its own remedy, which is
-   * better than a rule here that guesses at how they were attached.
+   * `machine` is the row's key, not an `instanceId`, and that is exactly the
+   * right boundary rather than a convenient one: §8 gives a machine one host,
+   * a host holds all its folders in one manager, and that manager groups across
+   * them. The rail groups by machine too, so what a person can select is what
+   * the host can do.
    */
   const [picked, setPicked] = useState<{ machine: string; ids: string[] }>({
     machine: '',

@@ -561,12 +561,27 @@ describe('a group does not span machines', () => {
    * refusals with different remedies, and before this field existed the fleet
    * could only give the more confident of the two.
    */
+  /*
+   * One host per **machine**, which is what §8 says and what this fixture used
+   * to get wrong.
+   *
+   * Keyed by workspace, it built a host per folder — a topology the product
+   * cannot produce, since `connectOrSpawn` dials the machine's single host and
+   * binds a folder to it. The difference is not academic: it is the whole
+   * subject of the refusal below, and with a host per folder the fixture agreed
+   * with a check that was wrong about the product.
+   *
+   * A machine with no id keeps a host per folder, because that is the honest
+   * reading of an unreported `machineId` (§6.7) and the fleet treats it the same
+   * way — as its own machine.
+   */
   function makeFleet(machineId?: string): Fleet {
     const hosts = new Map<string, SessionHostServer>();
     const fleet = new Fleet({
       runtimes: RUNTIMES,
       connect: async ({ workspaceRoot }) => {
-        let server = hosts.get(workspaceRoot);
+        const key = machineId ?? workspaceRoot;
+        let server = hosts.get(key);
         if (server === undefined) {
           const identity = await openWorkspace(workspaceRoot);
           const registry = new RuntimeRegistry();
@@ -582,6 +597,18 @@ describe('a group does not span machines', () => {
           managers.push(manager);
           server = new SessionHostServer({
             manager,
+            // The second folder joins this host's manager rather than starting
+            // one, which is what makes it one host holding several workspaces.
+            openWorkspace: async (root) => {
+              const added = await manager.addWorkspace(root);
+              return {
+                info: {
+                  instanceId: added.instanceId,
+                  lineageId: identity.lineageId,
+                  root: added.root,
+                },
+              };
+            },
             identity: {
               instanceId: identity.instanceId,
               lineageId: identity.lineageId,
@@ -590,11 +617,14 @@ describe('a group does not span machines', () => {
               ...(machineId === undefined ? {} : { machineId }),
             },
           });
-          hosts.set(workspaceRoot, server);
+          hosts.set(key, server);
         }
         const pair = memoryChannelPair<SessionCommand, SessionMessage>();
         server.accept(pair.host);
-        return new HostConnection({ channel: pair.main });
+        // Naming the folder, which this fixture never did: without it the host
+        // binds its first workspace and every attach comes back as the same
+        // one, so "two folders on one machine" was never actually two.
+        return new HostConnection({ channel: pair.main, workspace: workspaceRoot });
       },
     });
     fleets.push(fleet);
@@ -639,15 +669,21 @@ describe('a group does not span machines', () => {
     expect((await fleet.get(there.sessionId)).group).toBeUndefined();
   });
 
-  it('says "two folders on one machine" when that is what it is, not "two machines"', async () => {
+  it('groups across two folders on one machine, which is one host', async () => {
     /*
-     * The same-workspace assumption that was hiding in `Fleet.group`.
+     * The refusal that was refusing something that works.
      *
-     * The check keyed on `instanceId` — one *checkout* — and the sentence said
-     * "machines", so two folders on one build box were refused with a claim that
-     * was false and a remedy that pointed at machines nobody was using. What is
-     * actually required is one *host process*, because a group is delivered by a
-     * lookup in one manager's session map.
+     * `Fleet.group` kept one entry per attached *workspace* and counted those,
+     * so two folders on one machine were two owners and the call was refused
+     * before the host was asked. But §8 gives a machine one host process, and a
+     * host holds all its folders in one `SessionManager` — whose `groupSessions`
+     * looks in one map and does not care which workspace a session came from.
+     *
+     * The sentence it refused with made it worse: *"a group is delivered inside
+     * one host, so both folders have to be open on the same one"* — which they
+     * already were, and which nothing a person could do would make more true.
+     * The comment above the check claimed a host holding several workspaces
+     * would satisfy it; the code counted workspaces, so it never did.
      */
     const fleet = makeFleet('machine-1');
     const one = await root();
@@ -655,8 +691,8 @@ describe('a group does not span machines', () => {
     const hostA = await fleet.attach(local(one));
     const hostB = await fleet.attach(local(two));
 
-    // Two checkouts, one machine — which is the fact the fleet could not state
-    // before there was a machine id to state it with.
+    // Two checkouts, one machine — the fact the fleet could not state before
+    // there was a machine id to state it with.
     expect(hostA.instanceId).not.toBe(hostB.instanceId);
     expect(hostA.machineId).toBe('machine-1');
     expect(hostB.machineId).toBe('machine-1');
@@ -664,17 +700,10 @@ describe('a group does not span machines', () => {
     const here = await fleet.createSession(hostA.instanceId, { title: 'here', goal: 'g' });
     const there = await fleet.createSession(hostB.instanceId, { title: 'there', goal: 'g' });
 
-    const refusal = fleet.group([here.sessionId, there.sessionId], 'across');
-    await expect(refusal).rejects.toThrow(/workspaces on one machine/);
-    // And explicitly not the other sentence, which would send somebody to look
-    // at a second machine that does not exist.
-    await expect(
-      fleet.group([here.sessionId, there.sessionId], 'across'),
-    ).rejects.not.toThrow(/on 2 machines/);
-
-    // Still refused rather than half-made: nothing was written on either side.
-    expect((await fleet.get(here.sessionId)).group).toBeUndefined();
-    expect((await fleet.get(there.sessionId)).group).toBeUndefined();
+    const grouped = await fleet.group([here.sessionId, there.sessionId], 'across folders');
+    expect(grouped).toHaveLength(2);
+    expect((await fleet.get(here.sessionId)).group?.name).toBe('across folders');
+    expect((await fleet.get(there.sessionId)).group?.name).toBe('across folders');
   });
 
   it('groups sessions that are on one host, through the same call', async () => {
