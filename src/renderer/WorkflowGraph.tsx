@@ -22,7 +22,7 @@
  * function of the document and reflows only when the document changes.
  */
 
-import type { JSX } from 'react';
+import type { JSX, KeyboardEvent } from 'react';
 import type { NodeState } from '@shared/workflow/schedule.js';
 import type { Workflow } from '../shared/types/index.js';
 import { layoutWorkflow, NODE_HEIGHT, NODE_WIDTH } from '../shared/workflow/layout.js';
@@ -62,8 +62,18 @@ function fit(text: string, chars: number): string {
  * the run thinks it is doing, and saying both at once in one border says
  * neither.
  */
-function boxClass(refused: boolean, at: NodeState | undefined): string {
+function boxClass(
+  refused: boolean,
+  at: NodeState | undefined,
+  chosen = false,
+  waiting = false,
+): string {
+  // Waiting for a partner outranks everything: it is the one state that says
+  // what the *next* click will do, and a border that hid it would leave
+  // somebody mid-gesture with nothing telling them a gesture is open.
+  if (waiting) return 'fill-raised stroke-accent';
   if (refused) return 'fill-panel stroke-state-fail';
+  if (chosen) return 'fill-raised stroke-ink';
   switch (at) {
     case 'done':
       return 'fill-panel stroke-accent';
@@ -80,6 +90,9 @@ export function WorkflowGraph({
   workflow,
   problems = [],
   states,
+  selected,
+  linking,
+  onPick,
 }: {
   workflow: Workflow;
   problems?: Array<{ node?: string; message: string }>;
@@ -95,6 +108,24 @@ export function WorkflowGraph({
    * it is the ordinary reading of absence rather than a value anybody writes.
    */
   states?: Readonly<Record<string, NodeState>>;
+  /**
+   * Which node the editor has selected, when this is an editing surface (§4.4).
+   *
+   * Absent when the graph is only a picture — a run, or a document being read —
+   * and then nothing here responds to a click.
+   */
+  selected?: string | null;
+  /**
+   * The node waiting for a partner, while an edge is being drawn.
+   *
+   * Two clicks make an edge: one names the predecessor, the next names what
+   * follows it. Held by the caller rather than here because the caller is what
+   * turns the pair into a `needs`, and a mode the picture owned privately would
+   * be a mode nothing could cancel.
+   */
+  linking?: string | null;
+  /** Clicking a node. Absent makes the graph a picture again. */
+  onPick?: (nodeId: string) => void;
 }): JSX.Element {
   const laid = layoutWorkflow(workflow.nodes);
   const refused = refusedNodes(problems);
@@ -157,6 +188,8 @@ export function WorkflowGraph({
         {laid.nodes.map((node) => {
           const bad = refused.has(node.id);
           const at = states?.[node.id];
+          const chosen = node.id === selected;
+          const waiting = node.id === linking;
           return (
             <g
               key={node.id}
@@ -166,6 +199,28 @@ export function WorkflowGraph({
               /* On the group rather than the rect, so a test can ask what a
                  node is doing without knowing which shape carries the colour. */
               data-state={at ?? (states === undefined ? undefined : 'unstarted')}
+              data-selected={chosen ? 'yes' : undefined}
+              /*
+                Focusable and pressable when there is something to press.
+                
+                An SVG group takes neither by default, so a canvas that only
+                answered the mouse would be a canvas §7's phone and anybody's
+                keyboard could not use — the same rule the rail's rows follow.
+              */
+              {...(onPick === undefined
+                ? {}
+                : {
+                    role: 'button' as const,
+                    tabIndex: 0,
+                    'aria-pressed': chosen,
+                    className: 'cursor-pointer',
+                    onClick: () => onPick(node.id),
+                    onKeyDown: (e: KeyboardEvent) => {
+                      if (e.key !== 'Enter' && e.key !== ' ') return;
+                      e.preventDefault();
+                      onPick(node.id);
+                    },
+                  })}
             >
               <rect
                 x={node.x}
@@ -184,7 +239,7 @@ export function WorkflowGraph({
                    run whatever the run thinks it is doing, and saying both at
                    once in one border says neither.
                  */
-                className={boxClass(bad, at)}
+                className={boxClass(bad, at, chosen, waiting)}
               />
               <text
                 x={node.x + 10}

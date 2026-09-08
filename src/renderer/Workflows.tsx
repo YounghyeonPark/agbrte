@@ -52,6 +52,45 @@ function nodeCount(n: number): string {
   return `${n} node${n === 1 ? '' : 's'}`;
 }
 
+/**
+ * The name a document will actually land under.
+ *
+ * `saveWorkflow` replaces anything outside `[a-zA-Z0-9._-]` with a dash, so a
+ * name typed with a space in it becomes a file nobody named. Shown before the
+ * file exists rather than discovered afterwards — the attach form makes the
+ * same promise about a folder, for the same reason.
+ */
+function safeId(typed: string): string {
+  return typed.trim().replace(/[^a-zA-Z0-9._-]/g, '-');
+}
+
+/**
+ * What a new document starts as: one node, filled in enough to be legal.
+ *
+ * Not empty. `validateWorkflow` refuses a workflow with no nodes and a node
+ * with no `outOfScope` — §4.3's rule, because a child without exclusions reads
+ * widely to re-derive context it was never given — so an empty start would open
+ * the editor onto a list of findings. A skeleton opens onto something to change.
+ */
+function skeleton(id: string): Workflow {
+  return {
+    id,
+    name: id,
+    goal: 'what this whole workflow is for',
+    nodes: [
+      {
+        id: 'first',
+        title: 'first',
+        scope: 'the one thing this part does',
+        outOfScope: ['everything the other parts do'],
+        acceptance: ['how anybody can tell it is done'],
+        contract: { summaryMaxTokens: 800, artifacts: [] },
+        tokenCeiling: 20_000,
+      },
+    ],
+  };
+}
+
 export function Workflows({
   workspaces,
   schedules,
@@ -95,6 +134,11 @@ export function Workflows({
   const anything = workspaces.some((w) => (w.found?.length ?? 0) > 0);
   /** `instanceId::id` of the document open in the editor, if any. */
   const [editing, setEditing] = useState<string | null>(null);
+  /** The workspace whose `New workflow…` form is open, if any. */
+  const [making, setMaking] = useState<string | null>(null);
+  const [draftId, setDraftId] = useState('');
+  /** A document being written that is not on disk yet — id and where it will go. */
+  const [started, setStarted] = useState<{ instanceId: string; id: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   return (
@@ -255,6 +299,117 @@ export function Workflows({
               ))}
             </ul>
           )}
+      {onSave !== undefined ? (
+        <div className="grid gap-2" data-testid="workflow-new">
+          {making === host.instanceId ? (
+            <form
+              className="border-line grid gap-2 rounded-surface border p-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const id = safeId(draftId);
+                if (id === '') return;
+                setMaking(null);
+                setDraftId('');
+                setStarted({ instanceId: host.instanceId, id });
+                setEditing(`${host.instanceId}::${id}`);
+              }}
+            >
+              <label className="text-muted grid gap-1 text-[11px]">
+                A name for it
+                <input
+                  className="field text-[12px]"
+                  data-testid="workflow-new-id"
+                  autoFocus
+                  value={draftId}
+                  onChange={(e) => setDraftId(e.target.value)}
+                  placeholder="nightly-sweep"
+                />
+                {/*
+                  The filename, before the file exists.
+
+                  `saveWorkflow` replaces anything outside `[a-zA-Z0-9._-]` with
+                  a dash, so a name with a space in it lands under a name nobody
+                  typed. The attach form makes the same promise about a folder
+                  for the same reason: a thing appearing on disk under a name
+                  you did not choose is a thing you go looking for later.
+                */}
+                <span className="opacity-70" data-testid="workflow-new-file">
+                  {draftId.trim() === ''
+                    ? 'templates/….workflow.json'
+                    : `templates/${safeId(draftId)}.workflow.json`}
+                </span>
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="submit"
+                  className="btn text-accent text-[11px]"
+                  data-testid="workflow-new-start"
+                  disabled={safeId(draftId) === ''}
+                >
+                  Start it
+                </button>
+                <button
+                  type="button"
+                  className="btn-quiet text-[11px]"
+                  onClick={() => {
+                    setMaking(null);
+                    setDraftId('');
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div>
+              <button
+                type="button"
+                className="btn text-[11px]"
+                data-testid="workflow-new-open"
+                onClick={() => setMaking(host.instanceId)}
+              >
+                New workflow…
+              </button>
+            </div>
+          )}
+
+          {/*
+            The editor, over a document that is not on disk yet.
+
+            Nothing is written until Save, which is what makes an abandoned one
+            cost nothing — and `workflow.save` refuses a document with findings,
+            so a skeleton that cannot run cannot land in the repo either.
+          */}
+          {started?.instanceId === host.instanceId &&
+          editing === `${host.instanceId}::${started.id}` ? (
+            <WorkflowEditor
+              initial={skeleton(started.id)}
+              saving={saving}
+              saveError={saveError}
+              onCancel={() => {
+                setEditing(null);
+                setStarted(null);
+                setSaveError(null);
+              }}
+              onSave={(made) => {
+                setSaving(true);
+                setSaveError(null);
+                void onSave(host.instanceId, started.id, made)
+                  .then((problems) => {
+                    if (problems.length === 0) {
+                      setEditing(null);
+                      setStarted(null);
+                    } else setSaveError(problems.map((p) => p.message).join('; '));
+                  })
+                  .catch((err: unknown) => {
+                    setSaveError(err instanceof Error ? err.message : String(err));
+                  })
+                  .finally(() => setSaving(false));
+              }}
+            />
+          ) : null}
+        </div>
+      ) : null}
         </div>
       ))}
 

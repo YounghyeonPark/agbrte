@@ -81,6 +81,19 @@ export function WorkflowEditor({
 }): JSX.Element {
   const [draft, setDraft] = useState<Workflow>(initial);
   const [selected, setSelected] = useState<string | null>(initial.nodes[0]?.id ?? null);
+  /**
+   * The predecessor half of an edge being drawn, or `null` when none is.
+   *
+   * Two clicks make an edge: one names what comes first, the next names what
+   * follows it. That reads in the order people say it — "scan, then tests" —
+   * and it is the same two taps on a phone, where a drag has no second button
+   * to cancel with.
+   *
+   * The pair *toggles*: clicking a partner that is already linked removes the
+   * edge. One gesture for both directions, because an SVG path a millimetre
+   * wide is not something to ask anybody to hit.
+   */
+  const [linking, setLinking] = useState<string | null>(null);
 
   // Recomputed on every keystroke, which is the point. The refusals are cheap —
   // they look at the document and nothing else — so there is no reason to make
@@ -152,22 +165,55 @@ export function WorkflowEditor({
         />
       </div>
 
-      <WorkflowGraph workflow={draft} problems={problems} />
+      {/*
+        The picture is the selector now, which is what the header meant by "the
+        graph selects, the form writes". It used to be a row of buttons under a
+        picture that could not be touched — two lists of the same nodes, one of
+        them showing where they sit and the other the only one you could use.
+      */}
+      <WorkflowGraph
+        workflow={draft}
+        problems={problems}
+        selected={selected}
+        linking={linking}
+        onPick={(id) => {
+          if (linking === null || linking === id) {
+            // A second click on the same node cancels rather than making a
+            // self-edge, which `validateWorkflow` would refuse anyway — better
+            // to answer the gesture than to answer with a finding.
+            setLinking(null);
+            setSelected(id);
+            return;
+          }
+          const already = (draft.nodes.find((n) => n.id === id)?.needs ?? []).includes(linking);
+          setNeeds(
+            id,
+            already
+              ? (draft.nodes.find((n) => n.id === id)?.needs ?? []).filter((d) => d !== linking)
+              : [...(draft.nodes.find((n) => n.id === id)?.needs ?? []), linking],
+          );
+          setLinking(null);
+          setSelected(id);
+        }}
+      />
 
       <div className="flex flex-wrap items-center gap-2">
-        {draft.nodes.map((n) => (
+        {linking !== null ? (
+          /* Said out loud while it is open. A mode nothing announces is a mode
+             the next click is a surprise from. */
+          <span className="control-note" data-testid="wf-linking">
+            click what follows {linking} — or {linking} again to cancel
+          </span>
+        ) : selected !== null ? (
           <button
-            key={n.id}
             type="button"
             className="btn text-[11px]"
-            data-testid="wf-select-node"
-            data-id={n.id}
-            aria-pressed={selected === n.id}
-            onClick={() => setSelected(n.id)}
+            data-testid="wf-link"
+            onClick={() => setLinking(selected)}
           >
-            {n.id}
+            {selected} then…
           </button>
-        ))}
+        ) : null}
         <button type="button" className="btn text-[11px]" data-testid="wf-add-node" onClick={addNode}>
           + node
         </button>

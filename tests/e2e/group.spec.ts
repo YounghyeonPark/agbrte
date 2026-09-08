@@ -17,7 +17,7 @@
  */
 
 import { expect, test } from '@playwright/test';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { launch, makeRepo } from './harness.js';
 import { addAgent, createSession, openSession } from './actions.js';
@@ -613,6 +613,177 @@ test('draws a run as a graph, with the node it is on', async () => {
     expect(into).toEqual(['lint', 'tests']);
 
     await expect(page.locator('[data-testid=run-graph] summary')).toContainText('1 of 4 started');
+  } finally {
+    await agbrte.close();
+  }
+});
+
+/*
+ * Editing a workflow by clicking its picture (§4.4).
+ *
+ * The editor's own header set the split: "structure is geometry and prose is
+ * not — the graph selects, the form writes". The graph did neither. It was a
+ * picture with a row of buttons under it naming the same nodes again, and the
+ * one thing a graph is unarguably better at — saying what waits on what — was
+ * a textarea of node ids typed by hand.
+ *
+ * Two clicks make an edge, in the order people say it: "scan, then lint". The
+ * same two taps work on a phone, where a drag has no second button to cancel
+ * with, and the pair toggles so removing one is the same gesture as making it —
+ * an SVG path a millimetre wide is not a thing to ask anybody to hit.
+ */
+test('draws an edge by clicking two nodes, and writes it to the file', async () => {
+  const repo = await makeRepo();
+  await mkdir(join(repo, '.agbrte', 'templates'), { recursive: true });
+  const node = (id: string, needs?: string[]) => ({
+    id,
+    title: id,
+    scope: `do the ${id} part`,
+    outOfScope: ['everything else'],
+    acceptance: ['it is done'],
+    contract: { summaryMaxTokens: 800, artifacts: [] },
+    tokenCeiling: 20_000,
+    ...(needs === undefined ? {} : { needs }),
+  });
+  await writeFile(
+    join(repo, '.agbrte', 'templates', 'sweep.workflow.json'),
+    JSON.stringify({
+      id: 'sweep',
+      name: 'Nightly sweep',
+      goal: 'keep the tree green overnight',
+      nodes: [node('scan'), node('tests', ['scan']), node('lint')],
+    }),
+    'utf8',
+  );
+
+  const agbrte = await launch(repo);
+  try {
+    const page = agbrte.window;
+    await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
+    await page.click('[data-testid=show-workflows]');
+    await page.click('[data-testid=workflow-shape] summary');
+    await page.click('[data-testid=workflow-edit]');
+    await page.waitForSelector('[data-testid=wf-node-form]', { timeout: 20_000 });
+
+    const box = (id: string) => page.locator(`[data-testid=workflow-node][data-id=${id}]`);
+
+    // The picture selects, which it could not before.
+    await box('lint').click();
+    await expect(box('lint')).toHaveAttribute('data-selected', 'yes');
+
+    await box('scan').click();
+    await page.click('[data-testid=wf-link]');
+    // The open gesture says what the next click will do. A mode nothing
+    // announces is a mode the next click is a surprise from.
+    await expect(page.locator('[data-testid=wf-linking]')).toContainText('what follows scan');
+    await box('lint').click();
+
+    const edges = () =>
+      page
+        .locator('[data-testid=workflow-edge]')
+        .evaluateAll((els) =>
+          els.map((e) => `${e.getAttribute('data-from')}->${e.getAttribute('data-to')}`).sort(),
+        );
+    expect(await edges()).toEqual(['scan->lint', 'scan->tests']);
+
+    /*
+     * And the layout moved with it, which is the property that makes stored
+     * positions unnecessary: `lint` needs `scan` now, so it belongs in the
+     * second column and is drawn there. A canvas that remembered where somebody
+     * dragged a box would put coordinates in the file, and every review would
+     * then have to tell a change of meaning from a change of mind.
+     */
+    const columns = await page
+      .locator('[data-testid=workflow-node]')
+      .evaluateAll((els) =>
+        Object.fromEntries(
+          els.map((e) => [
+            e.getAttribute('data-id'),
+            Math.round(Number(e.querySelector('rect')?.getAttribute('x') ?? 0)),
+          ]),
+        ),
+      );
+    expect(columns['lint']).toBe(columns['tests']);
+    expect(columns['lint']).toBeGreaterThan(columns['scan'] ?? 0);
+
+    // The same gesture takes it back out.
+    await box('scan').click();
+    await page.click('[data-testid=wf-link]');
+    await box('lint').click();
+    expect(await edges()).toEqual(['scan->tests']);
+
+    // And back in, then saved — the file is the artefact, reviewed as a diff.
+    await box('scan').click();
+    await page.click('[data-testid=wf-link]');
+    await box('lint').click();
+    await page.click('[data-testid=wf-save]');
+
+    await expect
+      .poll(
+        async () =>
+          (
+            JSON.parse(
+              await readFile(join(repo, '.agbrte', 'templates', 'sweep.workflow.json'), 'utf8'),
+            ) as { nodes: Array<{ id: string; needs?: string[] }> }
+          ).nodes.find((n) => n.id === 'lint')?.needs,
+        { timeout: 20_000 },
+      )
+      .toEqual(['scan']);
+  } finally {
+    await agbrte.close();
+  }
+});
+
+/*
+ * Making one, which the app could not do at all (§4.4).
+ *
+ * The pane could list, validate, draw, edit, run and schedule a workflow, and
+ * the only way to bring one into existence was to write the JSON by hand — so
+ * every one of those controls was for documents somebody had made elsewhere.
+ */
+test('makes a new workflow, under the name it says it will use', async () => {
+  const repo = await makeRepo();
+  const agbrte = await launch(repo);
+
+  try {
+    const page = agbrte.window;
+    await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
+    await page.click('[data-testid=show-workflows]');
+    await page.click('[data-testid=workflow-new-open]');
+
+    await page.fill('[data-testid=workflow-new-id]', 'nightly sweep');
+    /*
+     * The filename, before the file exists. `saveWorkflow` replaces anything
+     * outside `[a-zA-Z0-9._-]` with a dash, so a name with a space lands under
+     * one nobody typed — and a thing appearing on disk under a name you did not
+     * choose is a thing you go looking for later.
+     */
+    await expect(page.locator('[data-testid=workflow-new-file]')).toHaveText(
+      'templates/nightly-sweep.workflow.json',
+    );
+    await page.click('[data-testid=workflow-new-start]');
+
+    // A skeleton, not an empty document: `validateWorkflow` refuses a workflow
+    // with no nodes, so an empty start would open onto a list of findings.
+    await expect(page.locator('[data-testid=workflow-node]')).toHaveCount(1);
+    await page.click('[data-testid=wf-save]');
+
+    await expect
+      .poll(
+        async () =>
+          (
+            JSON.parse(
+              await readFile(
+                join(repo, '.agbrte', 'templates', 'nightly-sweep.workflow.json'),
+                'utf8',
+              ),
+            ) as { id: string }
+          ).id,
+        { timeout: 20_000 },
+      )
+      .toBe('nightly-sweep');
+    // And it joins the list it was made from, without a reload.
+    await expect(page.locator('[data-testid=workflow-row]')).toHaveCount(1);
   } finally {
     await agbrte.close();
   }

@@ -189,7 +189,10 @@ test('edits one, refuses to save it broken, and writes it back canonically', asy
      * refusal §4.3 raises at spawn, from the same function — and the save must
      * go dark rather than offering a round trip whose only outcome is this list.
      */
-    await page.locator('[data-testid=wf-select-node][data-id=scan]').click();
+    // Selected by clicking the picture. The row of buttons that used to name
+    // the nodes a second time is gone — the graph selects now, which is what
+    // the editor's own header always said it did.
+    await page.locator('[data-testid=workflow-node][data-id=scan]').click();
     await page.locator('[data-testid=wf-outofscope]').fill('');
     await expect(page.locator('[data-testid=wf-node-problems]')).toContainText(
       'outOfScope is required',
