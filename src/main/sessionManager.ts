@@ -916,6 +916,9 @@ export class SessionManager extends EventEmitter {
       checklist: [],
       artifacts: [],
       needsAttention: null,
+      // Carried onto the live record as well as into the log, because the rail
+      // draws `Session` and this is what tells a run from an ordinary session.
+      ...(input.workflow !== undefined ? { workflow: input.workflow } : {}),
       ...(input.budget !== undefined ? { budget: input.budget } : {}),
       ...(input.splitGrant !== undefined && input.splitGrant.count > 0
         ? {
@@ -4507,6 +4510,9 @@ export class SessionManager extends EventEmitter {
       checklist: projection.checklist,
       artifacts: projection.artifacts,
       needsAttention: projection.needsAttention,
+      // From the fold, which is where it has always been — a run that came back
+      // after a host restart is still a run, and the rail should still say so.
+      ...(projection.workflow !== undefined ? { workflow: projection.workflow } : {}),
       ...(grant != null
         ? {
             standingGrant: {

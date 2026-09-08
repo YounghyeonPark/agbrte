@@ -571,6 +571,19 @@ export interface Session {
   checklist: ChecklistItem[];
   artifacts: ArtifactRef[];
   budget?: SessionBudget;
+  /**
+   * The workflow document this session is a run of (§4.4).
+   *
+   * On the live record and not only on the projection, because the rail draws
+   * `Session` and this is the one fact that tells a workflow run from an
+   * ordinary session there. It was written into `session.created` from the
+   * start and folded into `SessionProjection` — everything except the last hop
+   * to what a client actually reads, which is §16's shape in miniature: the
+   * fact was durable, plumbed, and invisible.
+   *
+   * Absent for an ordinary session, which is almost all of them.
+   */
+  workflow?: string;
   /** Splits this session may make without asking (§17 Q8). Absent means none. */
   splitGrant?: SplitGrant;
   /** Runs without asking (§17 Q19). Absent means every `ask` asks, as always. */

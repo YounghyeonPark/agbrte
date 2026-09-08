@@ -17,7 +17,7 @@
  */
 
 import { expect, test } from '@playwright/test';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { launch, makeRepo } from './harness.js';
 import { addAgent, createSession, openSession } from './actions.js';
@@ -444,6 +444,82 @@ test('groups sessions picked in the rail, and ungroups them again', async () => 
     });
     // Opening clears what was picked, so the bar goes rather than going stale.
     await expect(bar).toHaveCount(0);
+  } finally {
+    await agbrte.close();
+  }
+});
+
+/*
+ * A workflow run reads as one in the rail (§4.4).
+ *
+ * The two kinds of session look identical there otherwise — same title, same
+ * state, same row — and they are not the same thing to open: one is a
+ * conversation with an agent, the other is a graph that spawns children and
+ * finishes on its own. §4.4 draws that line as "a run is a session and a
+ * document is a file", and the rail was drawing only half of it.
+ *
+ * The fact was there the whole time. `session.created` has carried the workflow
+ * id since §4.4 shipped and the projection folds it; it stopped one hop short
+ * of `Session`, which is the record a client reads — durable, plumbed, and
+ * invisible.
+ */
+test('tells a workflow run from a seat somebody is driving', async () => {
+  const repo = await makeRepo();
+  await mkdir(join(repo, '.agbrte', 'templates'), { recursive: true });
+  await writeFile(
+    join(repo, '.agbrte', 'templates', 'sweep.workflow.json'),
+    JSON.stringify({
+      id: 'sweep',
+      name: 'Nightly sweep',
+      goal: 'keep the tree green overnight',
+      nodes: [
+        {
+          id: 'tests',
+          title: 'tests',
+          scope: 'run the suite and report',
+          outOfScope: ['changing product code'],
+          acceptance: ['it ran'],
+          contract: { summaryMaxTokens: 800, artifacts: [] },
+          tokenCeiling: 20_000,
+        },
+      ],
+    }),
+    'utf8',
+  );
+
+  const agbrte = await launch(repo);
+  try {
+    const page = agbrte.window;
+    await createSession(page, 'an ordinary seat');
+
+    await page.click('[data-testid=show-workflows]');
+    await page.waitForSelector('[data-testid=workflow-row]', { timeout: 20_000 });
+    await page.click('[data-testid=workflow-run]');
+    await page.click('[data-testid=show-workflows]');
+
+    /*
+     * The run appears in the rail at all, which is the half that broke first:
+     * starting one through the channel directly created the session on the host
+     * and left the list without it — a run that had started and could not be
+     * found. It goes through the store now, like every other way a session is
+     * made.
+     */
+    const rows = page.locator('[data-testid=host] [data-testid=session]');
+    await expect(rows.filter({ hasText: 'Nightly sweep' })).toHaveCount(1, { timeout: 20_000 });
+
+    const run = rows.filter({ hasText: 'Nightly sweep' });
+    await expect(run.locator('[data-testid=session-workflow]')).toHaveAttribute(
+      'data-workflow',
+      'sweep',
+    );
+    // Words rather than a glyph: the group tag beside it is already an
+    // accent-coloured `· name`, and a second one would read as a group.
+    await expect(run.locator('[data-testid=session-workflow]')).toContainText('run of sweep');
+
+    // And the seat is left alone. A marker on every row says nothing.
+    await expect(
+      rows.filter({ hasText: 'an ordinary seat' }).locator('[data-testid=session-workflow]'),
+    ).toHaveCount(0);
   } finally {
     await agbrte.close();
   }

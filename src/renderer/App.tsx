@@ -1299,13 +1299,9 @@ export function App(): JSX.Element {
              * are handed over together — and a host that refuses either says so
              * in its own sentence, which the panel prints verbatim.
              */
-            onRun={async (instanceId, workflowId, ceiling) => {
-              await window.agbrte.workflows.run(instanceId, workflowId, {
-                tokenCeiling: ceiling,
-                spent: 0,
-                reservedForChildren: 0,
-              });
-            }}
+            onRun={(instanceId, workflowId, ceiling) =>
+              store.runWorkflow(instanceId, workflowId, ceiling)
+            }
             onSchedule={async (instanceId, wanted) => {
               // The host's answer, not the draft: it read the file back, and a
               // pane showing what it hoped for would be showing what no file
@@ -2629,6 +2625,7 @@ function HostGroup({
               <LiveDot state={s.state} />
               <span className={quietTone(s.state)}>{s.state.replace(/_/g, ' ')}</span>
               <FolderTag name={folderOf(s.instanceId)} />
+              {s.workflow !== undefined && <WorkflowTag id={s.workflow} />}
               {s.group !== undefined && <GroupTag name={s.group.name} />}
             </span>
           </SessionRow>
@@ -2984,6 +2981,37 @@ function FolderTag({ name }: { name: string | null }): JSX.Element | null {
  * meaning the model does not have. Truncated with the row, because a long group
  * name must not be the thing that widens a 300px column.
  */
+/**
+ * A session that is a workflow run rather than a seat somebody is driving (§4.4).
+ *
+ * The two kinds look identical in the rail otherwise — same title, same state,
+ * same row — and they are not the same thing to open: one is a conversation
+ * with an agent, the other is a graph that spawns children and finishes on its
+ * own. §4.4 draws that line as "a run is a session and a document is a file",
+ * and this is the half of it the rail was missing.
+ *
+ * Words rather than a glyph, and `run of` rather than a bare name: `GroupTag`
+ * beside it is already an accent-coloured `· name`, so a second one would read
+ * as a group at the size the rail draws these. The document's id is the useful
+ * half — a machine running three routines has three of these.
+ *
+ * `Session.workflow` had been written into `session.created` and folded into
+ * the projection since §4.4 shipped, and stopped one hop short of the record a
+ * client reads — durable, plumbed, and invisible.
+ */
+function WorkflowTag({ id }: { id: string }): JSX.Element {
+  return (
+    <span
+      className="text-state-paused truncate-line min-w-0"
+      data-testid="session-workflow"
+      data-workflow={id}
+      title={`a run of the ${id} workflow`}
+    >
+      run of {id}
+    </span>
+  );
+}
+
 function GroupTag({ name }: { name: string }): JSX.Element {
   return (
     <span

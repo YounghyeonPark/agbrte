@@ -208,6 +208,16 @@ export interface AgbrteState {
    * in the component keeps one place answering "which group is this".
    */
   groupWith(sessionId: string, name: string): Promise<void>;
+  /**
+   * Start a run of a workflow that workspace holds (§4.4).
+   *
+   * Through the store rather than straight to the IPC, and that is not tidiness:
+   * a run *is* a session, so the rail has to learn about it the way it learns
+   * about every other one. Calling the channel directly created the session on
+   * the host and left the list without it — a run that had started and could
+   * not be found.
+   */
+  runWorkflow(instanceId: string, workflowId: string, ceiling: number): Promise<void>;
   /** Take the open session out of its group. */
   leaveGroup(): Promise<void>;
   /**
@@ -762,6 +772,21 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
         applySnapshot(set, get, await agbrte().sessions.snapshot(open));
       }
     });
+  },
+
+  async runWorkflow(instanceId, workflowId, ceiling) {
+    const session = await guard(set, () =>
+      agbrte().workflows.run(instanceId, workflowId, {
+        tokenCeiling: ceiling,
+        spent: 0,
+        reservedForChildren: 0,
+      }),
+    );
+    if (!session) return;
+    // Appended rather than re-listed, like `createSession`: the host answered
+    // with the session it made, and asking again would be a round trip to learn
+    // what is already in hand.
+    set({ sessions: [...get().sessions, session] });
   },
 
   async leaveGroup() {
