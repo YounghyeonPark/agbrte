@@ -179,6 +179,32 @@ export async function send(page: Page, text: string): Promise<void> {
   await page.click('[data-testid=composer-send]');
 }
 
+/**
+ * Open the workflow pane, which no longer has a button in the rail.
+ *
+ * It is reached from the one place workflows are used: the host's new-session
+ * form, beside the list of workflows you can start from. A button in the rail
+ * was a claim that people navigate *to* workflows, and they do not — they come
+ * to start work, and a workflow is one of the things work starts from.
+ */
+export async function openWorkflows(page: Page, host?: string): Promise<void> {
+  const scope = host === undefined ? page : hostGroup(page, host);
+  const door = scope.locator('[data-testid=open-workflows]').first();
+  // The `+` *toggles* the form, so pressing it when the form is already open
+  // closes it. Asked rather than assumed, because a helper that only works from
+  // one starting state is a helper that fails halfway down a longer spec — and
+  // did, in a run where an earlier step had left the form open.
+  if ((await door.count()) === 0) {
+    await scope.locator('[data-testid=new-session]').first().click();
+  }
+  await door.click();
+}
+
+/** Leave it again. The pane carries its own way out, since nothing toggles it. */
+export async function closeWorkflows(page: Page): Promise<void> {
+  await page.locator('[data-testid=close-workflows]').click();
+}
+
 export async function openSession(page: Page, title: string, host?: string): Promise<void> {
   const scope = host === undefined ? page : hostGroup(page, host);
   await scope.locator(`[data-testid=session][data-title="${title}"]`).click();

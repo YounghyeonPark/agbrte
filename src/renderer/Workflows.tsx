@@ -119,6 +119,7 @@ function going(workflowId: string, sessions: readonly Session[]): Session | unde
 export function Workflows({
   workspaces,
   sessions,
+  onClose,
   onOpenRun,
   schedules,
   onSave,
@@ -134,6 +135,8 @@ export function Workflows({
    * rail is drawn from. Nothing new crosses the wire for this.
    */
   sessions: readonly Session[];
+  /** Leave the pane. See the control that calls it. */
+  onClose: () => void;
   /** Open one, which is the rail's own action — this pane points, never drives. */
   onOpenRun: (sessionId: string, instanceId: string) => void;
   /**
@@ -181,7 +184,25 @@ export function Workflows({
   return (
     <section className="grid gap-4 p-4" data-testid="workflows">
       <div className="grid gap-1">
-        <h2 className="text-ink text-sm font-medium">Workflows</h2>
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="text-ink text-sm font-medium">Workflows</h2>
+          {/*
+            The way out, which used to be the button that opened it.
+
+            That button toggled, so closing was pressing it again; with it gone
+            from the rail this pane would have been one somebody could enter and
+            not leave. A view with no exit is worse than one with no entrance —
+            the entrance was at least missed on the way in.
+          */}
+          <button
+            type="button"
+            className="btn-quiet text-[11px]"
+            data-testid="close-workflows"
+            onClick={onClose}
+          >
+            Done
+          </button>
+        </div>
         <p className="text-muted max-w-prose text-[13px]">
           A workflow is a decomposition written down before it runs: what the parts are, what each
           one may not touch, and what it owes back. They live beside session templates in the

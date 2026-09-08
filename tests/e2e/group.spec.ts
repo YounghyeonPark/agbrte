@@ -20,7 +20,7 @@ import { expect, test } from '@playwright/test';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { launch, makeRepo } from './harness.js';
-import { addAgent, createSession, openSession } from './actions.js';
+import { addAgent, closeWorkflows, createSession, openSession, openWorkflows } from './actions.js';
 
 test.describe('a session gets a folder of its own', () => {
   test('makes one beside the folder this host has open', async () => {
@@ -492,10 +492,12 @@ test('tells a workflow run from a seat somebody is driving', async () => {
     const page = agbrte.window;
     await createSession(page, 'an ordinary seat');
 
-    await page.click('[data-testid=show-workflows]');
+    await openWorkflows(page);
     await page.waitForSelector('[data-testid=workflow-row]', { timeout: 20_000 });
     await page.click('[data-testid=workflow-run]');
-    await page.click('[data-testid=show-workflows]');
+    // Back to the rail. The pane carries its own way out now that nothing in
+    // the sidebar toggles it.
+    await closeWorkflows(page);
 
     /*
      * The run appears in the rail at all, which is the half that broke first:
@@ -570,10 +572,12 @@ test('draws a run as a graph, with the node it is on', async () => {
     // dashboard shows them instead. See the `HostGroup` call site.
     await createSession(page, 'a seat');
 
-    await page.click('[data-testid=show-workflows]');
+    await openWorkflows(page);
     await page.waitForSelector('[data-testid=workflow-row]', { timeout: 20_000 });
     await page.click('[data-testid=workflow-run]');
-    await page.click('[data-testid=show-workflows]');
+    // Back to the rail. The pane carries its own way out now that nothing in
+    // the sidebar toggles it.
+    await closeWorkflows(page);
 
     await page.locator('[data-testid=session][data-title="Nightly sweep"]').click();
     await expect(page.locator('[data-testid=run-graph]')).toBeVisible({ timeout: 20_000 });
@@ -660,7 +664,7 @@ test('draws an edge by clicking two nodes, and writes it to the file', async () 
   try {
     const page = agbrte.window;
     await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
-    await page.click('[data-testid=show-workflows]');
+    await openWorkflows(page);
     await page.click('[data-testid=workflow-shape] summary');
     await page.click('[data-testid=workflow-edit]');
     await page.waitForSelector('[data-testid=wf-node-form]', { timeout: 20_000 });
@@ -748,7 +752,7 @@ test('makes a new workflow, under the name it says it will use', async () => {
   try {
     const page = agbrte.window;
     await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
-    await page.click('[data-testid=show-workflows]');
+    await openWorkflows(page);
     await page.click('[data-testid=workflow-new-open]');
 
     await page.fill('[data-testid=workflow-new-id]', 'nightly sweep');
@@ -832,7 +836,7 @@ test('shows a workflow its own runs, and draws the live one on its shape', async
   try {
     const page = agbrte.window;
     await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
-    await page.click('[data-testid=show-workflows]');
+    await openWorkflows(page);
     await page.waitForSelector('[data-testid=workflow-row]', { timeout: 20_000 });
     await page.click('[data-testid=workflow-shape] summary');
 

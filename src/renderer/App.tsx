@@ -41,6 +41,7 @@ import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
 import { Welcome } from './Welcome.js';
 import { About } from './About.js';
+import type { WorkflowSummary } from '../shared/host/sessionProtocol.js';
 import { RunGraph } from './RunGraph.js';
 import { Workflows, type WorkspaceWorkflows } from './Workflows.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
@@ -1057,19 +1058,6 @@ export function App(): JSX.Element {
             >
               Guide
             </button>
-            {/* Beside Guide rather than in the session list, which is §4.4's
-                distinction made visible: a workflow *run* is a session and
-                belongs with the sessions, a workflow *document* is a file and
-                belongs where files are looked at. */}
-            <button
-              className="btn"
-              data-testid="show-workflows"
-              title="Workflow documents in the attached folders"
-              aria-pressed={view === 'workflows'}
-              onClick={() => setView((open) => (open === 'workflows' ? 'none' : 'workflows'))}
-            >
-              Workflows
-            </button>
             {/* The menu bar used to be the one place an About lived; with the
                 bar gone this button is its whole surface. */}
             <button
@@ -1174,6 +1162,7 @@ export function App(): JSX.Element {
               activeId={active?.sessionId ?? null}
               picked={picked.machine === machine.key ? picked.ids : []}
               onPicked={(ids) => setPicked({ machine: machine.key, ids })}
+              onOpenWorkflows={() => setView('workflows')}
               /*
                * On the dashboard these rows are the dashboard, printed again in
                * a 300px column: the same four titles, the same four states, in a
@@ -1295,6 +1284,7 @@ export function App(): JSX.Element {
           <Workflows
             workspaces={workflows}
             sessions={sessions}
+            onClose={() => setView('none')}
             // Opening a run is the rail's own action; this pane points at one.
             onOpenRun={(sessionId, instanceId) => {
               setView('none');
@@ -1955,6 +1945,7 @@ function HostGroup({
   activeId,
   picked,
   onPicked,
+  onOpenWorkflows,
   showLoaded,
 }: {
   machine: MachineRow;
@@ -1970,6 +1961,8 @@ function HostGroup({
   picked: string[];
   /** Replace this section's selection. Picking here takes it from any other. */
   onPicked: (ids: string[]) => void;
+  /** Show the pane where workflow documents are written (§4.4). */
+  onOpenWorkflows: () => void;
   /** False while the dashboard is showing them. See the call site. */
   showLoaded: boolean;
 }): JSX.Element {
@@ -2092,6 +2085,8 @@ function HostGroup({
   const [folder, setFolder] = useState('');
   const [folderTouched, setFolderTouched] = useState(false);
   const [templates, setTemplates] = useState<SessionTemplateDto[]>([]);
+  /** This workspace's workflow documents, for the row beside the templates. */
+  const [flows, setFlows] = useState<WorkflowSummary[]>([]);
   /*
    * The MCP servers this session is being given (§17 Q20).
    *
@@ -2108,6 +2103,18 @@ function HostGroup({
   useEffect(() => {
     if (!adding) return;
     void window.agbrte.templates.list(host.instanceId).then(setTemplates, () => setTemplates([]));
+    /*
+     * The workspace's workflows, beside its templates and for the same reason.
+     *
+     * Both answer "start from something that already exists", which is what
+     * this form is for — and a workflow run *is* a session (§4.4), so this is
+     * where starting one belongs rather than behind a button of its own in the
+     * rail. `null` from a host too old to list them, which the row below reads
+     * as nothing to offer.
+     */
+    void window.agbrte.workflows
+      .list(host.instanceId)
+      .then((found) => setFlows(found ?? []), () => setFlows([]));
   }, [adding, host.instanceId]);
 
   /** The first unsendable MCP row, shown under the fields rather than swallowed. */
@@ -2466,6 +2473,79 @@ function HostGroup({
           >
             Create
           </button>
+
+          {/*
+            The way into the documents, from the one place they are used.
+
+            This had a button of its own in the rail beside `Guide`, and a
+            button in the rail is a claim that somebody navigates *to*
+            workflows. They do not: they come here to start work, and a workflow
+            is one of the things work starts from. The list above is that, and
+            this is the door to writing one — next to the thing it writes.
+
+            Shown whether or not any exist, because "there are none yet" is
+            exactly when somebody needs it.
+          */}
+          <div>
+            <button
+              type="button"
+              className="btn-quiet text-[11px]"
+              data-testid="open-workflows"
+              onClick={() => {
+                setAdding(false);
+                onOpenWorkflows();
+              }}
+            >
+              {flows.length === 0 ? 'Write a workflow…' : 'Edit workflows…'}
+            </button>
+          </div>
+
+          {/*
+            Runnable ones only.
+
+            A document with findings cannot run, and offering it here would be a
+            control that fails on press — §3.5's shape, and worse than usual
+            because the failure would arrive after a session had been created.
+            The pane below is where a broken one is *seen*, with its reasons.
+          */}
+          {flows.filter((f) => f.workflow !== undefined && f.problems.length === 0).length > 0 && (
+            <div className="grid gap-1">
+              <span className={LABEL}>or from a workflow</span>
+              {flows
+                .filter((f) => f.workflow !== undefined && f.problems.length === 0)
+                .map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className="btn text-left"
+                    data-testid="new-from-workflow"
+                    data-id={f.id}
+                    title={f.workflow?.goal}
+                    onClick={() => {
+                      /*
+                       * The document's own ceiling where the author pinned one,
+                       * and a default otherwise (§4.3).
+                       *
+                       * A run fans out into children, so the wire requires a
+                       * ceiling rather than defaulting to none — and a workflow
+                       * that names a budget is its author saying what the graph
+                       * costs, which is the better answer than anything this
+                       * form could invent.
+                       */
+                      void store.runWorkflow(
+                        host.instanceId,
+                        f.id,
+                        f.workflow?.budget?.tokenCeiling ?? 200_000,
+                      );
+                      setAdding(false);
+                    }}
+                  >
+                    {f.workflow?.name ?? f.id}
+                    <span className="text-muted"> · {f.workflow?.nodes.length ?? 0}</span>
+                  </button>
+                ))}
+            </div>
+          )}
 
           {/* §17 Q12: templates are taken from sessions that worked, so this list
               is empty until somebody saves one — and says so rather than

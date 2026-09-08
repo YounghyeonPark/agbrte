@@ -25,6 +25,7 @@ import { expect, test } from '@playwright/test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { serveWebFixture } from './harness.js';
+import { openWorkflows } from './actions.js';
 
 /** A node with everything a seam needs, so a test can break one thing at a time. */
 const node = (id: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -81,7 +82,7 @@ test('lists the documents in the workspace, with what is wrong with them', async
     await page.goto(web.url);
     await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
 
-    await page.locator('[data-testid=show-workflows]').click();
+    await openWorkflows(page);
     await expect(page.locator('[data-testid=workflows]')).toBeVisible({ timeout: 20_000 });
 
     // Both documents, and not the session template sitting beside them.
@@ -175,7 +176,7 @@ test('edits one, refuses to save it broken, and writes it back canonically', asy
     const before = await readFile(path, 'utf8');
     await page.goto(web.url);
     await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
-    await page.locator('[data-testid=show-workflows]').click();
+    await openWorkflows(page);
 
     const review = page.locator('[data-testid=workflow-row][data-id=review]');
     await expect(review).toBeVisible({ timeout: 20_000 });
@@ -241,7 +242,7 @@ test('says a workspace has none, which is different from being unable to ask', a
   try {
     await page.goto(web.url);
     await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
-    await page.locator('[data-testid=show-workflows]').click();
+    await openWorkflows(page);
 
     // "None here yet" and not the too-old sentence: this host can answer, and
     // the answer is that there are none. Rendering one as the other would claim
@@ -274,7 +275,7 @@ test('runs a workflow, and schedules it to run again', async ({ page }) => {
     await writeWorkflows(web.repo);
     await page.goto(web.url);
     await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
-    await page.locator('[data-testid=show-workflows]').click();
+    await openWorkflows(page);
 
     const row = page.locator('[data-testid=workflow-row][data-id=review]');
     await expect(row).toBeVisible({ timeout: 20_000 });
@@ -328,7 +329,7 @@ test('will not run a document it has already said is broken', async ({ page }) =
     await writeWorkflows(web.repo);
     await page.goto(web.url);
     await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
-    await page.locator('[data-testid=show-workflows]').click();
+    await openWorkflows(page);
 
     /*
      * The broken document this suite already writes. Its findings are on the
