@@ -1294,6 +1294,12 @@ export function App(): JSX.Element {
         {view === 'workflows' ? (
           <Workflows
             workspaces={workflows}
+            sessions={sessions}
+            // Opening a run is the rail's own action; this pane points at one.
+            onOpenRun={(sessionId, instanceId) => {
+              setView('none');
+              void store.openSession(sessionId, instanceId);
+            }}
             schedules={schedules}
             /*
              * Starting a run and arranging one are the same permission, so they

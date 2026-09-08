@@ -788,3 +788,92 @@ test('makes a new workflow, under the name it says it will use', async () => {
     await agbrte.close();
   }
 });
+
+/*
+ * A workflow's runs, under the document they came from (§4.4).
+ *
+ * Pressing *Run now* started something and then it vanished. A run is a session
+ * — "a run is a session and a document is a file" — so it went into the rail
+ * with everything else, correctly, and left the document's own page unable to
+ * answer the two questions somebody standing there has: is this going, and did
+ * the last one work.
+ *
+ * Nothing new crosses the wire for it. A run carries the document's id
+ * (`Session.workflow`), so its runs are a filter over the list the rail is
+ * already drawn from — and the graph that was drawn twice, once for the shape
+ * here and once for the run in the session, is now one picture that carries
+ * both.
+ */
+test('shows a workflow its own runs, and draws the live one on its shape', async () => {
+  const repo = await makeRepo();
+  await mkdir(join(repo, '.agbrte', 'templates'), { recursive: true });
+  const node = (id: string, needs?: string[]) => ({
+    id,
+    title: id,
+    scope: `do the ${id} part`,
+    outOfScope: ['everything else'],
+    acceptance: ['it is done'],
+    contract: { summaryMaxTokens: 800, artifacts: [] },
+    tokenCeiling: 20_000,
+    ...(needs === undefined ? {} : { needs }),
+  });
+  await writeFile(
+    join(repo, '.agbrte', 'templates', 'sweep.workflow.json'),
+    JSON.stringify({
+      id: 'sweep',
+      name: 'Nightly sweep',
+      goal: 'keep the tree green overnight',
+      nodes: [node('scan'), node('tests', ['scan']), node('lint', ['scan']), node('report', ['tests', 'lint'])],
+    }),
+    'utf8',
+  );
+
+  const agbrte = await launch(repo);
+  try {
+    const page = agbrte.window;
+    await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
+    await page.click('[data-testid=show-workflows]');
+    await page.waitForSelector('[data-testid=workflow-row]', { timeout: 20_000 });
+    await page.click('[data-testid=workflow-shape] summary');
+
+    // A document nobody has run has no history, and a section saying so would
+    // be a section about nothing.
+    await expect(page.locator('[data-testid=workflow-runs]')).toHaveCount(0);
+
+    await page.click('[data-testid=workflow-run]');
+
+    const rows = page.locator('[data-testid=workflow-run-row]');
+    await expect(rows).toHaveCount(1, { timeout: 20_000 });
+    // `of 4` comes from the document, not from the run: a run that has spawned
+    // one of four children has not finished a quarter of anything, and the
+    // three it has not started are the point of saying four.
+    await expect(rows.first()).toContainText('0 of 4');
+
+    /*
+     * And the document's own picture carries the live run's state, which is the
+     * half that makes this one page rather than two. `WorkflowGraph` said from
+     * the start that "when a run exists, the same boxes carry its state"; this
+     * is the second caller it meant.
+     */
+    const states = await page
+      .locator('[data-testid=workflow-shape] [data-testid=workflow-node]')
+      .evaluateAll((els) =>
+        Object.fromEntries(els.map((e) => [e.getAttribute('data-id'), e.getAttribute('data-state')])),
+      );
+    expect(states).toEqual({
+      scan: 'running',
+      tests: 'unstarted',
+      lint: 'unstarted',
+      report: 'unstarted',
+    });
+
+    // The row points at the session rather than driving it: clicking opens the
+    // run where its transcript and children are.
+    await rows.first().click();
+    await expect(page.locator('[data-testid=session-title]')).toHaveText('Nightly sweep', {
+      timeout: 20_000,
+    });
+  } finally {
+    await agbrte.close();
+  }
+});

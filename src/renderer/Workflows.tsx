@@ -30,8 +30,10 @@ import type { HostInfo } from '../shared/ipc/contract.js';
 import type { WorkflowSummary } from '../shared/host/sessionProtocol.js';
 import { WorkflowGraph } from './WorkflowGraph.js';
 import { WorkflowEditor } from './WorkflowEditor.js';
+import { runProgress } from '../shared/workflow/progress.js';
+import { WorkflowRuns } from './WorkflowRuns.js';
 import { WorkflowSchedulePanel } from './WorkflowSchedule.js';
-import type { Workflow, WorkflowSchedule } from '../shared/types/index.js';
+import type { Session, Workflow, WorkflowSchedule } from '../shared/types/index.js';
 
 /**
  * One workspace's answer.
@@ -91,14 +93,49 @@ function skeleton(id: string): Workflow {
   };
 }
 
+/**
+ * The run of this document that is still going, if one is.
+ *
+ * `working` and the paused states both count as going — a run waiting on a
+ * quota window has not finished, and drawing it as though it had would say the
+ * work is done. Only a `done`, `failed` or `cancelled` run is over.
+ *
+ * The newest, because two can overlap: the schedule refuses to start one over
+ * another, but `Run now` does not — pressing it twice is a person's decision to
+ * make and not something to refuse on their behalf.
+ */
+function going(workflowId: string, sessions: readonly Session[]): Session | undefined {
+  return sessions
+    .filter(
+      (s) =>
+        s.workflow === workflowId &&
+        s.state !== 'done' &&
+        s.state !== 'failed' &&
+        s.state !== 'cancelled',
+    )
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+
 export function Workflows({
   workspaces,
+  sessions,
+  onOpenRun,
   schedules,
   onSave,
   onRun,
   onSchedule,
 }: {
   workspaces: WorkspaceWorkflows[];
+  /**
+   * Every session the client knows about, so a document can show its own runs.
+   *
+   * A filter rather than a fetch: a run carries the document's id
+   * (`Session.workflow`), so the runs of a workflow are already in the list the
+   * rail is drawn from. Nothing new crosses the wire for this.
+   */
+  sessions: readonly Session[];
+  /** Open one, which is the rail's own action — this pane points, never drives. */
+  onOpenRun: (sessionId: string, instanceId: string) => void;
   /**
    * What each workspace runs on a routine, keyed by `instanceId` (§4.4).
    *
@@ -237,7 +274,29 @@ export function Workflows({
                     <details data-testid="workflow-shape">
                       <summary className="text-muted cursor-pointer text-[11px]">shape</summary>
                       <div className="grid gap-2 pt-2">
-                        <WorkflowGraph workflow={file.workflow} problems={file.problems} />
+                        {/*
+                          The document's shape, carrying a live run's state when
+                          one is going.
+
+                          One picture rather than two. The same graph was drawn
+                          here for the document and again in the session for the
+                          run, and somebody comparing "what this does" with
+                          "where it has got to" had to hold them apart in their
+                          head. `WorkflowGraph`'s header always said the boxes
+                          would carry a run's state; this is the other caller it
+                          meant.
+
+                          The *newest* run, and only while one is working: an
+                          old run's states over a document somebody is reading
+                          would be a picture of history presented as now.
+                        */}
+                        <WorkflowGraph
+                          workflow={file.workflow}
+                          problems={file.problems}
+                          {...(going(file.id, sessions) === undefined
+                            ? {}
+                            : { states: runProgress(going(file.id, sessions)!, sessions) })}
+                        />
                         {onSave !== undefined ? (
                           <div>
                             <button
@@ -280,6 +339,14 @@ export function Workflows({
                           ),
                         )
                       }
+                    />
+                  ) : null}
+                  {file.workflow !== undefined ? (
+                    <WorkflowRuns
+                      workflowId={file.id}
+                      nodeCount={file.workflow.nodes.length}
+                      sessions={sessions}
+                      onOpen={onOpenRun}
                     />
                   ) : null}
                   {file.problems.length > 0 ? (
