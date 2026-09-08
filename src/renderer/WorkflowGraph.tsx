@@ -23,6 +23,7 @@
  */
 
 import type { JSX } from 'react';
+import type { NodeState } from '@shared/workflow/schedule.js';
 import type { Workflow } from '../shared/types/index.js';
 import { layoutWorkflow, NODE_HEIGHT, NODE_WIDTH } from '../shared/workflow/layout.js';
 
@@ -43,12 +44,57 @@ function fit(text: string, chars: number): string {
   return text.length <= chars ? text : `${text.slice(0, chars - 1)}…`;
 }
 
+/**
+ * The border a node wears, chosen outside the markup.
+ *
+ * Outside because `scripts/inert-classes.mjs` reads `className` expressions to
+ * find every class the renderer uses, and a comparison written in there —
+ * `at === 'done' ? …` — hands it `done` as a class token that nothing defines.
+ * It reported three, all of them string comparisons rather than classes. The
+ * scanner is right to be literal about that; the fix is to give it only classes
+ * to look at.
+ *
+ * Still one branch per outcome rather than a composed string, which is the rule
+ * that scanner exists to enforce: a class name built from a variable is
+ * invisible to it *and* to Tailwind, which is how one goes silently dead.
+ *
+ * A refusal outranks a state. A node the validator named cannot run whatever
+ * the run thinks it is doing, and saying both at once in one border says
+ * neither.
+ */
+function boxClass(refused: boolean, at: NodeState | undefined): string {
+  if (refused) return 'fill-panel stroke-state-fail';
+  switch (at) {
+    case 'done':
+      return 'fill-panel stroke-accent';
+    case 'running':
+      return 'fill-raised stroke-accent';
+    case 'failed':
+      return 'fill-panel stroke-state-fail';
+    default:
+      return 'fill-panel stroke-line';
+  }
+}
+
 export function WorkflowGraph({
   workflow,
   problems = [],
+  states,
 }: {
   workflow: Workflow;
   problems?: Array<{ node?: string; message: string }>;
+  /**
+   * What each node is doing, when this is drawing a *run* (§4.4).
+   *
+   * The promise this file opened with: "when a run exists, the same boxes carry
+   * its state, because where a box goes is a function of the document either
+   * way". Absent when drawing the document — a shape nobody is running has no
+   * state to carry, and colouring it as though it did would be an invention.
+   *
+   * A node missing from the map has not been spawned. That is `unstarted`, and
+   * it is the ordinary reading of absence rather than a value anybody writes.
+   */
+  states?: Readonly<Record<string, NodeState>>;
 }): JSX.Element {
   const laid = layoutWorkflow(workflow.nodes);
   const refused = refusedNodes(problems);
@@ -110,20 +156,35 @@ export function WorkflowGraph({
 
         {laid.nodes.map((node) => {
           const bad = refused.has(node.id);
+          const at = states?.[node.id];
           return (
-            <g key={node.id} data-testid="workflow-node" data-id={node.id} data-ok={bad ? 'no' : 'yes'}>
+            <g
+              key={node.id}
+              data-testid="workflow-node"
+              data-id={node.id}
+              data-ok={bad ? 'no' : 'yes'}
+              /* On the group rather than the rect, so a test can ask what a
+                 node is doing without knowing which shape carries the colour. */
+              data-state={at ?? (states === undefined ? undefined : 'unstarted')}
+            >
               <rect
                 x={node.x}
                 y={node.y}
                 width={NODE_WIDTH}
                 height={NODE_HEIGHT}
                 rx={2}
-                /* Spelled out per branch rather than composed, for the reason
+                /*
+                   Spelled out per branch rather than composed, for the reason
                    `CapabilityBadges` gives: a class name built from a variable
                    is invisible to Tailwind's scanner and to
                    `scripts/inert-classes.mjs`, which is how one goes silently
-                   dead. */
-                className={bad ? 'fill-panel stroke-state-fail' : 'fill-panel stroke-line'}
+                   dead.
+
+                   A refusal outranks a state. A node the validator named cannot
+                   run whatever the run thinks it is doing, and saying both at
+                   once in one border says neither.
+                 */
+                className={boxClass(bad, at)}
               />
               <text
                 x={node.x + 10}

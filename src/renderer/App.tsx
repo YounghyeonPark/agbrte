@@ -41,6 +41,7 @@ import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
 import { Welcome } from './Welcome.js';
 import { About } from './About.js';
+import { RunGraph } from './RunGraph.js';
 import { Workflows, type WorkspaceWorkflows } from './Workflows.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
 import {
@@ -1399,6 +1400,26 @@ export function App(): JSX.Element {
               no server was named.
             */}
             <McpAttached {...(active.mcp !== undefined ? { servers: active.mcp } : {})} />
+
+            {/*
+              Above the branch, not inside the composer's `meta` where the group
+              and MCP panels live — because a run root never reaches that.
+
+              A workflow run has no agent of its own; it spawns children and
+              waits. So it takes the `agents.length === 0` arm below and shows
+              the picker, and a graph put beside the composer would have been a
+              graph nobody with a run ever saw. It was, until this moved.
+
+              An ordinary session has no picture to draw and gets no empty panel
+              promising one.
+            */}
+            {active.workflow !== undefined ? (
+              <RunGraph
+                run={active}
+                sessions={sessions}
+                documents={(instanceId) => window.agbrte.workflows.list(instanceId)}
+              />
+            ) : null}
 
             {active.agents.length === 0 ? (
               autoAdding === active.sessionId ? (

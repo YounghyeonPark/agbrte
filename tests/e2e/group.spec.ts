@@ -524,3 +524,96 @@ test('tells a workflow run from a seat somebody is driving', async () => {
     await agbrte.close();
   }
 });
+
+/*
+ * A run, drawn while it runs (§4.4, §4.3).
+ *
+ * `WorkflowGraph` was written for this and said so: "when a run exists, the
+ * same boxes carry its state, because where a box goes is a function of the
+ * document either way". What was missing was the state, and it turned out to
+ * need nothing new on the wire — a run names each child after its **node id**,
+ * because that is "the run's only durable link back to the document", and
+ * `Session.children` already crosses with a title and a state per child.
+ *
+ * The graph answers what the transcript and the rail cannot. A join — two
+ * predecessors meeting at one node — is the shape a session tree has no way to
+ * express, and it is why `needs` exists at all.
+ */
+test('draws a run as a graph, with the node it is on', async () => {
+  const repo = await makeRepo();
+  await mkdir(join(repo, '.agbrte', 'templates'), { recursive: true });
+  const node = (id: string, needs?: string[]) => ({
+    id,
+    title: id,
+    scope: `do the ${id} part`,
+    outOfScope: ['everything else'],
+    acceptance: ['it is done'],
+    contract: { summaryMaxTokens: 800, artifacts: [] },
+    tokenCeiling: 20_000,
+    ...(needs === undefined ? {} : { needs }),
+  });
+  await writeFile(
+    join(repo, '.agbrte', 'templates', 'sweep.workflow.json'),
+    JSON.stringify({
+      id: 'sweep',
+      name: 'Nightly sweep',
+      goal: 'keep the tree green overnight',
+      nodes: [node('scan'), node('tests', ['scan']), node('lint', ['scan']), node('report', ['tests', 'lint'])],
+    }),
+    'utf8',
+  );
+
+  const agbrte = await launch(repo);
+  try {
+    const page = agbrte.window;
+    // A session open first: with none, the rail hides its rows and the
+    // dashboard shows them instead. See the `HostGroup` call site.
+    await createSession(page, 'a seat');
+
+    await page.click('[data-testid=show-workflows]');
+    await page.waitForSelector('[data-testid=workflow-row]', { timeout: 20_000 });
+    await page.click('[data-testid=workflow-run]');
+    await page.click('[data-testid=show-workflows]');
+
+    await page.locator('[data-testid=session][data-title="Nightly sweep"]').click();
+    await expect(page.locator('[data-testid=run-graph]')).toBeVisible({ timeout: 20_000 });
+
+    /*
+     * Above the branch that offers an agent, not beside the composer.
+     *
+     * A run root has no agent of its own — it spawns children and waits — so it
+     * takes the empty-roster arm and shows the picker. A graph put beside the
+     * composer was a graph nobody with a run ever saw, which is where this
+     * first went.
+     */
+    const nodes = page.locator('[data-testid=run-graph] [data-testid=workflow-node]');
+    await expect(nodes).toHaveCount(4);
+    await expect(nodes.filter({ has: page.locator('[data-testid=workflow-node-id]') })).toHaveCount(
+      4,
+    );
+
+    const states = await nodes.evaluateAll((els) =>
+      Object.fromEntries(els.map((e) => [e.getAttribute('data-id'), e.getAttribute('data-state')])),
+    );
+    // Only what `needs` allows: `scan` has nothing waiting on it, and the other
+    // three are waiting on it. `unstarted` is the reading of a node with no
+    // child yet, which is absence rather than a value anybody writes.
+    expect(states).toEqual({
+      scan: 'running',
+      tests: 'unstarted',
+      lint: 'unstarted',
+      report: 'unstarted',
+    });
+
+    // The join is drawn, which is the whole argument for SVG over boxes: two
+    // edges arriving at one node is the thing a tree cannot say.
+    const into = await page
+      .locator('[data-testid=run-graph] [data-testid=workflow-edge][data-to=report]')
+      .evaluateAll((els) => els.map((e) => e.getAttribute('data-from')).sort());
+    expect(into).toEqual(['lint', 'tests']);
+
+    await expect(page.locator('[data-testid=run-graph] summary')).toContainText('1 of 4 started');
+  } finally {
+    await agbrte.close();
+  }
+});
