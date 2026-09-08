@@ -22,6 +22,7 @@ import {
   attachedHosts,
   createSession,
   hostGroup,
+  openNewSession,
   openSession,
   runtimeOptions,
   send,
@@ -234,8 +235,19 @@ test.describe('the shell', () => {
 
       await expect(welcome.locator('[data-testid=welcome-new-session]')).toHaveCount(0);
       await expect(welcome).toContainText('Pick a session');
-      // The act itself did not go away, only its second copy.
-      await expect(agbrte.window.locator('[data-testid=new-session-oneshot]')).toBeVisible();
+      /*
+       * And what it points at instead is on screen.
+       *
+       * The greeting names `+`, and this is the state where that sentence is
+       * finally the right one: a host is attached and an agent is remembered,
+       * so the three steps the old wording left out have already been taken.
+       * The rail's own `New session` is gone, which is why the sentence had to
+       * change at all — a greeting naming a button that is not there is the
+       * worst kind of wrong (§3.5).
+       */
+      await expect(welcome).toContainText('press +');
+      await expect(hostGroup(agbrte.window).locator('[data-testid=new-session]')).toBeVisible();
+      await expect(agbrte.window.locator('[data-testid=add-host]')).toBeVisible();
     } finally {
       await agbrte.close();
       await rm(repo, { recursive: true, force: true });
@@ -490,7 +502,7 @@ test.describe('two workspaces on one machine', () => {
       // And nothing was deleted: opening the folder again finds the session
       // where it was left, which is the whole difference between detaching and
       // destroying (§5.4).
-      await agbrte.window.click('[data-testid=new-session-oneshot]');
+      await openNewSession(agbrte.window);
       await agbrte.window.fill('[data-testid=new-session-path]', repoA);
       await agbrte.window.fill('[data-testid=new-session-folder]', '');
       await agbrte.window.click('[data-testid=new-session-open]');
@@ -846,27 +858,33 @@ test.describe('the first screen, the guide, and about', () => {
       await expect(welcome).not.toContainText(/phone/i);
 
       /*
-       * The one-shot is on screen in both places it is promised.
+       * The one-shot is on screen where it is promised, and only there.
        *
-       * Presence, not a press: its first step is the native folder dialog,
-       * which Playwright cannot answer, so clicking here would hang the run
-       * rather than test it. What is checkable — and what actually regressed
-       * before, for the guide — is whether a control exists anywhere a person
-       * will look. The greeting points at the button beside it, so the old copy
-       * naming a `+` three steps away must be gone.
+       * Presence, not a press: what is checkable — and what actually regressed
+       * before, for the guide — is whether a control exists where a person will
+       * look. The greeting points at the button directly beneath it, so the old
+       * copy naming a `+` three steps away must be gone.
+       *
+       * `new-session-oneshot` was the rail's second copy of this button. It is
+       * gone too, and asserted gone rather than left unmentioned: what replaced
+       * it is `Attach host…` carrying the same panel on its "This machine" tab,
+       * and a stray third door would put the app back where it started.
        */
       await expect(welcome.locator('[data-testid=welcome-new-session]')).toBeVisible();
-      await expect(agbrte.window.locator('[data-testid=new-session-oneshot]')).toBeVisible();
+      await expect(agbrte.window.locator('[data-testid=new-session-oneshot]')).toHaveCount(0);
       await expect(welcome).not.toContainText('press +');
 
       await createSession(agbrte.window, 'Guide check');
       await expect(welcome).toBeHidden();
 
 
-      // The fast path is an addition, so the granular controls it shortcuts are
-      // still here — and the header button survives a session being open, which
-      // is when a second workspace is most likely to be wanted.
-      await expect(agbrte.window.locator('[data-testid=new-session-oneshot]')).toBeVisible();
+      /*
+       * With a session open, the two controls that remain are the two acts:
+       * `Attach host…` for a machine or a folder that is not here yet — the
+       * folder panel lives behind its local tab — and the host row's `+` for
+       * another session on one that is. A second workspace is most likely to be
+       * wanted exactly now, so this is the state that has to keep the route.
+       */
       await expect(agbrte.window.locator('[data-testid=add-host]')).toBeVisible();
       await expect(hostGroup(agbrte.window).locator('[data-testid=new-session]')).toBeVisible();
 

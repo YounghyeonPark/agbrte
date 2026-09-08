@@ -825,6 +825,10 @@ export function App(): JSX.Element {
    */
   const newSessionOneShot = (): void => {
     setView('none');
+    // Including the attach panel, which is one of the two places this is
+    // reached from: leaving it open would stack two folder questions down the
+    // same rail, and the one being answered is this one.
+    setAttaching(false);
     setPane('main');
     setStarting(null);
     setCreating(true);
@@ -1080,27 +1084,6 @@ export function App(): JSX.Element {
             </button>
           </div>
 
-          {/* The one primary action in the app, on its own line.
-
-              `basis-full` rather than a fifth control in the group above: at
-              300px that row already wraps, and a button that matters more than
-              its neighbours cannot say so from the end of a queue of four. It
-              is the accent because this is where a person acts — the same rule
-              that colours a session needing attention.
-
-              The `data-testid` is unique to this one; the Welcome screen's copy
-              of the same action carries `welcome-new-session`, because two
-              elements sharing a testid is a strict-mode failure in every test
-              that reaches for it while both are on screen. */}
-          <button
-            className="btn text-accent"
-            data-testid="new-session-oneshot"
-            title="Pick a folder and start working in it"
-            disabled={starting !== null}
-            onClick={() => void newSessionOneShot()}
-          >
-            {starting !== null ? 'Starting…' : 'New session'}
-          </button>
         </header>
 
         {/* Below the header rather than in it: a fleet-wide search is a thing you
@@ -1115,6 +1098,7 @@ export function App(): JSX.Element {
             key={attaching}
             initialMode={attaching}
             onDone={() => setAttaching(false)}
+            onOpenFolder={() => newSessionOneShot()}
           />
         )}
 
@@ -2268,11 +2252,26 @@ function HostGroup({
           </span>
         </div>
         <div className="flex shrink-0 gap-1">
-          {/* Kept, and not superseded. `new-session-oneshot` in the header is a
-              fast path for one session in a folder you have not attached yet;
-              this is how you get the *second* one in a workspace, a session
-              named something other than its folder, or one built from a
-              template. Removing it would trade a shortcut for a capability. */}
+          {/* Where a session comes from, now that the header's `New session`
+              is gone.
+
+              That button opened the folder panel, and it sat in the rail
+              immediately above `Attach host…` — two controls, one line apart,
+              both meaning "start work somewhere new", and the one with the
+              accent was not the one whose name said so. It went.
+
+              What it was carrying had to go somewhere, because it was not only
+              a shortcut: the folder panel is the only thing that opens a folder
+              nobody has attached yet, and `Attach host…` ended, on its own
+              machine, at a paragraph saying there was nothing to attach. So the
+              act moved into that panel (`AttachHost`'s *Open a folder…*) and
+              the two are now one door, in the order a person means them: bring
+              a machine or a folder in, then work in it.
+
+              This is the second half. Everything about a session on a host that
+              is already here happens on this `+`: another session in the open
+              workspace, one named something other than its folder, one in a new
+              folder under it, and one started from a template or a workflow. */}
           <button
             className="btn aspect-square px-0"
             data-testid="new-session"

@@ -43,6 +43,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 import { launch, makeRepo, type LaunchedApp } from './harness.js';
+import { openNewSession } from './actions.js';
 
 /** What a machine with a working directory of projects on it would answer. */
 const FOUND = {
@@ -342,7 +343,7 @@ test.describe('attaching asks for a machine', () => {
 
       // And it was not remembered: a machine that has never answered is not one
       // to offer first next time.
-      await page.click('[data-testid=new-session-oneshot]');
+      await openNewSession(page);
       const machines = page.locator('[data-testid=new-session-machine] option');
       await expect(machines).toHaveCount(1);
       await expect(machines.first()).toHaveText('This machine');
@@ -352,7 +353,7 @@ test.describe('attaching asks for a machine', () => {
     }
   });
 
-  test('this machine needs no attaching, and says so', async () => {
+  test('this machine needs no attaching, so the tab offers the folder instead', async () => {
     const repo = await makeRepo();
     const agbrte = await launch(repo);
 
@@ -361,12 +362,27 @@ test.describe('attaching asks for a machine', () => {
       await page.click('[data-testid=add-host]');
       await page.click('[data-testid=attach-local]');
 
-      // Not a folder picker any more. The machine the app runs on is present by
-      // construction, and the folder is a question the session asks.
+      // The machine is still not a button: the one the app runs on is present
+      // by construction, and offering to add it would be offering to agree with
+      // a fact.
       await expect(page.locator('[data-testid=attach-local-note]')).toContainText(
-        'Choose a folder to work in when you start a session',
+        'What gets attached is a folder on it',
       );
-      await expect(page.locator('[data-testid=attach-pick-folder]')).toHaveCount(0);
+
+      /*
+       * The folder, though, is exactly what somebody pressing `Attach host…`
+       * came here for, and this tab used to end at that sentence and a `Done`.
+       *
+       * It could, while the rail's header carried a `New session` that opened
+       * the folder panel one line above this button. That copy is gone — two
+       * controls a line apart both meaning "start work somewhere new" — and
+       * without this the app would have lost the only thing that opens a folder
+       * nobody has attached yet, which is a capability, not a shortcut.
+       */
+      await page.click('[data-testid=attach-local-open]');
+      await expect(page.locator('[data-testid=new-session-panel]')).toBeVisible();
+      // And the panel it opened replaces this one rather than stacking under it.
+      await expect(page.locator('[data-testid=attach-panel]')).toBeHidden();
     } finally {
       await agbrte.close();
       await agbrte.window.context().close().catch(() => undefined);
@@ -381,7 +397,7 @@ test.describe('creating a session asks for a folder', () => {
 
     try {
       const page = agbrte.window;
-      await page.click('[data-testid=new-session-oneshot]');
+      await openNewSession(page);
       await expect(page.locator('[data-testid=new-session-panel]')).toBeVisible();
 
       /*
@@ -428,7 +444,7 @@ test.describe('creating a session asks for a folder', () => {
       await page.click('[data-testid=attach-remote-go]');
       await expect(page.locator('[data-testid=attach-panel]')).toBeHidden();
 
-      await page.click('[data-testid=new-session-oneshot]');
+      await openNewSession(page);
       await expect(page.locator('[data-testid=new-session-panel]')).toBeVisible();
 
       // This machine first, then the ones that have been named.
@@ -520,10 +536,11 @@ test.describe('creating a session asks for a folder', () => {
       );
       await expect(page.locator('[data-testid=attach-path]')).toHaveValue('');
       await expect(page.locator('[data-testid=attach-workspace-trigger]')).toHaveCount(0);
-      await page.click('[data-testid=add-host]');
+      // Straight from this panel into the folder panel behind its local tab,
+      // which is where that button went. The attach panel closes as it opens:
+      // two folder questions down one rail is one too many.
+      await openNewSession(page);
       await expect(page.locator('[data-testid=attach-panel]')).toBeHidden();
-
-      await page.click('[data-testid=new-session-oneshot]');
       await page.selectOption('[data-testid=new-session-machine]', 'build-01');
       await expect(page.locator('[data-testid=new-session-note]')).toContainText(
         'not running a POSIX shell',
@@ -547,7 +564,7 @@ test.describe('creating a session asks for a folder', () => {
       const page = agbrte.window;
 
       // A session made the ordinary way, so the folder has something in it.
-      await page.click('[data-testid=new-session-oneshot]');
+      await openNewSession(page);
       await expect(page.locator('[data-testid=new-session-panel]')).toBeVisible();
       await page.fill('[data-testid=new-session-path]', repo);
       await page.click('[data-testid=new-session-open]');
@@ -561,7 +578,7 @@ test.describe('creating a session asks for a folder', () => {
        * and a form that went straight from "which folder" to "what shall we call
        * the new one" would make a duplicate the easiest thing to make.
        */
-      await page.click('[data-testid=new-session-oneshot]');
+      await openNewSession(page);
       await page.fill('[data-testid=new-session-path]', repo);
       await page.click('[data-testid=new-session-open]');
       await expect(page.locator('[data-testid=new-session-existing]')).toContainText(

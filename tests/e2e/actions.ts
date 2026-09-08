@@ -200,6 +200,31 @@ export async function openWorkflows(page: Page, host?: string): Promise<void> {
   await door.click();
 }
 
+/**
+ * Open the folder panel: which machine, which folder, and what is already in it.
+ *
+ * It is reached through `Attach host…` now, on the "This machine" tab. The rail
+ * used to carry a `New session` one line above `Attach host…` that opened this
+ * directly — two controls a line apart, both meaning "start work somewhere
+ * new". The button went; the panel could not, because it is the only thing that
+ * opens a folder nobody has attached yet, and the local tab of the attach panel
+ * ended at a paragraph saying there was nothing to attach. So they are one door
+ * now, and this is how a test walks through it.
+ *
+ * Idempotent about the panel, because `Attach host…` *toggles*: pressing it
+ * while the panel is open closes it, and a helper that only works from a closed
+ * start is one that fails halfway down a longer spec — which is the lesson
+ * `openWorkflows` above learnt the expensive way.
+ */
+export async function openNewSession(page: Page): Promise<void> {
+  if (!(await page.locator('[data-testid=attach-panel]').isVisible())) {
+    await page.click('[data-testid=add-host]');
+  }
+  await page.click('[data-testid=attach-local]');
+  await page.click('[data-testid=attach-local-open]');
+  await expect(page.locator('[data-testid=new-session-panel]')).toBeVisible();
+}
+
 /** Leave it again. The pane carries its own way out, since nothing toggles it. */
 export async function closeWorkflows(page: Page): Promise<void> {
   await page.locator('[data-testid=close-workflows]').click();

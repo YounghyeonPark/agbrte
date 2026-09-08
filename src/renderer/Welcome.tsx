@@ -20,6 +20,15 @@
  * cannot serve: a machine over ssh, and attaching a workspace you mean to make
  * several sessions in.
  *
+ * **This is the only place the button itself is offered now.** The rail's
+ * header carried a second copy of it, beside `Attach host…`, and two adjacent
+ * buttons for "bring a folder in" is one too many. What the copy was actually
+ * load-bearing for is that the folder panel is the only way to open a folder
+ * that is not attached yet — so the act moved into the attach panel it was
+ * standing next to (`AttachHost`'s *Open a folder…*), rather than being
+ * deleted. Here it stays unmediated, because an empty window is the one place
+ * where a step in between is a step too many.
+ *
  * The same discipline as the guide about promises: nothing is claimed here
  * that this build does not deliver, which is easy precisely because almost
  * nothing is claimed at all.
@@ -35,8 +44,10 @@ export interface WelcomeProps {
    * The primary button is for an empty app. Once sessions exist the way in is
    * to open one — they are listed a few inches to the left — and a large
    * accent button offering to make *another* competes with the list for the
-   * eye while being the rarer intent. The sidebar keeps `New session`, which
-   * is the same act where somebody with sessions would look for it.
+   * eye while being the rarer intent. Somebody with sessions has a host
+   * attached and an agent remembered, so their next session is the `+` on that
+   * host's row — and a folder that is not attached yet is `Attach host…`,
+   * which now carries this act (`AttachHost`'s *Open a folder…*).
    */
   hasSessions: boolean;
   /** The one-shot: folder, session, agent, chat (App.tsx `newSessionOneShot`). */
@@ -79,20 +90,21 @@ export function Welcome({
          * The sentence points at the button under it, and says what the button
          * does rather than what it is called.
          *
-         * It used to read "pick a session on the left, or press +", which named
-         * a control that is one of four steps — folder, session, agent, model —
-         * and left the other three for the person to discover in order. The
-         * greeting now describes the whole act, because the button now performs
-         * the whole act.
+         * It used to read "pick a session on the left, or press +" in *every*
+         * state, which named a control that is one of four steps — folder,
+         * session, agent, model — and left the other three for the person to
+         * discover in order. From an empty window that is the wrong sentence,
+         * and the button under it now performs the whole act instead.
          *
-         * Both states get the same sentence for the same reason: with no host
-         * attached this button *is* the way in, and with one attached it is
-         * still the shortest. The difference between the two states is only how
-         * much else is offered underneath.
+         * With sessions on the left it is the right sentence again, and it is
+         * back: the three steps it used to leave out are already taken. A host
+         * is attached, an agent is remembered, and `+` on that host's row is
+         * one press to a session in the workspace already open — which is also
+         * why there is no button here to point at in that state.
          */}
         <p className="text-muted text-sm leading-relaxed">
           {hasSessions
-            ? 'Ready when you are. Pick a session from the list, or start another with New session.'
+            ? 'Ready when you are. Pick a session from the list, or press + on a host to start another.'
             : hasHosts
               ? 'Ready when you are. Start a session in a folder — it brings your usual agent with it.'
               : 'Welcome to Agbrte. Point it at a folder and you are working — it attaches the machine, opens a session and brings your usual agent.'}
@@ -104,10 +116,12 @@ export function Welcome({
         {/*
          * The primary action, and the reason this screen is not a form.
          *
-         * `welcome-new-session` rather than `new-session-oneshot`: the sidebar
-         * header carries that id and both are on screen together, which would
-         * make a test reaching for it ambiguous rather than convenient. Same
-         * action, same handler, two places a person might look.
+         * `welcome-new-session` rather than something shared: the rail's header
+         * used to carry a copy of this button, and two elements with one testid
+         * on screen together is a strict-mode failure in every test that reaches
+         * for either. The copy is gone and the id stays as it is — the tests
+         * that name it are about *this* screen, and renaming it now would churn
+         * a dozen assertions to say the same thing.
          */}
         <button
           className="btn text-accent"

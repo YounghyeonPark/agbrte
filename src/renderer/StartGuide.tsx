@@ -57,7 +57,7 @@ const STEPS: Array<{ title: string; detail: string }> = [
   {
     title: 'Start a session',
     detail:
-      'New session asks which machine and which folder, and shows what is already in that folder before it starts anything.',
+      'On an empty window, New session. On a host that is already attached, + on its row. Either way you are asked which folder, and shown what is already in it before anything starts.',
   },
   {
     title: 'Add an agent',

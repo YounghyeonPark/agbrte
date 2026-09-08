@@ -62,9 +62,24 @@ import type { RestoringMachine } from '../shared/ipc/contract.js';
 
 export function AttachHost({
   onDone,
+  onOpenFolder,
   initialMode = 'local',
 }: {
   onDone: (machine?: Machine) => void;
+  /**
+   * Open a folder on *this* machine — the folder panel, which asks the same two
+   * questions this one does and then starts a session.
+   *
+   * The local tab used to end at a paragraph and a `Done`, on the grounds that
+   * this machine is present by construction and there is nothing to attach. True
+   * about the machine, and it left the tab a dead end: the header carried a
+   * `New session` that opened the folder panel, so "bring a folder in" was a
+   * *different* button from "attach a host", and this one answered a question
+   * nobody asks. The header's copy is gone (App.tsx `HostGroup`), so the tab has
+   * to carry the act it was standing next to, or a fleet with one session in it
+   * has no way left to open a second folder.
+   */
+  onOpenFolder: () => void;
   /** Set when the start guide opened this for one particular way in. */
   initialMode?: 'local' | 'remote';
 }): JSX.Element {
@@ -262,13 +277,20 @@ export function AttachHost({
 
       {mode === 'local' ? (
         <>
-          {/* Not a button, because there is nothing to press. The machine the app
-              is running on is present by construction, and offering to "add" it
-              would be offering to agree with a fact (see `machines.ts`). */}
+          {/* The machine itself is still not a button: it is present by
+              construction, and offering to "add" it would be offering to agree
+              with a fact (see `machines.ts`). What *is* a button is the folder,
+              which is the thing this tab was always a step towards. */}
           <p className="text-muted text-xs" data-testid="attach-local-note">
-            This machine is always available. Choose a folder to work in when you start a
-            session.
+            This machine is always available. What gets attached is a folder on it.
           </p>
+          <button
+            className="btn text-accent"
+            data-testid="attach-local-open"
+            onClick={() => onOpenFolder()}
+          >
+            Open a folder…
+          </button>
           <button className="btn" data-testid="attach-local-done" onClick={() => onDone()}>
             Done
           </button>
