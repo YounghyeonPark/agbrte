@@ -345,6 +345,16 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
    * A failure that is invisible in the one place it is being watched for is the
    * argument for handling it here rather than at the caller.
    */
+  /**
+   * The port this actually got, which is not always the one that was asked for.
+   *
+   * `--port 0` means *any free one*, and the link is the thing somebody copies
+   * — so printing the zero back is printing an address that reaches nothing.
+   * Read from the socket after `listen` resolves, which is the only moment the
+   * answer exists.
+   */
+  let bound = opts.port;
+
   await new Promise<void>((done, fail) => {
     const failed = (err: Error): void => fail(listenFailure(err, opts.port, host));
     wss.on('error', failed);
@@ -361,6 +371,8 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
       http.off('error', failed);
       wss.on('error', afterStart);
       http.on('error', afterStart);
+      const address = http.address();
+      if (typeof address === 'object' && address !== null) bound = address.port;
       done();
     });
   });
@@ -372,7 +384,7 @@ export async function serveWeb(opts: WebServerOptions): Promise<RunningWebServer
      * no access log, no `Referer`, and no proxy. A query string would have been
      * in the host's own log the first time anybody opened the page.
      */
-    url: `http://${host.includes(':') ? `[${host}]` : host}:${opts.port}/#t=${opts.token}`,
+    url: `http://${host.includes(':') ? `[${host}]` : host}:${bound}/#t=${opts.token}`,
     close: () =>
       new Promise<void>((done) => {
         wss.close();

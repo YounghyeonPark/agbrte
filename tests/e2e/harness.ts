@@ -14,7 +14,6 @@ import {
 } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { createServer as netCreateServer } from 'node:net';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { delimiter, join, resolve } from 'node:path';
@@ -384,15 +383,6 @@ export async function serveWebFixture(opts: { home?: string; repo?: string } = {
   stop: () => Promise<void>;
 }> {
   const repo = await makeRepo(opts.repo);
-  const port = await new Promise<number>((done, fail) => {
-    const probe = netCreateServer();
-    probe.once('error', fail);
-    probe.listen(0, '127.0.0.1', () => {
-      const address = probe.address();
-      const chosen = typeof address === 'object' && address !== null ? address.port : 0;
-      probe.close(() => done(chosen));
-    });
-  });
   /*
    * A pinned token, because the server now mints one per run and prints it in a
    * link this fixture never reads — it spawns the CLI with `stdio: 'ignore'`.
@@ -401,7 +391,6 @@ export async function serveWebFixture(opts: { home?: string; repo?: string } = {
    * when somebody rewords a line.
    */
   const token = 'e2e-fixture-token';
-  const url = `http://127.0.0.1:${port}/#t=${token}`;
   /*
    * Its own machine directory, always — the way `launch` does (§8).
    *
@@ -428,7 +417,21 @@ export async function serveWebFixture(opts: { home?: string; repo?: string } = {
   const home = opts.home ?? (await tempFixture('agbrte-web-home-'));
   const server = spawn(
     process.execPath,
-    [resolve('dist/cli/agbrte.js'), 'web', repo, '--port', String(port), '--token', token],
+    /*
+     * `--port 0`: the server picks, and says which.
+     *
+     * This used to open a socket on port 0 to learn a free number, close it,
+     * and pass that number along — which leaves a window where another fixture
+     * in the same parallel run takes it. That is not theoretical; it cost two
+     * failures in one session, each reported by the poll below as "it printed
+     * its link, so it did listen and the poll could not reach it", which is
+     * what being on somebody else's port looks like from here.
+     *
+     * Asking the server means there is no window at all. It also needs the
+     * server to *print* the port it got rather than the one it was asked for,
+     * which it now does — a link naming port 0 was a link that reached nothing.
+     */
+    [resolve('dist/cli/agbrte.js'), 'web', repo, '--port', '0', '--token', token],
     {
       // Kept, not discarded. `stdio: 'ignore'` is what made the last
       // investigation cost a day: the CLI died on a busy port with a stack
@@ -459,6 +462,30 @@ export async function serveWebFixture(opts: { home?: string; repo?: string } = {
   });
 
   const deadline = Date.now() + 30_000;
+
+  /*
+   * The port comes back from the server's own link, so this waits for the line
+   * before it can poll anything.
+   *
+   * Which is also the honest order: until that line exists there is nothing
+   * listening to poll, and the old code's first thirty polls were against a
+   * port whose server had not started.
+   */
+  let url = '';
+  while (Date.now() < deadline && url === '') {
+    const printed = /http:\/\/127\.0\.0\.1:(\d+)\//.exec(said);
+    if (printed !== null) url = `http://127.0.0.1:${printed[1]!}/#t=${token}`;
+    else await new Promise((r) => setTimeout(r, 50));
+  }
+  if (url === '') {
+    server.kill();
+    throw new Error(
+      `the web server never printed a link${exit === null ? ' and is still running' : ` — it ${exit}`}` +
+        `${said.trim() === '' ? ' and printed nothing' : `:
+${said.trim()}`}`,
+    );
+  }
+
   let up = false;
   while (Date.now() < deadline && !up) {
     try {
@@ -476,20 +503,17 @@ export async function serveWebFixture(opts: { home?: string; repo?: string } = {
      * the process was alive — an inference, and the first real failure it caught
      * contradicted it: the server had printed its link, which `serveWeb` only
      * does *after* `listen` resolves. So it was up, listening, and unreachable
-     * from this process for thirty seconds, which is a different problem from
-     * the one that sentence named and would have sent the next reader the wrong
-     * way. The link is the evidence, so the link is what is reported.
+     * from this process for thirty seconds.
+     *
+     * That sentence then earned its keep twice more, and it was pointing at a
+     * real thing: the port had been chosen by probing and releasing one, so
+     * another fixture in the same parallel run could take it in between. The
+     * server printing its link was true and the poll was reaching *somebody
+     * else's*. The port is the server's own choice now, so reaching this at all
+     * means something new — which is why the sentence no longer guesses.
      */
-    const listened = said.includes(String(port));
     throw new Error(
-      `the web server on port ${port} was never reachable` +
-        `${
-          listened
-            ? ' — it printed its link, so it did listen and the poll could not reach it'
-            : exit === null
-              ? ' — it is still running and never printed a link'
-              : ` — it ${exit}`
-        }` +
+      `the web server on ${url} was never reachable, though it printed that link` +
         `${said.trim() === '' ? ' and printed nothing' : `:\n${said.trim()}`}`,
     );
   }
