@@ -92,6 +92,7 @@ import type {
   Session,
   SessionState,
   ShellProgram,
+  WorkflowSchedule,
 } from '../shared/types/index.js';
 import type { UpdateState } from '../shared/ipc/contract.js';
 
@@ -279,6 +280,8 @@ export function App(): JSX.Element {
    * not evidence about what the workspace holds.
    */
   const [workflows, setWorkflows] = useState<WorkspaceWorkflows[]>([]);
+  /** What each workspace runs on a routine, by `instanceId`. The host keeps them. */
+  const [schedules, setSchedules] = useState<Record<string, WorkflowSchedule[]>>({});
   /*
    * Which pane a narrow screen is showing. Above `md` both are up and this is
    * ignored.
@@ -556,6 +559,23 @@ export function App(): JSX.Element {
       })),
     ).then((all) => {
       if (live) setWorkflows(all);
+    });
+    /*
+     * The routines, read beside the documents rather than with them.
+     *
+     * A separate call because they answer separate questions and one of them
+     * can fail on its own: a host too old to keep a schedule still lists
+     * workflows perfectly well, and a pane that lost the documents because the
+     * schedules could not be read would be trading the thing somebody came for
+     * against the thing they might not have.
+     */
+    void Promise.all(
+      hosts.map(async (host) => [
+        host.instanceId,
+        await window.agbrte.workflows.schedules(host.instanceId).catch(() => []),
+      ] as const),
+    ).then((all) => {
+      if (live) setSchedules(Object.fromEntries(all));
     });
     return () => {
       live = false;
@@ -1273,6 +1293,26 @@ export function App(): JSX.Element {
         {view === 'workflows' ? (
           <Workflows
             workspaces={workflows}
+            schedules={schedules}
+            /*
+             * Starting a run and arranging one are the same permission, so they
+             * are handed over together — and a host that refuses either says so
+             * in its own sentence, which the panel prints verbatim.
+             */
+            onRun={async (instanceId, workflowId, ceiling) => {
+              await window.agbrte.workflows.run(instanceId, workflowId, {
+                tokenCeiling: ceiling,
+                spent: 0,
+                reservedForChildren: 0,
+              });
+            }}
+            onSchedule={async (instanceId, wanted) => {
+              // The host's answer, not the draft: it read the file back, and a
+              // pane showing what it hoped for would be showing what no file
+              // holds.
+              const stored = await window.agbrte.workflows.setSchedules(instanceId, wanted);
+              setSchedules((was) => ({ ...was, [instanceId]: stored }));
+            }}
             onSave={async (instanceId, workflowId, workflow) => {
               const saved = await window.agbrte.workflows.save(instanceId, workflowId, workflow);
               /*

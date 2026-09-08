@@ -34,7 +34,7 @@
  */
 
 import { nextStep, runSucceeded, type NodeState, type RunState } from '@shared/workflow/schedule.js';
-import type { SessionId, Workflow, WorkflowNode } from '@shared/types/index.js';
+import type { InstanceId, SessionId, Workflow, WorkflowNode } from '@shared/types/index.js';
 import type { SessionManager } from './sessionManager.js';
 
 /** What a live run needs: the document, and one advance at a time. */
@@ -128,6 +128,31 @@ export class WorkflowRuns {
   /** Whether this session is a workflow root this host is driving. */
   isRun(sessionId: SessionId): boolean {
     return this.live.has(sessionId);
+  }
+
+  /**
+   * Whether a run of this document is still going, in this workspace.
+   *
+   * Asked by the schedule runner before it starts another (§4.4). Two runs of
+   * one workflow fan out into two sets of children spending two budgets into
+   * one workspace, which is §4.2's reasoning for capping a session at one agent,
+   * one level up.
+   *
+   * Answered from `live` rather than from the log, and that is exact rather
+   * than lazy: what the question means is "is this host driving one", and a
+   * host that restarted is driving nothing until `resume` says otherwise —
+   * which is the same instant `live` learns about it.
+   */
+  isRunning(workflowId: string, instanceId: InstanceId): boolean {
+    for (const [rootId, running] of this.live) {
+      if (running.workflow.id !== workflowId) continue;
+      try {
+        if (this.manager.get(rootId).instanceId === instanceId) return true;
+      } catch {
+        // Gone from under us between the two lookups. Not running, then.
+      }
+    }
+    return false;
   }
 
   /**

@@ -30,6 +30,8 @@ import { openWorkspace, peekIdentity } from '@main/store/identity.js';
 import { listen, hostSocketPath, socketAnswers, hostAlreadyRunning } from '@shared/host/socketChannel.js';
 import { listenLoopback, newControlToken } from '@shared/host/loopback.js';
 import { PreviewServers } from '@main/preview/servers.js';
+import { ScheduleRunner } from '@main/schedules/runner.js';
+import { runWorkflowDocument } from '@main/workflowStart.js';
 import { Shells, shellsStatus } from '@main/terminal/shell.js';
 import { TerminalPrograms } from '@main/terminal/programs.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
@@ -547,6 +549,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       // only as a process blocked on a prompt nobody can answer.
       workspace.shells?.closeAll();
     }
+    schedules.stop();
     server.stop('host stopping');
     supervisor.dispose();
     // Every pointer as well as the machine's own record. A pointer left behind
@@ -555,6 +558,35 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     await clearOwnMachineRecord(process.pid, home);
     await Promise.all([...held.values()].map((w) => clearOwnHostRecord(w.info.root, process.pid)));
   };
+
+  /*
+   * Routines, owned by the host for the reason preview servers are (§6.8, §4.4).
+   *
+   * A schedule kept in the window would fire only while somebody was watching,
+   * and "every morning" that skips the mornings the laptop was shut is not a
+   * routine. Started below once the workspaces are known, stopped in `shutdown`
+   * with the servers and the shells — a timer outliving the process that owns
+   * the workspace would be work starting with nothing left that knows how to
+   * stop it.
+   */
+  const schedules = new ScheduleRunner({
+    workspaces: () => [...held.values()].map((w) => w.info.root),
+    running: (root, workflowId) => {
+      const entry = [...held.values()].find((w) => w.info.root === root);
+      return (
+        entry !== undefined && manager.workflowRuns.isRunning(workflowId, entry.info.instanceId)
+      );
+    },
+    run: async (root, schedule) => {
+      const entry = [...held.values()].find((w) => w.info.root === root);
+      if (entry === undefined) return;
+      await runWorkflowDocument(manager, entry.info.root, schedule.workflowId, schedule.budget);
+    },
+    // The host's stderr, which is where a background job's account of itself
+    // belongs: nobody is waiting on this call to hand a sentence to.
+    report: (line) => process.stderr.write(`schedule: ${line}
+`),
+  });
 
   server = new SessionHostServer({
     manager,
@@ -754,6 +786,17 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       throw err;
     }
   }
+
+  /*
+   * Started once this host is answering, and asked one question straight away.
+   *
+   * A machine that was off through its schedule's hour should not wait another
+   * minute to find that out — and the first tick is also the cheapest place to
+   * discover that a schedules file is unreadable, while somebody may still be
+   * looking at the window that started this.
+   */
+  schedules.start();
+  void schedules.tick();
 
   return { socket, ...(port !== undefined ? { port } : {}), stop };
 }

@@ -48,11 +48,12 @@ import type {
   PermissionRequest,
   PermissionResolved,
   Session,
+  SessionBudget,
   SessionProjection,
   ShellProgram,
 } from '../types/index.js';
 import type { WorkflowSummary } from '../host/sessionProtocol.js';
-import type { Workflow } from '../types/index.js';
+import type { Workflow, WorkflowSchedule } from '../types/index.js';
 
 // ------------------------------------------------------------------- payloads
 
@@ -892,7 +893,7 @@ export interface AgbrteApi {
      * The **document** travels, never the text: §4.4 puts a canonical form on
      * disk so a one-field edit is a one-line diff, and a client serialising for
      * itself would make that a property of the app version rather than of the
-     * file.  non-empty means nothing was written — a document the
+     * file. `problems` non-empty means nothing was written — a document the
      * reader will refuse is not a saved workflow, it is a trap set for later.
      */
     save(
@@ -900,6 +901,42 @@ export interface AgbrteApi {
       workflowId: string,
       workflow: Workflow,
     ): Promise<{ id: string; problems: Array<{ node?: string; message: string }> }>;
+    /**
+     * Start a run of one, which nothing could do before (§4.4, §4.3).
+     *
+     * `list` and `save` were the whole of this surface, so a workflow could be
+     * written, checked and drawn and then only run by a test holding the
+     * manager. The document was reachable and the thing it describes was not.
+     *
+     * By id, because the run is of the document *that machine* holds — the one
+     * a colleague pulling the repo also has. A body sent from here would let a
+     * client run something the workspace does not contain, and the log would
+     * name a workflow nobody could find.
+     *
+     * The ceiling is required, not defaulted. A run fans out into children, so
+     * §4.3's argument is at its sharpest here: a limit refused up front is a
+     * conversation, and one refused later is a bill. The workflow's own budget,
+     * where the author pinned one, is a claim about what the graph costs —
+     * this is whoever pressed the button saying what they will pay.
+     */
+    run(instanceId: string, workflowId: string, budget: SessionBudget): Promise<Session>;
+    /**
+     * What that workspace runs on a routine, and when each last did (§4.4).
+     *
+     * Empty from a host too old to keep one, which reads as *no routines* — the
+     * same thing it means on a host that has none, and the honest answer either
+     * way: nothing is scheduled there.
+     */
+    schedules(instanceId: string): Promise<WorkflowSchedule[]>;
+    /**
+     * Replace them, whole.
+     *
+     * The host owns the timer (§6.4) — this is a client editing what it will
+     * do. Whole rather than one at a time for the reason `setEndpointChain`
+     * is: two clients on one host cannot interleave into a list neither asked
+     * for.
+     */
+    setSchedules(instanceId: string, schedules: WorkflowSchedule[]): Promise<WorkflowSchedule[]>;
   };
   /**
    * Your screen, for the sessions that want to see it (§12.1).
@@ -1418,6 +1455,9 @@ export const CH = {
   inboxList: 'agbrte:inbox.list',
   workflowsList: 'agbrte:workflows.list',
   workflowsSave: 'agbrte:workflows.save',
+  workflowsRun: 'agbrte:workflows.run',
+  workflowsSchedules: 'agbrte:workflows.schedules',
+  workflowsSetSchedules: 'agbrte:workflows.setSchedules',
   sessionsRespondSplit: 'agbrte:sessions.respondSplit',
   sessionsGroup: 'agbrte:sessions.group',
   sessionsUngroup: 'agbrte:sessions.ungroup',

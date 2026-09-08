@@ -86,3 +86,52 @@ export interface Workflow {
    */
   budget?: SessionBudget;
 }
+
+/*
+ * ---------------------------------------------------------------- schedules
+ *
+ * A workflow this workspace runs on a routine (§4.4, §6.4).
+ *
+ * Here rather than beside the code that reads the file, because it crosses the
+ * wire: `schedule.list` and `schedule.set` carry it, and a shared type that
+ * lived under `main/` would pull the host's store into the renderer's bundle.
+ * The *behaviour* — validation, when a schedule is next due, the file itself —
+ * stays in `main/store/schedules.ts`, which is the half that needs a disk.
+ */
+
+/** When a workflow should run, in the two shapes that need no parser. */
+export type ScheduleEvery =
+  /** Every `ms`, measured from the last run this host started. */
+  | { kind: 'interval'; ms: number }
+  /** Once a day at `minute` past local midnight — 540 is nine in the morning. */
+  | { kind: 'daily'; minute: number };
+
+export interface WorkflowSchedule {
+  /** The document's id, which is its file's stem. Runs are read from disk. */
+  workflowId: string;
+  every: ScheduleEvery;
+  /**
+   * What each run may spend (§4.3).
+   *
+   * Required, not defaulted, and this is the strongest place that rule applies:
+   * a run fans out into children and nobody is watching when it starts. A
+   * ceiling refused up front is a conversation; one refused at three in the
+   * morning is a bill.
+   */
+  budget: SessionBudget;
+  /**
+   * When this last *started* a run, as recorded by whichever host did it.
+   *
+   * Written before the run rather than after, so a crash mid-run cannot make
+   * the next tick start a second one. The cost is that a run which failed to
+   * start still moves the clock, which is the safer of the two mistakes here.
+   */
+  lastRunAt?: string;
+  /**
+   * Off without being forgotten.
+   *
+   * Deleting is also possible and means something different — this is "not for
+   * now", and it keeps the budget and the timing somebody chose.
+   */
+  enabled: boolean;
+}

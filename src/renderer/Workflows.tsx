@@ -30,7 +30,8 @@ import type { HostInfo } from '../shared/ipc/contract.js';
 import type { WorkflowSummary } from '../shared/host/sessionProtocol.js';
 import { WorkflowGraph } from './WorkflowGraph.js';
 import { WorkflowEditor } from './WorkflowEditor.js';
-import type { Workflow } from '../shared/types/index.js';
+import { WorkflowSchedulePanel } from './WorkflowSchedule.js';
+import type { Workflow, WorkflowSchedule } from '../shared/types/index.js';
 
 /**
  * One workspace's answer.
@@ -53,9 +54,20 @@ function nodeCount(n: number): string {
 
 export function Workflows({
   workspaces,
+  schedules,
   onSave,
+  onRun,
+  onSchedule,
 }: {
   workspaces: WorkspaceWorkflows[];
+  /**
+   * What each workspace runs on a routine, keyed by `instanceId` (§4.4).
+   *
+   * The host keeps these; this is a read of them. Absent for a workspace whose
+   * host is too old to keep one, which reads the same as having none — because
+   * on that host, nothing is scheduled.
+   */
+  schedules?: Record<string, WorkflowSchedule[]>;
   /**
    * Write one back. Resolves with the host's findings, empty when it was saved.
    *
@@ -69,6 +81,16 @@ export function Workflows({
     workflowId: string,
     workflow: Workflow,
   ) => Promise<Array<{ node?: string; message: string }>>;
+  /**
+   * Start a run now — the same command a schedule calls, pressed by a person.
+   *
+   * Absent where this client may not start work, and its absence is what hides
+   * the schedule controls too: arranging for something to run is the same
+   * permission as running it.
+   */
+  onRun?: (instanceId: string, workflowId: string, ceiling: number) => Promise<void>;
+  /** Replace one workspace's routines, whole. See `setSchedules` on the wire. */
+  onSchedule?: (instanceId: string, schedules: WorkflowSchedule[]) => Promise<void>;
 }): JSX.Element {
   const anything = workspaces.some((w) => (w.found?.length ?? 0) > 0);
   /** `instanceId::id` of the document open in the editor, if any. */
@@ -186,6 +208,35 @@ export function Workflows({
                         ) : null}
                       </div>
                     </details>
+                  ) : null}
+                  {onRun !== undefined && onSchedule !== undefined && file.workflow !== undefined ? (
+                    <WorkflowSchedulePanel
+                      workflowId={file.id}
+                      schedule={(schedules?.[host.instanceId] ?? []).find(
+                        (s) => s.workflowId === file.id,
+                      )}
+                      canRun={file.problems.length === 0}
+                      onRun={(ceiling) => onRun(host.instanceId, file.id, ceiling)}
+                      onSet={(made) =>
+                        onSchedule(host.instanceId, [
+                          // Whole-list replacement, so this rebuilds the others
+                          // around the one being set — the wire takes the list
+                          // and two clients cannot interleave into a third.
+                          ...(schedules?.[host.instanceId] ?? []).filter(
+                            (s) => s.workflowId !== file.id,
+                          ),
+                          made,
+                        ])
+                      }
+                      onClear={() =>
+                        onSchedule(
+                          host.instanceId,
+                          (schedules?.[host.instanceId] ?? []).filter(
+                            (s) => s.workflowId !== file.id,
+                          ),
+                        )
+                      }
+                    />
                   ) : null}
                   {file.problems.length > 0 ? (
                     /* Every finding, not the first. A document has many seams and

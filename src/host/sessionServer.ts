@@ -26,6 +26,8 @@
  */
 
 import { listListeningPorts, type ListeningPort } from '@main/preview/ports.js';
+import { runWorkflowDocument } from '@main/workflowStart.js';
+import { readSchedules, writeSchedules } from '@main/store/schedules.js';
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import type { PreviewServers } from '@main/preview/servers.js';
 import type { Shells } from '@main/terminal/shell.js';
@@ -779,6 +781,61 @@ export class SessionHostServer {
            */
           const files = await listWorkflows(this.bound(client, 'list workflows').info.root);
           return files.map(({ id, workflow, problems }) => ({ id, workflow, problems }));
+        }
+
+        case 'workflow.run': {
+          /*
+           * A write, and the one that spends money (§4.4, §4.3).
+           *
+           * It creates a session and starts a graph that fans out into
+           * children, so the gate is the same one `session.group` argues for at
+           * greater length: a read-only client watching a build box must not be
+           * able to start work on it.
+           *
+           * The document is read from *this workspace* rather than taken from
+           * the caller. A run names a workflow in the log, and a body sent over
+           * the wire would put a name there that nothing on the machine can be
+           * matched against — the same reasoning that keeps `template.apply`
+           * reading from disk.
+           */
+          this.requireWrite(client, 'run a workflow');
+          /*
+           * Through the shared starter, which the schedule runner also calls.
+           *
+           * One place reads the document and decides whether it can run, so a
+           * routine cannot come to a different answer from the button — a
+           * schedule that ran documents this refuses would be the worse half of
+           * that pair, because nobody is watching when it does.
+           */
+          return runWorkflowDocument(
+            manager,
+            this.bound(client, 'run a workflow').info.root,
+            command.workflowId,
+            command.budget,
+            client.actor,
+          );
+        }
+
+        case 'schedule.list': {
+          // A read of this workspace's own file, like `workflow.list` beside it.
+          return readSchedules(this.bound(client, 'list schedules').info.root);
+        }
+
+        case 'schedule.set': {
+          /*
+           * A write, and one that arranges to spend money while nobody is
+           * watching — the same gate as starting a run, for a stronger reason.
+           *
+           * Validated by `writeSchedules`, which refuses the whole list if any
+           * entry is unusable: a half-applied list is the state nobody can
+           * reason about, and this one decides what happens at nine tomorrow.
+           */
+          this.requireWrite(client, 'set the workflow schedule');
+          await writeSchedules(
+            this.bound(client, 'set the workflow schedule').info.root,
+            command.schedules,
+          );
+          return readSchedules(this.bound(client, 'set the workflow schedule').info.root);
         }
 
         case 'workflow.save': {

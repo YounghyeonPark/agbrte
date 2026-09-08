@@ -48,8 +48,10 @@ import type {
   SessionProjection,
   ShellProgram,
   Workflow,
+  WorkflowSchedule,
 } from '../types/index.js';
 import type { HostChannel } from './protocol.js';
+
 
 export type RequestId = string;
 
@@ -306,6 +308,36 @@ export interface HostIdentity {
  * ignores the extra `hello` field and reports `protocol: 1` exactly as it always
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
+ *
+ * ## v31 also adds `schedule.list` and `schedule.set`
+ *
+ * A routine is the reason `workflow.run` was built, and it lives in the host
+ * because the host is what does things — the app is a client (§6.4), and a
+ * timer in the window would fire only while somebody was watching it. So these
+ * two are how a client reads and edits something it does not own.
+ *
+ * `set` replaces the whole list, like `endpoints.chain`: two clients editing
+ * one host cannot interleave into a list neither asked for.
+ *
+ * ## v31 adds `workflow.run`, which is the only half that was missing
+ *
+ * `workflow.list` and `workflow.save` shipped at v25 and v26, and there it
+ * stopped: a workflow could be authored, validated, drawn and edited, and the
+ * only thing that could *run* one was a test holding the `SessionManager`
+ * directly. Every client — the window, the phone, the CLI — could see the
+ * document and had no way to act on it.
+ *
+ * It takes an id and a budget. The id, because a run is of the document that
+ * machine holds, which is the one a colleague pulling the repo also gets;
+ * sending a body would let a client run something the workspace does not
+ * contain and leave the log naming a workflow nobody can find. The budget,
+ * because §4.3's argument about ceilings is sharpest here — a run fans out
+ * into children, and this is the command a schedule will eventually call
+ * while nobody is watching.
+ *
+ * A v30 host refuses it by name through `COMMAND_SINCE`, which is the whole
+ * degradation: the workflow pane still lists and validates there, exactly as
+ * it did.
  *
  * ## v30 adds `endpoints.chain`, which is the write half of a read that shipped
  *
@@ -696,7 +728,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 30;
+export const SESSION_PROTOCOL_VERSION = 31;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -774,6 +806,9 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'workflow.list': 25,
   'workflow.save': 26,
   'endpoints.chain': 30,
+  'workflow.run': 31,
+  'schedule.list': 31,
+  'schedule.set': 31,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -848,6 +883,39 @@ export type SessionCommand =
   | { t: 'workflow.list'; id: RequestId }
   /** Write a workflow document into the workspace (§4.4). A write, gated. */
   | { t: 'workflow.save'; id: RequestId; workflowId: string; workflow: Workflow }
+  /**
+   * Start a run of a workflow this workspace holds (§4.4).
+   *
+   * **The first way a client could start one at all.** `workflow.list` and
+   * `workflow.save` were the whole of the wire, so a workflow could be written,
+   * validated and drawn, and then only run by a test holding the manager
+   * directly. The document was reachable and the thing it describes was not.
+   *
+   * By id, not by value: the run is of the document *on that machine*, which is
+   * the one a colleague pulling the repo also has. Sending the body would let a
+   * client run something the workspace does not contain, and the log would then
+   * name a workflow nobody could find.
+   *
+   * A write, and the strongest kind — it creates a session and spends whatever
+   * that session spends. `budget` is required for the same reason (§4.3): a
+   * ceiling refused at the start is a conversation, and one refused at three in
+   * the morning is a bill.
+   */
+  | { t: 'workflow.run'; id: RequestId; workflowId: string; budget: SessionBudget }
+  /** What this workspace runs on a routine, and when it last did (§4.4). */
+  | { t: 'schedule.list'; id: RequestId }
+  /**
+   * Replace the whole list of routines for this workspace.
+   *
+   * Whole rather than one at a time, for the reason `endpoints.chain` is: two
+   * clients editing the same host cannot interleave into a list neither asked
+   * for. The loser overwrites the winner, which is visible and correctable.
+   *
+   * A write, and the one that arranges to spend money while nobody is watching
+   * — so it carries the same gate as starting a run, and every entry carries
+   * its own ceiling (§4.3).
+   */
+  | { t: 'schedule.set'; id: RequestId; schedules: WorkflowSchedule[] }
   | { t: 'template.apply'; id: RequestId; templateId: string; title?: string }
   /**
    * What each endpoint on this host can serve, right now (§3.8).

@@ -51,6 +51,8 @@ import type { PreviewForwards } from '../preview/forwards.js';
 import type {
   ReasoningRequest,
   AgentId,
+  SessionBudget,
+  WorkflowSchedule,
   InstanceId,
   McpServerConfig,
   AgbrteEvent,
@@ -612,6 +614,21 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   handle(CH.inboxList, (limit?: number) => fleet.inbox(limit));
   handle(CH.inboxMarkRead, () => fleet.markInboxRead());
   handle(CH.workflowsList, (instanceId: string) => fleet.workflows(instanceId as InstanceId));
+  // A write that starts work and spends a budget, gated by the host it reaches
+  // — §7 puts enforcement where the knowledge is.
+  handle(CH.workflowsRun, (r: { instanceId: string; workflowId: string; budget: SessionBudget }) =>
+    fleet.runWorkflow(r.instanceId as InstanceId, r.workflowId, r.budget),
+  );
+
+  handle(CH.workflowsSchedules, (instanceId: string) =>
+    fleet.schedules(instanceId as InstanceId),
+  );
+  handle(
+    CH.workflowsSetSchedules,
+    (r: { instanceId: string; schedules: WorkflowSchedule[] }) =>
+      fleet.setSchedules(r.instanceId as InstanceId, r.schedules),
+  );
+
   handle(CH.workflowsSave, (r: { instanceId: string; workflowId: string; workflow: Workflow }) =>
     fleet.saveWorkflow(r.instanceId as InstanceId, r.workflowId, r.workflow),
   );

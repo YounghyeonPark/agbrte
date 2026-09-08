@@ -47,7 +47,7 @@ import type { ListeningPort } from './preview/ports.js';
 import type { PreviewServer, PreviewServerLog } from './preview/servers.js';
 import type { ShellHandle } from './terminal/shell.js';
 import type { SessionTemplate } from './store/templates.js';
-import type { Workflow } from '@shared/types/index.js';
+import type { SessionBudget, Workflow, WorkflowSchedule } from '@shared/types/index.js';
 import type { ModelNeed } from './runtime/registry.js';
 import type {
   CreateSessionInput,
@@ -1742,6 +1742,49 @@ export class Fleet extends EventEmitter {
     workflow: Workflow,
   ): Promise<{ id: string; problems: Array<{ node?: string; message: string }> }> {
     return this.host(instanceId).connection.saveWorkflow(workflowId, workflow);
+  }
+
+  /**
+   * Start a run of a workflow that workspace holds (§4.4).
+   *
+   * Straight through, and refused *there*: the host owns the work, and §7 puts
+   * enforcement where the knowledge is. A host older than v31 is refused by
+   * name rather than by silence, which is the same sentence every other new
+   * command gets.
+   */
+  async runWorkflow(
+    instanceId: InstanceId,
+    workflowId: string,
+    budget: SessionBudget,
+  ): Promise<Session> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('workflow.run')) {
+      throw new AttachRefused(
+        `the host for ${labelOf(entry)} is too old to run a workflow. Update it and try again.`,
+      );
+    }
+    return entry.connection.runWorkflow(workflowId, budget);
+  }
+
+  /** What that workspace runs on a routine (§4.4). Empty from a host too old. */
+  async schedules(instanceId: InstanceId): Promise<WorkflowSchedule[]> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('schedule.list')) return [];
+    return entry.connection.schedules();
+  }
+
+  /** Replace them, refused by name where the host predates them. */
+  async setSchedules(
+    instanceId: InstanceId,
+    schedules: WorkflowSchedule[],
+  ): Promise<WorkflowSchedule[]> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('schedule.set')) {
+      throw new AttachRefused(
+        `the host for ${labelOf(entry)} is too old to keep a schedule. Update it and try again.`,
+      );
+    }
+    return entry.connection.setSchedules(schedules);
   }
 
   async workflows(instanceId: InstanceId): Promise<WorkflowSummary[] | null> {

@@ -38,7 +38,7 @@ import {
   type UpdateState,
 } from '../shared/ipc/contract.js';
 import type { ReasoningMode } from '../shared/ipc/contract.js';
-import type { Workflow } from '../shared/types/index.js';
+import type { SessionBudget, Workflow, WorkflowSchedule } from '../shared/types/index.js';
 import type {
   McpServerConfig,
   PermissionDecision,
@@ -100,6 +100,11 @@ const api: AgbrteApi = {
     list: (instanceId: string) => ipcRenderer.invoke(CH.workflowsList, instanceId),
     save: (instanceId: string, workflowId: string, workflow: Workflow) =>
       ipcRenderer.invoke(CH.workflowsSave, { instanceId, workflowId, workflow }),
+    run: (instanceId: string, workflowId: string, budget: SessionBudget) =>
+      ipcRenderer.invoke(CH.workflowsRun, { instanceId, workflowId, budget }),
+    schedules: (instanceId: string) => ipcRenderer.invoke(CH.workflowsSchedules, instanceId),
+    setSchedules: (instanceId: string, schedules: WorkflowSchedule[]) =>
+      ipcRenderer.invoke(CH.workflowsSetSchedules, { instanceId, schedules }),
   },
   capture: {
     sources: () => ipcRenderer.invoke(CH.captureSources),

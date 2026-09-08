@@ -293,6 +293,11 @@ const api: AgbrteApi = {
     list: call(CH.workflowsList),
     save: (instanceId, workflowId, workflow) =>
       call(CH.workflowsSave)({ instanceId, workflowId, workflow }),
+    run: (instanceId: string, workflowId: string, budget: unknown) =>
+      call(CH.workflowsRun)({ instanceId, workflowId, budget }),
+    schedules: call(CH.workflowsSchedules),
+    setSchedules: (instanceId: string, schedules: unknown) =>
+      call(CH.workflowsSetSchedules)({ instanceId, schedules }),
   },
   /**
    * Routed to the server like everything else, which is what makes the honest

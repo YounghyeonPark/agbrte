@@ -17,7 +17,7 @@ import type { PreviewServer, PreviewServerLog } from '../preview/servers.js';
 import type { ShellHandle } from '../terminal/shell.js';
 import type { SessionTemplate } from '../store/templates.js';
 import type { WorkflowSummary } from '@shared/host/sessionProtocol.js';
-import type { Workflow } from '@shared/types/index.js';
+import type { Workflow, WorkflowSchedule } from '@shared/types/index.js';
 import { EventEmitter } from 'node:events';
 import {
   COMMAND_SINCE,
@@ -493,6 +493,40 @@ export class HostConnection extends EventEmitter {
   ): Promise<{ id: string; problems: Array<{ node?: string; message: string }> }> {
     this.require('workflow.save');
     return this.call({ t: 'workflow.save', workflowId, workflow });
+  }
+
+  /**
+   * Start a run of a workflow this workspace holds (§4.4).
+   *
+   * By id, so the run is of the document on that machine — the one a colleague
+   * pulling the repo also has. A budget is required rather than optional: a run
+   * fans out into children, and §4.3's argument about ceilings is at its
+   * sharpest where the thing being started is a graph.
+   *
+   * `require` names the command, so a host older than v31 is refused by name
+   * and the workflow pane keeps listing and validating exactly as it did.
+   */
+  async runWorkflow(workflowId: string, budget: SessionBudget): Promise<Session> {
+    this.require('workflow.run');
+    return this.call<Session>({ t: 'workflow.run', workflowId, budget });
+  }
+
+  /** What this workspace runs on a routine (§4.4). */
+  async schedules(): Promise<WorkflowSchedule[]> {
+    this.require('schedule.list');
+    return this.call<WorkflowSchedule[]>({ t: 'schedule.list' });
+  }
+
+  /**
+   * Replace them, whole.
+   *
+   * Whole rather than one at a time, like `setEndpointChain`: two clients
+   * editing one host cannot interleave into a list neither asked for, and the
+   * loser overwriting the winner is visible and correctable.
+   */
+  async setSchedules(schedules: WorkflowSchedule[]): Promise<WorkflowSchedule[]> {
+    this.require('schedule.set');
+    return this.call<WorkflowSchedule[]>({ t: 'schedule.set', schedules });
   }
 
   /**

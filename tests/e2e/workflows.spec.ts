@@ -250,3 +250,93 @@ test('says a workspace has none, which is different from being unable to ask', a
     await web.stop();
   }
 });
+
+/*
+ * Running a workflow, and arranging for it to run again (§4.4, §6.4, §4.3).
+ *
+ * Until v31 nothing could start a run at all: this pane could list, validate,
+ * draw and edit a document, and the only thing that could *run* one was a test
+ * holding the `SessionManager`. The document was reachable and the thing it
+ * describes was not.
+ *
+ * The schedule beside it is the reason that gap mattered. It belongs to the
+ * **host** (§6.4) — a timer in this window would fire only while somebody had
+ * the window open, which is the one thing a routine cannot depend on — so what
+ * is under test here is a client reading and editing something it does not own.
+ */
+test('runs a workflow, and schedules it to run again', async ({ page }) => {
+  const web = await serveWebFixture();
+
+  try {
+    await writeWorkflows(web.repo);
+    await page.goto(web.url);
+    await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
+    await page.locator('[data-testid=show-workflows]').click();
+
+    const row = page.locator('[data-testid=workflow-row][data-id=review]');
+    await expect(row).toBeVisible({ timeout: 20_000 });
+
+    // Nothing is scheduled until something schedules it, and the row says so by
+    // offering the control rather than by describing a routine it does not have.
+    await expect(row.locator('[data-testid=workflow-schedule-summary]')).toHaveCount(0);
+
+    await row.locator('[data-testid=workflow-schedule-open]').click();
+    await row.locator('[data-testid=workflow-schedule-time]').fill('06:30');
+    await row.locator('[data-testid=workflow-schedule-save]').click();
+
+    /*
+     * Read back from the host, not echoed. The host wrote the file and read it
+     * again, so this is what will actually fire — a pane showing the draft
+     * would be showing something no file holds.
+     */
+    await expect(row.locator('[data-testid=workflow-schedule-summary]')).toContainText(
+      'every day at 06:30',
+      { timeout: 20_000 },
+    );
+    // And it has not run, which is a different thing from having no schedule.
+    await expect(row.locator('[data-testid=workflow-schedule-summary]')).toContainText(
+      'not yet run',
+    );
+
+    /*
+     * The file it landed in is the one `run/` holds — gitignored, beside
+     * `sessions/`. A schedule under `templates/` would start running on a
+     * colleague's machine the moment they pulled.
+     */
+    const written = JSON.parse(
+      await readFile(join(web.repo, '.agbrte', 'run', 'schedules.json'), 'utf8'),
+    ) as { schedules: Array<{ workflowId: string; every: { minute: number } }> };
+    expect(written.schedules[0]?.workflowId).toBe('review');
+    expect(written.schedules[0]?.every.minute).toBe(6 * 60 + 30);
+
+    await row.locator('[data-testid=workflow-unschedule]').click();
+    await expect(row.locator('[data-testid=workflow-schedule-summary]')).toHaveCount(0, {
+      timeout: 20_000,
+    });
+  } finally {
+    await web.stop();
+  }
+});
+
+test('will not run a document it has already said is broken', async ({ page }) => {
+  const web = await serveWebFixture();
+
+  try {
+    await writeWorkflows(web.repo);
+    await page.goto(web.url);
+    await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
+    await page.locator('[data-testid=show-workflows]').click();
+
+    /*
+     * The broken document this suite already writes. Its findings are on the
+     * row, and offering to run it anyway would be a control that fails on
+     * press — §3.5's shape, and worse here because the failure would arrive
+     * after a session had been created.
+     */
+    const broken = page.locator('[data-testid=workflow-row][data-ok=no]');
+    await expect(broken).toBeVisible({ timeout: 20_000 });
+    await expect(broken.locator('[data-testid=workflow-schedule]')).toHaveCount(0);
+  } finally {
+    await web.stop();
+  }
+});

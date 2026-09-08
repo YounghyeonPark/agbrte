@@ -11,6 +11,11 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { SessionHostServer } from '../src/host/sessionServer.js';
+import { HostConnection } from '@main/host/hostConnection.js';
+import { memoryChannelPair } from '@shared/host/memoryChannel.js';
+import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
+import type { LineageId } from '@shared/types/index.js';
 import { until } from './support/until.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -90,6 +95,31 @@ async function settle(
   if (child === undefined) throw new Error(`no child for ${nodeId}`);
   if (state === 'done') await m.reportResult(child.sessionId, { summary: `${nodeId} finished` });
   else await m.cancelSession(child.sessionId);
+}
+
+
+/**
+ * A host over an in-memory channel, and a client bound to this workspace.
+ *
+ * Module-scoped because two describes need it: the run command and the routines
+ * that call it. Its own `SessionManager` per call, so a test that starts a run
+ * cannot leave one running under the next.
+ */
+async function client(): Promise<{ connection: HostConnection; manager: SessionManager }> {
+  const registry = new RuntimeRegistry();
+  registry.register(new EchoRuntime({ script: [] }), { label: 'Echo', model: 'none' });
+  const manager = new SessionManager({ registry, workspaceRoot: root, instanceId });
+
+  const server = new SessionHostServer({
+    manager,
+    identity: { instanceId, lineageId: 'l' as LineageId, workspaceRoot: root, runtimes: ['echo'] },
+  });
+  const pair = memoryChannelPair<SessionCommand, SessionMessage>();
+  server.accept(pair.host);
+  const connection = new HostConnection({ channel: pair.main, workspace: root });
+  await connection.ready;
+
+  return { connection, manager };
 }
 
 const titles = (rootId: SessionId): string[] =>
@@ -476,5 +506,141 @@ describe('the exemption §4.4 grants, and its edges', () => {
     await expect(manager.workflowRuns.start(rootId, workflow([node('a')]))).rejects.toThrow(
       /reserve/,
     );
+  });
+});
+
+/*
+ * Starting a run from a client, which nothing could do (§4.4).
+ *
+ * `workflow.list` and `workflow.save` were the whole of the wire, so a workflow
+ * could be authored, validated, drawn and edited — and the only thing that
+ * could run one was a test holding the `SessionManager` directly, the way every
+ * test above this one does. The document was reachable and the thing it
+ * describes was not.
+ *
+ * Driven through a real `SessionHostServer` and `HostConnection` rather than
+ * the manager, because the manager was never the missing part.
+ */
+describe('running a workflow from a client', () => {
+  const CEILING = { tokenCeiling: 200_000, spent: 0, reservedForChildren: 0 };
+
+  /** The document on disk, which is where the host reads it from. */
+  async function put(wf: Workflow): Promise<void> {
+    const { saveWorkflow } = await import('@main/store/workflows.js');
+    expect((await saveWorkflow(root, wf.id, wf)).problems).toEqual([]);
+  }
+
+  it('starts the graph, and the run is a session like any other', async () => {
+    const wf = workflow([node('scan'), node('tests', ['scan'])]);
+    await put(wf);
+    const { connection, manager } = await client();
+
+    const session = await connection.runWorkflow(wf.id, CEILING);
+
+    // The root carries the workflow it is a run of, so a restart still knows
+    // (§4.4) — and only what is ready has been spawned, which is the whole
+    // behaviour the nodes above test through the manager.
+    // The run carries the workflow it is of, in the log — where a restart reads
+    // it from (§4.4). Not on `Session`, which is the live view.
+    expect((await manager.projection(session.sessionId)).workflow).toBe(wf.id);
+    await until(() => manager.get(session.sessionId).children.length === 1);
+    expect(manager.get(session.sessionId).children[0]?.title).toBe('scan');
+  });
+
+  it('refuses a document this workspace does not have, and says what it has', async () => {
+    const wf = workflow([node('scan')]);
+    await put(wf);
+    const { connection } = await client();
+
+    /*
+     * By id and read on the host, so this is the only place the question can be
+     * answered. A body sent over the wire would let a client run something the
+     * workspace does not contain, and the log would then name a workflow nobody
+     * could find.
+     */
+    await expect(connection.runWorkflow('not-here', CEILING)).rejects.toThrow(/no workflow/);
+    await expect(connection.runWorkflow('not-here', CEILING)).rejects.toThrow(wf.id);
+  });
+
+  it('refuses a broken document with its own findings, not with "invalid"', async () => {
+    /*
+     * `workflow.list` already carries `problems` so the pane can show a broken
+     * document *as* a document. Running one is where that stops being
+     * tolerable — and the reason has to travel, or the refusal sends somebody
+     * back to the pane to learn what this already knew.
+     */
+    const broken = { ...workflow([node('scan', ['nobody'])]), id: 'broken' };
+    const { saveWorkflow } = await import('@main/store/workflows.js');
+    // Written past the validator on purpose: a file arrives by `git pull` as
+    // often as by this app, and that is the copy a run meets.
+    await saveWorkflow(root, broken.id, broken).catch(() => undefined);
+    const { writeFile, mkdir } = await import('node:fs/promises');
+    // `saveWorkflow` refused it, so it never made the directory either.
+    await mkdir(join(root, '.agbrte', 'templates'), { recursive: true });
+    await writeFile(
+      join(root, '.agbrte', 'templates', 'broken.workflow.json'),
+      JSON.stringify(broken, null, 2),
+      'utf8',
+    );
+
+    const { connection } = await client();
+    await expect(connection.runWorkflow('broken', CEILING)).rejects.toThrow(/cannot run as written/);
+    await expect(connection.runWorkflow('broken', CEILING)).rejects.toThrow(/nobody/);
+  });
+});
+
+/*
+ * Reading and editing a routine from a client (§4.4, §6.4).
+ *
+ * The host owns the timer, so this is the whole of what a client does with one:
+ * ask what is set, and replace it. Worth driving over the wire rather than
+ * against the store, because the store was never the missing part — the point
+ * of this pair is that a window, a phone and the CLI can all change what a
+ * machine does at nine tomorrow without any of them having to be running then.
+ */
+describe('the routines a client can set', () => {
+  const BUDGET = { tokenCeiling: 100_000, spent: 0, reservedForChildren: 0 };
+  const nine = {
+    workflowId: 'nightly',
+    every: { kind: 'daily' as const, minute: 9 * 60 },
+    budget: BUDGET,
+    enabled: true,
+  };
+
+  it('is empty until something sets one', async () => {
+    const { connection } = await client();
+    expect(await connection.schedules()).toEqual([]);
+  });
+
+  it('round-trips what was set, and hands back what the host stored', async () => {
+    const { connection } = await client();
+    // The reply is read back from the file rather than echoed, so what a client
+    // shows is what will actually fire.
+    expect(await connection.setSchedules([nine])).toEqual([nine]);
+    expect(await connection.schedules()).toEqual([nine]);
+  });
+
+  it('refuses the whole list when one entry could not be honoured', async () => {
+    const { connection } = await client();
+    await connection.setSchedules([nine]);
+
+    /*
+     * An interval short enough to be a loop. Refused whole, because a
+     * half-applied list is the state nobody can reason about — and this list
+     * decides what happens while nobody is watching.
+     */
+    await expect(
+      connection.setSchedules([nine, { ...nine, workflowId: 'tight', every: { kind: 'interval', ms: 1_000 } }]),
+    ).rejects.toThrow(/refused/);
+    expect(await connection.schedules()).toEqual([nine]);
+  });
+
+  it('takes one back out by leaving it out', async () => {
+    // Whole-list replacement is the only edit there is, for the reason
+    // `endpoints.chain` gives: two clients on one host cannot interleave into a
+    // list neither asked for.
+    const { connection } = await client();
+    await connection.setSchedules([nine]);
+    expect(await connection.setSchedules([])).toEqual([]);
   });
 });
