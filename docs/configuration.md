@@ -2,7 +2,7 @@
 
 [← README](../README.md)
 
-Two files, since `--help` covers flags and not files.
+The files, since `--help` covers flags and not files.
 **[DESIGN.md](../DESIGN.md) §3.8 and §8.2 are the full reference for both**,
 including why credentials belong to the machine's host rather than to whoever is
 attached.
@@ -101,6 +101,55 @@ box: name it, give it the URL, leave the key empty if it needs none. Editing the
 file by hand stays available and is the only way to change an endpoint that
 already exists, because the write path refuses to redirect an id an agent may
 already be pointing at.
+
+## `<workspace>/.agbrte/templates/*.mcp.json` — servers a project uses
+
+Tracked, so a colleague who clones the repository gets them. One file per
+server, named by the id the tools take (`mcp__<id>__<tool>`).
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "some-mcp-server"],
+  "envFrom": { "API_KEY": "SEARCH_API_KEY" }
+}
+```
+
+**`envFrom` maps rather than holds.** The left side is the variable the server
+wants; the right side is the name the *machine* keeps the value under. There is
+no field a value fits in, and both halves are checked as environment-variable
+names, so a key pasted into either is refused — which is what makes this file
+safe to commit. An `env` block is refused too, by name, rather than ignored.
+
+The value lives in `~/.agbrte/secrets.json` (`0600`), beside the model keys and
+never in the repository. Nothing asks you to put it there in advance: tick the
+server in the new-session form and it asks for whatever is missing, by name.
+
+This is how **web search** works, and why there is no search tool in the list:
+search means a vendor, an endpoint and a key, and an MCP server for whichever
+one you use is a file like the above rather than a decision baked into this
+program. The same route carries anything else with an MCP server.
+
+Nothing attaches itself. A session gets what somebody ticked when it was made,
+and a host restart brings a declared server back — which a hand-typed one
+cannot, since its values were never written down (DESIGN.md §17 Q20).
+
+## `<workspace>/.agbrte/templates/*.skill.md` — instructions a project carries
+
+Tracked, beside the servers. Frontmatter with a description, then the body:
+
+```markdown
+---
+description: How commit messages are written here
+---
+
+They say why, and they record what broke.
+```
+
+The description is what the model reads when deciding whether to load the body,
+so the body is not in the window until the work calls for it. Ticked per session
+like a server, and refused with its reason if the id is not a legal tool name or
+the body is over the 8,000-character tool-output cap.
 
 ## `<workspace>/.agbrte/access.json` — watching rather than driving
 

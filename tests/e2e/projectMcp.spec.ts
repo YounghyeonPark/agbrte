@@ -109,6 +109,43 @@ test('asks for the key by name, spawns the server, and keeps the value off the p
   }
 });
 
+test('says a project declares none, where somebody would look for one', async () => {
+  // A plain workspace: nothing in `templates/` at all.
+  const repo = await makeRepo();
+  const agbrte = await launch(repo);
+
+  try {
+    const page = agbrte.window;
+    await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
+    await hostGroup(page).locator('[data-testid=new-session]').click();
+
+    /*
+     * A workspace declaring nothing rendered nothing at all, so the only way to
+     * learn that a project *can* declare a server was to read the source — and
+     * this is the route web search takes, since there is no search tool and an
+     * MCP server for whichever vendor you use is a file rather than a decision
+     * baked into this program.
+     *
+     * The same argument the workflow door makes: shown whether or not any
+     * exist, because "there are none yet" is exactly when somebody needs it.
+     */
+    const none = page.locator('[data-testid=new-servers-none]');
+    await expect(none).toBeVisible({ timeout: 20_000 });
+    // The file to write and where, because a hint that does not say the name is
+    // a hint somebody has to come back from.
+    await expect(none).toContainText('.agbrte/templates/');
+    await expect(none).toContainText('.mcp.json');
+    // And the one thing that must not be misread: the key is not in the file.
+    await expect(none).toContainText('envFrom');
+
+    // Not both at once: a workspace that declares servers gets the list, not
+    // an explanation of how to make the list it already has.
+    await expect(page.locator('[data-testid=new-servers]')).toHaveCount(0);
+  } finally {
+    await agbrte.close();
+  }
+});
+
 test('lists what the machine keeps, by name, and forgets one when asked', async () => {
   const repo = await withDeclaration();
   const agbrte = await launch(repo);

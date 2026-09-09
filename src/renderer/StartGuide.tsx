@@ -60,6 +60,11 @@ const STEPS: Array<{ title: string; detail: string }> = [
       'On an empty window, New session. On a host that is already attached, + on its row. Either way you are asked which folder, and shown what is already in it before anything starts.',
   },
   {
+    title: 'Give it tools, if the project has any',
+    detail:
+      'A file in .agbrte/templates/ — <id>.mcp.json for a server, <id>.skill.md for instructions — is offered as a tick when you make a session. Tracked, so it travels by clone; the key stays on the machine and is asked for by name. Web search is an MCP server, which is why there is no search tool.',
+  },
+  {
     title: 'Add an agent',
     detail:
       'Pick a runtime — an installed CLI, a local model, or an API endpoint — and a model where one is called for.',

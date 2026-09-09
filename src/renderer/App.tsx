@@ -2725,6 +2725,34 @@ function HostGroup({
             `newFolderTarget` is a folder about to be created, which declares
             nothing yet.
           */}
+          {newFolderTarget === '' && declared !== null && declared.length === 0 && (
+            /*
+              Said when there are none, which is when it needs saying.
+
+              A workspace that declares nothing rendered nothing at all, so the
+              only way to learn that a project *can* declare a server was to
+              read the source — and this is the route web search takes, since
+              there is no search tool and an MCP server for whichever vendor you
+              use is a file rather than a decision baked into this program.
+
+              The same argument the workflow door makes two blocks down:
+              "shown whether or not any exist, because 'there are none yet' is
+              exactly when somebody needs it". A folded line, so a workspace
+              that will never declare one pays a sentence for it.
+            */
+            <details data-testid="new-servers-none">
+              <summary className={`${LABEL} text-muted cursor-pointer`}>
+                MCP servers — this project declares none
+              </summary>
+              <p className="text-muted m-0 pt-1 text-[11px]">
+                A file in <code>.agbrte/templates/</code> named{' '}
+                <code>&lt;id&gt;.mcp.json</code> adds one, and it is tracked, so a colleague who
+                clones this gets it. It names a command and, through{' '}
+                <code>envFrom</code>, which key on this machine to hand it — never the key
+                itself. Web search works this way. See <em>Guide</em>.
+              </p>
+            </details>
+          )}
           {newFolderTarget === '' && declared !== null && declared.length > 0 && (
             <div className="grid gap-1" data-testid="new-servers">
               <span className={LABEL}>MCP servers this project declares</span>
