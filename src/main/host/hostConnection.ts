@@ -485,6 +485,42 @@ export class HostConnection extends EventEmitter {
   }
 
   /**
+   * Which named secrets this machine holds — **names only** (§13, v33).
+   *
+   * `require` rather than an empty list, for the reason every other capability
+   * read here gives: a machine holding none and a host too old to be asked are
+   * different facts, and only one has a remedy (§3.3).
+   *
+   * There is no `getSecret` beside this and there will not be one. A value's
+   * only caller is the spawn on the machine that holds it, so a reader here
+   * would be a way for a value to cross a wire for no reason — which is the
+   * whole of what §13 asks.
+   */
+  async secretNames(): Promise<string[]> {
+    this.require('secrets.list');
+    return this.call<string[]>({ t: 'secrets.list' });
+  }
+
+  /**
+   * Store one on that machine, replacing whatever was there (§13, v33).
+   *
+   * The value is passed through as an argument and is not held, logged or
+   * echoed anywhere on this side either — the reply is the name, which the
+   * caller already had. Refused by name where the host predates the command,
+   * because a silent no-op here means somebody believes a key is stored.
+   */
+  async setSecret(name: string, value: string): Promise<{ name: string }> {
+    this.require('secrets.set');
+    return this.call<{ name: string }>({ t: 'secrets.set', name, value });
+  }
+
+  /** Forget one there. Absent is success: the caller wanted it gone. */
+  async deleteSecret(name: string): Promise<{ name: string }> {
+    this.require('secrets.delete');
+    return this.call<{ name: string }>({ t: 'secrets.delete', name });
+  }
+
+  /**
    * Skill documents in this host's workspace (§17 Q21, §17 Q12).
    *
    * `require` rather than an empty list, for the reason `workflows()` below

@@ -250,6 +250,24 @@ export interface SessionHostOptions {
     order: string[],
   ) => Promise<{ path: string; default: string; fallback: string[] }>;
   /**
+   * The named secrets this machine holds, and the two writes (§13, v33).
+   *
+   * Callbacks, like `addEndpoint` above and for the identical reason: this file
+   * never imports the module that touches a credential, so a value passes
+   * through as an argument to something `hostMain` supplied and is not held
+   * here, not defaulted here, and not describable from here.
+   *
+   * One object rather than three fields, because they are one capability — a
+   * host either has a machine directory to keep secrets in or it does not, and
+   * a server that could list but not set would be a state nothing wants.
+   */
+  secrets?: {
+    /** **Names only.** There is no reader for a value outside this machine. */
+    list: () => Promise<string[]>;
+    set: (name: string, value: string) => Promise<{ name: string }>;
+    delete: (name: string) => Promise<{ name: string }>;
+  };
+  /**
    * Called whenever this server stops serving, for any reason.
    *
    * Named for the *fact* rather than for one cause, because it had one cause and
@@ -1194,6 +1212,60 @@ export class SessionHostServer {
 
         case 'models.progress':
           return (await this.opts.installProgress?.()) ?? [];
+
+        case 'secrets.list': {
+          /*
+           * Names, never values (§13). The reply is a list of strings a person
+           * reads to know what this machine holds — and the reason there is no
+           * sibling command returning a value is that nothing outside the spawn
+           * on this machine has any use for one.
+           *
+           * A read, so no gate: knowing that a machine holds `SEARCH_API_KEY`
+           * says nothing about what it is, and a read-only client that could not
+           * see the names would be unable to tell a missing key from a broken
+           * server.
+           */
+          const secrets = this.opts.secrets;
+          if (secrets === undefined) return [];
+          return secrets.list();
+        }
+
+        case 'secrets.set': {
+          /*
+           * A write, and the same gate as `endpoints.add` below for the same
+           * reason: §7's `read-only` role exists so a phone pinned by an access
+           * policy can watch a build box without driving it, and a client that
+           * could store a credential there could make that box talk to an
+           * account nobody on it owns.
+           *
+           * **Nothing about `command.value` is logged, reported or echoed.** The
+           * reply is the name, which the caller already had; `reply()` turns a
+           * thrown error into its `message`, which is exactly why the writer
+           * never interpolates a value into one.
+           */
+          this.requireWrite(client, 'store a secret on this machine');
+          const secrets = this.opts.secrets;
+          if (secrets === undefined) {
+            throw new Error(
+              'this host cannot keep secrets — it was started without a place to keep them',
+            );
+          }
+          return secrets.set(command.name, command.value);
+        }
+
+        case 'secrets.delete': {
+          // The same gate: removing a credential a running server needs is a
+          // change to what this machine can do, and a read-only client does not
+          // make those.
+          this.requireWrite(client, 'forget a secret on this machine');
+          const secrets = this.opts.secrets;
+          if (secrets === undefined) {
+            throw new Error(
+              'this host cannot keep secrets — it was started without a place to keep them',
+            );
+          }
+          return secrets.delete(command.name);
+        }
 
         case 'endpoints.add': {
           /*

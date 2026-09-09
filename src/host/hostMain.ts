@@ -50,6 +50,7 @@ import {
 import { refuseIfHeldElsewhere } from './legacyHost.js';
 import { readKnownWorkspaces, writeKnownWorkspaces } from './workspaces.js';
 import { addEndpoint, setChain } from './endpoints.js';
+import { deleteSecret, readSecretNames, setSecret } from './secrets.js';
 import { addManagedToolsToPath } from './managedTools.js';
 
 /**
@@ -644,6 +645,20 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
      */
     addEndpoint: (input) => addEndpoint(input),
     setChain: (order) => setChain(order),
+    /*
+     * The same boundary again, for the credentials an MCP server needs (§13).
+     *
+     * `secrets.json` sits beside `endpoints.json` under `~/.agbrte`, `0600`, and
+     * this is the only place the two halves meet: a value arrives on the control
+     * channel, goes into `setSecret`, and stops. `list` returns names — there is
+     * no reader for a value on this side at all, which is what makes "never
+     * echoed" a property of the shape rather than of everyone remembering.
+     */
+    secrets: {
+      list: () => readSecretNames(),
+      set: (name, value) => setSecret(name, value),
+      delete: (name) => deleteSecret(name),
+    },
     /*
      * The machine's answer, for a connection bound to no workspace.
      *

@@ -329,6 +329,37 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  *
+ * ## v33 adds `secrets.list`, `secrets.set` and `secrets.delete`
+ *
+ * An MCP server's `env` values are credentials, and Q20 kept them out of every
+ * durable thing on purpose — which is why "a resumed session does not silently
+ * reconnect: the log deliberately cannot rebuild what it deliberately does not
+ * hold". That cost was recorded honestly: restarting a host costs a running
+ * session its tools permanently, and the cure is a person retyping a server
+ * definition.
+ *
+ * These three let the *machine* hold the value under a name, beside the
+ * `apiKey` that `endpoints.json` has kept there since §3.8 and under the same
+ * argument: `~/.agbrte` is outside every workspace, in no repository, in no
+ * template. §13's rule is about a file that *travels*, and this one does not.
+ * What changes is Q20's asymmetry, deliberately — a host that holds the value
+ * can rebuild the connection, which is the whole point of holding it.
+ *
+ * **`secrets.list` answers with names and never values**, and there is no
+ * command that reads one back. A name is what a person needs in order to know
+ * what is stored and remove it; a value has no caller outside the machine that
+ * spawns the process. The two readers are separate functions in `secrets.ts`
+ * rather than one with a flag, because a flag is one typo from a reply with a
+ * key in it.
+ *
+ * `set` and `delete` are **writes**, gated like `endpoints.add`: §7's read-only
+ * role exists so a phone can watch a build box without driving it, and a client
+ * that could store a credential on that box could make it talk to an account
+ * nobody there owns.
+ *
+ * A v32 host refuses all three by name, and the degradation is the behaviour
+ * that shipped: values typed per session, gone when the process is.
+ *
  * ## v32 adds `skill.list`, which is §17 Q21's own "next"
  *
  * A skill was session-only and typed at creation, so "how we write commit
@@ -771,7 +802,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 32;
+export const SESSION_PROTOCOL_VERSION = 33;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -853,6 +884,9 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'schedule.list': 31,
   'schedule.set': 31,
   'skill.list': 32,
+  'secrets.list': 33,
+  'secrets.set': 33,
+  'secrets.delete': 33,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -923,6 +957,24 @@ export type SessionCommand =
       target?: ExecutionTarget;
     }
   | { t: 'template.list'; id: RequestId }
+  /**
+   * Which named secrets this machine holds — **names only** (§13, v33).
+   *
+   * There is deliberately no command that reads a value back. See the v33 note
+   * above: a name is what somebody needs to know what is stored and to remove
+   * it, and a value's only caller is the spawn on this machine.
+   */
+  | { t: 'secrets.list'; id: RequestId }
+  /**
+   * Store one under a name, replacing whatever was there (§13, v33).
+   *
+   * A write, gated like `endpoints.add`. The value goes straight to the
+   * callback that writes the file — never into a log line, an event, or an
+   * error message, which is why the writer never interpolates it into one.
+   */
+  | { t: 'secrets.set'; id: RequestId; name: string; value: string }
+  /** Forget one. Absent is success: the caller wanted it gone (§13, v33). */
+  | { t: 'secrets.delete'; id: RequestId; name: string }
   /**
    * Skill documents in this workspace, read and checked (§17 Q21, §17 Q12).
    *

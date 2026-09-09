@@ -1788,6 +1788,60 @@ export class Fleet extends EventEmitter {
   }
 
   /**
+   * The named secrets the machine behind this host holds (§13, v33).
+   *
+   * `null` where the host cannot answer, never `[]` — §3.3: a machine holding
+   * none and a host too old to have the command are different facts, and the
+   * caller renders the second as "cannot say" rather than as "none".
+   *
+   * A *machine* question asked through a workspace's host, like the runtimes and
+   * the endpoints beside it: §8 puts one host on a machine, so its workspaces
+   * all answer with the same list.
+   */
+  async secretNames(instanceId: InstanceId): Promise<string[] | null> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('secrets.list')) return null;
+    try {
+      return await entry.connection.secretNames();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Store one on that machine (§13, v33).
+   *
+   * Refused by name where the host predates it, unlike the read above: a write
+   * that quietly did nothing would leave somebody believing a key is stored,
+   * and finding out when a server fails to start is finding out in the worst
+   * place. The same argument `setSchedules` makes beside it.
+   *
+   * The value is handed straight to the connection — never destructured,
+   * logged, or echoed back (§13), which is the same rule `sessionsAttachMcp`
+   * follows one layer up.
+   */
+  async setSecret(instanceId: InstanceId, name: string, value: string): Promise<{ name: string }> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('secrets.set')) {
+      throw new AttachRefused(
+        `the host for ${labelOf(entry)} is too old to keep a secret. Update it and try again.`,
+      );
+    }
+    return entry.connection.setSecret(name, value);
+  }
+
+  /** Forget one there, refused by name on a host that predates it. */
+  async deleteSecret(instanceId: InstanceId, name: string): Promise<{ name: string }> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('secrets.delete')) {
+      throw new AttachRefused(
+        `the host for ${labelOf(entry)} is too old to forget a secret. Update it and try again.`,
+      );
+    }
+    return entry.connection.deleteSecret(name);
+  }
+
+  /**
    * The skills this workspace holds (§17 Q21, §17 Q12).
    *
    * `null` where the host cannot answer, never `[]`. §3.3: a workspace with no
