@@ -1,0 +1,25 @@
+{
+  "verifiedAt": "2026-09-10",
+  "registry": "npm",
+  "note": "Package names and the variables these servers read are theirs, not ours. A name that has moved shows as mcp.failed with npx's own words, which is why this file carries a date the way the model catalogue does.",
+  "servers": [
+    {
+      "id": "search",
+      "label": "Brave Search",
+      "note": "Web search. This is what Agbrte has instead of a search tool: the vendor, the endpoint and the key are yours, and the fetch tool reads a page once you have its address.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "envFrom": { "BRAVE_API_KEY": "BRAVE_API_KEY" },
+      "keyFrom": "https://brave.com/search/api/"
+    },
+    {
+      "id": "github",
+      "label": "GitHub",
+      "note": "Issues, pull requests and code search on repositories the token can see. A personal access token, scoped to what you actually want reachable from a session.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "envFrom": { "GITHUB_PERSONAL_ACCESS_TOKEN": "GITHUB_TOKEN" },
+      "keyFrom": "https://github.com/settings/tokens"
+    }
+  ]
+}

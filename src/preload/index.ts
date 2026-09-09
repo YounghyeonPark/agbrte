@@ -100,6 +100,8 @@ const api: AgbrteApi = {
     list: (instanceId: string) => ipcRenderer.invoke(CH.projectServersList, instanceId),
     attach: (sessionId: string, serverId: string) =>
       ipcRenderer.invoke(CH.projectServersAttach, sessionId, serverId),
+    declare: (instanceId: string, server: unknown) =>
+      ipcRenderer.invoke(CH.projectServersDeclare, instanceId, server),
   },
   secrets: {
     list: (instanceId: string) => ipcRenderer.invoke(CH.secretsList, instanceId),

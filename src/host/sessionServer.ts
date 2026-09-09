@@ -38,7 +38,12 @@ import {
   readTemplate,
   saveTemplate,
 } from '@main/store/templates.js';
-import { listProjectServers, neededNames, readProjectServer } from '@main/store/projectServers.js';
+import {
+  listProjectServers,
+  neededNames,
+  readProjectServer,
+  writeProjectServer,
+} from '@main/store/projectServers.js';
 import { listSkills } from '@main/store/skills.js';
 import { listWorkflows, saveWorkflow } from '@main/store/workflows.js';
 import {
@@ -1289,6 +1294,25 @@ export class SessionHostServer {
             command.serverId,
           );
           return manager.attachMcp(command.sessionId as SessionId, config, client.actor);
+        }
+
+        case 'mcp.declare': {
+          /*
+           * A write, and one that puts a file in somebody's repository (v36).
+           *
+           * Gated like `endpoints.add`: §7's read-only role exists so a phone
+           * can watch a build box without driving it, and committing a command
+           * that box will later be asked to run is driving it.
+           *
+           * The store builds the file from the fields this type has, so a
+           * credential has no route into a tracked file even if a client sent
+           * one (§13).
+           */
+          this.requireWrite(client, 'declare an MCP server');
+          return writeProjectServer(
+            this.bound(client, 'declare an MCP server').info.root,
+            command.server,
+          );
         }
 
         case 'mcp.project': {

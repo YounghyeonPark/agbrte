@@ -46,6 +46,7 @@ import type {
   SkillSummary,
   WorkflowSummary,
 } from '../shared/host/sessionProtocol.js';
+import { catalogueServers } from '../shared/mcp/catalogue.js';
 import { RunGraph } from './RunGraph.js';
 import { Workflows, type WorkspaceWorkflows } from './Workflows.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
@@ -2177,6 +2178,17 @@ function HostGroup({
    * know exists.
    */
   const [stored, setStored] = useState<string[] | null>(null);
+  /**
+   * Catalogue entries this workspace has not declared yet.
+   *
+   * Filtered rather than greyed out: an id already declared is a file on disk,
+   * and `writeProjectServer` refuses to replace one — so offering it would be a
+   * control that fails on press (§3.5). The file is where a declaration is
+   * changed, which is also where a diff can show what changed.
+   */
+  const offerable = catalogueServers().filter(
+    (entry) => !(declared ?? []).some((d) => d.id === entry.id),
+  );
   /*
    * The MCP servers this session is being given (§17 Q20).
    *
@@ -2725,6 +2737,64 @@ function HostGroup({
             `newFolderTarget` is a folder about to be created, which declares
             nothing yet.
           */}
+          {/*
+            The servers this app knows how to write a declaration for.
+
+            Not defaults, and the distinction is the whole design: nothing here
+            is on, nothing attaches itself, and picking one writes a *file* into
+            `templates/` — the same artifact somebody writes by hand, tracked, in
+            a diff, and gone to a colleague on the next clone. §17 Q20 refused an
+            app-level registry; a catalogue that configured something invisible
+            would be that registry wearing a button.
+
+            Shown beside whatever the workspace already declares rather than
+            only when it declares nothing, because the second server is as
+            tedious to hand-write as the first.
+          */}
+          {newFolderTarget === '' && declared !== null && offerable.length > 0 && (
+            <details data-testid="new-server-catalogue">
+              <summary className={`${LABEL} text-muted cursor-pointer`}>
+                add a server this app knows about
+              </summary>
+              <div className="grid gap-1 pt-1">
+                {offerable.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className="btn grid gap-0.5 text-left text-[11px]"
+                    data-testid="catalogue-server"
+                    data-id={entry.id}
+                    onClick={() => {
+                      void window.agbrte.projectServers
+                        .declare(host.instanceId, {
+                          id: entry.id,
+                          command: entry.command,
+                          args: entry.args,
+                          envFrom: entry.envFrom,
+                        })
+                        .then(() =>
+                          // Re-read rather than guess: the declaration's
+                          // `missing` half is the machine's answer, and only the
+                          // host has both (§5.1).
+                          window.agbrte.projectServers.list(host.instanceId),
+                        )
+                        .then(setDeclared, () => undefined);
+                    }}
+                  >
+                    <span className="text-accent">{entry.label}</span>
+                    <span className="text-muted wrap-anywhere">{entry.note}</span>
+                    {/* What it will write, before it writes it: a file appearing
+                        in somebody's repository has to be legible first — the
+                        same rule the new-folder line follows. */}
+                    <code className="text-muted wrap-anywhere">
+                      .agbrte/templates/{entry.id}.mcp.json · {entry.command}{' '}
+                      {(entry.args ?? []).join(' ')}
+                    </code>
+                  </button>
+                ))}
+              </div>
+            </details>
+          )}
           {newFolderTarget === '' && declared !== null && declared.length === 0 && (
             /*
               Said when there are none, which is when it needs saying.

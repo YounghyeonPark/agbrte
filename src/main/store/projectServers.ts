@@ -46,7 +46,7 @@
  * is one project's declaration, travelling only to people who have that project.
  */
 
-import { readdir, readFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { templatesDir } from './templates.js';
 
@@ -214,6 +214,83 @@ export async function readProjectServer(
     },
     problems,
   };
+}
+
+/**
+ * Write a declaration into the workspace (§17 Q20, §17 Q12).
+ *
+ * `workflows.ts` argues for its own writer on the grounds that §4.4 wants an
+ * agent able to *propose* a decomposition. Nothing proposes a server, so this
+ * one is here for a different reason: the app knows a handful of well-known
+ * servers (`shared/mcp/catalogue.ts`), and picking one has to produce the same
+ * artifact a person writes by hand — a tracked file, reviewed in a diff, that a
+ * colleague gets by cloning. A catalogue that configured something invisible
+ * instead would be the app-level registry Q20 refused, wearing a button.
+ *
+ * **Refused rather than replaced**, like `addEndpoint` and unlike `setSecret`.
+ * The id is the prefix of `mcp__<id>__*`, which policy rules match on, so
+ * swapping the command under an existing one silently changes what every rule
+ * pointing at it now permits. The remedy is in the refusal: edit the file, or
+ * pick another id.
+ *
+ * The body is built here from the fields this type has rather than serialised
+ * from the caller's object, which is what keeps §13's guarantee a property of
+ * the *writer*: there is no path by which an `env` block reaches the file, so a
+ * caller that grew one could not put a credential in a repository by accident.
+ */
+export async function writeProjectServer(
+  workspaceRoot: string,
+  server: ProjectServer,
+): Promise<{ id: string; path: string }> {
+  /*
+   * The id first, before the disk is touched — which is `readProjectServer`'s
+   * ordering above and is here for the second time the same mistake was made.
+   *
+   * With the checks the other way round, an illegal id like `Search` read back
+   * as a *problem* rather than as "could not be read", the duplicate check took
+   * that for a file, and the refusal said this workspace already had a server
+   * called `Search`. A sentence that is both false and unactionable, about a
+   * file that does not exist.
+   */
+  if (!ID.test(server.id)) {
+    throw new ProjectServerRefused(
+      `"${server.id}" cannot be an MCP server id — lowercase letters, digits, - and _ only`,
+    );
+  }
+  const existing = await readProjectServer(workspaceRoot, server.id);
+  if (existing.problems.length === 0 || !existing.problems[0]?.startsWith('could not be read')) {
+    // Anything but "not there" means a file is there: a broken declaration is
+    // still one somebody wrote, and overwriting it would throw away the thing
+    // they were part-way through fixing.
+    throw new ProjectServerRefused(
+      `this workspace already has an MCP server called "${server.id}" — its tools are ` +
+        `mcp__${server.id}__*, and two declarations cannot share that name. Edit ` +
+        `${server.id}${PROJECT_SERVER_SUFFIX} instead, or pick another id.`,
+    );
+  }
+
+  const dir = templatesDir(workspaceRoot);
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, `${server.id}${PROJECT_SERVER_SUFFIX}`);
+  const body = {
+    command: server.command,
+    ...(server.args !== undefined ? { args: server.args } : {}),
+    ...(server.cwd !== undefined ? { cwd: server.cwd } : {}),
+    ...(server.envFrom !== undefined ? { envFrom: server.envFrom } : {}),
+  };
+  // Two-space JSON with a trailing newline, like `saveWorkflow`: the file is
+  // going into somebody's repository and a diff on it should read like the rest
+  // of the tree rather than like output.
+  await writeFile(path, `${JSON.stringify(body, null, 2)}
+`, 'utf8');
+  return { id: server.id, path };
+}
+
+export class ProjectServerRefused extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'ProjectServerRefused';
+  }
 }
 
 /**

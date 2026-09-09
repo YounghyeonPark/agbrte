@@ -19,13 +19,14 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   listProjectServers,
   neededNames,
   readProjectServer,
+  writeProjectServer,
   PROJECT_SERVER_SUFFIX,
 } from '../src/main/store/projectServers.js';
 
@@ -135,6 +136,70 @@ describe('reading one', () => {
   it('reports a file that is not there as a problem, not a throw', async () => {
     const root = await workspace({});
     expect((await readProjectServer(root, 'missing')).problems[0]).toContain('could not be read');
+  });
+});
+
+describe('writing one', () => {
+  it('writes a file a reader accepts, with the fields and nothing else', async () => {
+    const root = await workspace({});
+    const written = await writeProjectServer(root, {
+      id: 'search',
+      command: 'npx',
+      args: ['-y', 'some-server'],
+      envFrom: { API_KEY: 'SEARCH_API_KEY' },
+    });
+    expect(written.id).toBe('search');
+    // The round trip is the assertion that matters: the catalogue's shortcut
+    // has to produce the same artifact a person writes by hand, or it is a
+    // second way of meaning the same thing (§4.4's convergence argument).
+    const read = await readProjectServer(root, 'search');
+    expect(read.problems).toEqual([]);
+    expect(read.server?.envFrom).toEqual({ API_KEY: 'SEARCH_API_KEY' });
+  });
+
+  it('writes JSON a person can read in a diff', async () => {
+    const root = await workspace({});
+    await writeProjectServer(root, { id: 'search', command: 'npx' });
+    const raw = await readFile(join(root, '.agbrte', 'templates', 'search.mcp.json'), 'utf8');
+    // Two-space and a trailing newline, like `saveWorkflow`: this is going into
+    // somebody's repository and should read like the rest of the tree.
+    expect(raw).toBe(['{', '  "command": "npx"', '}', ''].join('\n'));
+  });
+
+  it('refuses to replace an id that is taken, and leaves the file alone', async () => {
+    const root = await workspace({ [`search${PROJECT_SERVER_SUFFIX}`]: GOOD });
+    /*
+     * The opposite of `setSecret` and the same as `addEndpoint`: the id is the
+     * prefix of `mcp__<id>__*`, which policy rules match on, so swapping the
+     * command under an existing one silently changes what every rule pointing
+     * at it now permits.
+     */
+    await expect(
+      writeProjectServer(root, { id: 'search', command: 'something-else' }),
+    ).rejects.toThrow(/already has/);
+    expect((await readProjectServer(root, 'search')).server?.command).toBe('npx');
+  });
+
+  it('has no route by which a credential reaches the file', async () => {
+    const root = await workspace({});
+    // The body is built from the fields the type has, so a caller that grew an
+    // `env` cannot put a secret in a repository by accident (§13). Asserted on
+    // the bytes, because that is what gets committed.
+    await writeProjectServer(root, {
+      id: 'search',
+      command: 'npx',
+      ...({ env: { API_KEY: 'sk-live-abcdef' } } as object),
+    });
+    const raw = await readFile(join(root, '.agbrte', 'templates', 'search.mcp.json'), 'utf8');
+    expect(raw).not.toContain('sk-live-abcdef');
+    expect(raw).not.toContain('env');
+  });
+
+  it('refuses an id the tool names could not carry', async () => {
+    const root = await workspace({});
+    await expect(writeProjectServer(root, { id: 'Search', command: 'npx' })).rejects.toThrow(
+      /cannot be an MCP server id/,
+    );
   });
 });
 

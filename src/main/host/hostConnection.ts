@@ -520,6 +520,23 @@ export class HostConnection extends EventEmitter {
   }
 
   /**
+   * Write one declaration into this host's workspace (§17 Q20, v36).
+   *
+   * Refused by name on a host that predates it, because a silent no-op leaves
+   * somebody believing a file is in their repository — and they find out from a
+   * colleague who cloned it and got nothing.
+   */
+  async declareProjectServer(server: {
+    id: string;
+    command: string;
+    args?: string[];
+    envFrom?: Record<string, string>;
+  }): Promise<{ id: string; path: string }> {
+    this.require('mcp.declare');
+    return this.call<{ id: string; path: string }>({ t: 'mcp.declare', server });
+  }
+
+  /**
    * The MCP servers this host's workspace declares (§17 Q20, §17 Q12, v34).
    *
    * `require` rather than an empty list, like every other capability read here:

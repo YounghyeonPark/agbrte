@@ -352,6 +352,26 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  *
+ * ## v36 writes a declaration, so a catalogue can be a shortcut to a file
+ *
+ * The app knows a couple of well-known servers (`shared/mcp/catalogue.ts`), and
+ * picking one has to produce **the same artifact somebody writes by hand** — a
+ * tracked file in `templates/`, reviewed in a diff, that a colleague gets by
+ * cloning. A catalogue that configured something invisible instead would be the
+ * app-level registry Q20 refused, wearing a button.
+ *
+ * So this is a write, gated like every other, and it is `workflow.save`'s shape
+ * for `workflow.save`'s reason: the *document* crosses the wire and never the
+ * text, so its canonical form belongs to the file rather than to whichever
+ * client last touched it.
+ *
+ * **Refused rather than replaced** where the id is taken. It is the prefix of
+ * `mcp__<id>__*`, which policy rules match on, so swapping the command under an
+ * existing one silently changes what every rule pointing at it now permits.
+ *
+ * A v35 host refuses it by name, and the degradation is what shipped: write the
+ * file by hand, which is all anybody could do before.
+ *
  * ## v35 attaches a declared server by id, which is the only way it can work
  *
  * v34 let a workspace declare a server and v33 let the machine hold the values;
@@ -877,7 +897,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 35;
+export const SESSION_PROTOCOL_VERSION = 36;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -964,6 +984,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'secrets.delete': 33,
   'mcp.project': 34,
   'session.attachProject': 35,
+  'mcp.declare': 36,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -1034,6 +1055,18 @@ export type SessionCommand =
       target?: ExecutionTarget;
     }
   | { t: 'template.list'; id: RequestId }
+  /**
+   * Write one declaration into this workspace (§17 Q20, §17 Q12, v36).
+   *
+   * A write, gated. The fields rather than the text, so the file's shape is the
+   * host's business — and so there is no path by which an `env` block reaches a
+   * tracked file (§13).
+   */
+  | {
+      t: 'mcp.declare';
+      id: RequestId;
+      server: { id: string; command: string; args?: string[]; envFrom?: Record<string, string> };
+    }
   /**
    * The MCP servers this **workspace declares** (§17 Q20, §17 Q12, v34).
    *

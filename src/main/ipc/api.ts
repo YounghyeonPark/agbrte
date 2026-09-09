@@ -621,6 +621,12 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     fleet.attachProjectMcp(sessionId as SessionId, serverId),
   );
 
+  handle(
+    CH.projectServersDeclare,
+    (instanceId: string, server: { id: string; command: string; args?: string[]; envFrom?: Record<string, string> }) =>
+      fleet.declareProjectServer(instanceId as InstanceId, server),
+  );
+
   handle(CH.secretsList, (instanceId: string) => fleet.secretNames(instanceId as InstanceId));
 
   // The value is handed straight to the fleet — never destructured, logged or

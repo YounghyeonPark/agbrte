@@ -895,6 +895,18 @@ export interface AgbrteApi {
   projectServers: {
     list(instanceId: string): Promise<ProjectServerSummary[] | null>;
     attach(sessionId: string, serverId: string): Promise<McpServerStatus>;
+    /**
+     * Write one, from the catalogue this app ships (§17 Q20, v36).
+     *
+     * The fields and not the text: the file's shape belongs to the host, which
+     * is also what keeps an `env` block from ever reaching a tracked file. What
+     * comes back is the path, so the app can say where it put it — a file
+     * appearing in somebody's repository has to be legible before it is useful.
+     */
+    declare(
+      instanceId: string,
+      server: { id: string; command: string; args?: string[]; envFrom?: Record<string, string> },
+    ): Promise<{ id: string; path: string }>;
   };
   /**
    * The named secrets a machine holds (§13).
@@ -1505,6 +1517,7 @@ export const CH = {
   inboxList: 'agbrte:inbox.list',
   projectServersList: 'agbrte:projectServers.list',
   projectServersAttach: 'agbrte:projectServers.attach',
+  projectServersDeclare: 'agbrte:projectServers.declare',
   secretsList: 'agbrte:secrets.list',
   secretsSet: 'agbrte:secrets.set',
   secretsDelete: 'agbrte:secrets.delete',

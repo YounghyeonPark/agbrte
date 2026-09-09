@@ -34,7 +34,7 @@ import {
   type SessionMessage,
 } from '@shared/host/sessionProtocol.js';
 import { openWorkspace } from '@main/store/identity.js';
-import type { InstanceId } from '@shared/types/index.js';
+import type { AccessRole, InstanceId } from '@shared/types/index.js';
 import { PROJECT_SERVER_SUFFIX } from '@main/store/projectServers.js';
 import {
   deleteSecret,
@@ -86,7 +86,10 @@ afterEach(async () => {
   await rm(machine, { recursive: true, force: true });
 });
 
-async function connect(protocol?: number): Promise<HostConnection> {
+async function connect(
+  opts: { protocol?: number; role?: AccessRole } | number = {},
+): Promise<HostConnection> {
+  const { protocol, role } = typeof opts === 'number' ? { protocol: opts, role: undefined } : opts;
   const registry = new RuntimeRegistry();
   registry.register(new EchoRuntime({ script: [] }), { label: 'Echo', model: 'none' });
   const server = new SessionHostServer({
@@ -101,7 +104,10 @@ async function connect(protocol?: number): Promise<HostConnection> {
   });
   const pair = memoryChannelPair<SessionCommand, SessionMessage>();
   server.accept(pair.host);
-  const connection = new HostConnection({ channel: pair.main });
+  const connection = new HostConnection({
+    channel: pair.main,
+    ...(role !== undefined ? { role } : {}),
+  });
   await connection.ready;
   if (protocol !== undefined) {
     (connection as unknown as { identity?: { protocol: number } }).identity = { protocol };
@@ -317,6 +323,43 @@ describe('resuming', () => {
      * The workspace declares no `typed`, so nothing here pretends otherwise.
      */
     expect(back.mcp ?? []).toEqual([]);
+  });
+});
+
+describe('declaring one over the wire', () => {
+  it('writes a file the next listing finds', async () => {
+    const connection = await connect();
+    const written = await connection.declareProjectServer({
+      id: 'notes',
+      command: 'npx',
+      args: ['-y', 'some-server'],
+      envFrom: { API_KEY: 'NOTES_TOKEN' },
+    });
+    expect(written.id).toBe('notes');
+    /*
+     * The round trip is the point: a catalogue's shortcut has to produce the
+     * same artifact somebody writes by hand, or the app has two ways of meaning
+     * one thing (§4.4's convergence argument, borrowed).
+     */
+    const found = await connection.projectServers();
+    const notes = found.find((f) => f.id === 'notes');
+    expect(notes?.command).toBe('npx');
+    expect(notes?.missing).toEqual(['NOTES_TOKEN']);
+  });
+
+  it('refuses an id that is taken rather than replacing it', async () => {
+    const connection = await connect();
+    // The id is the prefix of `mcp__<id>__*`, which policy rules match on.
+    await expect(
+      connection.declareProjectServer({ id: 'search', command: 'something-else' }),
+    ).rejects.toThrow(/already has/);
+  });
+
+  it('refuses a read-only client, since this commits a command to a repository', async () => {
+    const watching = await connect({ role: 'read-only' });
+    await expect(
+      watching.declareProjectServer({ id: 'notes', command: 'npx' }),
+    ).rejects.toThrow(/read-only/);
   });
 });
 

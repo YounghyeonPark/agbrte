@@ -293,6 +293,8 @@ const api: AgbrteApi = {
     list: call(CH.projectServersList),
     attach: (sessionId: string, serverId: string) =>
       call(CH.projectServersAttach)(sessionId, serverId),
+    declare: (instanceId: string, server: unknown) =>
+      call(CH.projectServersDeclare)(instanceId, server),
   },
   secrets: {
     list: call(CH.secretsList),

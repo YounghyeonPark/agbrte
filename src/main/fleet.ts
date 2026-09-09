@@ -1812,6 +1812,26 @@ export class Fleet extends EventEmitter {
   }
 
   /**
+   * Write one declaration into that workspace (§17 Q20, v36).
+   *
+   * Refused by name where the host is too old, like every write here: the
+   * alternative is somebody believing a file exists that does not.
+   */
+  async declareProjectServer(
+    instanceId: InstanceId,
+    server: { id: string; command: string; args?: string[]; envFrom?: Record<string, string> },
+  ): Promise<{ id: string; path: string }> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('mcp.declare')) {
+      throw new AttachRefused(
+        `the host for ${labelOf(entry)} is too old to write an MCP declaration. ` +
+          'Update it, or write the file by hand.',
+      );
+    }
+    return entry.connection.declareProjectServer(server);
+  }
+
+  /**
    * The MCP servers this workspace declares, and what they still need (v34).
    *
    * `null` where the host cannot answer, never `[]` (§3.3): a workspace

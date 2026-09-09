@@ -23,7 +23,7 @@
  */
 
 import { expect, test } from '@playwright/test';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launch, makeRepo } from './harness.js';
@@ -141,6 +141,59 @@ test('says a project declares none, where somebody would look for one', async ()
     // Not both at once: a workspace that declares servers gets the list, not
     // an explanation of how to make the list it already has.
     await expect(page.locator('[data-testid=new-servers]')).toHaveCount(0);
+  } finally {
+    await agbrte.close();
+  }
+});
+
+test('writes a declaration from the catalogue, into the tracked directory', async () => {
+  const repo = await makeRepo();
+  const agbrte = await launch(repo);
+
+  try {
+    const page = agbrte.window;
+    await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
+    await hostGroup(page).locator('[data-testid=new-session]').click();
+
+    // Folded, so a workspace that will never declare one pays a line for it.
+    await page.click('[data-testid=new-server-catalogue] summary');
+    const entry = page.locator('[data-testid=catalogue-server][data-id=search]');
+    await expect(entry).toBeVisible({ timeout: 20_000 });
+    /*
+     * What it will write, before it writes it. A file appearing in somebody's
+     * repository has to be legible first — the same rule the new-folder line
+     * follows about a directory appearing on a machine.
+     */
+    await expect(entry).toContainText('.agbrte/templates/search.mcp.json');
+
+    await entry.click();
+
+    /*
+     * A file, not a setting. This is the whole distinction between a catalogue
+     * and the app-level registry §17 Q20 refused: the shortcut produces the
+     * artifact somebody would have typed, tracked, in a diff, and gone to a
+     * colleague on the next clone.
+     */
+    const written = JSON.parse(
+      await readFile(join(repo, '.agbrte', 'templates', 'search.mcp.json'), 'utf8'),
+    ) as { command: string; envFrom: Record<string, string> };
+    expect(written.command).toBe('npx');
+    // A name on both sides, and no value anywhere: that is what makes the file
+    // safe to commit (§13).
+    expect(Object.values(written.envFrom)).toEqual(['BRAVE_API_KEY']);
+
+    // And the form now shows it as a declaration like any other, asking for the
+    // key by name once it is ticked.
+    const row = page.locator('[data-testid=new-server][data-id=search]');
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await row.locator('[data-testid=new-server-pick]').check();
+    await expect(
+      page.locator('[data-testid=new-server-key][data-name=BRAVE_API_KEY]'),
+    ).toBeVisible();
+
+    // Offered once: the id is now taken, and `writeProjectServer` refuses to
+    // replace one — so a second offer would be a control that fails on press.
+    await expect(entry).toHaveCount(0);
   } finally {
     await agbrte.close();
   }
