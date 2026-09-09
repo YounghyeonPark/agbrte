@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { SessionHostServer } from '../src/host/sessionServer.js';
 import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
@@ -42,10 +43,22 @@ import {
   setSecret,
 } from '../src/host/secrets.js';
 
+/*
+ * A real MCP server over stdio, from `tests/fixtures`. `npx` would have been
+ * shorter and would have made every assertion below a statement about a spawn
+ * that failed — and the difference between "the config was built and the
+ * process would not start" and "the config was never built" is most of what
+ * this file is about.
+ *
+ * `lookup` echoes `AGBRTE_E2E_TOKEN`, which is how a test can show a value
+ * reached the *process* while the log and the wire carry only its name (§13).
+ */
+const FIXTURE = fileURLToPath(new URL('./fixtures/mcpServer.cjs', import.meta.url));
+
 const DECLARED = {
-  command: 'npx',
-  args: ['-y', '@some/mcp-search'],
-  envFrom: { API_KEY: 'SEARCH_API_KEY' },
+  command: process.execPath,
+  args: [FIXTURE],
+  envFrom: { AGBRTE_E2E_TOKEN: 'SEARCH_API_KEY' },
 };
 
 let root = '';
@@ -102,8 +115,10 @@ describe('mcp.project over the session protocol', () => {
     expect(found).toHaveLength(1);
     expect(found[0]).toEqual({
       id: 'search',
-      command: 'npx',
-      args: ['-y', '@some/mcp-search'],
+      // What will run, because whoever approves this is approving that rather
+      // than a name they cannot check.
+      command: process.execPath,
+      args: [FIXTURE],
       // The machine holds nothing yet, so everything the declaration wants is
       // missing — which is exactly the list a form has to ask for.
       needs: ['SEARCH_API_KEY'],
@@ -182,10 +197,25 @@ describe('attaching one', () => {
      */
     const status = await connection.attachProjectMcp(session.sessionId, 'search');
     expect(status.id).toBe('search');
-    expect(status.error ?? '').not.toContain('no usable MCP server');
-    expect(status.error ?? '').not.toContain('not stored here');
+    expect(status.error).toBeUndefined();
+    // The server started and named its tools under this declaration's id.
+    expect(status.tools).toContain('mcp__search__lookup');
     // And the value did not come back in the reply, which is the whole point.
     expect(JSON.stringify(status)).not.toContain('sk-live-abcdef');
+
+    /*
+     * The log carries the env *name* and not the value (§13) — the asymmetry
+     * Q20 named, unchanged by any of this. What is new is only where the value
+     * comes from; where it is allowed to appear is exactly where it was.
+     *
+     * The name is `AGBRTE_E2E_TOKEN`, which is what the *server* asked for,
+     * rather than `SEARCH_API_KEY`, which is what the machine calls it. That is
+     * `envFrom` doing the one thing it exists for.
+     */
+    const events = await connection.events(session.sessionId);
+    const line = events.find((e) => e.type === 'mcp.attached');
+    expect((line as { envKeys?: string[] }).envKeys).toEqual(['AGBRTE_E2E_TOKEN']);
+    expect(JSON.stringify(events)).not.toContain('sk-live-abcdef');
   });
 
   it('refuses before attaching when the machine does not hold the secret', async () => {
@@ -220,6 +250,73 @@ describe('attaching one', () => {
     await expect(
       connection.createSession({ title: 'work', goal: 'work' }, ['search']),
     ).rejects.toThrow(/SEARCH_API_KEY/);
+  });
+});
+
+describe('resuming', () => {
+  /*
+   * Q20's recorded cost, bought back (§17 Q20, v35).
+   *
+   * "A resumed session does not silently reconnect: the log deliberately cannot
+   * rebuild what it deliberately does not hold." It can now, for a declared
+   * server: the file has the command and the machine has the value, so the two
+   * halves the log was missing are both still here after a restart.
+   *
+   * Which servers to bring back is read from `mcp.attached` in the log, and
+   * whether one is a declaration is answered by the workspace *now* — no marker
+   * was added to the event, because that would be a durable claim about the past
+   * answering a question the present can answer.
+   */
+  it('brings back a declared server the session used to have', async () => {
+    const first = await connect();
+    await first.setSecret('SEARCH_API_KEY', 'sk-live-abcdef');
+    const session = await first.createSession({ title: 'work', goal: 'work' });
+    await first.attachProjectMcp(session.sessionId, 'search');
+
+    // A second host over the same workspace and the same machine directory,
+    // which is what a restart is from the session's point of view.
+    const restarted = await connect();
+    const back = await restarted.resumeSession(session.sessionId);
+    // Back, and working: the tools are named again, which they could not be if
+    // resume had only noticed the server without starting it.
+    expect(back.mcp?.map((m) => m.id)).toEqual(['search']);
+    expect(back.mcp?.[0]?.tools).toContain('mcp__search__lookup');
+  });
+
+  it('says why, when the machine has forgotten the key', async () => {
+    const first = await connect();
+    await first.setSecret('SEARCH_API_KEY', 'sk-live-abcdef');
+    const session = await first.createSession({ title: 'work', goal: 'work' });
+    await first.attachProjectMcp(session.sessionId, 'search');
+    await first.deleteSecret('SEARCH_API_KEY');
+
+    const back = await (await connect()).resumeSession(session.sessionId);
+    /*
+     * Recorded rather than silent, and never thrown. A resume that fell over
+     * because a key was rotated would take the transcript with it, and "why can
+     * it not search any more" has to be answerable where the question is asked.
+     */
+    expect(back.mcp?.[0]?.error).toContain('SEARCH_API_KEY');
+  });
+
+  it('leaves a hand-typed server exactly as it was', async () => {
+    const first = await connect();
+    const session = await first.createSession({
+      title: 'work',
+      goal: 'work',
+      mcpServers: [
+        { id: 'typed', command: process.execPath, args: [FIXTURE], env: { API_KEY: 'sk-live-typed' } },
+      ],
+    });
+    expect(session.mcp?.map((m) => m.id)).toEqual(['typed']);
+
+    const back = await (await connect()).resumeSession(session.sessionId);
+    /*
+     * Unchanged, and this is the half of Q20 that still holds: the log kept the
+     * env *names* and never the values, so there is nothing to rebuild from.
+     * The workspace declares no `typed`, so nothing here pretends otherwise.
+     */
+    expect(back.mcp ?? []).toEqual([]);
   });
 });
 

@@ -1063,9 +1063,29 @@ export class SessionHostServer {
           );
         }
 
-        case 'session.resume':
-          // A read: loading a session from its log changes nothing about it.
-          return manager.resumeSession(command.sessionId as SessionId);
+        case 'session.resume': {
+          /*
+           * Loading a session from its log changes nothing about it — and then
+           * brings back the servers it had, which does start processes (v35).
+           *
+           * That is a smaller act than it sounds beside what resume already
+           * does: it rebuilds agents that can take turns and spend money. A
+           * server here was approved for this session by whoever made it, runs
+           * as the host rather than as the client, and gives the *agent* tools
+           * rather than the caller — so no client gains anything by asking, and
+           * the gate stays where it is.
+           *
+           * Q20's recorded cost was that "a resumed session does not silently
+           * reconnect: the log deliberately cannot rebuild what it deliberately
+           * does not hold". It can now, for the servers a workspace declares:
+           * the file has the command and the machine has the value (v33, v34).
+           * A hand-typed server is unchanged and still cannot come back, which
+           * is the same sentence with the same reason behind it.
+           */
+          const session = await manager.resumeSession(command.sessionId as SessionId);
+          await this.reattachDeclared(session, client);
+          return session;
+        }
 
         case 'session.attachMcp':
           /*
@@ -1777,14 +1797,6 @@ export class SessionHostServer {
   }
 
   /**
-   * The workspace a workspace-scoped command runs against, or a refusal.
-   *
-   * Named in the refusal, because "no workspace" on a host holding four folders
-   * is a sentence nobody can act on. The verb is carried for the same reason
-   * `requireWrite` carries one: a person needs to know what was refused, not
-   * merely that something was.
-   */
-  /**
    * A declaration, turned into the config `SessionManager` takes (v35).
    *
    * Every refusal here happens **before** anything is created or attached, and
@@ -1838,6 +1850,83 @@ export class SessionHostServer {
     };
   }
 
+  /**
+   * Bring back the declared servers a resumed session used to have (v35).
+   *
+   * **Which servers is read from the log**, not from a field: `mcp.attached`
+   * names every server that was ever attached to this session, and the
+   * projection does not carry them precisely because the values could not be
+   * rebuilt. Nothing new is stored to make this work.
+   *
+   * **Whether one is a declaration is answered by the workspace, now.** There is
+   * no marker on the event saying "this came from a file", and adding one would
+   * be a durable claim about the past to answer a question the present can
+   * answer: if this workspace declares `search`, then `search` in this
+   * workspace *is* that declaration — which is the same identity rule
+   * `attachMcp` enforces when it refuses two servers under one id.
+   *
+   * Failures are recorded and never thrown. A resume that fell over because a
+   * key was rotated would take the transcript with it, and the transcript is
+   * the thing that was worth keeping.
+   */
+  private async reattachDeclared(session: Session, client: Client): Promise<void> {
+    const root = client.workspace?.info.root;
+    if (root === undefined) return;
+
+    const events = await this.opts.manager.events(session.sessionId);
+    /*
+     * Both outcomes, de-duplicated.
+     *
+     * `mcp.failed` counts as well as `mcp.attached`, because a server that did
+     * not start is still a server this session was asked to have — the failure
+     * is often the network being down for one `npx`, and a resume is exactly
+     * when it is worth another go. It is also what `noteMcpUnavailable` writes
+     * below, so a key put back after being rotated away is picked up on the
+     * next resume rather than needing the server named again by hand.
+     *
+     * De-duplicated because a server attached, lost and attached again is one
+     * server, and `attachMcp` refuses the second of a pair sharing an id.
+     */
+    const attached = [
+      ...new Set(
+        events
+          .filter((e) => e.type === 'mcp.attached' || e.type === 'mcp.failed')
+          .map((e) => (e as { serverId: string }).serverId),
+      ),
+    ];
+    if (attached.length === 0) return;
+
+    const declared = new Set(
+      (await listProjectServers(root)).filter((f) => f.server !== undefined).map((f) => f.id),
+    );
+    for (const serverId of attached) {
+      if (!declared.has(serverId)) continue;
+      try {
+        const config = await this.resolveDeclared(root, serverId);
+        await this.opts.manager.attachMcp(session.sessionId, config, client.actor);
+      } catch (err) {
+        // The reason on the session rather than nowhere: a rotated key is a
+        // sentence somebody can act on, and silence is not (§3.5).
+        await this.opts.manager
+          .noteMcpUnavailable(
+            session.sessionId,
+            serverId,
+            err instanceof Error ? err.message : String(err),
+            client.actor,
+          )
+          .catch(() => undefined);
+      }
+    }
+  }
+
+  /**
+   * The workspace a workspace-scoped command runs against, or a refusal.
+   *
+   * Named in the refusal, because "no workspace" on a host holding four folders
+   * is a sentence nobody can act on. The verb is carried for the same reason
+   * `requireWrite` carries one: a person needs to know what was refused, not
+   * merely that something was.
+   */
   private bound(client: Client, verb: string): HostWorkspace {
     if (client.workspace !== null) return client.workspace;
     const held = this.heldWorkspaces().map((w) => w.info.root);

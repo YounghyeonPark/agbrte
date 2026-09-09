@@ -2519,6 +2519,37 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Record that a server could not be brought back, without trying to (§3.5).
+   *
+   * `connectMcp` writes `mcp.failed` for a process that would not start. This
+   * is the same line for a server that never got as far as a process — a
+   * declaration whose secret is no longer on the machine, met while resuming —
+   * and it exists because the alternative is a session that quietly comes back
+   * without its tools. "Why can it not search any more" has to be answerable
+   * from the transcript, which is where the question is asked.
+   *
+   * Deliberately not a throw: resume must finish. A session is worth having
+   * without one of its servers, and the reason belongs beside the server rather
+   * than in an exception that takes the whole session down with it.
+   */
+  async noteMcpUnavailable(
+    sessionId: SessionId,
+    serverId: string,
+    reason: string,
+    actor?: Actor,
+  ): Promise<void> {
+    const live = this.live(sessionId);
+    live.session.mcp ??= [];
+    await live.store.append(
+      { type: 'mcp.failed', serverId, reason },
+      { ...(actor !== undefined ? { actor } : {}) },
+    );
+    live.session.mcp.push({ id: serverId, tools: [], error: reason });
+    this.touch(live);
+    this.emit('session', live.session);
+  }
+
+  /**
    * Start one server, record what happened, and hand back what attached.
    *
    * Shared by `createSession` and `attachMcp` so the two cannot drift, which is
