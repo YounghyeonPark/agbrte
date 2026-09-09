@@ -241,6 +241,11 @@ describe('the suite', () => {
       'glob',
       'grep',
       'bash',
+      // Beside the shell rather than instead of it: `bash` could always `curl`,
+      // so this buys no capability. What it buys is a rule a policy can match, a
+      // log row naming the URL, and a refusal that can say which address it
+      // would not go to (§13, §6.2).
+      'fetch',
       'message',
       // Its own name rather than an argument on `message`, so a grant for one
       // can never widen into the other (§13, §17 Q22).

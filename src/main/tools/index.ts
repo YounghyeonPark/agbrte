@@ -22,6 +22,7 @@ import { spawn } from 'node:child_process';
 import { readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { globMatch, isInsideWorkspace } from '../policy/evaluate.js';
+import { fetchTool } from './fetch.js';
 import type { WorkspaceLeases } from './leases.js';
 import { PEER_MESSAGE_MAX_CHARS } from '@shared/types/index.js';
 import type {
@@ -936,6 +937,16 @@ export const DEFAULT_TOOLS: ToolDefinition[] = [
   globTool,
   grepTool,
   bashTool,
+  /*
+   * A named door to the network, beside the shell that already had one.
+   *
+   * `bash` could always `curl`, so this adds no capability — what it adds is a
+   * policy rule that can match, a log row naming the URL, and a refusal that can
+   * say which address it would not go to (§13). See `fetch.ts` on why a private
+   * address is refused: §6.2's control channel is on this machine's loopback and
+   * is authenticated by a bearer token.
+   */
+  fetchTool,
   messageTool,
   messagePeerTool,
   peerHistoryTool,
