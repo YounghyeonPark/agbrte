@@ -379,11 +379,26 @@ export class HostConnection extends EventEmitter {
    * Nothing changes on the wire. What changes is that a field this cannot carry
    * is now a compile error at the boundary rather than a silence at runtime.
    */
-  createSession(input: CreateSessionInput): Promise<Session> {
+  createSession(input: CreateSessionInput, projectServers?: string[]): Promise<Session> {
+    /*
+     * `projectServers` is a second argument rather than a field on `input`,
+     * and the distinction is load-bearing (v35). `CreateSessionInput` is what
+     * `SessionManager` takes, and it has no such field: these are ids the
+     * *host* turns into configs by reading the workspace and resolving names
+     * against the machine. Putting them in `input` would declare something the
+     * manager ignores, which is the shape of every silent-drop bug this file's
+     * `createSession` comment already records.
+     */
     // Both shapes: the strings so a host older than v12 still makes the
     // session it always made, and the whole input so a newer one makes the
     // session that was actually asked for.
-    return this.call({ t: 'session.create', title: input.title, goal: input.goal, input });
+    return this.call({
+      t: 'session.create',
+      title: input.title,
+      goal: input.goal,
+      input,
+      ...(projectServers !== undefined && projectServers.length > 0 ? { projectServers } : {}),
+    });
   }
 
   resumeSession(sessionId: SessionId): Promise<Session> {
@@ -486,6 +501,22 @@ export class HostConnection extends EventEmitter {
   async templates(): Promise<SessionTemplate[]> {
     this.require('template.list');
     return this.call<SessionTemplate[]>({ t: 'template.list' });
+  }
+
+  /**
+   * Attach a server the workspace declares, by id (§17 Q20, §17 Q12, v35).
+   *
+   * The id and nothing else. The host reads the declaration and resolves its
+   * names against the machine, which is the only arrangement that works: a
+   * client filling the environment in would need the values, and the reason
+   * they live on the machine is that it does not.
+   *
+   * Refused by name where the host predates the command, because a silent
+   * failure here means somebody believes a session has tools it has not got.
+   */
+  async attachProjectMcp(sessionId: SessionId, serverId: string): Promise<McpServerStatus> {
+    this.require('session.attachProject');
+    return this.call<McpServerStatus>({ t: 'session.attachProject', sessionId, serverId });
   }
 
   /**

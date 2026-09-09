@@ -50,7 +50,7 @@ import {
 import { refuseIfHeldElsewhere } from './legacyHost.js';
 import { readKnownWorkspaces, writeKnownWorkspaces } from './workspaces.js';
 import { addEndpoint, setChain } from './endpoints.js';
-import { deleteSecret, readSecretNames, setSecret } from './secrets.js';
+import { deleteSecret, readSecretNames, resolveSecrets, setSecret } from './secrets.js';
 import { addManagedToolsToPath } from './managedTools.js';
 
 /**
@@ -658,6 +658,12 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
       list: () => readSecretNames(),
       set: (name, value) => setSecret(name, value),
       delete: (name) => deleteSecret(name),
+      /*
+       * The one reader of a value, and it never leaves this process: it feeds
+       * the environment of a server about to be spawned here. There is no wire
+       * command behind it and there will not be one (§13).
+       */
+      resolve: (names) => resolveSecrets(names),
     },
     /*
      * The machine's answer, for a connection bound to no workspace.

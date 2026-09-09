@@ -352,6 +352,30 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  *
+ * ## v35 attaches a declared server by id, which is the only way it can work
+ *
+ * v34 let a workspace declare a server and v33 let the machine hold the values;
+ * this is the command that joins them into a session. `session.attachProject`
+ * and `projectServers` on `session.create` both name a **declaration by id**,
+ * and the host reads the file, resolves the names against its own secrets, and
+ * attaches the result.
+ *
+ * **By id rather than by value, and this one is forced rather than chosen.**
+ * The obvious alternative is a client reading `mcp.project`, filling in the
+ * environment, and sending an ordinary `session.attachMcp` — which would mean
+ * the values travelling to the client so it could send them back. The whole
+ * point of v33 is that they do not need to. So resolution happens in the host,
+ * which is the one process holding both the declaration and the machine.
+ *
+ * It also keeps `SessionManager` unchanged: what reaches it is the
+ * `McpServerConfig` it has always taken, built one layer out. A session created
+ * this way is indistinguishable from one somebody typed, which is what makes
+ * `mcp.attached` mean the same thing in both.
+ *
+ * A v34 host refuses both by name. The degradation is honest rather than
+ * silent: a client that cannot attach a declaration can still read it, and the
+ * person can type the server in as they did before.
+ *
  * ## v34 adds `mcp.project`, which is what the secrets are for
  *
  * A project that uses an MCP server had no way to say so: Q20 put the
@@ -853,7 +877,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 34;
+export const SESSION_PROTOCOL_VERSION = 35;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -939,6 +963,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'secrets.set': 33,
   'secrets.delete': 33,
   'mcp.project': 34,
+  'session.attachProject': 35,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -1265,7 +1290,30 @@ export type SessionCommand =
       title: string;
       goal: string;
       input?: CreateSessionInput;
+      /**
+       * Servers this workspace **declares**, named by id (v35).
+       *
+       * Beside `input.mcpServers` rather than inside it, because they are not
+       * the same thing: that field carries a config the client wrote, values
+       * and all, while these are ids the *host* turns into configs by reading
+       * the workspace and resolving names against the machine. Folding them
+       * together would mean either the client sending values it should not
+       * have, or a field whose meaning depends on which half is filled in.
+       *
+       * An id naming no declaration, or one that cannot be used, is refused by
+       * name — before the session exists, so nothing half-made is left behind.
+       */
+      projectServers?: string[];
     }
+  /**
+   * Attach a server the workspace declares, by id (§17 Q20, §17 Q12, v35).
+   *
+   * `session.attachMcp` said later, for a declaration rather than a config. See
+   * the v35 note: the values are resolved in the host because that is the one
+   * place holding both the file and the machine, and sending them to a client
+   * so it could send them back would undo the reason they are stored at all.
+   */
+  | { t: 'session.attachProject'; id: RequestId; sessionId: string; serverId: string }
   /**
    * Attach an MCP server to a session that already exists (§17 Q20).
    *

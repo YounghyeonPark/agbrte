@@ -38,7 +38,12 @@ import {
 } from '@shared/host/sessionProtocol.js';
 import { openWorkspace } from '@main/store/identity.js';
 import type { AccessRole, InstanceId } from '@shared/types/index.js';
-import { deleteSecret, readSecretNames, resolveSecrets, setSecret } from '../src/host/secrets.js';
+import {
+  deleteSecret,
+  readSecretNames,
+  resolveSecrets,
+  setSecret,
+} from '../src/host/secrets.js';
 
 const VALUE = 'sk-live-do-not-echo-me';
 
@@ -76,6 +81,7 @@ async function connect(opts: { protocol?: number; role?: AccessRole } = {}): Pro
       list: () => readSecretNames(secrets),
       set: (name, value) => setSecret(name, value, secrets),
       delete: (name) => deleteSecret(name, secrets),
+      resolve: (names) => resolveSecrets(names, secrets),
     },
   });
   const pair = memoryChannelPair<SessionCommand, SessionMessage>();

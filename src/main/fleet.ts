@@ -1793,6 +1793,25 @@ export class Fleet extends EventEmitter {
   }
 
   /**
+   * Attach a declared server to a session on this host (§17 Q20, v35).
+   *
+   * Refused by name on a host too old for it, like every other write here: a
+   * client told nothing would leave somebody believing a session has tools it
+   * has not got, and they would find out from a model that cannot do the thing
+   * they asked for.
+   */
+  async attachProjectMcp(sessionId: SessionId, serverId: string): Promise<McpServerStatus> {
+    const entry = this.ownerOf(sessionId);
+    if (!entry.connection.supports('session.attachProject')) {
+      throw new AttachRefused(
+        `the host for ${labelOf(entry)} is too old to attach a declared MCP server. ` +
+          'Update it and try again.',
+      );
+    }
+    return entry.connection.attachProjectMcp(sessionId, serverId);
+  }
+
+  /**
    * The MCP servers this workspace declares, and what they still need (v34).
    *
    * `null` where the host cannot answer, never `[]` (§3.3): a workspace
@@ -2362,9 +2381,27 @@ export class Fleet extends EventEmitter {
     return entry ? snapshot(entry) : null;
   }
 
-  async createSession(instanceId: InstanceId, input: CreateSessionInput): Promise<Session> {
+  async createSession(
+    instanceId: InstanceId,
+    input: CreateSessionInput,
+    /** Ids of servers this workspace declares, resolved by the host (v35). */
+    projectServers?: string[],
+  ): Promise<Session> {
     const entry = this.require(instanceId);
-    const session = await entry.connection.createSession(input);
+    if (projectServers !== undefined && projectServers.length > 0) {
+      // Refused by name rather than dropped: a session created without the
+      // servers it was asked for is one somebody has to notice.
+      if (!entry.connection.supports('session.attachProject')) {
+        throw new AttachRefused(
+          `the host for ${labelOf(entry)} is too old to start a session with a declared MCP ` +
+            'server. Update it and try again.',
+        );
+      }
+    }
+    const session = await entry.connection.createSession(
+      input,
+      ...(projectServers !== undefined ? ([projectServers] as const) : ([] as const)),
+    );
     this.owners.set(session.sessionId, instanceId);
     return session;
   }

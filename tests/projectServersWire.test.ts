@@ -35,7 +35,12 @@ import {
 import { openWorkspace } from '@main/store/identity.js';
 import type { InstanceId } from '@shared/types/index.js';
 import { PROJECT_SERVER_SUFFIX } from '@main/store/projectServers.js';
-import { deleteSecret, readSecretNames, setSecret } from '../src/host/secrets.js';
+import {
+  deleteSecret,
+  readSecretNames,
+  resolveSecrets,
+  setSecret,
+} from '../src/host/secrets.js';
 
 const DECLARED = {
   command: 'npx',
@@ -78,6 +83,7 @@ async function connect(protocol?: number): Promise<HostConnection> {
       list: () => readSecretNames(secrets),
       set: (name, value) => setSecret(name, value, secrets),
       delete: (name) => deleteSecret(name, secrets),
+      resolve: (names) => resolveSecrets(names, secrets),
     },
   });
   const pair = memoryChannelPair<SessionCommand, SessionMessage>();
@@ -155,7 +161,69 @@ describe('mcp.project over the session protocol', () => {
   });
 });
 
-describe('a host that predates the command', () => {
+describe('attaching one', () => {
+  /*
+   * The end of the trip, and the reason the last two versions exist: a file in
+   * a repository plus a value on a machine become tools on a session, with the
+   * value never leaving the machine in either direction.
+   */
+  it('resolves the declaration against the machine and attaches it', async () => {
+    const connection = await connect();
+    await connection.setSecret('SEARCH_API_KEY', 'sk-live-abcdef');
+    const session = await connection.createSession({ title: 'work', goal: 'work' });
+
+    /*
+     * `npx` is not going to answer MCP here, and that is the *right* failure to
+     * see: it means the config was built and handed to `connectMcp`, which
+     * reported a process that would not start as `mcp.failed` in the transcript
+     * (§3.5) rather than throwing. What matters is which failure — "could not
+     * start" is a spawn that happened, and the refusals below are the ones that
+     * happen before anything is spawned at all.
+     */
+    const status = await connection.attachProjectMcp(session.sessionId, 'search');
+    expect(status.id).toBe('search');
+    expect(status.error ?? '').not.toContain('no usable MCP server');
+    expect(status.error ?? '').not.toContain('not stored here');
+    // And the value did not come back in the reply, which is the whole point.
+    expect(JSON.stringify(status)).not.toContain('sk-live-abcdef');
+  });
+
+  it('refuses before attaching when the machine does not hold the secret', async () => {
+    const connection = await connect();
+    const session = await connection.createSession({ title: 'work', goal: 'work' });
+    /*
+     * Named, because the name is the list a person has to fill in. "Could not
+     * start" would send them to the wrong problem — a missing key is not a
+     * broken server, and only one of the two has a remedy they can act on.
+     */
+    await expect(connection.attachProjectMcp(session.sessionId, 'search')).rejects.toThrow(
+      /SEARCH_API_KEY/,
+    );
+  });
+
+  it('refuses an id the workspace does not declare', async () => {
+    const connection = await connect();
+    const session = await connection.createSession({ title: 'work', goal: 'work' });
+    await expect(connection.attachProjectMcp(session.sessionId, 'nothing')).rejects.toThrow(
+      /no usable MCP server/,
+    );
+  });
+
+  it('refuses a whole create rather than leaving a session half-equipped', async () => {
+    const connection = await connect();
+    /*
+     * Resolved before the session exists. A session created and *then* told it
+     * cannot have the server it was asked for is a session somebody has to
+     * notice and clean up — and `createSession` already refuses a duplicate
+     * server id the same way, for the same reason.
+     */
+    await expect(
+      connection.createSession({ title: 'work', goal: 'work' }, ['search']),
+    ).rejects.toThrow(/SEARCH_API_KEY/);
+  });
+});
+
+describe('a host that predates the commands', () => {
   const tooOldFor = (command: string): number => (COMMAND_SINCE[command] ?? 1) - 1;
 
   it('refuses the read by name rather than answering an empty list', async () => {
@@ -166,8 +234,21 @@ describe('a host that predates the command', () => {
     );
   });
 
-  it('registers it in COMMAND_SINCE at the version that added it', () => {
+  it('refuses the attach by name too', async () => {
+    // A silent failure here leaves somebody believing a session has tools it
+    // has not got, and they find out from a model that cannot do the thing they
+    // asked for.
+    await expect(
+      (await connect(tooOldFor('session.attachProject'))).attachProjectMcp(
+        'whatever' as never,
+        'search',
+      ),
+    ).rejects.toThrow(/session\.attachProject/);
+  });
+
+  it('registers both in COMMAND_SINCE at the versions that added them', () => {
     expect(COMMAND_SINCE['mcp.project']).toBe(34);
-    expect(SESSION_PROTOCOL_VERSION).toBeGreaterThanOrEqual(34);
+    expect(COMMAND_SINCE['session.attachProject']).toBe(35);
+    expect(SESSION_PROTOCOL_VERSION).toBeGreaterThanOrEqual(35);
   });
 });

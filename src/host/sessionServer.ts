@@ -38,7 +38,7 @@ import {
   readTemplate,
   saveTemplate,
 } from '@main/store/templates.js';
-import { listProjectServers, neededNames } from '@main/store/projectServers.js';
+import { listProjectServers, neededNames, readProjectServer } from '@main/store/projectServers.js';
 import { listSkills } from '@main/store/skills.js';
 import { listWorkflows, saveWorkflow } from '@main/store/workflows.js';
 import {
@@ -50,6 +50,7 @@ import {
   type AgentSpec,
   type InstanceId,
   type LineageId,
+  type McpServerConfig,
   type PermissionRequest,
   type Session,
   type ModelCapabilityHint,
@@ -267,6 +268,19 @@ export interface SessionHostOptions {
     list: () => Promise<string[]>;
     set: (name: string, value: string) => Promise<{ name: string }>;
     delete: (name: string) => Promise<{ name: string }>;
+    /**
+     * Values, for a spawn about to happen on this machine (§13, v35).
+     *
+     * The one reader of a value anywhere, and it exists because attaching a
+     * declared server has to resolve its names *here*: the alternative is
+     * sending the values to a client so it can send them back, which would undo
+     * the reason they are stored at all.
+     *
+     * A name this machine does not hold is absent from the result rather than
+     * empty — "not set" and "set to nothing" are different, and the caller has
+     * to be able to say which one is missing.
+     */
+    resolve: (names: readonly string[]) => Promise<Record<string, string>>;
   };
   /**
    * Called whenever this server stops serving, for any reason.
@@ -1010,9 +1024,29 @@ export class SessionHostServer {
         case 'session.create': {
           this.requireWrite(client, 'create a session');
           const input = command.input ?? { title: command.title, goal: command.goal };
+          /*
+           * Declarations first, and before the session exists (v35).
+           *
+           * Resolved up here rather than after creating, so an id naming
+           * nothing refuses the whole call instead of leaving a session behind
+           * with a server it was asked for and did not get. `createSession`
+           * already refuses a duplicate id the same way, for the same reason.
+           *
+           * Appended after the client's own `mcpServers`, so a config somebody
+           * typed and a declaration with the same id collide on the manager's
+           * duplicate check rather than one silently winning.
+           */
+          const declared = await Promise.all(
+            (command.projectServers ?? []).map((id) =>
+              this.resolveDeclared(this.bound(client, 'create a session').info.root, id),
+            ),
+          );
           return manager.createSession(
             {
               ...input,
+              ...(declared.length > 0
+                ? { mcpServers: [...(input.mcpServers ?? []), ...declared] }
+                : {}),
               /*
                * The connection's folder wins over anything the client named.
                *
@@ -1213,6 +1247,29 @@ export class SessionHostServer {
 
         case 'models.progress':
           return (await this.opts.installProgress?.()) ?? [];
+
+        case 'session.attachProject': {
+          /*
+           * A declaration, attached — the command the last two versions were
+           * for (§17 Q20, §17 Q12, v35).
+           *
+           * Gated like every other write, and resolved *here* rather than by
+           * the client: this process holds the workspace file and the machine's
+           * secrets, and sending values out so they could come back would undo
+           * v33 entirely.
+           *
+           * What reaches `SessionManager` is the `McpServerConfig` it has always
+           * taken, so a session attached this way is indistinguishable from one
+           * somebody typed — which is what keeps `mcp.attached` meaning one
+           * thing.
+           */
+          this.requireWrite(client, 'attach a project MCP server');
+          const config = await this.resolveDeclared(
+            this.bound(client, 'attach a project MCP server').info.root,
+            command.serverId,
+          );
+          return manager.attachMcp(command.sessionId as SessionId, config, client.actor);
+        }
 
         case 'mcp.project': {
           /*
@@ -1727,6 +1784,60 @@ export class SessionHostServer {
    * `requireWrite` carries one: a person needs to know what was refused, not
    * merely that something was.
    */
+  /**
+   * A declaration, turned into the config `SessionManager` takes (v35).
+   *
+   * Every refusal here happens **before** anything is created or attached, and
+   * each names the thing to fix. A server that cannot be built is not a server
+   * that starts badly — `connectMcp` reports a process that would not start as
+   * `mcp.failed` in the transcript (§3.5), which is right for a command that
+   * exits and wrong for a workspace that never declared this at all.
+   *
+   * The missing-secret refusal is the one worth naming precisely: it says which
+   * *names* are absent, because that is the list a person has to fill in, and
+   * saying "could not start" would send them to the wrong problem entirely.
+   */
+  private async resolveDeclared(root: string, serverId: string): Promise<McpServerConfig> {
+    const found = await readProjectServer(root, serverId);
+    if (found.server === undefined) {
+      throw new Error(
+        `this workspace has no usable MCP server called "${serverId}"` +
+          (found.problems.length > 0 ? ` — ${found.problems.join('; ')}` : ''),
+      );
+    }
+    const server = found.server;
+    const names = neededNames(server);
+    // A machine that cannot keep secrets can still run a declaration that needs
+    // none, which is the ordinary case for a server reading a local file.
+    const held = names.length === 0 || this.opts.secrets === undefined
+      ? {}
+      : await this.opts.secrets.resolve(names);
+
+    const env: Record<string, string> = {};
+    const missing: string[] = [];
+    for (const [wants, named] of Object.entries(server.envFrom ?? {})) {
+      const value = held[named];
+      if (value === undefined) missing.push(named);
+      else env[wants] = value;
+    }
+    if (missing.length > 0) {
+      throw new Error(
+        `"${serverId}" needs ${missing.join(', ')} on this machine, and it is not stored here. ` +
+          'Add it, then attach the server again.',
+      );
+    }
+
+    return {
+      id: server.id,
+      command: server.command,
+      ...(server.args !== undefined ? { args: server.args } : {}),
+      // Workspace-relative in the file (§5.4b), absolute for the spawn: the
+      // declaration travels between machines and this does not.
+      ...(server.cwd !== undefined ? { cwd: resolve(root, server.cwd) } : {}),
+      ...(Object.keys(env).length > 0 ? { env } : {}),
+    };
+  }
+
   private bound(client: Client, verb: string): HostWorkspace {
     if (client.workspace !== null) return client.workspace;
     const held = this.heldWorkspaces().map((w) => w.info.root);
