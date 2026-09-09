@@ -16,7 +16,11 @@ import type { ListeningPort } from '../preview/ports.js';
 import type { PreviewServer, PreviewServerLog } from '../preview/servers.js';
 import type { ShellHandle } from '../terminal/shell.js';
 import type { SessionTemplate } from '../store/templates.js';
-import type { SkillSummary, WorkflowSummary } from '@shared/host/sessionProtocol.js';
+import type {
+  ProjectServerSummary,
+  SkillSummary,
+  WorkflowSummary,
+} from '@shared/host/sessionProtocol.js';
 import type { CreateSessionInput, Workflow, WorkflowSchedule } from '@shared/types/index.js';
 import { EventEmitter } from 'node:events';
 import {
@@ -482,6 +486,18 @@ export class HostConnection extends EventEmitter {
   async templates(): Promise<SessionTemplate[]> {
     this.require('template.list');
     return this.call<SessionTemplate[]>({ t: 'template.list' });
+  }
+
+  /**
+   * The MCP servers this host's workspace declares (§17 Q20, §17 Q12, v34).
+   *
+   * `require` rather than an empty list, like every other capability read here:
+   * a workspace declaring none and a host too old to be asked are different
+   * facts, and only one has a remedy (§3.3).
+   */
+  async projectServers(): Promise<ProjectServerSummary[]> {
+    this.require('mcp.project');
+    return this.call<ProjectServerSummary[]>({ t: 'mcp.project' });
   }
 
   /**

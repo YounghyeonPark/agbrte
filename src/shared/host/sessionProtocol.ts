@@ -85,6 +85,29 @@ export interface EndpointAdded {
  * document, and an editor needs it in order to fix it.
  */
 /**
+ * One MCP server a workspace declares, as a client sees it (§17 Q20, v34).
+ *
+ * `command` and `args` travel because whoever approves this is approving *what
+ * will run on their machine*, and a name alone is not something anybody can
+ * agree to. The absolute path the file was read from does not, like its
+ * neighbours here: a path that crosses a machine names nothing on the far side
+ * (§5.4b).
+ *
+ * `needs` is what the declaration asks the machine for; `missing` is the part
+ * that machine does not hold. Joined on the host because it is the one process
+ * with both facts — the workspace's file and `secrets.list` — and a client
+ * deriving `missing` itself would be a second copy of a rule that can drift.
+ */
+export interface ProjectServerSummary {
+  id: string;
+  command?: string;
+  args?: string[];
+  needs: string[];
+  missing: string[];
+  problems: string[];
+}
+
+/**
  * One skill document as a client sees it (§17 Q21).
  *
  * The absolute path is dropped at the boundary, like `WorkflowSummary`'s: a path
@@ -328,6 +351,34 @@ export interface HostIdentity {
  * ignores the extra `hello` field and reports `protocol: 1` exactly as it always
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
+ *
+ * ## v34 adds `mcp.project`, which is what the secrets are for
+ *
+ * A project that uses an MCP server had no way to say so: Q20 put the
+ * declaration in the creation form, which is right about *when* the decision is
+ * made and leaves the project itself mute. A colleague who clones the
+ * repository gets a README paragraph, if somebody wrote one.
+ *
+ * So a server can be a file in `<workspace>/.agbrte/templates/`, beside the
+ * workflows and the skills, and this is the read that reaches it. Named
+ * `mcp.project` rather than `mcp.list` because there is a second MCP list a
+ * client cares about — the servers attached to a session — and a name that
+ * needs a paragraph to disambiguate is a name that will be got wrong once.
+ *
+ * **The declaration has no field a credential fits in.** It carries `envFrom`,
+ * mapping the variable a server wants to the *name* the machine stores it
+ * under, and both halves are validated as environment-variable names. That is
+ * stronger than checking values look like `${…}`: a refusal on read stops a bad
+ * file being used, not being committed, and by then the key is in every clone.
+ * `workflows.ts` makes the identical argument about its own type.
+ *
+ * The reply joins two facts owned by two places — what the workspace asks for
+ * and what the machine holds (v33) — because the host is the one process with
+ * both, and a client computing `missing` itself would be a second copy of a
+ * rule that must not drift.
+ *
+ * A v33 host refuses it by name, and the degradation is the behaviour that
+ * shipped: servers typed into the form, one session at a time.
  *
  * ## v33 adds `secrets.list`, `secrets.set` and `secrets.delete`
  *
@@ -802,7 +853,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 33;
+export const SESSION_PROTOCOL_VERSION = 34;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -887,6 +938,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'secrets.list': 33,
   'secrets.set': 33,
   'secrets.delete': 33,
+  'mcp.project': 34,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -957,6 +1009,14 @@ export type SessionCommand =
       target?: ExecutionTarget;
     }
   | { t: 'template.list'; id: RequestId }
+  /**
+   * The MCP servers this **workspace declares** (§17 Q20, §17 Q12, v34).
+   *
+   * Not the servers attached to a session, which is what makes the name worth
+   * its extra word. A read: nothing here attaches anything, and a session still
+   * gets what a person named when they made it.
+   */
+  | { t: 'mcp.project'; id: RequestId }
   /**
    * Which named secrets this machine holds — **names only** (§13, v33).
    *

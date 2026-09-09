@@ -38,6 +38,7 @@ import {
   readTemplate,
   saveTemplate,
 } from '@main/store/templates.js';
+import { listProjectServers, neededNames } from '@main/store/projectServers.js';
 import { listSkills } from '@main/store/skills.js';
 import { listWorkflows, saveWorkflow } from '@main/store/workflows.js';
 import {
@@ -1212,6 +1213,35 @@ export class SessionHostServer {
 
         case 'models.progress':
           return (await this.opts.installProgress?.()) ?? [];
+
+        case 'mcp.project': {
+          /*
+           * The workspace's declarations, joined with what this machine holds.
+           *
+           * Two facts owned by two places (§8): the file says which names a
+           * server wants, and only the machine can say which of them it has. The
+           * host is the one process with both, so the join happens here — a
+           * client doing it would need `secrets.list` *and* this, and would hold
+           * a second copy of a rule that can drift.
+           *
+           * Names, never values, on both halves. `missing` is the useful shape:
+           * it is what a form has to ask for, and it is derived from a list of
+           * names that carried nothing secret to begin with.
+           */
+          const files = await listProjectServers(this.bound(client, 'list MCP servers').info.root);
+          const held = new Set(this.opts.secrets === undefined ? [] : await this.opts.secrets.list());
+          return files.map(({ id, server, problems }) => {
+            const needs = server === undefined ? [] : neededNames(server);
+            return {
+              id,
+              ...(server?.command !== undefined ? { command: server.command } : {}),
+              ...(server?.args !== undefined ? { args: server.args } : {}),
+              needs,
+              missing: needs.filter((name) => !held.has(name)),
+              problems,
+            };
+          });
+        }
 
         case 'secrets.list': {
           /*

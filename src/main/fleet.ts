@@ -29,7 +29,12 @@ import { basename } from 'node:path';
 
 import { byAttentionThenRecency, describeTarget, sameTarget } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
-import type { HostIdentity, SkillSummary, WorkflowSummary } from '@shared/host/sessionProtocol.js';
+import type {
+  HostIdentity,
+  ProjectServerSummary,
+  SkillSummary,
+  WorkflowSummary,
+} from '@shared/host/sessionProtocol.js';
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import { requireTransport } from './host/transports.js';
 import {
@@ -1785,6 +1790,24 @@ export class Fleet extends EventEmitter {
       );
     }
     return entry.connection.setSchedules(schedules);
+  }
+
+  /**
+   * The MCP servers this workspace declares, and what they still need (v34).
+   *
+   * `null` where the host cannot answer, never `[]` (§3.3): a workspace
+   * declaring none and a host too old to have the command are different facts,
+   * and telling somebody there are none when nothing could say is the failure
+   * four capability states exist to avoid.
+   */
+  async projectServers(instanceId: InstanceId): Promise<ProjectServerSummary[] | null> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('mcp.project')) return null;
+    try {
+      return await entry.connection.projectServers();
+    } catch {
+      return null;
+    }
   }
 
   /**
