@@ -163,6 +163,69 @@ function confine(ctx: ToolContext, raw: unknown): { path: string } | { error: st
   return { path: abs };
 }
 
+/**
+ * The workspace store, and the part of it an agent may write (§5.1, §4.4).
+ *
+ * `.agbrte/` is the app's own bookkeeping sitting inside the folder the agent
+ * works in, and `confine` cannot tell the difference: it asks whether a path is
+ * inside the workspace, and this is. So `write` and `edit` could reach
+ * `sessions/<id>/events.jsonl` — the append-only record §5.1 calls the truth —
+ * `instance.json`, which is the workspace's identity, and `run/schedules.json`,
+ * which is what fires with nobody watching. An agent editing its own log is not
+ * a hypothetical failure mode; it is the one that makes every other record
+ * unciteable.
+ *
+ * `SKIP_DIRS` below has excluded this directory from `glob` and `grep` since
+ * those existed, on the grounds that "walking one is walking our own
+ * bookkeeping". Reading a session log is a fair thing to want and stays
+ * allowed; writing one never was, and the asymmetry was an oversight rather
+ * than a decision.
+ *
+ * ## What stays writable, and why it is not a hole
+ *
+ * `templates/` and `memory/` are **content**, not bookkeeping, and both are
+ * tracked by git for that reason (§17 Q12). §4.4 wants an agent able to propose
+ * a decomposition *by writing a file* — "hand-written and agent-proposed
+ * documents converge on one artifact reviewed in one medium, a diff" — and
+ * skills and MCP declarations sit in that directory under the same argument.
+ * Closing those would remove a capability the design asks for in order to fix a
+ * bug about a different directory.
+ *
+ * The `.mcp.json` case is the one worth being explicit about, since a written
+ * declaration is a command a machine may later run: it is refused a credential
+ * by its own type, it cannot attach itself, and a person ticks it in a form
+ * that shows the command. The file is a proposal, and the diff is where it is
+ * agreed to.
+ *
+ * ## What this does not cover
+ *
+ * `bash`. A shell can write anything the host user can, and no path check
+ * inside this file changes that — the gate is the boundary there, and it is
+ * `ask` by construction (`ToolPolicy.defaultAction` is the literal type). This
+ * closes the two tools that take a path and were confined by one already.
+ */
+const STORE_DIRS = ['.agbrte', '.devagents'];
+const STORE_WRITABLE = new Set(['templates', 'memory']);
+
+/**
+ * A refusal when this write lands in the app's own store, or `null`.
+ *
+ * Both directory names, like `SKIP_DIRS`: a folder created before the rename
+ * still holds a session store, and a guard that knew only the current name
+ * would leave the older ones open.
+ */
+function guardStorePath(root: string, abs: string): string | null {
+  const parts = relative(root, abs).split(sep);
+  const [dir, inside] = parts;
+  if (dir === undefined || !STORE_DIRS.includes(dir)) return null;
+  if (inside !== undefined && STORE_WRITABLE.has(inside)) return null;
+  return (
+    `${parts.join('/')} is Agbrte's own store for this workspace, and writing there would ` +
+    `edit the record this session is kept in. ` +
+    `${dir}/templates and ${dir}/memory are yours to write; the rest is not.`
+  );
+}
+
 const SKIP_DIRS = new Set([
   '.git',
   'node_modules',
@@ -934,6 +997,12 @@ export const PUBLIC_TOOLS: ToolDefinition[] = [
  * either of them having been careful.
  */
 async function guardWrite(ctx: ToolContext, path: string): Promise<string | null> {
+  // Before the lease, because this is a refusal about the *path* and taking a
+  // claim on a file nothing may write would leave a lease behind for a write
+  // that was never going to happen.
+  const store = guardStorePath(ctx.workspaceRoot, path);
+  if (store !== null) return store;
+
   const claim = ctx.leases.acquire(path, ctx.agentId);
   if (!claim.ok) {
     return (
