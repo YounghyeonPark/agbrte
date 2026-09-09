@@ -28,6 +28,7 @@ import type {
   InboxEntry,
   MatrixCell,
   McpServerConfig,
+  SkillConfig,
   PermissionRequest,
   PermissionResolved,
   Session,
@@ -169,6 +170,19 @@ export interface AgbrteState {
     title: string,
     goal: string,
     mcpServers?: McpServerConfig[],
+    /**
+     * Skills to inject at creation (§17 Q21).
+     *
+     * Bodies rather than ids, because that is what `createSession` takes and
+     * what the log records — the workspace file is where they were *read* from,
+     * not a reference the session keeps. A skill edited tomorrow does not
+     * silently change what a session running today was told, which is the same
+     * property the brief has.
+     *
+     * Unlike `mcpServers` there is no credential here, which is exactly why
+     * this one can come from a tracked file at all (§13, §17 Q12).
+     */
+    skills?: SkillConfig[],
   ): Promise<void>;
   openSession(sessionId: string, instanceId?: string): Promise<void>;
   /** Deselect, so a narrow screen can show the list again. */
@@ -546,7 +560,7 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     });
   },
 
-  async createSession(instanceId, title, goal, mcpServers) {
+  async createSession(instanceId, title, goal, mcpServers, skills) {
     const session = await guard(set, () =>
       agbrte().sessions.create({
         instanceId,
@@ -556,6 +570,8 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
         // named", and an empty array would put a `mcp: []` on a session that
         // never asked for one.
         ...(mcpServers !== undefined && mcpServers.length > 0 ? { mcpServers } : {}),
+        // The same rule, for the same reason (§17 Q21).
+        ...(skills !== undefined && skills.length > 0 ? { skills } : {}),
       }),
     );
     if (!session) return;

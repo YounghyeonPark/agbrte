@@ -16,8 +16,8 @@ import type { ListeningPort } from '../preview/ports.js';
 import type { PreviewServer, PreviewServerLog } from '../preview/servers.js';
 import type { ShellHandle } from '../terminal/shell.js';
 import type { SessionTemplate } from '../store/templates.js';
-import type { WorkflowSummary } from '@shared/host/sessionProtocol.js';
-import type { Workflow, WorkflowSchedule } from '@shared/types/index.js';
+import type { SkillSummary, WorkflowSummary } from '@shared/host/sessionProtocol.js';
+import type { CreateSessionInput, Workflow, WorkflowSchedule } from '@shared/types/index.js';
 import { EventEmitter } from 'node:events';
 import {
   COMMAND_SINCE,
@@ -359,7 +359,23 @@ export class HostConnection extends EventEmitter {
     return this.call({ t: 'session.get', sessionId });
   }
 
-  createSession(input: { title: string; goal: string }): Promise<Session> {
+  /**
+   * `CreateSessionInput`, and it was `{title, goal}` until a test wrote a
+   * literal.
+   *
+   * The whole input has travelled in the `input` field since v12 and always
+   * reached the far side intact, so `mcpServers` and the rest worked — the
+   * *parameter* was the narrow thing, and every caller passes a variable rather
+   * than an object literal, so TypeScript's excess-property check never fired
+   * and nothing said so. That is the trap `endpoints.add` fell into a release
+   * ago, recorded at length in `sessionProtocol.ts`'s v29 note: a field threaded
+   * from a form to a plan and stopped dead at a signature, type-checking clean
+   * the whole way.
+   *
+   * Nothing changes on the wire. What changes is that a field this cannot carry
+   * is now a compile error at the boundary rather than a silence at runtime.
+   */
+  createSession(input: CreateSessionInput): Promise<Session> {
     // Both shapes: the strings so a host older than v12 still makes the
     // session it always made, and the whole input so a newer one makes the
     // session that was actually asked for.
@@ -466,6 +482,19 @@ export class HostConnection extends EventEmitter {
   async templates(): Promise<SessionTemplate[]> {
     this.require('template.list');
     return this.call<SessionTemplate[]>({ t: 'template.list' });
+  }
+
+  /**
+   * Skill documents in this host's workspace (§17 Q21, §17 Q12).
+   *
+   * `require` rather than an empty list, for the reason `workflows()` below
+   * gives: a workspace with no skills is a finished answer and a host that
+   * predates them is one to update, and rendering the second as the first is
+   * §3.3's "an unknown must never render as a no".
+   */
+  async skills(): Promise<SkillSummary[]> {
+    this.require('skill.list');
+    return this.call<SkillSummary[]>({ t: 'skill.list' });
   }
 
   /**

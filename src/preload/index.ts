@@ -96,6 +96,9 @@ const api: AgbrteApi = {
     list: (limit?: number) => ipcRenderer.invoke(CH.inboxList, limit),
     markRead: () => ipcRenderer.invoke(CH.inboxMarkRead),
   },
+  skills: {
+    list: (instanceId: string) => ipcRenderer.invoke(CH.skillsList, instanceId),
+  },
   workflows: {
     list: (instanceId: string) => ipcRenderer.invoke(CH.workflowsList, instanceId),
     save: (instanceId: string, workflowId: string, workflow: Workflow) =>

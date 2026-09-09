@@ -613,6 +613,8 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
 
   handle(CH.inboxList, (limit?: number) => fleet.inbox(limit));
   handle(CH.inboxMarkRead, () => fleet.markInboxRead());
+  handle(CH.skillsList, (instanceId: string) => fleet.skills(instanceId as InstanceId));
+
   handle(CH.workflowsList, (instanceId: string) => fleet.workflows(instanceId as InstanceId));
   // A write that starts work and spends a budget, gated by the host it reaches
   // — §7 puts enforcement where the knowledge is.

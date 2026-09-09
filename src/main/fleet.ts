@@ -29,7 +29,7 @@ import { basename } from 'node:path';
 
 import { byAttentionThenRecency, describeTarget, sameTarget } from '@shared/types/index.js';
 import type { HostConnection } from './host/hostConnection.js';
-import type { HostIdentity, WorkflowSummary } from '@shared/host/sessionProtocol.js';
+import type { HostIdentity, SkillSummary, WorkflowSummary } from '@shared/host/sessionProtocol.js';
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import { requireTransport } from './host/transports.js';
 import {
@@ -1785,6 +1785,24 @@ export class Fleet extends EventEmitter {
       );
     }
     return entry.connection.setSchedules(schedules);
+  }
+
+  /**
+   * The skills this workspace holds (§17 Q21, §17 Q12).
+   *
+   * `null` where the host cannot answer, never `[]`. §3.3: a workspace with no
+   * skills and a host too old to have the command are different facts, and the
+   * caller renders the second as "cannot say" rather than as "none" — an
+   * unknown must never render as a no.
+   */
+  async skills(instanceId: InstanceId): Promise<SkillSummary[] | null> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('skill.list')) return null;
+    try {
+      return await entry.connection.skills();
+    } catch {
+      return null;
+    }
   }
 
   async workflows(instanceId: InstanceId): Promise<WorkflowSummary[] | null> {

@@ -38,6 +38,7 @@ import {
   readTemplate,
   saveTemplate,
 } from '@main/store/templates.js';
+import { listSkills } from '@main/store/skills.js';
 import { listWorkflows, saveWorkflow } from '@main/store/workflows.js';
 import {
   AccessDenied,
@@ -766,6 +767,22 @@ export class SessionHostServer {
 
         case 'template.list':
           return listTemplates(this.bound(client, 'list templates').info.root);
+
+        case 'skill.list': {
+          /*
+           * Read where the workspace is, for `workflow.list`'s reason below:
+           * that is where the documents are, and the client asking may be a
+           * phone (§17 Q21, §6.6).
+           *
+           * The path each file was read from is dropped here rather than at the
+           * client — a path that crosses a machine names nothing on the far side
+           * (§5.4b) — and the problems travel, because a document that cannot be
+           * used is a row with its reason rather than an error hiding the good
+           * ones.
+           */
+          const files = await listSkills(this.bound(client, 'list skills').info.root);
+          return files.map(({ id, skill, problems }) => ({ id, skill, problems }));
+        }
 
         case 'workflow.list': {
           /*

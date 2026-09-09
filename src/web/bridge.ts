@@ -289,6 +289,9 @@ const api: AgbrteApi = {
     list: call(CH.inboxList),
     markRead: call(CH.inboxMarkRead),
   },
+  skills: {
+    list: call(CH.skillsList),
+  },
   workflows: {
     list: call(CH.workflowsList),
     save: (instanceId, workflowId, workflow) =>

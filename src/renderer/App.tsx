@@ -41,7 +41,7 @@ import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
 import { Welcome } from './Welcome.js';
 import { About } from './About.js';
-import type { WorkflowSummary } from '../shared/host/sessionProtocol.js';
+import type { SkillSummary, WorkflowSummary } from '../shared/host/sessionProtocol.js';
 import { RunGraph } from './RunGraph.js';
 import { Workflows, type WorkspaceWorkflows } from './Workflows.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
@@ -94,6 +94,7 @@ import type {
   Session,
   SessionState,
   ShellProgram,
+  SkillConfig,
   WorkflowSchedule,
 } from '../shared/types/index.js';
 import type { UpdateState } from '../shared/ipc/contract.js';
@@ -1392,6 +1393,12 @@ export function App(): JSX.Element {
             */}
             <McpAttached {...(active.mcp !== undefined ? { servers: active.mcp } : {})} />
 
+            {/* Beside it, and for the same reason (§17 Q21): what this session
+                was given, said where somebody can see they got it. Ticking a
+                skill on the form and then finding no trace of it anywhere is
+                how a person learns not to trust the tick. */}
+            <SkillsAttached {...(active.skills !== undefined ? { skills: active.skills } : {})} />
+
             {/*
               Above the branch, not inside the composer's `meta` where the group
               and MCP panels live — because a run root never reaches that.
@@ -2126,6 +2133,18 @@ function HostGroup({
   const [templates, setTemplates] = useState<SessionTemplateDto[]>([]);
   /** This workspace's workflow documents, for the row beside the templates. */
   const [flows, setFlows] = useState<WorkflowSummary[]>([]);
+  /**
+   * The workspace's skills, and which of them this session is being given
+   * (§17 Q21, §17 Q12).
+   *
+   * Unlike the MCP drafts below, these are not typed here and hold no
+   * credential: a skill is a file in `templates/`, so what this state holds is a
+   * set of *ids* and the bodies come from the list. That is the whole difference
+   * the tracked directory buys — the thing a person retyped into every session
+   * is now a thing they tick.
+   */
+  const [skills, setSkills] = useState<SkillSummary[] | null>(null);
+  const [chosenSkills, setChosenSkills] = useState<string[]>([]);
   /*
    * The MCP servers this session is being given (§17 Q20).
    *
@@ -2154,10 +2173,37 @@ function HostGroup({
     void window.agbrte.workflows
       .list(host.instanceId)
       .then((found) => setFlows(found ?? []), () => setFlows([]));
+    /*
+     * And its skills, which are the third answer to the same question.
+     *
+     * `null` is kept as `null` rather than flattened to `[]`, unlike the two
+     * above: those decide whether to *offer* something, and an offer nobody can
+     * fulfil is simply absent. This one has a sentence to say — a host too old
+     * to be asked is not a workspace with no skills (§3.3), and somebody who
+     * wrote one and cannot see it needs to know which of those is true.
+     */
+    void window.agbrte.skills.list(host.instanceId).then(setSkills, () => setSkills(null));
   }, [adding, host.instanceId]);
 
   /** The first unsendable MCP row, shown under the fields rather than swallowed. */
   const mcpProblem = firstProblem(mcpDrafts);
+
+  /**
+   * The ticked skills, as bodies, in the order the workspace lists them.
+   *
+   * Read out of the list rather than held in state, so a tick can never carry a
+   * body the file no longer has — the form is open for as long as somebody is
+   * filling it in, and `templates/` is a directory an editor is also pointed at.
+   * `undefined` rather than `[]` when nothing is ticked: the host reads absent
+   * as "none were named", and an empty array would be a shape claiming a
+   * decision nobody made.
+   */
+  const pickedSkills = ((): SkillConfig[] | undefined => {
+    const bodies = (skills ?? [])
+      .filter((s) => s.skill !== undefined && chosenSkills.includes(s.id))
+      .map((s) => s.skill as SkillConfig);
+    return bodies.length === 0 ? undefined : bodies;
+  })();
 
   /**
    * Where this session's work goes, when it is asked for a folder of its own.
@@ -2220,6 +2266,15 @@ function HostGroup({
             ? await store.attachLocalHost(newFolderTarget)
             : await store.attachRemoteHost(host.label, newFolderTarget);
         if (opened === null) return;
+        /*
+         * No skills on this branch, and not by omission.
+         *
+         * The folder does not exist yet, so it has no `templates/` and nothing
+         * was offered above — the list is bound to the workspace the session
+         * lands in, and this one is being created. A skill from the *old*
+         * workspace travelling into a new one would be exactly the ambient
+         * inheritance §17 Q21 refuses for children.
+         */
         await store.createSession(opened.instanceId, title.trim(), title.trim(), configs);
       })();
       setFolder('');
@@ -2229,8 +2284,9 @@ function HostGroup({
       setAdding(false);
       return;
     }
-    void store.createSession(into, title.trim(), title.trim(), configs);
+    void store.createSession(into, title.trim(), title.trim(), configs, pickedSkills);
     setTitle('');
+    setChosenSkills([]);
     /*
      * Cleared before the create resolves, deliberately.
      *
@@ -2339,6 +2395,9 @@ function HostGroup({
                 // Keeping a token in renderer state for as long as the window is
                 // open, on the chance the form is reopened, is the wrong trade.
                 if (open) setMcpDrafts([]);
+                // And the ticks, for the reason the folder below is cleared: a
+                // decision about one session must not quietly become a setting.
+                if (open) setChosenSkills([]);
                 /*
                  * And each opening starts over on the folder.
                  *
@@ -2514,6 +2573,67 @@ function HostGroup({
                 }`
               : `will create ${newFolderTarget}`}
           </span>
+          {/*
+            §17 Q21: instructions this session starts with, from files the
+            workspace holds.
+
+            Beside the MCP fields because it is the same decision — what this
+            session is given, decided by the person making it, written into its
+            own log — and different from them in the one way that matters here:
+            these are ticked rather than typed, because a skill is a project fact
+            in a tracked directory (§17 Q12) rather than something retyped per
+            session. There is no field to author one in, deliberately: it is
+            written in an editor, like the README beside it.
+
+            Only offered where the workspace already exists. `newFolderTarget`
+            means a folder that is about to be created, which has no
+            `templates/` yet and therefore nothing to offer — and carrying the
+            *old* workspace's skills into it would be the ambient inheritance
+            Q21 refuses.
+          */}
+          {newFolderTarget === '' && skills !== null && skills.length > 0 && (
+            <div className="grid gap-1" data-testid="new-skills">
+              <span className={LABEL}>skills in this workspace</span>
+              {skills.map((s) => (
+                <label
+                  key={s.id}
+                  className="flex items-baseline gap-2 text-xs"
+                  data-testid="new-skill"
+                  data-id={s.id}
+                  data-ok={s.problems.length === 0 ? 'yes' : 'no'}
+                >
+                  <input
+                    type="checkbox"
+                    data-testid="new-skill-pick"
+                    /* A file that would be refused at creation cannot be
+                       ticked. Offering it would be a control that fails on
+                       press (§3.5), and the reason is beside it either way. */
+                    disabled={s.skill === undefined}
+                    checked={chosenSkills.includes(s.id)}
+                    onChange={(e) =>
+                      setChosenSkills((was) =>
+                        e.target.checked ? [...was, s.id] : was.filter((id) => id !== s.id),
+                      )
+                    }
+                  />
+                  <span className="min-w-0">
+                    <code className="text-accent">{s.id}</code>{' '}
+                    <span className="text-muted wrap-anywhere">
+                      {s.skill?.description ?? s.problems.join('; ')}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+          {newFolderTarget === '' && skills === null && (
+            /* §3.3: an unknown must never render as a no. A host too old for
+               `skill.list` and a workspace with no skills are different facts,
+               and only one of them has a remedy. */
+            <span className="text-muted text-[11px]" data-testid="new-skills-unknown">
+              this host is too old to say what skills the workspace has — update it
+            </span>
+          )}
           {/* §17 Q20: what this session may reach, decided by the person making
               it, going straight into its own log. Above the button because it is
               part of the same decision, and folded because most sessions attach
@@ -3517,6 +3637,37 @@ function machineFor(
         if (p.instanceId === instanceId) cb(p.step);
       }),
   };
+}
+
+/**
+ * The skills this session was given, from `Session.skills` (§17 Q21).
+ *
+ * The id and the description, which is exactly what the *model* is shown until
+ * the work calls for the body — so this row is what the session's tool list
+ * looks like from outside, rather than a second rendering of the file.
+ *
+ * Absent means none were named, and renders nothing. A strip saying "no skills"
+ * on every session is how people learn to stop reading a row.
+ */
+function SkillsAttached({
+  skills,
+}: {
+  skills?: Array<{ id: string; description: string }>;
+}): JSX.Element | null {
+  if (skills === undefined || skills.length === 0) return null;
+  return (
+    <div
+      data-testid="skills-attached"
+      className="border-line flex shrink-0 flex-wrap items-baseline gap-x-4 gap-y-1 border-b px-4 py-2"
+    >
+      {skills.map((skill) => (
+        <span key={skill.id} className="min-w-0" data-testid="skill" data-id={skill.id}>
+          <span className={`${LABEL} text-muted`}>skill · {skill.id}</span>{' '}
+          <span className="text-muted text-[11px]">{skill.description}</span>
+        </span>
+      ))}
+    </div>
+  );
 }
 
 /**

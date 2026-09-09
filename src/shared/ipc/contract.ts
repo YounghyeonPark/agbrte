@@ -52,7 +52,7 @@ import type {
   SessionProjection,
   ShellProgram,
 } from '../types/index.js';
-import type { WorkflowSummary } from '../host/sessionProtocol.js';
+import type { SkillSummary, WorkflowSummary } from '../host/sessionProtocol.js';
 import type { Workflow, WorkflowSchedule } from '../types/index.js';
 
 // ------------------------------------------------------------------- payloads
@@ -871,6 +871,17 @@ export interface AgbrteApi {
     markRead(): Promise<void>;
   };
   /**
+   * Skill documents in one workspace (§17 Q21, §17 Q12).
+   *
+   * Per instance and `null`-when-unanswerable for `workflows`' reasons below,
+   * which this deliberately mirrors rather than restates. What is different is
+   * that there is no `save`: a skill is written in an editor, and a command to
+   * write one would be a way for a session to author its own instructions.
+   */
+  skills: {
+    list(instanceId: string): Promise<SkillSummary[] | null>;
+  };
+  /**
    * Workflow documents in one workspace (§4.4).
    *
    * Per instance and not across the fleet, unlike `inbox`: a workflow is a file
@@ -1453,6 +1464,7 @@ export const CH = {
   hostsRuntimes: 'agbrte:hosts.runtimes',
   hostsConformance: 'agbrte:hosts.conformance',
   inboxList: 'agbrte:inbox.list',
+  skillsList: 'agbrte:skills.list',
   workflowsList: 'agbrte:workflows.list',
   workflowsSave: 'agbrte:workflows.save',
   workflowsRun: 'agbrte:workflows.run',

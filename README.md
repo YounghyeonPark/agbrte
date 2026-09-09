@@ -93,7 +93,10 @@ after a restart are not three features but three consequences of that.
   it has one to give — on another machine, if that is where the work is.
   Sessions can also be *grouped* and reach each other one bounded message at a
   time, carrying words and never authority. MCP servers and skills attach per
-  session, not from an app-wide registry somebody enabled months ago.
+  session, not from an app-wide registry somebody enabled months ago — and a
+  skill can be a file in the repository, so "how we write commit messages here"
+  is something a colleague gets by cloning rather than by being told, and still
+  something ticked onto one session by the person making it.
 - **A decomposition can be written down before it runs.** A *workflow* is a file
   in the repository: what the parts are, what each one may not touch, what it
   owes back, and what it waits on. Because it is a file it is reviewed in a diff

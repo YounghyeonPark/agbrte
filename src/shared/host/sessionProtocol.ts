@@ -47,6 +47,7 @@ import type {
   Session,
   SessionProjection,
   ShellProgram,
+  SkillConfig,
   Workflow,
   WorkflowSchedule,
 } from '../types/index.js';
@@ -83,6 +84,25 @@ export interface EndpointAdded {
  * `problems` is not enough on its own: a document with a bad seam still has a
  * document, and an editor needs it in order to fix it.
  */
+/**
+ * One skill document as a client sees it (§17 Q21).
+ *
+ * The absolute path is dropped at the boundary, like `WorkflowSummary`'s: a path
+ * that crosses a machine names nothing on the far side (§5.4b).
+ *
+ * `skill` is absent when the file would be refused at creation — an unusable
+ * document is still a row with its reasons, because the reason to look at the
+ * list is often that one of them is wrong. That asymmetry with `WorkflowSummary`
+ * is deliberate: a broken workflow keeps its parsed body because the editor
+ * needs it to fix the graph, and nothing here edits a skill. It is written in an
+ * editor, like the README beside it.
+ */
+export interface SkillSummary {
+  id: string;
+  skill?: SkillConfig;
+  problems: string[];
+}
+
 export interface WorkflowSummary {
   id: string;
   workflow?: Workflow;
@@ -308,6 +328,29 @@ export interface HostIdentity {
  * ignores the extra `hello` field and reports `protocol: 1` exactly as it always
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
+ *
+ * ## v32 adds `skill.list`, which is §17 Q21's own "next"
+ *
+ * A skill was session-only and typed at creation, so "how we write commit
+ * messages in this repo" was retyped into every session by every person who
+ * had it. Q21 already said where it belongs: a skill is a project fact, and
+ * Q12's argument for templates is that a colleague gets project facts by
+ * cloning. This is the read that makes the workspace's `templates/` directory
+ * reachable from a client — the same shape as `workflow.list` beside it, and
+ * for the same reason: the documents are on the machine that owns the
+ * workspace, and the client asking may be a phone (§6.6).
+ *
+ * **A read and only a read.** `workflow.save` exists because §4.4 wants an
+ * agent able to *propose* a decomposition; nothing proposes a skill. A write
+ * command here would be a way for a session to author its own instructions,
+ * which is the loop Q21's "explicit, inspectable rule" is written to keep out.
+ * Nothing is attached by it either — a person picks from the list at creation,
+ * exactly as they picked before by typing, so Q20's refusal of an app-level
+ * registry is untouched.
+ *
+ * A v31 host refuses it by name through `COMMAND_SINCE`, and the degradation is
+ * the old behaviour: skills can still be named at creation, one session at a
+ * time, which is the only thing that was ever possible.
  *
  * ## v31 also adds `schedule.list` and `schedule.set`
  *
@@ -728,7 +771,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 31;
+export const SESSION_PROTOCOL_VERSION = 32;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -809,6 +852,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'workflow.run': 31,
   'schedule.list': 31,
   'schedule.set': 31,
+  'skill.list': 32,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -879,6 +923,14 @@ export type SessionCommand =
       target?: ExecutionTarget;
     }
   | { t: 'template.list'; id: RequestId }
+  /**
+   * Skill documents in this workspace, read and checked (§17 Q21, §17 Q12).
+   *
+   * A read with no write beside it, unlike `workflow.list`: see the v32 note
+   * above. What comes back is what `createSession` would accept, so a client can
+   * offer the list without offering anything that fails on press (§3.5).
+   */
+  | { t: 'skill.list'; id: RequestId }
   /** Workflow documents in this workspace, parsed and validated (§4.4). */
   | { t: 'workflow.list'; id: RequestId }
   /** Write a workflow document into the workspace (§4.4). A write, gated. */
