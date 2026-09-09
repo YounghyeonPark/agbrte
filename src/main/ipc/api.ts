@@ -613,6 +613,27 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
 
   handle(CH.inboxList, (limit?: number) => fleet.inbox(limit));
   handle(CH.inboxMarkRead, () => fleet.markInboxRead());
+  handle(CH.projectServersList, (instanceId: string) =>
+    fleet.projectServers(instanceId as InstanceId),
+  );
+
+  handle(CH.projectServersAttach, (sessionId: string, serverId: string) =>
+    fleet.attachProjectMcp(sessionId as SessionId, serverId),
+  );
+
+  handle(CH.secretsList, (instanceId: string) => fleet.secretNames(instanceId as InstanceId));
+
+  // The value is handed straight to the fleet — never destructured, logged or
+  // echoed back (§13), which is the rule `sessionsAttachMcp` below follows for
+  // the identical reason.
+  handle(CH.secretsSet, (instanceId: string, name: string, value: string) =>
+    fleet.setSecret(instanceId as InstanceId, name, value),
+  );
+
+  handle(CH.secretsDelete, (instanceId: string, name: string) =>
+    fleet.deleteSecret(instanceId as InstanceId, name),
+  );
+
   handle(CH.skillsList, (instanceId: string) => fleet.skills(instanceId as InstanceId));
 
   handle(CH.workflowsList, (instanceId: string) => fleet.workflows(instanceId as InstanceId));
@@ -638,12 +659,18 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   handle(CH.sessionsList, () => fleet.list());
 
   handle(CH.sessionsCreate, (r: CreateSessionRequest) =>
-    fleet.createSession(r.instanceId as InstanceId, {
-      title: r.title,
-      goal: r.goal,
-      ...(r.mcpServers !== undefined ? { mcpServers: r.mcpServers } : {}),
-      ...(r.skills !== undefined ? { skills: r.skills } : {}),
-    }),
+    fleet.createSession(
+      r.instanceId as InstanceId,
+      {
+        title: r.title,
+        goal: r.goal,
+        ...(r.mcpServers !== undefined ? { mcpServers: r.mcpServers } : {}),
+        ...(r.skills !== undefined ? { skills: r.skills } : {}),
+      },
+      // A third argument rather than a field on the input, because the manager
+      // has no such field and would ignore one — see `HostConnection`.
+      r.projectServers,
+    ),
   );
 
   handle(

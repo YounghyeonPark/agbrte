@@ -289,6 +289,17 @@ const api: AgbrteApi = {
     list: call(CH.inboxList),
     markRead: call(CH.inboxMarkRead),
   },
+  projectServers: {
+    list: call(CH.projectServersList),
+    attach: (sessionId: string, serverId: string) =>
+      call(CH.projectServersAttach)(sessionId, serverId),
+  },
+  secrets: {
+    list: call(CH.secretsList),
+    set: (instanceId: string, name: string, value: string) =>
+      call(CH.secretsSet)(instanceId, name, value),
+    delete: (instanceId: string, name: string) => call(CH.secretsDelete)(instanceId, name),
+  },
   skills: {
     list: call(CH.skillsList),
   },

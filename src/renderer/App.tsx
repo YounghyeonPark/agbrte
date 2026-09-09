@@ -41,7 +41,11 @@ import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
 import { Welcome } from './Welcome.js';
 import { About } from './About.js';
-import type { SkillSummary, WorkflowSummary } from '../shared/host/sessionProtocol.js';
+import type {
+  ProjectServerSummary,
+  SkillSummary,
+  WorkflowSummary,
+} from '../shared/host/sessionProtocol.js';
 import { RunGraph } from './RunGraph.js';
 import { Workflows, type WorkspaceWorkflows } from './Workflows.js';
 import { RuntimeSelect } from './RuntimeSelect.js';
@@ -2145,6 +2149,34 @@ function HostGroup({
    */
   const [skills, setSkills] = useState<SkillSummary[] | null>(null);
   const [chosenSkills, setChosenSkills] = useState<string[]>([]);
+  /**
+   * The servers this workspace declares, and which are ticked (§17 Q20, v34).
+   *
+   * Ids, like the skills above and unlike `mcpDrafts` below — the difference is
+   * the whole point of the declaration. A ticked server is a *file* the host
+   * will read; nothing about it passes through this component.
+   */
+  const [declared, setDeclared] = useState<ProjectServerSummary[] | null>(null);
+  const [chosenServers, setChosenServers] = useState<string[]>([]);
+  /**
+   * Keys the machine does not hold yet, typed here on the way to it (§13).
+   *
+   * Held for one keystroke longer than strictly needed, exactly like
+   * `mcpDrafts`, and dropped on the same beat: these go straight into
+   * `secrets.set` and are cleared before the create resolves. Keyed by the
+   * machine's name for the secret, which is what the declaration asked for.
+   */
+  const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
+  /**
+   * What this machine already keeps, by name (§13).
+   *
+   * Names, and there is no reader for a value anywhere in this process — see
+   * `secrets` in the IPC contract. It is here so that "what does this machine
+   * hold, and how do I remove one" is answerable at the moment somebody is
+   * being asked for a key, rather than in a settings page they would have to
+   * know exists.
+   */
+  const [stored, setStored] = useState<string[] | null>(null);
   /*
    * The MCP servers this session is being given (§17 Q20).
    *
@@ -2183,6 +2215,18 @@ function HostGroup({
      * wrote one and cannot see it needs to know which of those is true.
      */
     void window.agbrte.skills.list(host.instanceId).then(setSkills, () => setSkills(null));
+    /*
+     * And what the workspace declares, with what it still needs.
+     *
+     * `null` kept as `null` for the skills' reason: a host too old to be asked
+     * is not a workspace declaring nothing (§3.3). The `missing` half is
+     * computed on the host — it joins the file with the machine's own secrets —
+     * so this list is directly what the form has to ask for.
+     */
+    void window.agbrte.projectServers
+      .list(host.instanceId)
+      .then(setDeclared, () => setDeclared(null));
+    void window.agbrte.secrets.list(host.instanceId).then(setStored, () => setStored(null));
   }, [adding, host.instanceId]);
 
   /** The first unsendable MCP row, shown under the fields rather than swallowed. */
@@ -2284,9 +2328,35 @@ function HostGroup({
       setAdding(false);
       return;
     }
-    void store.createSession(into, title.trim(), title.trim(), configs, pickedSkills);
+    /*
+     * Any keys typed for a declaration go to the machine first, then the create
+     * names the servers by id (§13, v33/v35).
+     *
+     * In this order because the host refuses a whole create when a declared
+     * server's secret is missing — which is the right refusal and makes the
+     * ordering here load-bearing rather than incidental.
+     */
+    void (async () => {
+      for (const [name, value] of Object.entries(keyDrafts)) {
+        if (value === '') continue;
+        await window.agbrte.secrets.set(host.instanceId, name, value);
+      }
+      await store.createSession(
+        into,
+        title.trim(),
+        title.trim(),
+        configs,
+        pickedSkills,
+        chosenServers.length > 0 ? chosenServers : undefined,
+      );
+    })();
     setTitle('');
     setChosenSkills([]);
+    setChosenServers([]);
+    // Before the create resolves, like the MCP drafts: a failed create says so
+    // in the error banner and the field is retyped, which is the cheaper of the
+    // two mistakes (§13).
+    setKeyDrafts({});
     /*
      * Cleared before the create resolves, deliberately.
      *
@@ -2398,6 +2468,11 @@ function HostGroup({
                 // And the ticks, for the reason the folder below is cleared: a
                 // decision about one session must not quietly become a setting.
                 if (open) setChosenSkills([]);
+                if (open) setChosenServers([]);
+                // Dropped with the MCP drafts and for the same reason: these
+                // are credentials, and keeping one in renderer state on the
+                // chance a form is reopened is the wrong trade (§13).
+                if (open) setKeyDrafts({});
                 /*
                  * And each opening starts over on the folder.
                  *
@@ -2633,6 +2708,140 @@ function HostGroup({
             <span className="text-muted text-[11px]" data-testid="new-skills-unknown">
               this host is too old to say what skills the workspace has — update it
             </span>
+          )}
+          {/*
+            The servers this workspace declares (§17 Q20, §17 Q12, v34).
+
+            Ticked rather than typed, like the skills above and for the same
+            reason: a project's server is a project fact, and retyping a command
+            and a key into every session is what the file exists to stop.
+
+            The command is shown because ticking one runs it on this machine,
+            and a name alone is not something anybody can agree to. What is
+            *not* shown, ever, is a value — the machine holds those, and the
+            only thing this form knows is which names are still missing.
+
+            Offered only where the workspace already exists, like the skills:
+            `newFolderTarget` is a folder about to be created, which declares
+            nothing yet.
+          */}
+          {newFolderTarget === '' && declared !== null && declared.length > 0 && (
+            <div className="grid gap-1" data-testid="new-servers">
+              <span className={LABEL}>MCP servers this project declares</span>
+              {declared.map((s) => (
+                <div key={s.id} className="grid gap-1" data-testid="new-server" data-id={s.id}>
+                  <label className="flex items-baseline gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      data-testid="new-server-pick"
+                      /* A declaration that cannot be used cannot be ticked: the
+                         host would refuse the create, and an offer that fails on
+                         press is §3.5's shape. */
+                      disabled={s.command === undefined}
+                      checked={chosenServers.includes(s.id)}
+                      onChange={(e) =>
+                        setChosenServers((was) =>
+                          e.target.checked ? [...was, s.id] : was.filter((id) => id !== s.id),
+                        )
+                      }
+                    />
+                    <span className="min-w-0">
+                      <code className="text-accent">{s.id}</code>{' '}
+                      <span className="text-muted wrap-anywhere">
+                        {s.command === undefined
+                          ? s.problems.join('; ')
+                          : [s.command, ...(s.args ?? [])].join(' ')}
+                      </span>
+                    </span>
+                  </label>
+                  {/*
+                    The keys it needs and this machine has not got.
+
+                    Named, because the name is the whole of what a person has to
+                    find — and asked here rather than in a settings page because
+                    this is the moment somebody is deciding to use the server.
+                    Typed masked and gone the instant the create is sent, like
+                    every other credential field in this app (§13).
+
+                    Only under a ticked row: a key for a server nobody is using
+                    is a question about nothing.
+                  */}
+                  {chosenServers.includes(s.id) &&
+                    s.missing.map((name) => (
+                      <label
+                        key={name}
+                        className="text-muted grid gap-1 pl-6 text-[11px]"
+                        data-testid="new-server-key"
+                        data-name={name}
+                      >
+                        {name} — not on this machine yet
+                        <input
+                          className="field"
+                          type="password"
+                          autoComplete="off"
+                          spellCheck={false}
+                          data-testid="new-server-key-value"
+                          value={keyDrafts[name] ?? ''}
+                          onChange={(e) =>
+                            setKeyDrafts((was) => ({ ...was, [name]: e.target.value }))
+                          }
+                        />
+                        <span className="wrap-anywhere">
+                          Kept on {machine.label}, not here and not in the repository — anyone who
+                          can read that home directory can use it.
+                        </span>
+                      </label>
+                    ))}
+                </div>
+              ))}
+            </div>
+          )}
+          {/*
+            What this machine already keeps (§13).
+
+            Names, never values — there is no command that reads one back and no
+            state in this process that holds one. It sits here, under the
+            servers, because this is where somebody is being asked for a key and
+            therefore where "what does it already have, and how do I get rid of
+            one" is a live question. A settings page they would have to know
+            about is the same information nobody finds.
+
+            Removing is immediate and says what it costs on the row it is on:
+            a server needing that name asks for it again next time.
+          */}
+          {stored !== null && stored.length > 0 && (
+            <div className="grid gap-1" data-testid="machine-secrets">
+              <span className={LABEL}>keys kept on {machine.label}</span>
+              {stored.map((name) => (
+                <div
+                  key={name}
+                  className="flex items-baseline justify-between gap-2 text-[11px]"
+                  data-testid="machine-secret"
+                  data-name={name}
+                >
+                  <code className="text-muted truncate-line min-w-0">{name}</code>
+                  <button
+                    type="button"
+                    className="btn-quiet shrink-0 hover:text-state-fail"
+                    data-testid="machine-secret-forget"
+                    title="Forget this key — a server that needs it will ask again"
+                    onClick={() => {
+                      void window.agbrte.secrets.delete(host.instanceId, name).then(() => {
+                        setStored((was) => (was ?? []).filter((n) => n !== name));
+                        // And the declarations say `missing` again, which is the
+                        // whole point of asking the host rather than remembering
+                        // here: two facts that both move (§5.1).
+                        void window.agbrte.projectServers
+                          .list(host.instanceId)
+                          .then(setDeclared, () => undefined);
+                      });
+                    }}
+                  >
+                    forget
+                  </button>
+                </div>
+              ))}
+            </div>
           )}
           {/* §17 Q20: what this session may reach, decided by the person making
               it, going straight into its own log. Above the button because it is

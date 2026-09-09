@@ -96,6 +96,20 @@ const api: AgbrteApi = {
     list: (limit?: number) => ipcRenderer.invoke(CH.inboxList, limit),
     markRead: () => ipcRenderer.invoke(CH.inboxMarkRead),
   },
+  projectServers: {
+    list: (instanceId: string) => ipcRenderer.invoke(CH.projectServersList, instanceId),
+    attach: (sessionId: string, serverId: string) =>
+      ipcRenderer.invoke(CH.projectServersAttach, sessionId, serverId),
+  },
+  secrets: {
+    list: (instanceId: string) => ipcRenderer.invoke(CH.secretsList, instanceId),
+    // Straight through. §13: the value reaches the process that needs it and
+    // nothing here keeps, logs or returns it.
+    set: (instanceId: string, name: string, value: string) =>
+      ipcRenderer.invoke(CH.secretsSet, instanceId, name, value),
+    delete: (instanceId: string, name: string) =>
+      ipcRenderer.invoke(CH.secretsDelete, instanceId, name),
+  },
   skills: {
     list: (instanceId: string) => ipcRenderer.invoke(CH.skillsList, instanceId),
   },

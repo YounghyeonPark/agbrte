@@ -183,6 +183,16 @@ export interface AgbrteState {
      * this one can come from a tracked file at all (§13, §17 Q12).
      */
     skills?: SkillConfig[],
+    /**
+     * Ids of servers the **workspace declares** (§17 Q12, v35).
+     *
+     * Ids and not configs, which is the difference that keeps this store clean:
+     * the host reads the declaration and resolves its names against the machine,
+     * so a value never reaches the renderer in either direction — unlike
+     * `mcpServers` above, where the person typed one and it passes straight
+     * through.
+     */
+    projectServers?: string[],
   ): Promise<void>;
   openSession(sessionId: string, instanceId?: string): Promise<void>;
   /** Deselect, so a narrow screen can show the list again. */
@@ -560,7 +570,7 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
     });
   },
 
-  async createSession(instanceId, title, goal, mcpServers, skills) {
+  async createSession(instanceId, title, goal, mcpServers, skills, projectServers) {
     const session = await guard(set, () =>
       agbrte().sessions.create({
         instanceId,
@@ -572,6 +582,7 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
         ...(mcpServers !== undefined && mcpServers.length > 0 ? { mcpServers } : {}),
         // The same rule, for the same reason (§17 Q21).
         ...(skills !== undefined && skills.length > 0 ? { skills } : {}),
+        ...(projectServers !== undefined && projectServers.length > 0 ? { projectServers } : {}),
       }),
     );
     if (!session) return;

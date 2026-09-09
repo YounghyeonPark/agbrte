@@ -52,7 +52,11 @@ import type {
   SessionProjection,
   ShellProgram,
 } from '../types/index.js';
-import type { SkillSummary, WorkflowSummary } from '../host/sessionProtocol.js';
+import type {
+  ProjectServerSummary,
+  SkillSummary,
+  WorkflowSummary,
+} from '../host/sessionProtocol.js';
 import type { Workflow, WorkflowSchedule } from '../types/index.js';
 
 // ------------------------------------------------------------------- payloads
@@ -271,6 +275,16 @@ export interface CreateSessionRequest {
   mcpServers?: McpServerConfig[];
   /** Skills to inject at creation (§17 Q21). Session-scoped, durable in the log. */
   skills?: SkillConfig[];
+  /**
+   * Ids of servers the **workspace declares** (§17 Q12, v35).
+   *
+   * Beside `mcpServers` rather than inside it, because they are not the same
+   * thing: that field is a config this client wrote, values and all, while
+   * these are ids the *host* turns into configs by reading the workspace and
+   * resolving names against the machine. A renderer never holds the values, and
+   * this field is what keeps it that way.
+   */
+  projectServers?: string[];
 }
 
 export interface AddAgentRequest {
@@ -871,6 +885,31 @@ export interface AgbrteApi {
     markRead(): Promise<void>;
   };
   /**
+   * The MCP servers one workspace declares (§17 Q20, §17 Q12).
+   *
+   * Per instance and `null`-when-unanswerable for `workflows`' reasons below.
+   * `attach` names a **declaration by id** and never a config: the host reads
+   * the file and resolves its names against the machine, so no value ever
+   * reaches this process — which is the whole reason the machine holds them.
+   */
+  projectServers: {
+    list(instanceId: string): Promise<ProjectServerSummary[] | null>;
+    attach(sessionId: string, serverId: string): Promise<McpServerStatus>;
+  };
+  /**
+   * The named secrets a machine holds (§13).
+   *
+   * **Names only, in both directions that matter.** `list` answers with names,
+   * and there is deliberately no reader for a value — a renderer has no use for
+   * one, and §13's rule is about the places a credential must not reach.
+   * `set` carries a value *into* the host and nothing back but the name.
+   */
+  secrets: {
+    list(instanceId: string): Promise<string[] | null>;
+    set(instanceId: string, name: string, value: string): Promise<{ name: string }>;
+    delete(instanceId: string, name: string): Promise<{ name: string }>;
+  };
+  /**
    * Skill documents in one workspace (§17 Q21, §17 Q12).
    *
    * Per instance and `null`-when-unanswerable for `workflows`' reasons below,
@@ -1464,6 +1503,11 @@ export const CH = {
   hostsRuntimes: 'agbrte:hosts.runtimes',
   hostsConformance: 'agbrte:hosts.conformance',
   inboxList: 'agbrte:inbox.list',
+  projectServersList: 'agbrte:projectServers.list',
+  projectServersAttach: 'agbrte:projectServers.attach',
+  secretsList: 'agbrte:secrets.list',
+  secretsSet: 'agbrte:secrets.set',
+  secretsDelete: 'agbrte:secrets.delete',
   skillsList: 'agbrte:skills.list',
   workflowsList: 'agbrte:workflows.list',
   workflowsSave: 'agbrte:workflows.save',
