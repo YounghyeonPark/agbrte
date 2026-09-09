@@ -123,6 +123,7 @@ export function EventRow({
   event,
   by,
   live = false,
+  onOpenChild,
 }: {
   event: AgbrteEvent;
   /**
@@ -135,6 +136,15 @@ export function EventRow({
    * pattern goes wrong: it stops meaning "running" and becomes decoration.
    */
   live?: boolean;
+  /**
+   * Open a child session from the row that says it was spawned.
+   *
+   * Optional, and the row renders a plain label without it rather than a button
+   * that does nothing when pressed (§3.5). Every caller that has a way to open a
+   * session passes it; the ones that do not are rendering a transcript they
+   * cannot navigate away from anyway.
+   */
+  onOpenChild?: (sessionId: string, instanceId: string) => void;
   /**
    * Which agent produced this, when the roster has more than one (§4.2).
    *
@@ -318,6 +328,73 @@ export function EventRow({
             {event.from} → {event.to}
             {event.reason !== undefined ? ` (${event.reason})` : ''}
           </span>
+        </div>
+      );
+
+    /*
+     * The two rows a supervisor's transcript is made of (§4.3, §4.4).
+     *
+     * They were in the log and nowhere on screen, which was survivable while
+     * every session with children also had an agent talking in the same
+     * transcript: the proposal, the approval, and then the agent's own account
+     * of what it had delegated carried the story, and these were a duplicate of
+     * it in colder words.
+     *
+     * A workflow run has none of that. Its root holds no seat at all — it reads
+     * a document and spawns what is ready — so `spawned_child` and
+     * `child_result` *are* its conversation, and a run root opened onto a page
+     * with a graph and nothing under it.
+     *
+     * The child is reachable from the row, because this row is the only thing
+     * that names it at the moment it appears. The rail's tree catches up, but
+     * "what did it just start" is a question asked about the line that says
+     * something started.
+     */
+    case 'session.spawned_child':
+      return (
+        <div data-testid="row-spawned-child" className={META_ROW}>
+          {who}
+          <span className="shrink-0">spawned</span>
+          {onOpenChild === undefined ? (
+            <span className="truncate-line min-w-0">{event.child.title}</span>
+          ) : (
+            <button
+              type="button"
+              className="btn truncate-line min-w-0 px-2 py-0"
+              data-testid="open-child"
+              data-child={event.child.sessionId}
+              onClick={() => onOpenChild(event.child.sessionId, event.child.instanceId)}
+            >
+              {event.child.title}
+            </button>
+          )}
+          {/* The reservation, where one was made. §4.3 takes a child's ceiling
+              out of its parent at spawn rather than at spend, and this line is
+              the only place a person can see the parent's budget leave — a root
+              that refuses a later node because it is out of room is otherwise
+              inexplicable from the transcript. */}
+          {event.reserved !== undefined && (
+            <span className="shrink-0">· {event.reserved.toLocaleString()} reserved</span>
+          )}
+        </div>
+      );
+
+    case 'session.child_result':
+      return (
+        /*
+         * `items-start`, unlike its neighbours: this is the one meta row whose
+         * content is prose somebody reads, and a result contract's summary is
+         * up to `summaryMaxTokens` of it. Truncated to a line it would say that
+         * a child finished and hide the only thing the child was asked to say.
+         */
+        <div data-testid="row-child-result" className={`${META_ROW} items-start`}>
+          <span className="shrink-0">← result</span>
+          <span className="wrap-anywhere min-w-0">{event.summary}</span>
+          {event.artifactIds.length > 0 && (
+            <span className="shrink-0">
+              · {event.artifactIds.length} artefact{event.artifactIds.length === 1 ? '' : 's'}
+            </span>
+          )}
         </div>
       );
 

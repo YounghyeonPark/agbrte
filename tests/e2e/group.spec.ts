@@ -22,6 +22,44 @@ import { join } from 'node:path';
 import { launch, makeRepo } from './harness.js';
 import { addAgent, closeWorkflows, createSession, openSession, openWorkflows } from './actions.js';
 
+/**
+ * One node of the sweep the workflow tests below run, filled in enough to be
+ * valid at every seam `validateWorkflow` checks (§4.3's brief: scope, what is
+ * out of scope, acceptance, a result contract, a ceiling).
+ */
+function sweepNode(id: string, needs?: string[]): Record<string, unknown> {
+  return {
+    id,
+    title: id,
+    scope: `do the ${id} part`,
+    outOfScope: ['everything else'],
+    acceptance: ['it is done'],
+    contract: { summaryMaxTokens: 800, artifacts: [] },
+    tokenCeiling: 20_000,
+    ...(needs === undefined ? {} : { needs }),
+  };
+}
+
+/**
+ * The document those tests run. One writer rather than a copy per test: this
+ * fixture was pasted four times and the copies had already begun to differ in
+ * ways nothing was asserting, which is how a shared fixture stops being shared
+ * without anybody deciding to stop sharing it.
+ */
+async function writeSweep(repo: string, nodes: Array<Record<string, unknown>>): Promise<void> {
+  await mkdir(join(repo, '.agbrte', 'templates'), { recursive: true });
+  await writeFile(
+    join(repo, '.agbrte', 'templates', 'sweep.workflow.json'),
+    JSON.stringify({
+      id: 'sweep',
+      name: 'Nightly sweep',
+      goal: 'keep the tree green overnight',
+      nodes,
+    }),
+    'utf8',
+  );
+}
+
 test.describe('a session gets a folder of its own', () => {
   test('makes one beside the folder this host has open', async () => {
     const repo = await makeRepo();
@@ -543,27 +581,12 @@ test('tells a workflow run from a seat somebody is driving', async () => {
  */
 test('draws a run as a graph, with the node it is on', async () => {
   const repo = await makeRepo();
-  await mkdir(join(repo, '.agbrte', 'templates'), { recursive: true });
-  const node = (id: string, needs?: string[]) => ({
-    id,
-    title: id,
-    scope: `do the ${id} part`,
-    outOfScope: ['everything else'],
-    acceptance: ['it is done'],
-    contract: { summaryMaxTokens: 800, artifacts: [] },
-    tokenCeiling: 20_000,
-    ...(needs === undefined ? {} : { needs }),
-  });
-  await writeFile(
-    join(repo, '.agbrte', 'templates', 'sweep.workflow.json'),
-    JSON.stringify({
-      id: 'sweep',
-      name: 'Nightly sweep',
-      goal: 'keep the tree green overnight',
-      nodes: [node('scan'), node('tests', ['scan']), node('lint', ['scan']), node('report', ['tests', 'lint'])],
-    }),
-    'utf8',
-  );
+  await writeSweep(repo, [
+    sweepNode('scan'),
+    sweepNode('tests', ['scan']),
+    sweepNode('lint', ['scan']),
+    sweepNode('report', ['tests', 'lint']),
+  ]);
 
   const agbrte = await launch(repo);
   try {
@@ -583,12 +606,12 @@ test('draws a run as a graph, with the node it is on', async () => {
     await expect(page.locator('[data-testid=run-graph]')).toBeVisible({ timeout: 20_000 });
 
     /*
-     * Above the branch that offers an agent, not beside the composer.
+     * Above the branch, not beside the composer.
      *
      * A run root has no agent of its own — it spawns children and waits — so it
-     * takes the empty-roster arm and shows the picker. A graph put beside the
-     * composer was a graph nobody with a run ever saw, which is where this
-     * first went.
+     * never reaches the seated arm the composer lives in, and a graph put there
+     * was a graph nobody with a run ever saw. Which arm it *does* take is the
+     * subject of the test below this one.
      */
     const nodes = page.locator('[data-testid=run-graph] [data-testid=workflow-node]');
     await expect(nodes).toHaveCount(4);
@@ -623,6 +646,77 @@ test('draws a run as a graph, with the node it is on', async () => {
 });
 
 /*
+ * A run root supervises; it must not take a seat (§4.3, §4.4).
+ *
+ * Zero agents is what a session nobody has seated looks like, and a run root
+ * has zero agents forever — it reads a document and spawns children. So it fell
+ * into the arm built for the other case and offered *Add an agent* on the one
+ * kind of session that must not have one. Worse than an offer: adding an agent
+ * saves it as that host's default, and the effect that seats the default
+ * silently on any empty roster reached run roots too — so opening one charged a
+ * seat to the budget reserved for the nodes, for an agent with nothing to do.
+ *
+ * The seat is asserted absent in each of the three shapes it could arrive in,
+ * because they are three different code paths: the picker, the silent auto-add,
+ * and the composer that a seated session gets.
+ *
+ * What replaces it is the root's own log. Those two rows — a child spawned, a
+ * result returned — were in every log and rendered nowhere, which was survivable
+ * only while every session with children also had an agent narrating the same
+ * story in the same transcript. A run has no narrator.
+ */
+test('gives a run root its log to read, rather than a seat it must not take', async () => {
+  const repo = await makeRepo();
+  await writeSweep(repo, [sweepNode('scan'), sweepNode('tests', ['scan'])]);
+
+  const agbrte = await launch(repo);
+  try {
+    const page = agbrte.window;
+    /*
+     * A seated session first, and the seating is the point rather than the
+     * scenery: `addAgent` remembers the choice as this host's default, which is
+     * what makes the auto-add below a real risk instead of a hypothetical one.
+     * With nothing remembered the effect returns early and the bug is invisible.
+     */
+    await createSession(page, 'a seat');
+    await addAgent(page, 'echo');
+
+    await openWorkflows(page);
+    await page.waitForSelector('[data-testid=workflow-row]', { timeout: 20_000 });
+    await page.click('[data-testid=workflow-run]');
+    await closeWorkflows(page);
+
+    await page.locator('[data-testid=session][data-title="Nightly sweep"]').click();
+    await expect(page.locator('[data-testid=run-pane]')).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('[data-testid=run-no-seat]')).toBeVisible();
+
+    // The three ways a seat could have arrived, none of them taken.
+    await expect(page.locator('[data-testid=picker-scroll]')).toHaveCount(0);
+    await expect(page.locator('[data-testid=add-agent]')).toHaveCount(0);
+    await expect(page.locator('[data-testid=auto-add]')).toHaveCount(0);
+    await expect(page.locator('[data-testid=composer-input]')).toHaveCount(0);
+
+    // And what it has instead: the node it started, named on the line that
+    // started it. `scan` is the only one ready — `tests` waits on it.
+    const spawned = page.locator('[data-testid=row-spawned-child]');
+    await expect(spawned).toHaveCount(1, { timeout: 20_000 });
+    await expect(spawned.first()).toContainText('scan');
+
+    /*
+     * The row is the way in. The rail's tree gets there too, but "what did it
+     * just start" is a question asked about the line saying something started,
+     * and a name with nothing behind it would be the row doing half its job.
+     */
+    await page.locator('[data-testid=open-child]').first().click();
+    await expect(page.locator('[data-testid=session-title]')).toHaveText('scan', {
+      timeout: 20_000,
+    });
+  } finally {
+    await agbrte.close();
+  }
+});
+
+/*
  * Editing a workflow by clicking its picture (§4.4).
  *
  * The editor's own header set the split: "structure is geometry and prose is
@@ -638,27 +732,7 @@ test('draws a run as a graph, with the node it is on', async () => {
  */
 test('draws an edge by clicking two nodes, and writes it to the file', async () => {
   const repo = await makeRepo();
-  await mkdir(join(repo, '.agbrte', 'templates'), { recursive: true });
-  const node = (id: string, needs?: string[]) => ({
-    id,
-    title: id,
-    scope: `do the ${id} part`,
-    outOfScope: ['everything else'],
-    acceptance: ['it is done'],
-    contract: { summaryMaxTokens: 800, artifacts: [] },
-    tokenCeiling: 20_000,
-    ...(needs === undefined ? {} : { needs }),
-  });
-  await writeFile(
-    join(repo, '.agbrte', 'templates', 'sweep.workflow.json'),
-    JSON.stringify({
-      id: 'sweep',
-      name: 'Nightly sweep',
-      goal: 'keep the tree green overnight',
-      nodes: [node('scan'), node('tests', ['scan']), node('lint')],
-    }),
-    'utf8',
-  );
+  await writeSweep(repo, [sweepNode('scan'), sweepNode('tests', ['scan']), sweepNode('lint')]);
 
   const agbrte = await launch(repo);
   try {
@@ -810,27 +884,12 @@ test('makes a new workflow, under the name it says it will use', async () => {
  */
 test('shows a workflow its own runs, and draws the live one on its shape', async () => {
   const repo = await makeRepo();
-  await mkdir(join(repo, '.agbrte', 'templates'), { recursive: true });
-  const node = (id: string, needs?: string[]) => ({
-    id,
-    title: id,
-    scope: `do the ${id} part`,
-    outOfScope: ['everything else'],
-    acceptance: ['it is done'],
-    contract: { summaryMaxTokens: 800, artifacts: [] },
-    tokenCeiling: 20_000,
-    ...(needs === undefined ? {} : { needs }),
-  });
-  await writeFile(
-    join(repo, '.agbrte', 'templates', 'sweep.workflow.json'),
-    JSON.stringify({
-      id: 'sweep',
-      name: 'Nightly sweep',
-      goal: 'keep the tree green overnight',
-      nodes: [node('scan'), node('tests', ['scan']), node('lint', ['scan']), node('report', ['tests', 'lint'])],
-    }),
-    'utf8',
-  );
+  await writeSweep(repo, [
+    sweepNode('scan'),
+    sweepNode('tests', ['scan']),
+    sweepNode('lint', ['scan']),
+    sweepNode('report', ['tests', 'lint']),
+  ]);
 
   const agbrte = await launch(repo);
   try {

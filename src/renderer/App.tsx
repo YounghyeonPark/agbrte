@@ -730,6 +730,17 @@ export function App(): JSX.Element {
    */
   useEffect(() => {
     if (active === null || active.agents.length > 0) return;
+    /*
+     * Never a run root (§4.3, §4.4).
+     *
+     * A run has no agent of its own: it reads a document and spawns what is
+     * ready, and the work happens in the children. It reaches this effect
+     * because it looks exactly like a session nobody has seated yet — zero
+     * agents — so opening one silently seated the remembered default on it and
+     * charged the seat to the root's budget, which is the budget reserved for
+     * the nodes. Nothing would have used it; it would just have been gone.
+     */
+    if (active.workflow !== undefined) return;
     if (autoAddTried.current.has(active.sessionId)) return;
     const host = hosts.find((h) => h.instanceId === active.instanceId);
     const runtimes = runtimesByHost[active.instanceId];
@@ -1401,7 +1412,45 @@ export function App(): JSX.Element {
               />
             ) : null}
 
-            {active.agents.length === 0 ? (
+            {active.workflow !== undefined && active.agents.length === 0 ? (
+              /*
+               * A run root, which is a supervisor and not a worker (§4.3, §4.4).
+               *
+               * It took the picker's arm below, because zero agents is what a
+               * session nobody has seated looks like — so the app offered *Add
+               * an agent* on the one kind of session that must not have one, and
+               * pressing it would have put a seat on a root whose whole job is
+               * to spawn children and wait. §3.5 in its plainest form: a control
+               * that should not be there at all is worse than one that fails.
+               *
+               * What replaces it is what the root actually has. The graph is
+               * above; this is its log, which `EventRow` now renders — the nodes
+               * it started, in order, each one a way into the child, and each
+               * result as it comes back.
+               */
+              <div
+                className="flex min-h-0 min-w-0 grow flex-col overflow-hidden"
+                data-testid="run-pane"
+              >
+                <p className="text-muted shrink-0 px-6 pt-2 text-[11px]" data-testid="run-no-seat">
+                  A run has no agent of its own. It starts the nodes above and waits — what each
+                  one says is in its own session.
+                </p>
+                <Transcript
+                  events={events}
+                  renderRow={(e) => (
+                    <EventRow
+                      key={e.seq}
+                      event={e}
+                      onOpenChild={(sessionId, instanceId) =>
+                        void store.openSession(sessionId, instanceId)
+                      }
+                    />
+                  )}
+                  working={active.state === 'working'}
+                />
+              </div>
+            ) : active.agents.length === 0 ? (
               autoAdding === active.sessionId ? (
                 /* The remembered default is being added; the form it replaces
                    stays hidden so the session lands in the chat, not on a form
@@ -1545,6 +1594,12 @@ export function App(): JSX.Element {
                           key={e.seq}
                           event={e}
                           by={agentLabel(active.agents, e.agentId)}
+                          // An approved split names its child here first, the
+                          // same way a run does; the tree in the rail is where
+                          // it is *found* later.
+                          onOpenChild={(sessionId, instanceId) =>
+                            void store.openSession(sessionId, instanceId)
+                          }
                           /* Only while the turn is actually in flight. A call
                              left unanswered by a crashed turn is history, and a
                              sweep on it would claim work is happening in a
