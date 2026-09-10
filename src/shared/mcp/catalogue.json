@@ -1,24 +1,39 @@
 {
   "verifiedAt": "2026-09-10",
   "registry": "npm",
-  "note": "Package names and the variables these servers read are theirs, not ours. A name that has moved shows as mcp.failed with npx's own words, which is why this file carries a date the way the model catalogue does.",
+  "note": "Each package name and each variable below was read off the npm registry and that package's own readme on the date above. What cannot be checked from here is whether a vendor's free tier still is one, which is why every entry says what it will ask you for.",
   "servers": [
     {
       "id": "search",
-      "label": "Brave Search",
-      "note": "Web search. This is what Agbrte has instead of a search tool: the vendor, the endpoint and the key are yours, and the fetch tool reads a page once you have its address.",
+      "label": "SearXNG",
+      "account": "none",
+      "note": "Web search with no account, no key and no card: it queries a SearXNG instance, which is a metasearch service you point it at — your own, or one you already use. This is what Agbrte has instead of a search tool, and the fetch tool reads a page once you have its address.",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
-      "envFrom": { "BRAVE_API_KEY": "BRAVE_API_KEY" },
-      "keyFrom": "https://brave.com/search/api/"
+      "args": ["-y", "mcp-searxng"],
+      "envFrom": { "SEARXNG_URL": "SEARXNG_URL" },
+      "asks": { "SEARXNG_URL": "The instance to query, e.g. http://127.0.0.1:8080 for one you run yourself." },
+      "keyFrom": "https://docs.searxng.org/admin/installation.html"
+    },
+    {
+      "id": "tavily",
+      "label": "Tavily",
+      "account": "free-key",
+      "note": "Web search built for agents: results come back summarised rather than as a page of links. A free account and an API key, no card.",
+      "command": "npx",
+      "args": ["-y", "tavily-mcp"],
+      "envFrom": { "TAVILY_API_KEY": "TAVILY_API_KEY" },
+      "asks": { "TAVILY_API_KEY": "From app.tavily.com — the free plan is enough to try it." },
+      "keyFrom": "https://app.tavily.com/home"
     },
     {
       "id": "github",
       "label": "GitHub",
-      "note": "Issues, pull requests and code search on repositories the token can see. A personal access token, scoped to what you actually want reachable from a session.",
+      "account": "free-key",
+      "note": "Issues, pull requests and code search on repositories the token can see. A personal access token, free, scoped to what you actually want reachable from a session.",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"],
       "envFrom": { "GITHUB_PERSONAL_ACCESS_TOKEN": "GITHUB_TOKEN" },
+      "asks": { "GITHUB_TOKEN": "A personal access token, scoped to the repositories you want reachable." },
       "keyFrom": "https://github.com/settings/tokens"
     }
   ]

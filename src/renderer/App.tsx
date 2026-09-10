@@ -2189,6 +2189,18 @@ function HostGroup({
   const offerable = catalogueServers().filter(
     (entry) => !(declared ?? []).some((d) => d.id === entry.id),
   );
+  /**
+   * What each value the form may ask for actually is, by name.
+   *
+   * From the catalogue rather than from the declaration, because the
+   * declaration deliberately carries no prose — it is a file with no field a
+   * credential fits in, and "what to put here" is not a property of the server
+   * so much as of the vendor. Flattened across entries: the names are
+   * environment variables, which are already unique on a machine.
+   */
+  const asksFor: Record<string, string> = Object.fromEntries(
+    catalogueServers().flatMap((entry) => Object.entries(entry.asks ?? {})),
+  );
   /*
    * The MCP servers this session is being given (§17 Q20).
    *
@@ -2781,7 +2793,16 @@ function HostGroup({
                         .then(setDeclared, () => undefined);
                     }}
                   >
-                    <span className="text-accent">{entry.label}</span>
+                    <span className="flex flex-wrap items-baseline gap-2">
+                      <span className="text-accent">{entry.label}</span>
+                      {/* What it costs to start, beside the name rather than
+                          inside the paragraph. An entry that says nothing reads
+                          as free, which is how the first version of this list
+                          recommended something wanting a card. */}
+                      <span className="text-muted" data-testid="catalogue-account">
+                        {entry.account === 'none' ? 'no account' : 'free account + key'}
+                      </span>
+                    </span>
                     <span className="text-muted wrap-anywhere">{entry.note}</span>
                     {/* What it will write, before it writes it: a file appearing
                         in somebody's repository has to be legible first — the
@@ -2884,6 +2905,14 @@ function HostGroup({
                             setKeyDrafts((was) => ({ ...was, [name]: e.target.value }))
                           }
                         />
+                        {/* What this value *is*, where the catalogue said so. A
+                            masked box cannot tell an API key from an instance
+                            URL, and both travel through the same store. */}
+                        {asksFor[name] !== undefined && (
+                          <span className="wrap-anywhere" data-testid="new-server-asks">
+                            {asksFor[name]}
+                          </span>
+                        )}
                         <span className="wrap-anywhere">
                           Kept on {machine.label}, not here and not in the repository — anyone who
                           can read that home directory can use it.
@@ -2909,7 +2938,10 @@ function HostGroup({
           */}
           {stored !== null && stored.length > 0 && (
             <div className="grid gap-1" data-testid="machine-secrets">
-              <span className={LABEL}>keys kept on {machine.label}</span>
+              {/* "values" rather than "keys": a SearXNG instance URL travels
+                  through the same store, and calling it a key would be wrong
+                  about the one entry that needs no key at all. */}
+              <span className={LABEL}>values kept on {machine.label}</span>
               {stored.map((name) => (
                 <div
                   key={name}

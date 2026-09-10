@@ -125,16 +125,29 @@ The value lives in `~/.agbrte/secrets.json` (`0600`), beside the model keys and
 never in the repository. Nothing asks you to put it there in advance: tick the
 server in the new-session form and it asks for whatever is missing, by name.
 
-The app knows a couple of servers and will write the file for you — *add a
-server this app knows about*, in the new-session form. It writes exactly what
-you would have typed, into the same tracked place, so there is nothing hidden to
-find later; a server already declared is not offered again, because the file is
-where a declaration is changed.
+The app knows a few servers and will write the file for you — *add a server this
+app knows about*, in the new-session form. It writes exactly what you would have
+typed, into the same tracked place, so there is nothing hidden to find later; a
+server already declared is not offered again, because the file is where a
+declaration is changed.
+
+Each entry says what it will ask you for, beside its name — `no account`, or
+`free account + key`. An entry that said nothing would read as free, and the
+first version of that list recommended a service whose *free* tier wanted a
+credit card.
 
 This is how **web search** works, and why there is no search tool in the list:
-search means a vendor, an endpoint and a key, and an MCP server for whichever
-one you use is a file like the above rather than a decision baked into this
-program. The same route carries anything else with an MCP server.
+search means a vendor, an endpoint and usually a key, and an MCP server for
+whichever one you use is a file like the above rather than a decision baked into
+this program. The same route carries anything else with an MCP server.
+
+The catalogue leads with the option needing **no account at all** — a SearXNG
+instance, which is a metasearch service you point it at, your own or one you
+already use. Telling somebody their agent cannot search the web until they have
+signed up for something is the wrong default, and driving a browser at a search
+page instead would be a workaround with three problems: it is against most
+engines' terms, a fresh profile collects consent pages and bot checks, and the
+agent cannot tell a bot check from a result.
 
 Nothing attaches itself. A session gets what somebody ticked when it was made,
 and a host restart brings a declared server back — which a hand-typed one

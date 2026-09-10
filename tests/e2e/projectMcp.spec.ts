@@ -165,6 +165,14 @@ test('writes a declaration from the catalogue, into the tracked directory', asyn
      * follows about a directory appearing on a machine.
      */
     await expect(entry).toContainText('.agbrte/templates/search.mcp.json');
+    /*
+     * And what it costs to start, beside the name.
+     *
+     * The first catalogue shipped one search entry whose *free* tier wanted a
+     * credit card, and said nothing — so a short list read as a
+     * recommendation. An entry that is silent about cost reads as free.
+     */
+    await expect(entry.locator('[data-testid=catalogue-account]')).toHaveText('no account');
 
     await entry.click();
 
@@ -180,16 +188,18 @@ test('writes a declaration from the catalogue, into the tracked directory', asyn
     expect(written.command).toBe('npx');
     // A name on both sides, and no value anywhere: that is what makes the file
     // safe to commit (§13).
-    expect(Object.values(written.envFrom)).toEqual(['BRAVE_API_KEY']);
+    expect(Object.values(written.envFrom)).toEqual(['SEARXNG_URL']);
 
     // And the form now shows it as a declaration like any other, asking for the
     // key by name once it is ticked.
     const row = page.locator('[data-testid=new-server][data-id=search]');
     await expect(row).toBeVisible({ timeout: 20_000 });
     await row.locator('[data-testid=new-server-pick]').check();
-    await expect(
-      page.locator('[data-testid=new-server-key][data-name=BRAVE_API_KEY]'),
-    ).toBeVisible();
+    const asked = page.locator('[data-testid=new-server-key][data-name=SEARXNG_URL]');
+    await expect(asked).toBeVisible();
+    // And what the value *is*, because a masked box cannot tell an instance URL
+    // from an API key and both go through the same store.
+    await expect(asked.locator('[data-testid=new-server-asks]')).toContainText('instance');
 
     // Offered once: the id is now taken, and `writeProjectServer` refuses to
     // replace one — so a second offer would be a control that fails on press.

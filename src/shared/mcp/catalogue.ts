@@ -26,14 +26,33 @@
  * name this machine keeps the value under, and the form asks for whatever is
  * missing when the server is ticked.
  *
+ * ## Every entry says what it will ask you for
+ *
+ * The first version of this file shipped one search entry, Brave, and said
+ * nothing about cost — so a two-line list read as a recommendation, and the
+ * recommendation turned out to want a credit card on its *free* tier. A
+ * catalogue that hides what an entry costs to start is worse than no catalogue,
+ * because the person finds out after picking.
+ *
+ * So `account` is a field: `none` means no account at all, `free-key` means a
+ * free signup and a key. It is on screen beside the label, and `asks` says what
+ * each value actually is — "an instance URL" and "an API key" are different
+ * questions and a masked box cannot tell them apart on its own.
+ *
  * ## What is deliberately short about it
  *
- * Two entries. `read`, `write`, `edit`, `glob`, `grep`, `bash` and `fetch` are
+ * Three entries. `read`, `write`, `edit`, `glob`, `grep`, `bash` and `fetch` are
  * built in, so most of what a catalogue like this usually carries — a
  * filesystem server, a fetch server, a git server — would be a second, worse
  * copy of a tool that is already there and already gated. What is left is the
- * work that needs somebody else's account: searching the web, and reaching a
- * forge.
+ * work that needs somebody else's account, or somebody else's index: searching
+ * the web, and reaching a forge.
+ *
+ * Search leads with the one needing **no account**, because the alternative is
+ * telling somebody their agent cannot search the web until they have signed up
+ * for something. SearXNG is not a workaround — querying a metasearch instance
+ * through its API is what the instance is for — and the paid-tier option that
+ * was here instead is gone rather than demoted.
  */
 
 import CATALOGUE from './catalogue.json' with { type: 'json' };
@@ -42,12 +61,27 @@ export interface CatalogueServer {
   /** The id the declaration is written under, and the prefix of its tool names. */
   id: string;
   label: string;
+  /**
+   * What starting it costs, on screen beside the label.
+   *
+   * Not a detail: an entry that says nothing reads as free, which is how the
+   * first version of this file recommended something wanting a card.
+   */
+  account: 'none' | 'free-key';
   note: string;
   command: string;
   args: string[];
   /** Variable the server reads → the name this machine keeps it under. */
   envFrom: Record<string, string>;
-  /** Where a person goes to get the key, since "get a key" is not an instruction. */
+  /**
+   * What each value *is*, by the name this machine keeps it under.
+   *
+   * A masked field cannot tell an API key from an instance URL, and both travel
+   * through the same store — so the sentence does it instead. Shown under the
+   * box the form asks in.
+   */
+  asks?: Record<string, string>;
+  /** Where a person goes to get it, since "get a key" is not an instruction. */
   keyFrom?: string;
 }
 
