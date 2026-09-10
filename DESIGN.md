@@ -2012,10 +2012,25 @@ the audit trail somebody reading the log afterwards wants.
 `screenshot` is deliberately outside this. §12.1 built it so an agent can "see
 its own output and iterate without you in the loop": the content is this
 session's own rendering, and gating it under a grant would break the one loop
-designed to run without a person. That it *can* be pointed at somebody else's
-page is a separate gap — unlike `fetch`, `captureUrl` does not vet the address at
-all — and it is recorded here rather than fixed by making the grant answer for
-less than it should.
+designed to run without a person.
+
+That it can be pointed at somebody else's page is a different question, and it
+has a different answer. A `file://` URL has been refused since the tool existed —
+a screenshot of a file is a read of the disk — and that check is now a parse
+rather than a pattern. **Loopback and the private ranges stay allowed**, because
+they *are* the tool: a dev server is on this machine, and this section already
+assigned "an agent that can screenshot `http://localhost:8080` can also
+screenshot an internal dashboard" to the gate rather than to an address check.
+What is refused outright is **link-local**: `169.254.169.254` serves a cloud
+instance's credentials as plain text, a browser renders them, and a model that
+reads images reads them back — and no dev-server loop wants it, so it is not a
+question worth asking a person.
+
+One thing that cannot be closed here: **a redirect**. The browser follows them
+itself, so a public page redirecting to the metadata address is never seen by
+that check — `fetch` walks its own hops and re-vets each one, and a subprocess
+driven with `--screenshot` cannot. Closing it would mean a proxy between the
+browser and the network.
 
 **And the server itself is code nobody here has read.** `npx -y <package>`
 fetches from a registry and executes as the host user, which is why the

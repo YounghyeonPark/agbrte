@@ -113,13 +113,35 @@ export function isPrivateAddress(address: string): boolean {
 }
 
 /**
- * A URL this tool is willing to open, or the reason it is not.
+ * Link-local, which is where a cloud instance keeps its own credentials.
  *
- * The refusals name the address rather than saying "not allowed", because the
- * two cases a person meets are a typo and a service that genuinely lives on
- * their machine — and only one of those is worth arguing with.
+ * Split out of `isPrivateAddress` because the two questions have different
+ * answers for different tools: a screenshot of `http://localhost:5173` is the
+ * whole point of `screenshot` (§12.1), and a screenshot of
+ * `http://169.254.169.254/` is a picture of an instance's credentials that a
+ * vision model can read back as text.
  */
-export async function vetUrl(raw: string): Promise<{ url: URL } | { error: string }> {
+export function isMetadataAddress(address: string): boolean {
+  const v4 = address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address;
+  if (isIP(v4) === 4) {
+    const [a = 0, b = 0] = v4.split('.').map(Number);
+    return a === 169 && b === 254;
+  }
+  return /^fe[89ab]/.test(address.toLowerCase().split('%')[0] ?? '');
+}
+
+/**
+ * Parse, refuse what no tool here may open, and resolve the name.
+ *
+ * Shared by the two vets below, which differ only in their verdict on a private
+ * address. Two named functions rather than one with a flag, for the reason
+ * `secrets.ts` gives about its own pair: a flag on a security function is one
+ * typo away from the wrong answer, and the wrong answer here is a tool reaching
+ * something it was built not to reach.
+ */
+async function addressesOf(
+  raw: string,
+): Promise<{ url: URL; addresses: string[] } | { error: string }> {
   let url: URL;
   try {
     url = new URL(raw);
@@ -128,8 +150,9 @@ export async function vetUrl(raw: string): Promise<{ url: URL } | { error: strin
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     // `file:` is the interesting one to refuse by name: it would be a way round
-    // the workspace confinement every other tool here is built on.
-    return { error: `only http and https can be fetched, not ${url.protocol.replace(':', '')}` };
+    // the workspace confinement every other tool here is built on — through a
+    // screenshot of the file, in the case of the browser.
+    return { error: `only http and https can be opened, not ${url.protocol.replace(':', '')}` };
   }
   if (url.username !== '' || url.password !== '') {
     // A credential in a URL is a credential in the transcript, which is the one
@@ -138,16 +161,61 @@ export async function vetUrl(raw: string): Promise<{ url: URL } | { error: strin
   }
 
   const host = url.hostname.replace(/^\[|\]$/g, '');
-  let addresses: string[];
-  if (isIP(host) !== 0) {
-    addresses = [host];
-  } else {
-    try {
-      addresses = (await lookup(host, { all: true })).map((a) => a.address);
-    } catch {
-      return { error: `could not resolve ${host}` };
-    }
+  if (isIP(host) !== 0) return { url, addresses: [host] };
+  try {
+    return { url, addresses: (await lookup(host, { all: true })).map((a) => a.address) };
+  } catch {
+    return { error: `could not resolve ${host}` };
   }
+}
+
+/**
+ * A URL the **screenshot** tool may open, or the reason it may not (§12.1, §13).
+ *
+ * Loopback and the private ranges are allowed, and that is not an oversight: the
+ * tool exists so "an agent starts a dev server, looks at what it rendered, and
+ * fixes it", and every one of those pages is on this machine or this network.
+ * §13 assigned that decision to the permission gate rather than to an address
+ * check — "an agent that can screenshot `http://localhost:8080` can also
+ * screenshot an internal dashboard", which is a question for a person.
+ *
+ * **Link-local is not that question.** `169.254.169.254` serves a cloud
+ * instance's credentials as plain text, a browser renders it, and a model that
+ * reads images reads it back. There is no version of a dev-server loop that
+ * wants it, so it is refused here rather than asked about.
+ *
+ * **What this cannot close: a redirect.** The browser follows them itself, so a
+ * public page redirecting to the metadata address is never seen by this check —
+ * `fetch` walks its own hops and can re-vet each one, and a subprocess with
+ * `--screenshot` cannot. Closing it would mean a proxy between the browser and
+ * the network. Recorded rather than implied.
+ */
+export async function vetScreenshotUrl(raw: string): Promise<{ url: URL } | { error: string }> {
+  const found = await addressesOf(raw);
+  if ('error' in found) return found;
+  const blocked = found.addresses.find((a) => isMetadataAddress(a));
+  if (blocked !== undefined) {
+    return {
+      error:
+        `${found.url.hostname} resolves to ${blocked}, which is where a cloud instance keeps ` +
+        'its own credentials. A screenshot of that is a picture of them.',
+    };
+  }
+  return { url: found.url };
+}
+
+/**
+ * A URL this tool is willing to open, or the reason it is not.
+ *
+ * The refusals name the address rather than saying "not allowed", because the
+ * two cases a person meets are a typo and a service that genuinely lives on
+ * their machine — and only one of those is worth arguing with.
+ */
+export async function vetUrl(raw: string): Promise<{ url: URL } | { error: string }> {
+  const found = await addressesOf(raw);
+  if ('error' in found) return found;
+  const { url, addresses } = found;
+  const host = url.hostname.replace(/^\[|\]$/g, '');
   // *Every* answer, not the first: a name that resolves to a public address and
   // a private one would otherwise be a coin flip.
   const blocked = addresses.find((a) => isPrivateAddress(a));

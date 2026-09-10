@@ -133,8 +133,38 @@ describe('the tool', () => {
         return { type: 'image', sha256: 'a'.repeat(64), width: 1, height: 1 } as ImageBlock;
       },
     });
-    await screenshotTool.run({ url: 'http://x.test', width: 375, height: 812 }, ctx);
+    // A host that resolves, because the tool now checks the address and not only
+    // the scheme. This test is about the viewport, and `x.test` — which it used
+    // before — resolves nowhere.
+    await screenshotTool.run({ url: 'http://127.0.0.1:5173', width: 375, height: 812 }, ctx);
     expect(seen[0]).toEqual({ width: 375, height: 812, dpr: 1 });
+  });
+
+  it('refuses the address a picture would leak, and a name that resolves nowhere', async () => {
+    /*
+     * The scheme has been checked since this tool existed — a `file://`
+     * screenshot is a read of the disk. The address is newer, and narrower than
+     * `fetch`'s on purpose: loopback and the private ranges are what §12.1 built
+     * this for, so only link-local is refused, where a cloud instance serves its
+     * own credentials as plain text for a browser to render.
+     */
+    const ctx = toolCtx({
+      capture: async () => {
+        throw new Error('should not have been reached');
+      },
+    });
+    const metadata = await screenshotTool.run({ url: 'http://169.254.169.254/latest/' }, ctx);
+    expect(metadata.ok).toBe(false);
+    expect(metadata.summary).toContain('credentials');
+
+    const onDisk = await screenshotTool.run({ url: 'file:///etc/passwd' }, ctx);
+    expect(onDisk.ok).toBe(false);
+
+    // And a name nothing answers for is refused here rather than after a minute
+    // of a browser waiting — which is what the old pattern-only check did.
+    const nowhere = await screenshotTool.run({ url: 'http://x.invalid/' }, ctx);
+    expect(nowhere.ok).toBe(false);
+    expect(nowhere.summary).toContain('resolve');
   });
 
   it('reports a failed capture instead of throwing at the loop', async () => {

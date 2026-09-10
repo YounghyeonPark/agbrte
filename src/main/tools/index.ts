@@ -22,7 +22,7 @@ import { spawn } from 'node:child_process';
 import { readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { globMatch, isInsideWorkspace } from '../policy/evaluate.js';
-import { fetchTool } from './fetch.js';
+import { fetchTool, vetScreenshotUrl } from './fetch.js';
 import type { WorkspaceLeases } from './leases.js';
 import { PEER_MESSAGE_MAX_CHARS } from '@shared/types/index.js';
 import type {
@@ -904,11 +904,23 @@ export const screenshotTool: ToolDefinition = {
       return fail('screenshots are not available on this host');
     }
     const url = args['url'];
-    if (typeof url !== 'string' || !/^https?:\/\//.test(url)) {
-      // Refused rather than guessed. A `file://` or `data:` URL here is a way to
-      // read the disk through a screenshot, which is not what this is for.
-      return fail('url must be an http or https address');
-    }
+    if (typeof url !== 'string' || url === '') return fail('url must be a non-empty string');
+    /*
+     * The scheme and the address, and only the address is new.
+     *
+     * A `file://` or `data:` URL here is a way to read the disk through a
+     * screenshot and has been refused since this tool existed — by a regex,
+     * which `vetScreenshotUrl` replaces with a parse so that a URL the browser
+     * would read differently cannot slip past a pattern.
+     *
+     * What it adds is link-local: `169.254.169.254` serves a cloud instance's
+     * credentials as plain text, a browser renders them, and a model that reads
+     * images reads them back. Loopback and the private ranges stay allowed
+     * because they *are* this tool — §12.1's dev-server loop — and §13 gave
+     * that decision to the gate rather than to an address check.
+     */
+    const vetted = await vetScreenshotUrl(url);
+    if ('error' in vetted) return fail(vetted.error);
 
     const width = typeof args['width'] === 'number' ? args['width'] : undefined;
     const height = typeof args['height'] === 'number' ? args['height'] : undefined;

@@ -41,9 +41,8 @@ vi.mock('node:dns/promises', () => ({
   },
 }));
 
-const { fetchTool, htmlToText, isPrivateAddress, vetUrl } = await import(
-  '../src/main/tools/fetch.js'
-);
+const { fetchTool, htmlToText, isMetadataAddress, isPrivateAddress, vetScreenshotUrl, vetUrl } =
+  await import('../src/main/tools/fetch.js');
 const { WorkspaceLeases } = await import('../src/main/tools/leases.js');
 type Ctx = Parameters<typeof fetchTool.run>[1];
 
@@ -240,6 +239,55 @@ describe('fetching', () => {
     reply = () => ({ status: 200, headers: {}, body: '' });
     expect((await fetchTool.run({ url: 'not a url' }, ctx())).ok).toBe(false);
     expect((await fetchTool.run({ url: '' }, ctx())).ok).toBe(false);
+  });
+});
+
+describe('what the screenshot tool may open', () => {
+  /*
+   * A different verdict on the same question, and the difference is the tool's
+   * purpose. §12.1 built `screenshot` so "an agent starts a dev server, looks at
+   * what it rendered, and fixes it" — every one of those pages is on this
+   * machine — so refusing private addresses there would refuse the tool.
+   *
+   * What is refused is link-local: `169.254.169.254` serves a cloud instance's
+   * credentials as plain text, a browser renders them, and a model that reads
+   * images reads them back. No dev-server loop wants that.
+   */
+  it('allows loopback and the private ranges, which are the whole point', async () => {
+    for (const address of ['127.0.0.1', '10.1.2.3', '192.168.1.10', '::1']) {
+      resolves = [address];
+      const said = await vetScreenshotUrl('http://dev.local:5173/');
+      expect('url' in said, address).toBe(true);
+    }
+    // And an address literal, which is how the dev-server case is usually typed.
+    expect('url' in (await vetScreenshotUrl('http://127.0.0.1:5173/'))).toBe(true);
+  });
+
+  it('refuses the metadata address, naming what a picture of it would be', async () => {
+    resolves = ['169.254.169.254'];
+    const said = await vetScreenshotUrl('http://metadata.example/');
+    expect('error' in said && said.error).toContain('credentials');
+    // And by literal, which is how it would actually be reached.
+    expect('error' in (await vetScreenshotUrl('http://169.254.169.254/latest/'))).toBe(true);
+  });
+
+  it('refuses a scheme the browser would read off the disk', async () => {
+    // Refused since this tool existed, by a regex; now by a parse, so a URL the
+    // browser reads differently from a pattern cannot slip past one.
+    for (const raw of ['file:///etc/passwd', 'data:text/html,<h1>x', 'not a url']) {
+      expect('error' in (await vetScreenshotUrl(raw)), raw).toBe(true);
+    }
+  });
+
+  it('tells link-local apart from the rest of the private space', () => {
+    expect(isMetadataAddress('169.254.169.254')).toBe(true);
+    expect(isMetadataAddress('fe80::1')).toBe(true);
+    expect(isMetadataAddress('::ffff:169.254.169.254')).toBe(true);
+    // The ranges `screenshot` is *for*, which `isPrivateAddress` still covers
+    // and this deliberately does not.
+    for (const ok of ['127.0.0.1', '10.0.0.1', '192.168.1.1', '8.8.8.8']) {
+      expect(isMetadataAddress(ok), ok).toBe(false);
+    }
   });
 });
 
