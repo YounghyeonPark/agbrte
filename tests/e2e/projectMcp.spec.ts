@@ -177,6 +177,18 @@ test('writes a declaration from the catalogue, into the tracked directory', asyn
     await entry.click();
 
     /*
+     * Waited for, and the wait is the bug this line used to have.
+     *
+     * Clicking sends an IPC to the host, which writes the file and answers; the
+     * read below was immediate, so it won on an idle machine and lost in a full
+     * run — a failure about timing dressed up as a missing file. The row
+     * appearing is the host saying it has written, and it is asserted here rather
+     * than further down because everything after it depends on the write.
+     */
+    const row = page.locator('[data-testid=new-server][data-id=search]');
+    await expect(row).toBeVisible({ timeout: 20_000 });
+
+    /*
      * A file, not a setting. This is the whole distinction between a catalogue
      * and the app-level registry §17 Q20 refused: the shortcut produces the
      * artifact somebody would have typed, tracked, in a diff, and gone to a
@@ -199,10 +211,8 @@ test('writes a declaration from the catalogue, into the tracked directory', asyn
     // safe to commit (§13).
     expect(Object.values(written.envFrom)).toEqual(['SEARXNG_URL']);
 
-    // And the form now shows it as a declaration like any other, asking for the
-    // key by name once it is ticked.
-    const row = page.locator('[data-testid=new-server][data-id=search]');
-    await expect(row).toBeVisible({ timeout: 20_000 });
+    // And the form shows it as a declaration like any other, asking for the key
+    // by name once it is ticked.
     await row.locator('[data-testid=new-server-pick]').check();
     const asked = page.locator('[data-testid=new-server-key][data-name=SEARXNG_URL]');
     await expect(asked).toBeVisible();
