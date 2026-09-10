@@ -47,7 +47,7 @@ import { createSession } from './actions.js';
 const MODEL = 'qwen3:0.6b';
 
 test.describe('choosing a model says what it can do', () => {
-  test('replaces the server’s declared claim with a measured one, before it is chosen', async () => {
+  test('replaces the server’s declared claim with a measured one, before it is chosen', { tag: '@live' }, async () => {
     test.skip(
       !(await modelAvailable(MODEL)),
       `needs a local Ollama server with ${MODEL} — run \`ollama pull ${MODEL}\``,

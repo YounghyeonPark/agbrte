@@ -247,7 +247,7 @@ const webServerBin = ((): string | null => {
   }
 })();
 
-test.describe('a real search server, called by a real model', () => {
+test.describe('a real search server, called by a real model', { tag: '@live' }, () => {
   test.beforeAll(async () => {
     if (await modelAvailable(MODEL)) await warmModel(MODEL);
   });

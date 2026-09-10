@@ -524,7 +524,7 @@ test.describe('two workspaces on one machine', () => {
  * These need a local model that can call a tool, so they **skip loudly** when
  * one is absent. Both are slow: a 7B model takes tens of seconds per turn cold.
  */
-test.describe('a real model against a real repo', () => {
+test.describe('a real model against a real repo', { tag: '@live' }, () => {
   /**
    * Retries here, and nowhere else in this suite.
    *
@@ -981,7 +981,7 @@ test.describe('reasoning effort', () => {
    * land for a restart to keep it; a select showing a new value proves only that
    * React re-rendered.
    */
-  test('moves the effort, and writes it down', async () => {
+  test('moves the effort, and writes it down', { tag: '@live' }, async () => {
     const thinker = 'qwen3:0.6b';
     test.skip(!(await modelAvailable(thinker)), `needs ${thinker} — run \`ollama pull ${thinker}\``);
 
@@ -1014,7 +1014,7 @@ test.describe('reasoning effort', () => {
    * and the adapter dropped it — the row would have described something no
    * caller could reach. This is the test that makes the row true.
    */
-  test('keeps what the model thought, folded away from what it said', async () => {
+  test('keeps what the model thought, folded away from what it said', { tag: '@live' }, async () => {
     const thinker = 'qwen3:0.6b';
     test.skip(!(await modelAvailable(thinker)), `needs ${thinker} — run \`ollama pull ${thinker}\``);
 

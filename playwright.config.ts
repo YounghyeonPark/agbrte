@@ -25,13 +25,60 @@ export default defineConfig({
   // A live test waits on a 7B model generating a tool call.
   timeout: 180_000,
   expect: { timeout: 15_000 },
-  // The model is loaded once in a `beforeAll`, and a cold start can be minutes
-  // of disk read. Without headroom here the hook times out and reports every
-  // test in the group as failed, which hides that only the load was slow.
-  globalTimeout: 20 * 60_000,
+  /*
+   * Headroom for a cold model load, and **not** a budget for the run.
+   *
+   * It was twenty minutes, chosen because "the model is loaded once in a
+   * `beforeAll`, and a cold start can be minutes of disk read" — without
+   * headroom the hook times out and reports every test in the group as failed,
+   * hiding that only the load was slow.
+   *
+   * Twenty stopped being headroom once the suite reached eighty-odd tests beside
+   * a group that talks to a 7B model. A run in this session spent it: one live
+   * test exceeded its own 180s ceiling, the cap arrived, and **seventeen tests
+   * did not run** — which is the worst failure a test budget has, because the
+   * report is about the slow test and says nothing about the coverage that
+   * silently went missing.
+   *
+   * So the number is large enough that normal variance cannot reach it. A run
+   * that genuinely hangs still stops; the difference is that a slow live test
+   * now costs time rather than coverage. The `live` project below is the other
+   * half of that: it runs last, so even reaching this cap truncates the group
+   * that was slow rather than the deterministic ones.
+   */
+  globalTimeout: 45 * 60_000,
   workers: 1,
   fullyParallel: false,
   reporter: [['list']],
+
+  /*
+   * Two projects, in this order, because one group of tests is not like the
+   * others.
+   *
+   * Everything tagged `@live` talks to a **real local model server**: it is the
+   * only part of the suite whose duration depends on a GPU, a cold weight load
+   * and whatever else the machine is doing. Every unexplained failure in this
+   * session came from that group or from contention around it, and separating
+   * them buys two things.
+   *
+   * **Order.** Deterministic tests finish before the live ones begin, so the
+   * live group cannot take coverage down with it — not through `globalTimeout`
+   * above, and not by competing with eighty Electron launches for the same GPU.
+   *
+   * **A name.** `npm run e2e:fast` is the deterministic suite, which is what you
+   * want while iterating on the renderer or the IPC surface. It existed before
+   * as `--grep-invert` typed by hand, which is the shape of a missing seam.
+   *
+   * Deliberately **not** `dependencies`, although that is the obvious tool: it
+   * makes a dependent project *skip* when its dependency fails, so one flaky
+   * deterministic test would silently drop the live group — the same class of
+   * hidden coverage loss the paragraph above is about. Declaration order with
+   * `workers: 1` is enough for the ordering and has no such cliff.
+   */
+  projects: [
+    { name: 'deterministic', grepInvert: /@live/u },
+    { name: 'live', grep: /@live/u },
+  ],
   // Retrying would mask exactly the flakiness worth knowing about here.
   retries: 0,
 

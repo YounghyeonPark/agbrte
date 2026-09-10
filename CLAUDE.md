@@ -15,6 +15,7 @@ npm run lint:classes  # renderer classes that style nothing
 npm run lint:reach    # modules no entry point reaches
 npm run lint:race     # state read before an await and written after it
 npm run e2e           # Playwright against real Electron — NOT in CI
+npm run e2e:fast      # the same, minus the tests that need a local model
 ```
 
 Four things about that list are load-bearing:
@@ -25,6 +26,14 @@ Four things about that list are load-bearing:
 - **The e2e suite is not in CI.** Nothing else exercises the renderer, the
   preload, the IPC surface or a real pty, so run it before finishing anything
   that touches them. It takes about five minutes.
+- **Two projects, and the order matters.** Everything tagged `@live` talks to a
+  real local model server, and it is the only part whose duration depends on a
+  GPU and a cold weight load. They run *after* the deterministic 84, so a slow
+  one costs time rather than coverage — a run once spent the global timeout on
+  one live test and **seventeen tests did not run**, reported as a slow test and
+  not as missing coverage. `e2e:fast` is the deterministic project alone, which
+  is what you want while iterating; the full `e2e` is still the gate, and an
+  unexplained failure there is worth re-running alone before believing it.
 - **A version bump needs a build before the tests pass.** A test compares the
   built bundle's content stamp with `package.json`; a stale `dist/` fails it and
   the message is about a hash, not about the build.

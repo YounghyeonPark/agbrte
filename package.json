@@ -42,6 +42,7 @@
     "dev": "node scripts/dev.mjs",
     "start": "npm run build && node scripts/launch.mjs",
     "e2e": "npm run build && playwright test",
+    "e2e:fast": "npm run build && playwright test --project deterministic",
     "agbrte:direct": "tsx src/cli/run.ts",
     "cli": "node scripts/build.mjs && node dist/cli/agbrte.js",
     "package": "node scripts/package.mjs",
