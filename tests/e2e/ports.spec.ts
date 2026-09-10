@@ -104,6 +104,63 @@ test.describe('ports are there when asked for', () => {
     }
   });
 
+  /**
+   * A forward is a TCP tunnel, and one of the things it carries is a screen.
+   *
+   * `ssh -L 3389` brings a Windows machine's desktop to a local address, which is
+   * the answer to "I want to watch the PC this remote session runs on" — and a
+   * better one than anything this app could draw, since a remote-desktop client
+   * already does hardware-accelerated video, input and the clipboard.
+   *
+   * The tunnel always did that. What stood in the way was the row presenting every
+   * forward as a browser link, because §6.8 was written about dev servers: a link
+   * to `http://127.0.0.1:54321` is a control that fails on press (§3.5), in front
+   * of an address that works the moment it is offered as text.
+   *
+   * Stubbed at the IPC rather than forwarded for real, because what is under test
+   * is the two shapes the row renders — a real `ssh -L` to a machine that is not
+   * there would test ssh.
+   */
+  test('gives a desktop port its address instead of a link a browser cannot use', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      const page = agbrte.window;
+      await pretendRemote(agbrte);
+      await agbrte.app.evaluate(async ({ ipcMain }) => {
+        ipcMain.removeHandler('agbrte:preview.list');
+        ipcMain.handle('agbrte:preview.list', async (_e, sessionId: string) => [
+          { sessionId, remotePort: 3000, localPort: 54321, url: 'http://127.0.0.1:54321', reachable: true },
+          { sessionId, remotePort: 3389, localPort: 54322, url: 'http://127.0.0.1:54322', reachable: true },
+        ]);
+      });
+
+      await createSession(page, 'watching');
+      await addAgent(page, 'echo');
+      await portsToggle(page).click();
+      await expect(portsRow(page)).toBeVisible();
+
+      // The dev server keeps its link, which is what the feature was built for.
+      const link = portsRow(page).locator('a', { hasText: ':3000' });
+      await expect(link).toHaveAttribute('href', 'http://127.0.0.1:54321');
+
+      /*
+       * The desktop port gets the address instead, and says what it is. The label
+       * is the half that matters as much as the link: a bare `:3389` on a build
+       * box is a number, and named it is an offer to see that machine's screen.
+       */
+      const desktop = page.locator('[data-testid=forward-address][data-port="3389"]');
+      await expect(desktop).toBeVisible();
+      await expect(desktop).toContainText('127.0.0.1:54322');
+      await expect(desktop).toContainText('remote desktop');
+      // And no link on it, which is the defect this closes.
+      await expect(desktop.locator('a')).toHaveCount(0);
+    } finally {
+      await agbrte.close();
+    }
+  });
+
   test('a remote session offers them, folded, and keeps everything they do', async () => {
     const repo = await makeRepo();
     const agbrte = await launch(repo);

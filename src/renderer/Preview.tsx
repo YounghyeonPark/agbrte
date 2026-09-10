@@ -23,6 +23,22 @@
  * recorded on `portsOpen`: the count would either be the noise itself, or would
  * cost a poll of a machine to render a digit for a panel nobody has opened.
  *
+ * ## A forward is a TCP tunnel, and the screen of that machine is one use of it
+ *
+ * `ssh -L` carries whatever is on the port. Tunnelling `3389` brings a Windows
+ * machine's **desktop** to a local address, which is the answer to "I want to
+ * watch the PC this remote session runs on" — and a better answer than anything
+ * this app could draw, since an RDP or VNC client already does hardware-
+ * accelerated video, input and the clipboard.
+ *
+ * The tunnel always did that. What stood in the way was this file: a forwarded
+ * port was rendered as a link to `http://127.0.0.1:<port>`, which a browser
+ * cannot speak RDP to — a control that fails on press (§3.5), in front of an
+ * address that works the moment it is offered as text instead. So the address is
+ * now always text, the link is offered only where a browser is the right tool
+ * (`shared/preview/protocols.ts`), and a port this app recognises says what it
+ * is.
+ *
  * ## "Nothing is answering" is a state, not an error
  *
  * A forward opens whether or not anything is listening at the far end, because
@@ -34,6 +50,7 @@
  */
 
 import { useEffect, useState, type JSX } from 'react';
+import { browserCanOpen, protocolOn } from '../shared/preview/protocols.js';
 import type {
   DetectedPortDto,
   ForwardDto,
@@ -112,13 +129,16 @@ export function Preview({
       className="border-line flex shrink-0 flex-wrap items-center gap-2 border-t px-3 py-2 text-xs"
       data-testid="ports-row"
     >
-      <span className="text-muted">Preview a port on that machine</span>
+      {/* "A port", not "a dev server": the same tunnel carries `3389` and shows
+          that machine's desktop in a remote-desktop client (see the header). */}
+      <span className="text-muted">Forward a port from that machine</span>
       <input
         className={FIELD}
         data-testid="forward-port"
         value={port}
         inputMode="numeric"
         aria-label="Remote port to forward"
+        title="A dev server, or 3389 / 5900 for that machine's screen"
         onChange={(e) => setPort(e.target.value)}
       />
       <button
@@ -160,20 +180,36 @@ export function Preview({
           >
             {f.loopbackOnly ? '' : '⚠ '}
             :{f.port}
+            {/* What it is, where that is known. A bare `:3389` on a build box is
+                a number; named, it is an offer to see the screen. */}
+            {protocolOn(f.port) !== null && (
+              <span className="text-muted"> · {protocolOn(f.port)?.label}</span>
+            )}
           </button>
         ))}
 
       {forwards.map((f) => (
         <span key={f.remotePort} className="border-line flex items-center gap-1 rounded border px-2 py-1">
-          <a
-            className="text-accent underline"
-            href={f.url}
-            target="_blank"
-            rel="noreferrer"
-            title={`${f.url} → port ${f.remotePort} on that machine`}
-          >
-            :{f.remotePort}
-          </a>
+          {browserCanOpen(f.remotePort) ? (
+            <a
+              className="text-accent underline"
+              href={f.url}
+              target="_blank"
+              rel="noreferrer"
+              title={`${f.url} → port ${f.remotePort} on that machine`}
+            >
+              :{f.remotePort}
+            </a>
+          ) : (
+            /* No link, because a browser cannot speak this. The address is the
+               useful thing here — it goes into a remote-desktop client — so it
+               is selectable text rather than a control that fails on press. */
+            <span data-testid="forward-address" data-port={f.remotePort}>
+              :{f.remotePort}{' '}
+              <code className="text-accent select-all">127.0.0.1:{f.localPort}</code>
+              <span className="text-muted"> · {protocolOn(f.remotePort)?.label}</span>
+            </span>
+          )}
           {f.reachable ? null : (
             <button
               className="text-muted hover:text-ink"
