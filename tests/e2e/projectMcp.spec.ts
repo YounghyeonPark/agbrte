@@ -184,8 +184,17 @@ test('writes a declaration from the catalogue, into the tracked directory', asyn
      */
     const written = JSON.parse(
       await readFile(join(repo, '.agbrte', 'templates', 'search.mcp.json'), 'utf8'),
-    ) as { command: string; envFrom: Record<string, string> };
+    ) as { command: string; args?: string[]; envFrom: Record<string, string> };
     expect(written.command).toBe('npx');
+    /*
+     * Pinned, and that is a security property rather than tidiness.
+     *
+     * `npx -y pkg` resolves to whatever the registry serves at run time, so an
+     * unpinned entry is a promise to execute code nobody here has looked at.
+     * The pin makes the thing that runs the thing the catalogue's `verifiedAt`
+     * was about (§13).
+     */
+    expect(written.args?.some((a) => /@\d/.test(a))).toBe(true);
     // A name on both sides, and no value anywhere: that is what makes the file
     // safe to commit (§13).
     expect(Object.values(written.envFrom)).toEqual(['SEARXNG_URL']);

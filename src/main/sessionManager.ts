@@ -136,7 +136,11 @@ import {
   type Worktree,
 } from './worktree.js';
 import type { Isolation, RoleRequirements, RuntimeRegistry } from './runtime/registry.js';
-import { defaultPolicyForTarget, evaluatePolicy } from './policy/evaluate.js';
+import {
+  defaultPolicyForTarget,
+  evaluatePolicy,
+  standingGrantAnswers,
+} from './policy/evaluate.js';
 
 export interface NewAgentInput {
   role: AgentRole;
@@ -3153,7 +3157,16 @@ export class SessionManager extends EventEmitter {
     }
 
     /*
-     * The standing grant settles the question and only the question (§17 Q19).
+     * The standing grant settles the question and only the question (§17 Q19) —
+     * and not the question of reaching outside this session at all.
+     *
+     * `standingGrantAnswers` holds back `fetch` and every `mcp__*`: those bring
+     * somebody else's text into the model's context, and "stop asking me" is not
+     * a sentence anybody meant to include "run what a web page told you to".
+     * Crossing that boundary is its own yes, asked once — *allow for this
+     * session* then pushes a policy rule that is evaluated above this, so the
+     * cost is one prompt per session rather than one per call, and the log
+     * records it as the person's decision rather than as the grant's.
      *
      * It is checked after policy has answered, and only an `ask` reaches it:
      * a policy `deny` and the escalation guard are refusals, not questions,
@@ -3164,7 +3177,7 @@ export class SessionManager extends EventEmitter {
      * answerable. Scope `once`: the grant does not widen the agent's policy,
      * so revoking it is nothing more than the session ending.
      */
-    if (live.session.standingGrant !== undefined) {
+    if (live.session.standingGrant !== undefined && standingGrantAnswers(ask.tool)) {
       const decision: PermissionDecision = { result: 'allow', scope: 'once' };
       await this.logDecision(live, request, decision, 'standing-grant', evaluation);
       return decision;

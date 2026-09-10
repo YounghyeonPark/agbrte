@@ -29,6 +29,7 @@ import {
   writeProjectServer,
   PROJECT_SERVER_SUFFIX,
 } from '../src/main/store/projectServers.js';
+import { catalogueServers } from '../src/shared/mcp/catalogue.js';
 
 const made: string[] = [];
 afterEach(async () => {
@@ -200,6 +201,61 @@ describe('writing one', () => {
     await expect(writeProjectServer(root, { id: 'Search', command: 'npx' })).rejects.toThrow(
       /cannot be an MCP server id/,
     );
+  });
+});
+
+describe('the catalogue the app ships', () => {
+  it('pins every version, because npx resolves at run time', async () => {
+    /*
+     * A security property, not tidiness. `npx -y pkg` fetches whatever the
+     * registry serves when the server starts, so an unpinned entry is a promise
+     * to execute code nobody here has looked at — and the catalogue's
+     * `verifiedAt` would be a claim about a different tarball every week.
+     *
+     * A pin does not survive a maintainer's account being taken over, which no
+     * pin can. It does mean the thing that runs is the thing that was checked.
+     */
+    for (const entry of catalogueServers()) {
+      const pinned = entry.args.some((a) => /@\d+(\.\d+)*$/.test(a));
+      expect(pinned, `${entry.id} names no version`).toBe(true);
+    }
+  });
+
+  it('says what every entry costs to start', async () => {
+    // An entry that is silent about cost reads as free, which is how the first
+    // version of this list recommended a service wanting a credit card.
+    for (const entry of catalogueServers()) {
+      expect(['none', 'free-key'], entry.id).toContain(entry.account);
+    }
+  });
+
+  it('writes something the reader accepts, for every entry', async () => {
+    // The catalogue is a shortcut to a file, so an entry that produces a file
+    // the reader refuses would be a button that fails after it has written.
+    for (const entry of catalogueServers()) {
+      const root = await workspace({});
+      await writeProjectServer(root, {
+        id: entry.id,
+        command: entry.command,
+        args: entry.args,
+        envFrom: entry.envFrom,
+      });
+      const read = await readProjectServer(root, entry.id);
+      expect(read.problems, entry.id).toEqual([]);
+      // And it names what it needs, so the form can ask for it.
+      expect(neededNames(read.server as never).length, entry.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('has somewhere to send a person for each value it asks for', async () => {
+    for (const entry of catalogueServers()) {
+      for (const name of Object.values(entry.envFrom)) {
+        // "get a key" is not an instruction, and a masked box cannot say what
+        // kind of value it wants.
+        expect(entry.asks?.[name], `${entry.id} does not say what ${name} is`).toBeTruthy();
+      }
+      expect(entry.keyFrom, entry.id).toBeTruthy();
+    }
   });
 });
 

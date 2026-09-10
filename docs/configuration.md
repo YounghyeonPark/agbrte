@@ -149,6 +149,16 @@ page instead would be a workaround with three problems: it is against most
 engines' terms, a fresh profile collects consent pages and bot checks, and the
 agent cannot tell a bot check from a result.
 
+**Two things to know before ticking one.** It runs a command on the machine that
+owns the workspace — `npx` fetches a package from npm and executes it as you,
+and the catalogue pins a version so the thing that runs is the one that was
+checked, which does not make it code anybody here has read. And whatever it
+returns enters a model's context as text: a search result or a page can contain
+instructions aimed at your agent. The permission gate is what contains that —
+consequential calls are asked about by default — so a session with a **standing
+grant** and a search server has turned "stop asking me" into "run what a web
+page said". That is the combination to avoid, rather than the server.
+
 Nothing attaches itself. A session gets what somebody ticked when it was made,
 and a host restart brings a declared server back — which a hand-typed one
 cannot, since its values were never written down (DESIGN.md §17 Q20).
