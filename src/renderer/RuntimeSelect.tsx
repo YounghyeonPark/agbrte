@@ -80,9 +80,31 @@ export function RuntimeSelect({
   value,
   onChange,
   groups,
+  busy = false,
 }: {
   value: string;
   onChange: (value: string) => void;
+  /**
+   * Whether the answer this list ranks on is still coming.
+   *
+   * Measured, not guessed at: on a machine with a model server, the picker
+   * mounts with no models known, ranks `cli:claude-code` first, and then
+   * `refreshModels()` lands about a hundred milliseconds later and the
+   * preselection becomes a local model. A person who read the first one and
+   * pressed the button in that beat seated something they had not chosen.
+   *
+   * So while it is coming the control says so and cannot be used. That is §3.3's
+   * rule in a different dress — an unsettled ranking must not render as a
+   * decision — and it is cheap, because the wait is the hundred milliseconds
+   * above and a failed fetch clears it with whatever is known.
+   *
+   * It also closes a race that had its own paragraph in `tests/e2e/actions.ts`:
+   * a click landing in the same tick as the value change lost the open, so the
+   * list "never appeared" and four specs failed in full runs while passing
+   * alone. Nothing in the test had to change — Playwright waits for an enabled
+   * control, which is the behaviour the helper wanted all along.
+   */
+  busy?: boolean;
   /**
    * The list, in two parts: what is ready, and what has to be fetched first.
    *
@@ -102,12 +124,17 @@ export function RuntimeSelect({
         data-testid="runtime-trigger"
         className="field text-ink flex items-center justify-between gap-2"
         aria-label="What will run"
+        disabled={busy}
       >
         {/* Not Select.Value: with an empty `value` — which happens while the host
             handshake is still in flight — Radix renders nothing at all, and an
             empty control reads as broken rather than as loading. */}
         <span className="truncate-line">
-          {selected === undefined ? (
+          {busy ? (
+            /* Not the preselection it is about to change. Showing a name here
+               and a different one a moment later is the whole defect. */
+            <span className="text-muted">Looking at what can run…</span>
+          ) : selected === undefined ? (
             'No runtime available'
           ) : (
             <>

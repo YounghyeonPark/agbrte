@@ -4139,7 +4139,18 @@ function AgentPicker({
    */
   const [answers, setAnswers] = useState<EndpointModelsDto[]>([]);
   const [modelsNote, setModelsNote] = useState<string | null>(null);
-  const [modelsBusy, setModelsBusy] = useState(false);
+  /**
+   * Whether the answer this screen ranks on is still coming.
+   *
+   * Initialised from the runtimes rather than to `false`, which is a one-frame
+   * difference that matters: the fetch starts in an effect *after* the first
+   * paint, so a `false` start offers a settled-looking choice for one frame
+   * before admitting it is not one. Where the runtimes arrive later, this flips
+   * on the render that learns about them.
+   */
+  const [modelsBusy, setModelsBusy] = useState(() =>
+    runtimes.some((r) => r.model === 'required'),
+  );
   /** One list per mounted picker. See the effect below. */
   const asked = useRef(false);
 
@@ -4569,6 +4580,7 @@ function AgentPicker({
         <RuntimeSelect
           value={value}
           onChange={setChosen}
+          busy={modelsBusy}
           groups={[
             { id: 'ready', label: 'Ready to use', options: [] },
             { id: 'install', label: 'Will be installed first', options: [] },

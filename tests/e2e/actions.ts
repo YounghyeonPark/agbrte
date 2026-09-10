@@ -126,13 +126,18 @@ export async function addAgent(page: Page, runtimeId: string, model?: string): P
    * exactly as strict. Nothing is retried and nothing is swallowed: a trigger
    * that does not open still fails, five seconds sooner and saying so.
    *
-   * **It has since answered the question.** The next run in which the flake
-   * recurred failed *here* rather than on the option — the list never appeared —
-   * which rules out the picker missing a runtime and leaves the trigger click
-   * going nowhere. `page.click` had already found the element and judged it
-   * actionable, so the open is being lost after the dispatch; the picker
-   * re-renders shortly after it mounts, when `refreshModels()` answers, and that
-   * is where to look next.
+   * **And it was answered, by instrumenting the thing rather than guessing.**
+   * `refreshModels()` was the culprit, as the note here suspected: the picker
+   * mounted with no models known, ranked `cli:claude-code` first, and about a
+   * hundred milliseconds later the answer landed and the preselection became a
+   * local model. A click in that tick changed the controlled value as Radix was
+   * opening, and the open was lost — the list "never appeared".
+   *
+   * It was a product defect before it was a flake: a person who read the first
+   * preselection and pressed the button in that beat seated something else.
+   * `RuntimeSelect` now says it is still looking and cannot be used until the
+   * ranking settles, so `page.click` waits for an enabled control — which is
+   * what this helper wanted from it all along, and why nothing here changed.
    */
   await expect(page.locator('[data-testid=runtime-list]')).toBeVisible({ timeout: 15_000 });
 

@@ -33,6 +33,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { launch, launchWith, makeRepo, type LaunchedApp } from './harness.js';
 import { createSession } from './actions.js';
+import { rm } from 'node:fs/promises';
 
 /** Replace the setup handler, and record what it was given. */
 async function stubSetup(
@@ -79,26 +80,46 @@ async function stubSetup(
  */
 async function stubModels(
   agbrte: LaunchedApp,
-  opts: { before: string[]; after: string[]; canInstall: boolean; pullFails?: string },
+  opts: {
+    before: string[];
+    after: string[];
+    canInstall: boolean;
+    pullFails?: string;
+    /**
+     * How long the answer takes, for the one test about what the screen does
+     * while it is coming.
+     *
+     * Real on this machine and far too quick to catch: about a hundred
+     * milliseconds. Stubbing the duration is what makes that state assertable
+     * rather than raced for.
+     */
+    delayMs?: number;
+  },
 ): Promise<void> {
   await agbrte.app.evaluate(
-    async ({ ipcMain }, { before, after, canInstall, pullFails }) => {
+    async ({ ipcMain }, { before, after, canInstall, pullFails, delayMs }) => {
       const scope = globalThis as unknown as { __pulls: unknown[]; __pulled: boolean };
       scope.__pulls = [];
       scope.__pulled = false;
 
       ipcMain.removeHandler('agbrte:hosts.models');
-      ipcMain.handle('agbrte:hosts.models', async () => [
-        {
-          endpointId: 'local',
-          models: scope.__pulled ? after : before,
-          // A machine that had no model server has one the moment `setUp` puts
-          // it there, which is the whole point of the route being one press:
-          // the second half has to see what the first half changed.
-          canInstall: canInstall || (globalThis as unknown as { __ollama?: boolean }).__ollama === true,
-          runner: 'ollama',
-        },
-      ]);
+      ipcMain.handle('agbrte:hosts.models', async () => {
+        // Slow on purpose, for the one test about what the screen does while the
+        // answer is coming. Absent means as fast as an IPC round trip.
+        if (delayMs !== undefined) await new Promise((done) => setTimeout(done, delayMs));
+        return [
+          {
+            endpointId: 'local',
+            models: scope.__pulled ? after : before,
+            // A machine that had no model server has one the moment `setUp` puts
+            // it there, which is the whole point of the route being one press:
+            // the second half has to see what the first half changed.
+            canInstall:
+              canInstall || (globalThis as unknown as { __ollama?: boolean }).__ollama === true,
+            runner: 'ollama',
+          },
+        ];
+      });
 
       ipcMain.removeHandler('agbrte:hosts.installModel');
       // `(event, instanceId, endpointId, tag)` — every `hosts.*` channel names
@@ -135,7 +156,13 @@ async function stubModels(
         ];
       });
     },
-    { before: opts.before, after: opts.after, canInstall: opts.canInstall, pullFails: opts.pullFails },
+    {
+      before: opts.before,
+      after: opts.after,
+      canInstall: opts.canInstall,
+      pullFails: opts.pullFails,
+      delayMs: opts.delayMs,
+    },
   );
 }
 
@@ -203,6 +230,63 @@ async function resize(app: LaunchedApp, width: number, height: number): Promise<
 }
 
 test.describe('one list, one button', () => {
+  /*
+   * The preselection does not move once it can be read (§3.3).
+   *
+   * Measured on this machine before it was fixed: the picker mounted with no
+   * models known, ranked `cli:claude-code` first, and about a hundred
+   * milliseconds later `refreshModels()` answered and the preselection became a
+   * local model. A person who read the first one and pressed the button in that
+   * beat seated something they had not chosen — and an unsettled ranking
+   * rendering as a decision is exactly what §3.3 is about.
+   *
+   * It also had a second cost, which is why `tests/e2e/actions.ts` carries a
+   * paragraph about it: a click landing in the same tick as the value change
+   * lost the Radix open state, the list "never appeared", and four specs failed
+   * in full runs while passing alone. Nothing in that helper changed — Playwright
+   * waits for an enabled control, which is what it wanted all along.
+   *
+   * The delay is stubbed because a hundred milliseconds is not a thing to race
+   * an assertion against.
+   */
+  test('says it is still looking, rather than offering a choice it will change', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      await stubModels(agbrte, {
+        before: ['qwen2.5:7b'],
+        after: ['qwen2.5:7b'],
+        canInstall: true,
+        delayMs: 2_000,
+      });
+      const page = agbrte.window;
+      await createSession(page, 'choosing');
+
+      const trigger = page.locator('[data-testid=runtime-trigger]');
+      await expect(trigger).toBeVisible();
+      // While the answer is coming: no name, and no way to act on one.
+      await expect(trigger).toContainText('Looking at what can run');
+      await expect(trigger).toBeDisabled();
+
+      // Once it lands, it is usable and names a model.
+      await expect(trigger).toBeEnabled({ timeout: 15_000 });
+      const settled = (await trigger.textContent())?.trim() ?? '';
+      expect(settled).toContain('qwen2.5:7b');
+
+      /*
+       * And it stays that. This is the assertion the defect fails: without the
+       * gate the label read `Claude Code · brings its own model` here and
+       * something else a moment later.
+       */
+      await page.waitForTimeout(1_500);
+      expect((await trigger.textContent())?.trim()).toBe(settled);
+    } finally {
+      await agbrte.close();
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   test('offers what is ready before what has to be fetched, and says what each costs', async () => {
     const repo = await makeRepo();
     const agbrte = await launch(repo);
@@ -213,11 +297,15 @@ test.describe('one list, one button', () => {
       await createSession(page, 'choosing');
 
       /*
-       * Waited for, because the list grows under the screen: models arrive a
-       * round trip after the picker opens, and until they do the only entry a
-       * model-taking runtime has is its "another model…" escape hatch — which
-       * legitimately reveals a text field. Asserting the resting shape while
-       * that is still in flight would assert the loading state instead.
+       * Waited for, and the control now waits too.
+       *
+       * The list grows under the screen — models arrive a round trip after the
+       * picker mounts — and this test used to be the only thing that knew it:
+       * until they landed, a model-taking runtime had just its "another model…"
+       * escape hatch, so asserting the resting shape early asserted the loading
+       * state instead. The screen says so itself now (see the test above this
+       * one), and this wait is the same wait said in the DOM rather than only
+       * here.
        */
       await expect(page.locator('[data-testid=runtime-trigger]')).toContainText('qwen2.5:7b', {
         timeout: 15_000,
