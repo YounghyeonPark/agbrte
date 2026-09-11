@@ -577,9 +577,42 @@ test.describe('a real model against a real repo', { tag: '@live' }, () => {
    * turn completed instead of being refused for a malformed history.
    */
   test('compacts a history that will not fit, and the model still answers', async () => {
+    /*
+     * The smallest model in the suite, and the smallest *window* — which is the
+     * one that sets the bill.
+     *
+     * The wall below has to cross `0.75 × contextWindow`, so the window decides
+     * how much text has to be prefilled twice: once to summarise it and once to
+     * send the summary. Measured from Ollama on this machine:
+     *
+     *     qwen2.5:7b     32,768 → a 73,700-character wall, on a 7B
+     *     qwen3:0.6b     40,960 → 92,000, on a 0.6B
+     *     llama3.2:1b   131,072 → 295,000, far worse
+     *     smollm2:360m    8,192 → 18,400, on a 360M
+     *
+     * `smollm2:360m` wins on paper and lost in practice, which is worth the
+     * lines. It is a **third model** in the live sequence: the group warms
+     * `qwen2.5:7b`, the tests below use `qwen3:0.6b`, and adding one more made
+     * Ollama reload between tests — so seating an agent in the *next* test took
+     * longer than the fifteen seconds its composer assertion allows, twice in a
+     * row, consistently. A cheaper test that makes its neighbours fail is not
+     * cheaper.
+     *
+     * `qwen3:0.6b` is the model the reasoning tests already use, so it costs no
+     * extra load, and the wall being larger does not matter beside a model a
+     * twelfth of the size. What was expensive was never the characters — it was
+     * prefilling them twice on seven billion parameters.
+     *
+     * Nothing under test cares which model this is. The assertion is that
+     * compaction happened and a real server accepted a history with `system`
+     * turns in the middle of it — "whether a 7B model says anything sensible
+     * about a wall of text is its business" was already the stated position, and
+     * it is just as true of a 0.6B one.
+     */
+    const small = 'qwen3:0.6b';
     test.skip(
-      !(await modelAvailable(MODEL)),
-      `needs a local Ollama server with ${MODEL} — run \`ollama pull ${MODEL}\``,
+      !(await modelAvailable(small)),
+      `needs a local Ollama server with ${small} — run \`ollama pull ${small}\``,
     );
 
     const repo = await makeRepo();
@@ -587,7 +620,7 @@ test.describe('a real model against a real repo', { tag: '@live' }, () => {
 
     try {
       await createSession(agbrte.window, 'Compaction');
-      await addAgent(agbrte.window, 'agbrte-harness', MODEL);
+      await addAgent(agbrte.window, 'agbrte-harness', small);
 
       /*
        * Just past 0.75 of the window, and no further.
@@ -598,11 +631,16 @@ test.describe('a real model against a real repo', { tag: '@live' }, () => {
        * is under test is that compaction happens and the server accepts what
        * comes out, and neither gets truer with a bigger wall.
        *
-       * 32,768-token window, `estimateTokens` at three characters each, so the
-       * mark is around 73,700 characters. Ordinary prose rather than one
-       * repeated character, so the summariser has something to summarise.
+       * 40,960-token window, `estimateTokens` at three characters each, so the
+       * mark is around 92,200 characters. 2,100 repeats of a 45-character
+       * sentence is 94,500 — over it with enough headroom that a change to the
+       * estimator does not quietly stop triggering compaction, which would turn
+       * this into a test that passes by doing nothing.
+       *
+       * Ordinary prose rather than one repeated character, so the summariser has
+       * something to summarise.
        */
-      const wall = 'The quick brown fox jumps over the lazy dog. '.repeat(1_750);
+      const wall = 'The quick brown fox jumps over the lazy dog. '.repeat(2_100);
       await send(agbrte.window, `${wall}
 
 In one short sentence: what animal was mentioned?`);
