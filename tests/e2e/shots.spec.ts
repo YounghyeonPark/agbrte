@@ -121,6 +121,88 @@ const WORK = [
 ];
 
 /** A repository with something in it, so a turn has something to be about. */
+/**
+ * What a project declares, as files in the repository it declares them in.
+ *
+ * These are the pictures the README was missing. A workflow, a skill and an MCP
+ * server are all *files in `templates/`*, which is the whole argument for them
+ * (§17 Q12, §4.4) — and an argument made only in prose is one nobody can see. A
+ * reader looking at the form finds a list that came from a folder, which is the
+ * thing the sentence is about.
+ *
+ * Real content rather than `foo`/`bar`, for `WORK`'s reason one screen up: these
+ * end up in the README, and placeholder text there is a picture of placeholder
+ * text.
+ */
+async function declareThings(repo: string): Promise<void> {
+  const dir = join(repo, '.agbrte', 'templates');
+  await mkdir(dir, { recursive: true });
+
+  const node = (
+    id: string,
+    scope: string,
+    needs?: string[],
+  ): Record<string, unknown> => ({
+    id,
+    title: id,
+    scope,
+    outOfScope: ['anything outside src/'],
+    acceptance: ['it is written down'],
+    contract: { summaryMaxTokens: 800, artifacts: [] },
+    tokenCeiling: 20_000,
+    ...(needs === undefined ? {} : { needs }),
+  });
+
+  // A join — two parts meeting at one — because that is the shape a session tree
+  // cannot express and therefore the reason the picture is worth taking.
+  await writeFile(
+    join(dir, 'review.workflow.json'),
+    JSON.stringify(
+      {
+        id: 'review',
+        name: 'review this branch',
+        goal: 'find what is broken before anybody else does',
+        nodes: [
+          node('scan', 'list every file the branch touched'),
+          node('tests', 'run the suite and report what failed', ['scan']),
+          node('lint', 'run the linters and report what they said', ['scan']),
+          node('report', 'write up what the two found, together', ['tests', 'lint']),
+        ],
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+
+  await writeFile(
+    join(dir, 'commits.skill.md'),
+    [
+      '---',
+      'description: How commit messages are written in this repository',
+      '---',
+      '',
+      'They say why, and they record what broke: the defect that produced the',
+      'line, what the wrong version cost, and which alternative was rejected.',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  // Declared but not yet usable on this machine, which is the honest state and
+  // the more informative picture: the form asks for the one value it needs, by
+  // name, and the key is never in the file.
+  await writeFile(
+    join(dir, 'search.mcp.json'),
+    JSON.stringify(
+      { command: 'npx', args: ['-y', 'mcp-searxng@2.2.0'], envFrom: { SEARXNG_URL: 'SEARXNG_URL' } },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+}
+
 async function fillRepo(repo: string): Promise<void> {
   await writeFile(
     join(repo, 'README.md'),
@@ -182,6 +264,7 @@ test.describe('@shots', () => {
 
     try {
       await fillRepo(web.repo);
+      await declareThings(web.repo);
 
       for (const { title, prompt } of WORK) {
         execFileSync(
@@ -236,11 +319,79 @@ test.describe('@shots', () => {
         await page.screenshot({ path: `${OUT}/02-session.png` });
       }
 
-      // The phone shape, which §12 and the CSS both take seriously.
+      /*
+       * The phone shape, which §12 and the CSS both take seriously — and it
+       * stays *here*, before the two shots below.
+       *
+       * Which pane and which session are open both survive a reload, so this
+       * came out as a picture of the workflows pane — captioned in the README as
+       * a dashboard on a phone. Nothing here asserts, the file was the right size
+       * and the right date, and only looking at the PNG caught it.
+       *
+       * Ordering it before those two was not enough: a *session* survives the
+       * reload as well, and on a phone one pane fills the screen (§12), so the
+       * shot came back as a transcript. So it says which view it wants.
+       *
+       * `back-to-list` and not `show-main`, which was the first attempt and is
+       * the opposite control: `show-main` gives the pane to the *session*, which
+       * is where this already was. `phone.spec.ts` drives the right one, and
+       * reading it beat guessing from a testid that sounded plausible.
+       */
       await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(web.url);
       await page.waitForTimeout(1500);
+      const back = page.locator('[data-testid=back-to-list]');
+      if (await back.isVisible()) {
+        await back.click();
+        await page.waitForTimeout(600);
+      }
       await page.screenshot({ path: `${OUT}/03-phone.png` });
+
+      /*
+       * What a project declares, which is three features and one picture.
+       *
+       * The new-session form is where a workflow, a skill and an MCP server all
+       * arrive, because all three are files in `templates/` and the form lists
+       * what the folder holds. A reader who has only been *told* that sees a
+       * sentence; here they see a list that came from a directory, with the MCP
+       * server asking for the one value it needs by name and the key nowhere in
+       * it (§13).
+       *
+       * Taller than the session shot, because this form is the tallest thing in
+       * the app when everything a project can declare is in one workspace.
+       */
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto(web.url);
+      await page.waitForSelector('[data-testid=host]', { timeout: 30_000 });
+      await page.locator('[data-testid=new-session]').first().click();
+      await page.waitForSelector('[data-testid=new-servers]', { timeout: 20_000 });
+      // Opened, because a folded `details` photographs as a word.
+      await page.locator('[data-testid=new-server-catalogue] summary').click();
+      // Ticked, so the row shows the question it asks rather than only the offer.
+      await page.locator('[data-testid=new-server][data-id=search] [data-testid=new-server-pick]').check();
+      await page.waitForTimeout(600);
+      await page.screenshot({ path: `${OUT}/04-declared.png` });
+
+      /*
+       * The workflow, drawn.
+       *
+       * §4.4's argument is that a decomposition written down is reviewable in a
+       * diff and a picture at the same time, and the join — two parts meeting at
+       * one — is the thing a session tree cannot express. That is why the
+       * fixture has one, and why this is a picture rather than a paragraph.
+       */
+      await page.locator('[data-testid=open-workflows]').first().click();
+      await page.waitForSelector('[data-testid=workflow-row]', { timeout: 20_000 });
+      /*
+       * Shorter than the form above, for the reason the dashboard is shorter
+       * than a session: one document and a four-node graph end around 520px, and
+       * the 900 this was first taken at left the bottom two thirds black — which
+       * is the exact criticism this file's own header makes of the first set.
+       */
+      await page.setViewportSize({ width: 1440, height: 600 });
+      await page.locator('[data-testid=workflow-shape] summary').first().click();
+      await page.waitForTimeout(600);
+      await page.screenshot({ path: `${OUT}/05-workflow.png` });
     } finally {
       await web.stop();
     }

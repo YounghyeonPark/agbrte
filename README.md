@@ -57,6 +57,10 @@ two builds on one computer, and what the test commands cover.
 | :-- | :-- | :-- |
 | Every session on every attached machine, ranked by **who needs a human**. | One session: a tool call, the permission it went through, and the answer. | The same app in a phone browser on your own network, driving a run on a build box. |
 
+| ![What the project declares](docs/shots/04-declared.png) | ![A workflow, drawn](docs/shots/05-workflow.png) |
+| :-- | :-- |
+| What this project declares, offered when a session is made: skills and MCP servers that are **files in the repository**, and a key asked for by name — kept on the machine, never in the file. | A workflow is a decomposition written down before it runs. The graph is the document; two parts meeting at one is the shape a session tree cannot express. |
+
 *(Real turns against a local `qwen2.5:7b`, captured by `AGBRTE_WRITE_FIXTURES=1 npx playwright test shots --grep @shots`.)*
 
 ## The one idea
@@ -92,11 +96,17 @@ after a restart are not three features but three consequences of that.
   hold can split into a child with its own log, and a slice of its budget when
   it has one to give — on another machine, if that is where the work is.
   Sessions can also be *grouped* and reach each other one bounded message at a
-  time, carrying words and never authority. MCP servers and skills attach per
-  session, not from an app-wide registry somebody enabled months ago — and a
-  skill can be a file in the repository, so "how we write commit messages here"
-  is something a colleague gets by cloning rather than by being told, and still
-  something ticked onto one session by the person making it.
+  time, carrying words and never authority.
+- **What a project uses is a file in the project.** A skill — "how we write
+  commit messages here" — and an MCP server are both files in a tracked
+  directory, so a colleague gets them by cloning rather than by being told, and
+  a change to either arrives as a diff. Nothing attaches itself: they are
+  offered when a session is made and ticked by the person making it, which is
+  the whole distinction from an app-wide registry somebody enabled months ago.
+  The app knows a couple of servers and will write the declaration for you,
+  saying what each costs to start before you pick one. **The key never goes in
+  the file** — the declaration names a variable, the machine holds the value,
+  and the form asks for whatever is missing by name.
 - **A decomposition can be written down before it runs.** A *workflow* is a file
   in the repository: what the parts are, what each one may not touch, what it
   owes back, and what it waits on. Because it is a file it is reviewed in a diff
@@ -104,7 +114,20 @@ after a restart are not three features but three consequences of that.
   autonomous one is not — and the same refusals a split meets at spawn are raised
   while it is being written, in an editor that draws the graph. Running one
   spawns each part as its dependencies finish; a part that fails stops what
-  needed it and nothing else.
+  needed it and nothing else — and the same picture carries the run, so which
+  part is going is where the shape already was. A workflow can also be left to
+  run on a routine, which happens on the host: closing the app does not close
+  the schedule.
+- **The network is a named door rather than a shell command.** `fetch` reads a
+  page as a tool, so which sites a session read is a question the log answers and
+  a policy rule can match — and it refuses the addresses that mean *this machine*
+  or *this network*, because a control channel and a cloud metadata service both
+  answer there. A standing grant does not cover it: "stop asking me" is a person
+  taking responsibility for what their own agent does, not for what a web page
+  tells it to do.
+- **A port on a remote machine comes to a local one**, and it is a plain tunnel,
+  so it carries a dev server to your browser or that machine's **desktop** to
+  your own remote-desktop client.
 - **A real terminal that says when it is off the record.** The PTY pane writes no
   events, passes no permission gate and spends your own allowance, and its header
   says so every time it is open.
