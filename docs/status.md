@@ -11,7 +11,7 @@ only partly true. This page is the summary.
 | 🟡 | **5 · Remote execution and device independence** · **7 · Multimodal** | acceptance criteria met, with named substitutions |
 | ✅ | **3 · Three-shape proof** | done — four runtimes, and two provider wire formats |
 | 🔨 | **8 · Breadth + polish** | started |
-| ✅ | **9 · Workflows** | done — authored, validated, drawn, edited and run, and a run survives a host restart |
+| ✅ | **9 · Workflows** | done — authored, validated, drawn, edited and run, a run survives a host restart, and one can be left on a routine |
 
 ## What works
 
@@ -22,6 +22,14 @@ on a tailnet. There is a dashboard, stall detection, quota parking that resumes 
 its own, notifications, a CLI for headless machines, and a one-file installer. One
 conformance suite runs against four deliberately different runtimes, including the
 agent CLI you already have installed.
+
+What a project uses is a file in that project: a skill, and an MCP server whose
+declaration names a variable rather than holding a key — the machine keeps the
+value, and the form asks for whatever is missing by name. The app knows a couple
+of servers and writes the declaration when one is picked. A session reaches the
+network through a named tool rather than a shell line, so which sites it read is
+a question the log answers, and a forwarded port carries a dev server to a
+browser or a remote machine's desktop to a remote-desktop client.
 
 ## What is not proven, named rather than glossed
 
@@ -79,6 +87,42 @@ the probes rather than reasoning about them (a missing GPU reported on an RTX
 4090; a port reported busy because `cmd.exe` echoed the script asking about it),
 which is the reason to distrust the rest until somebody walks it.
 
+**No server in the catalogue has been run against the thing it talks to.** The
+mechanism is proven end to end and more than once: a declaration is read, the
+names it asks for are resolved against the machine, a **real** stdio MCP server
+is spawned, its tools land on the session, and a host restart brings it back —
+all against `tests/fixtures/mcpServer.cjs`, which speaks the actual protocol. The
+part nobody here has done is the vendor's half. Package names and the variables
+each reads were taken off the npm registry and each package's own readme on the
+date in `catalogue.json`, and the versions are pinned to what was checked; what
+cannot be checked from this machine is whether a free tier is still free, or
+whether the package still works. Running one needs a SearXNG instance — this
+machine has no container runtime — or a key from a vendor.
+
+**Nobody has put a desktop through the tunnel.** A forward is `ssh -L` and always
+carried any TCP port; what changed is that the session view stopped presenting
+every one as a browser link, since a browser cannot speak RDP. Both shapes the
+row renders are tested. What has not happened is the end of it: `3389` forwarded
+from a real machine with a screen, into a remote-desktop client. No host here has
+a display.
+
+**Two holes in the network tools are recorded rather than closed**, and both are
+about a request that changes after it was vetted. `fetch` resolves a hostname,
+checks every address, and then makes the request *by name* — a resolver that
+answers differently the second time is not caught, and closing that means pinning
+the connection to the vetted address, which needs a dependency this project does
+not have. `screenshot` refuses the metadata address, but the browser follows
+redirects itself, so a public page redirecting there is never seen by that check;
+closing it means a proxy between the browser and the network. Neither is a task
+waiting its turn — they are the known edges of a defence, written down because
+one nobody recorded is worse than one whose limit is known.
+
+**A schedule has been tested against a clock, never watched fire.** The
+arithmetic is unit-tested at fixed times, the runner is driven by a fake clock,
+and the end-to-end test writes one and reads it back off disk from the host that
+will run it. Nobody has left one overnight and found the run in the morning,
+which is the only thing that proves the part this feature exists for.
+
 **OCR is not built**, so the redaction sweep reports `scanned: false` rather than
 an empty match list.
 
@@ -99,3 +143,14 @@ wrong folder, a host that cannot be found, a sidebar row with nothing under it.
 The suite stays green through all of them. Where that has bitten, the fix is
 recorded in the commit that made it — the commit messages here explain defects
 rather than diffs, and are worth reading as a second history of the design.
+
+There is a second shape, and it is worse because the suite *does* see it. Four
+specs failed in full runs and passed when run alone, over several days, and each
+time the reflex was to call them flaky and move on. They were one product defect:
+the runtime picker showed a preselection built before the models were known and
+replaced it about a hundred milliseconds later, so a click landing in that tick
+lost the list — and a person who read the first name and pressed the button in
+that beat seated an agent they had not chosen. What found it was instrumenting
+the thing rather than re-running it. **A test that only fails under load is
+still a test that failed**, and "it passes alone" is a description rather than an
+explanation.
