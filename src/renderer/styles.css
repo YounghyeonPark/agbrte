@@ -64,6 +64,21 @@
  * is not text and has no WCAG figure, but a panel whose edge cannot be found is
  * a panel that reads as part of the page behind it.
  *
+ * ## And it is now one of several, which narrows what a theme may be
+ *
+ * `themes.ts` offers four palettes and this block is the default among them.
+ * Everything above is the *reason* rather than the preference, so a theme may
+ * vary the temperature of the neutrals and how far apart the surfaces sit — and
+ * may not vary that there is one accent, that amber asks and red warns, or that
+ * the ground is not blue-tinted. `themes.test.ts` enforces all three, against
+ * every palette, along with the contrast floors below.
+ *
+ * It also reads this block. The literals here and the default palette there are
+ * two copies of one fact, because Tailwind needs them at build time and the
+ * picker needs them at run time — so a test fails if they ever disagree, which
+ * is the only way that drift is visible before somebody ships a picker whose
+ * "Warm" is not the warm they have been looking at.
+ *
  * ## Measured against the ground, not judged
  *
  * Worth keeping, because the first `fail` red chosen here measured 4.30:1 — it

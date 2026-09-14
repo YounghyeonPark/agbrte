@@ -211,10 +211,20 @@ waiting for a one-in-three failure:
   milliseconds while the dropdown is opened: it opens, and stays open.
 - *The controlled value moving.* `preferred` is derived from that answer, and a
   value changing in the tick Radix is opening is the exact mechanism of the
-  defect that was found and fixed before. The runtime list is doctored to
-  alternate, so the ranking really does move — **the test asserts that it moved**
-  before asserting the open survived, because a version that quietly failed to
-  create the condition would be a green test proving the opposite of its name.
+  defect that was found and fixed before. Driven by doctoring the runtime answer
+  to alternate, with the probe asserting **that the ranking had actually moved**
+  before asserting the open survived. Run alone and repeated, the condition
+  formed every time and the dropdown opened every time.
+
+  That probe is **not in the suite**, and why is worth as much as the result. In
+  a full run it reported *"trigger only ever showed qwen3:8b"* — the alternation
+  had not moved `preferred` that time, because removing the head of the list only
+  moves it when the head was preferred. So the run proved nothing, and the
+  self-check said so rather than passing. A test that can only create its
+  condition opportunistically is an investigative probe, not a gate: keeping it
+  buys red runs meaning "the environment did not cooperate". It answered its
+  question on the runs where the condition demonstrably formed, and the answer
+  lives here.
 - *An unmount.* The full-pane picker renders only while `active.agents.length ===
   0`, so anything seating an agent tears it out — which would lose the open for
   certain. The auto-add effect is the only spurious source, and it cannot fire
