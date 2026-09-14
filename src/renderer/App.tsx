@@ -1996,12 +1996,23 @@ export function App(): JSX.Element {
                               cost a probe of a machine to decide whether to draw a
                               button, and the answer belongs in the pane, where it
                               can say `install x11-apps` instead of going quiet
-                              (§3.3). */}
+                              (§3.3).
+
+                              **`Display` and not `Screen`, which is what it was for
+                              an afternoon.** The composer already has a `Screen`
+                              (`composer-capture`) that attaches a capture of *your*
+                              screen, and the two sat about ten centimetres apart on
+                              one row — the same word for "send a picture of mine"
+                              and "watch a picture of theirs". A person pressing the
+                              wrong one gets a capture picker instead of a remote
+                              desktop, which is not a near miss. The testids stay
+                              `screen-*`: the pane is the screen view, and only the
+                              label had a neighbour to be confused with. */}
                           {remoteHere && (
                             <button
                               className="btn text-[11px]"
                               data-testid="toggle-screen"
-                              title="Watch the screen of that machine, a few frames a second"
+                              title="Watch the screen of that machine, a few frames a second — not a capture of your own"
                               aria-pressed={screenShowing}
                               onClick={() =>
                                 setScreenOpen((was) => ({
@@ -2010,7 +2021,7 @@ export function App(): JSX.Element {
                                 }))
                               }
                             >
-                              Screen
+                              Display
                             </button>
                           )}
                           {/* Not grouped with the three above: grouping it there would

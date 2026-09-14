@@ -109,6 +109,23 @@ test.describe('the screen of that machine', () => {
       await createSession(page, 'looking');
       await addAgent(page, 'echo');
 
+      /*
+       * Its label is not the composer's, and this is a regression rather than a
+       * preference.
+       *
+       * It shipped as `Screen` for an afternoon, which put it about ten
+       * centimetres from `composer-capture` — also `Screen`, and the control that
+       * attaches a picture of *your* screen to the message. One word for "send
+       * mine" and "watch theirs", on one row. Pressing the wrong one opens a
+       * capture picker instead of a remote desktop, so the two are pinned as
+       * different words here.
+       */
+      await expect(toggle(page)).toHaveText('Display');
+      const capture = page.locator('[data-testid=composer-capture]');
+      if ((await capture.count()) > 0) {
+        expect(await capture.innerText()).not.toBe(await toggle(page).innerText());
+      }
+
       // Closed by default, like `Ports`: this one costs a whole frame off a
       // machine several times a second, so it is never open uninvited.
       await expect(row(page)).toHaveCount(0);

@@ -130,7 +130,7 @@ after a restart are not three features but three consequences of that.
   your own remote-desktop client.
 - **And you can watch that machine's screen with nothing installed on it.** A
   remote session that opens a window — an installer, a GUI test, the app it just
-  built — shows it in a `Screen` pane, a few frames a second, over `xwd` alone.
+  built — shows it under `Display`, a few frames a second, over `xwd` alone.
   Every X display is listed with its size, or with why it cannot be read; the
   frame rate is on screen, because it is a property of `xwd` rather than a target.
   Where a VNC server is actually running, the tunnel above is still the better
