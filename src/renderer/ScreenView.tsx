@@ -245,6 +245,27 @@ export function ScreenView({
               ))}
             </select>
 
+            {found.wayland !== undefined && (
+              /*
+               * A caution, not a refusal.
+               *
+               * `xwd` reads an X display, and under Wayland that is XWayland —
+               * whose root is not the compositor's output, so a grab comes back
+               * black or stale while the desktop is plainly there on the monitor.
+               * Said *before* the frame arrives, because a picture of nothing
+               * with nothing explaining it is the one failure this whole pane is
+               * arranged to avoid.
+               *
+               * The button stays enabled: some compositors do put something on
+               * the XWayland root, this host cannot know which, and refusing on a
+               * guess would withhold a view that might have worked (§3.3).
+               */
+              <span className="text-state-paused" data-testid="screen-wayland">
+                that machine runs Wayland — xwd sees only XWayland, so this may be
+                black
+              </span>
+            )}
+
             {found.tool === null && (
               /* The informative case §3.3 is about: there *is* a screen and this
                  host cannot read it yet. An empty list would have sent somebody

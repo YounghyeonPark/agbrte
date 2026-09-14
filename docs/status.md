@@ -143,8 +143,16 @@ with.
 
 Two limits are known rather than suspected. **Wayland**: `xwd -root` sees
 XWayland's root and not the compositor's output, so a Wayland session may grab
-little or nothing — the machine this was measured on runs Xorg on vt2. And **X
-authorisation**: a second display on that same machine refused with
+little or nothing — the machine this was measured on runs Xorg on vt2. The
+*capture* is still missing there and will stay missing until somebody builds the
+portal path, but it is no longer silent: the host looks for a compositor socket
+under `/run/user/<uid>/` and the viewer says so before the frame arrives, because
+a black rectangle with nothing explaining it was the worst shape this feature
+could fail in. Found on the filesystem rather than from `XDG_SESSION_TYPE`,
+which a host started over ssh almost never has. Nobody has run it against a real
+Wayland machine; what is tested is the detection, against built directories.
+
+And **X authorisation**: a second display on that same machine refused with
 `MIT-MAGIC-COOKIE`, and the refusal names `XAUTHORITY` rather than trying
 candidate cookie paths, because a fallback chain never tested against a failing
 display reports the wrong reason when all of it fails.
@@ -193,8 +201,16 @@ build-01` and a local model already preselected, so `modelsBusy` was false, the
 trigger was enabled, and Playwright's click landed. Something after that lost the
 open.
 
-Recorded here rather than fixed, because the honest state is that it has not been
-reproduced. It passes alone, which the paragraph above says is a description; what
+One of the two candidates below is now eliminated. `applyHosts` sets a **new
+array** on every host push, so the picker's whole option list is rebuilt several
+times a second under load — which was the obvious suspect and is not the cause:
+`pickerRace.spec.ts` drives that condition on purpose, pushing every eight
+milliseconds while the dropdown is opened, and the list opens and stays open
+every time. That is one candidate gone for the price of a five-second test rather
+than a day, and the test stays as the record.
+
+The rest is recorded rather than fixed, because the honest state is that it has
+not been reproduced. It passes alone, which the paragraph above says is a description; what
 is new is the narrowing — whatever this is, it is *not* the models-arriving tick,
 so the next person should not start there. Two candidates are visible in the code
 and neither is evidence: `entries` is a `useMemo` over `runtimes`, which is

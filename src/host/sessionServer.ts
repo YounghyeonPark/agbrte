@@ -1655,7 +1655,18 @@ export class SessionHostServer {
            * — and because reading `process.env` inside the module would make it
            * untestable for the one thing it does.
            */
-          return listDisplays({ env: process.env['DISPLAY'] });
+          return listDisplays({
+            env: process.env['DISPLAY'],
+            // Weaker than the socket scan and read anyway: this host is usually
+            // started from a non-login shell over ssh and inherits almost none of
+            // a desktop session's environment, so these are normally absent — but
+            // they are the only signal that survives a compositor whose socket
+            // lives where this process cannot read.
+            session: {
+              XDG_SESSION_TYPE: process.env['XDG_SESSION_TYPE'],
+              WAYLAND_DISPLAY: process.env['WAYLAND_DISPLAY'],
+            },
+          });
 
         case 'display.grab': {
           // The same read. Nothing is logged, stored as a blob or attached to a

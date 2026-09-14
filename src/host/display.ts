@@ -121,6 +121,24 @@ const TOOLS: readonly string[] = [
 const X11_SOCKETS = '/tmp/.X11-unix';
 
 /**
+ * Where a Wayland compositor puts its socket, one directory per user.
+ *
+ * Checked because of what `xwd` cannot see. Under a Wayland session the X server
+ * a client meets is **XWayland**, and its root window is not the compositor's
+ * output: grabbing it returns a black or stale rectangle while the desktop is
+ * plainly there on the monitor. That is the worst shape a failure can take here —
+ * a picture, of nothing, with nothing saying why — and it is exactly what the
+ * rest of this module spends its length avoiding.
+ *
+ * A filesystem fact rather than an environment variable, for the reason the X
+ * displays are found the same way: this host is frequently started from a
+ * non-login shell over ssh and inherits almost none of a desktop session's
+ * environment, so `XDG_SESSION_TYPE` is usually simply absent. A socket in
+ * `/run/user/<uid>/` is there whether or not anybody told this process about it.
+ */
+const WAYLAND_SOCKETS = '/run/user';
+
+/**
  * A hundred bytes is the fixed header, and a little slack covers the window name.
  *
  * The listing stops here rather than reading the frame: a display's size and
@@ -274,6 +292,47 @@ function checkName(display: string): void {
   }
 }
 
+/**
+ * Whether a Wayland compositor is running on this machine, and for whom.
+ *
+ * Returns the socket names found, which is more useful than a boolean: a box
+ * with `wayland-0` under two different uids is a box where the display somebody
+ * means may not be the one this host can reach at all.
+ *
+ * The environment is consulted too, and second. It is the weaker signal here —
+ * usually absent — but it is the only one that survives a compositor whose
+ * socket lives somewhere this cannot read.
+ */
+export async function waylandSockets(
+  dir: string,
+  env: { XDG_SESSION_TYPE?: string | undefined; WAYLAND_DISPLAY?: string | undefined } = {},
+): Promise<string[]> {
+  const found: string[] = [];
+  try {
+    for (const user of await readdir(dir)) {
+      // `/run/user/<uid>` is per-user and frequently unreadable by anybody else,
+      // which is not a fault: it means no answer about that user, not no Wayland.
+      try {
+        for (const name of await readdir(`${dir}/${user}`)) {
+          if (/^wayland-\d+$/u.test(name)) found.push(`${user}/${name}`);
+        }
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // No `/run/user` at all: not a systemd machine, or not Linux.
+  }
+
+  if (found.length === 0) {
+    const typed = env.XDG_SESSION_TYPE?.trim().toLowerCase();
+    const named = env.WAYLAND_DISPLAY?.trim();
+    if (typed === 'wayland') found.push('XDG_SESSION_TYPE=wayland');
+    else if (named !== undefined && named !== '') found.push(`WAYLAND_DISPLAY=${named}`);
+  }
+  return found;
+}
+
 async function socketDisplays(dir: string): Promise<string[]> {
   try {
     const names = await readdir(dir);
@@ -311,10 +370,15 @@ export async function listDisplays(
     socketDir?: string;
     /** `DISPLAY` from the environment, which may name one the sockets do not. */
     env?: string | undefined;
+    /** Where per-user runtime sockets live; injected for the tests. */
+    runtimeDir?: string;
+    /** The two variables that name a Wayland session, where this host has them. */
+    session?: { XDG_SESSION_TYPE?: string | undefined; WAYLAND_DISPLAY?: string | undefined };
   } = {},
 ): Promise<Displays> {
   const tool = opts.tool !== undefined ? opts.tool : findDisplayTool(opts.candidates);
   const names = await socketDisplays(opts.socketDir ?? X11_SOCKETS);
+  const wayland = await waylandSockets(opts.runtimeDir ?? WAYLAND_SOCKETS, opts.session ?? {});
 
   /*
    * `DISPLAY` is consulted because a socket listing is not the whole truth: an X
@@ -328,11 +392,16 @@ export async function listDisplays(
     if (number !== undefined && !names.includes(number)) names.push(number);
   }
 
+  // Carried on every answer rather than only where it changes one, because the
+  // caution is about what the *picture* will contain and that is true whether or
+  // not this host has a tool to take it with.
+  const note = wayland.length > 0 ? { wayland } : {};
+
   if (tool === null) {
     // Listed without sizes: the displays are real and the reason each one has no
     // size is the same missing tool, already named in `tool`. Repeating it per
     // row would read as four problems.
-    return { tool: null, displays: names.map((display) => ({ display })) };
+    return { tool: null, displays: names.map((display) => ({ display })), ...note };
   }
 
   const displays: DisplayInfo[] = [];
@@ -363,7 +432,7 @@ export async function listDisplays(
     }
   }
 
-  return { tool, displays };
+  return { tool, displays, ...note };
 }
 
 /**

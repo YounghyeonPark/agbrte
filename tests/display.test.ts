@@ -15,7 +15,7 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -25,6 +25,7 @@ import {
   grabDisplay,
   listDisplays,
   NoDisplayTool,
+  waylandSockets,
   type Spawn,
 } from '../src/host/display.js';
 import { makeXwd } from './support/xwdDump.js';
@@ -216,6 +217,88 @@ describe('listing the displays on a machine', () => {
     // And `:1.0` is `:1` written with a screen number, not a second display.
     const same = await listDisplays({ run, tool: XWD, socketDir: dirWith(['X1']), env: ':1.0' });
     expect(same.displays.map((d) => d.display)).toEqual([':1']);
+  });
+});
+
+describe('a compositor this cannot see', () => {
+  /*
+   * The gap the feature shipped with, and the shape it used to take: a Wayland
+   * machine gave a black rectangle and said nothing, which is a picture of
+   * nothing with nothing explaining it — the worst outcome a viewer has, and the
+   * one every other field in this module is arranged to avoid.
+   *
+   * Found on the filesystem rather than in the environment, deliberately. This
+   * host is usually started from a non-login shell over ssh and inherits almost
+   * none of a desktop session's variables, so `XDG_SESSION_TYPE` is normally
+   * simply absent — while a socket under `/run/user/<uid>/` is there whether or
+   * not anybody told this process about it.
+   */
+  it('finds a compositor by its socket, whatever the environment says', async () => {
+    const run = mkdtempSync(join(tmpdir(), 'agbrte-run-'));
+    mkdirSync(join(run, '1000'));
+    writeFileSync(join(run, '1000', 'wayland-0'), '');
+    // Beside files that are not it, because `/run/user/<uid>` is full of things.
+    writeFileSync(join(run, '1000', 'bus'), '');
+    writeFileSync(join(run, '1000', 'pulse'), '');
+
+    expect(await waylandSockets(run, {})).toEqual(['1000/wayland-0']);
+  });
+
+  it('reads the environment only when the sockets said nothing', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'agbrte-run-'));
+    expect(await waylandSockets(empty, { XDG_SESSION_TYPE: 'wayland' })).toEqual([
+      'XDG_SESSION_TYPE=wayland',
+    ]);
+    expect(await waylandSockets(empty, { WAYLAND_DISPLAY: 'wayland-1' })).toEqual([
+      'WAYLAND_DISPLAY=wayland-1',
+    ]);
+    // An X session that happens to have the variable set to nothing is not one.
+    expect(await waylandSockets(empty, { XDG_SESSION_TYPE: 'x11', WAYLAND_DISPLAY: '' })).toEqual(
+      [],
+    );
+  });
+
+  it('says nothing rather than guessing when it cannot look', async () => {
+    // `/run/user/<uid>` is frequently unreadable by anybody but its owner, and
+    // that is not a fault — it means no answer about that user, not no Wayland.
+    // §3.3 in its plainest form: an unknown must not render as a `no`.
+    expect(await waylandSockets('/definitely/not/here', {})).toEqual([]);
+  });
+
+  it('carries the caution beside the displays, and still lists them', async () => {
+    /*
+     * A caution, never a refusal. Some compositors do put something on the
+     * XWayland root, this host cannot know which, and hiding the displays on a
+     * guess would withhold a view that might have worked.
+     */
+    const run = mkdtempSync(join(tmpdir(), 'agbrte-run-'));
+    mkdirSync(join(run, '1000'));
+    writeFileSync(join(run, '1000', 'wayland-0'), '');
+    const { run: spawnFake } = fakeSpawn(() => ({ stdout: chunked(screen(1920, 1080)) }));
+
+    const found = await listDisplays({
+      run: spawnFake,
+      tool: XWD,
+      socketDir: dirWith(['X1']),
+      runtimeDir: run,
+    });
+
+    expect(found.wayland).toEqual(['1000/wayland-0']);
+    expect(found.displays[0]).toEqual({ display: ':1', width: 1920, height: 1080 });
+  });
+
+  it('leaves the field off entirely on an X machine', async () => {
+    // Absent rather than an empty array: a client checking `!== undefined` is the
+    // shape this reads best in, and "we looked and found none" is exactly what an
+    // absent optional says here.
+    const { run } = fakeSpawn(() => ({ stdout: chunked(screen(64, 48)) }));
+    const found = await listDisplays({
+      run,
+      tool: XWD,
+      socketDir: dirWith(['X1']),
+      runtimeDir: mkdtempSync(join(tmpdir(), 'agbrte-run-')),
+    });
+    expect(found.wayland).toBeUndefined();
   });
 });
 

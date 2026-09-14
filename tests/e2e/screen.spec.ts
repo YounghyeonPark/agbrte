@@ -46,7 +46,7 @@ const toggle = (page: Page) => page.locator('[data-testid=toggle-screen]');
 /** Answer `display.list` and `display.grab` with whatever the test needs. */
 async function doctorDisplays(
   agbrte: LaunchedApp,
-  answer: { tool: string | null; displays: Array<Record<string, unknown>> },
+  answer: { tool: string | null; displays: Array<Record<string, unknown>>; wayland?: string[] },
   frame?: Record<string, unknown>,
 ): Promise<void> {
   await agbrte.app.evaluate(
@@ -211,6 +211,53 @@ test.describe('the screen of that machine', () => {
       await page.locator('[data-testid=screen-live]').click();
       await expect(page.locator('[data-testid=screen-live]')).toHaveText('Watch');
       await expect(frame).toBeVisible();
+    } finally {
+      await agbrte.close();
+    }
+  });
+
+  test('warns that a Wayland machine will probably be black, and still offers it', async () => {
+    /*
+     * The gap this feature shipped with. `xwd` reads an X display, and under a
+     * Wayland session that is XWayland — whose root is not the compositor's
+     * output, so the grab comes back black while the desktop is plainly there on
+     * the monitor. A picture of nothing with nothing explaining it is the worst
+     * failure a viewer has.
+     *
+     * Said before the frame rather than after, and **not** a refusal: some
+     * compositors do put something on the XWayland root, the host cannot know
+     * which, and hiding the display on a guess would withhold a view that might
+     * have worked (§3.3).
+     */
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      const page = agbrte.window;
+      await pretendRemote(agbrte);
+      await doctorDisplays(
+        agbrte,
+        {
+          tool: '/usr/bin/xwd',
+          displays: [{ display: ':0', width: 1920, height: 1080 }],
+          wayland: ['1000/wayland-0'],
+        },
+        {
+          display: ':0', png: FRAME, width: 1280, height: 720,
+          sourceWidth: 1920, sourceHeight: 1080, tookMs: 120,
+        },
+      );
+      await createSession(page, 'wayland box');
+      await addAgent(page, 'echo');
+      await toggle(page).click();
+
+      const warned = page.locator('[data-testid=screen-wayland]');
+      await expect(warned).toBeVisible({ timeout: 20_000 });
+      await expect(warned).toContainText('XWayland');
+
+      // Offered anyway: the display is listed and the control works.
+      await expect(page.locator('[data-testid=screen-live]')).toBeEnabled();
+      await expect(page.locator('[data-testid=screen-frame]')).toBeVisible();
     } finally {
       await agbrte.close();
     }

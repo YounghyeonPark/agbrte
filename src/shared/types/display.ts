@@ -49,6 +49,22 @@ export interface Displays {
    */
   tool: string | null;
   displays: DisplayInfo[];
+  /**
+   * A compositor this capture cannot see, where one is running.
+   *
+   * `xwd` reads an **X** display. Under a Wayland session the X server a client
+   * meets is XWayland, whose root window is not the compositor's output — so a
+   * grab comes back black or stale while the desktop is plainly there on the
+   * monitor. A picture of nothing, with nothing saying why, is the worst shape a
+   * failure takes in a viewer, and it is the one thing every other field here is
+   * arranged to avoid.
+   *
+   * Present means a compositor was found and this list is probably XWayland.
+   * Absent means none was found, which on a machine whose `/run/user` cannot be
+   * read is "no answer" rather than "no Wayland" — so it is said as a caution
+   * beside the displays and never as a refusal to show them (§3.3).
+   */
+  wayland?: string[];
 }
 
 /** One frame, on the wire. */
