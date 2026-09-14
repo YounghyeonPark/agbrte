@@ -38,6 +38,14 @@ on:
   #
   # `published` rather than `created`: the release workflow makes a **draft**,
   # and a draft is a build somebody has not yet decided to stand behind.
+  #
+  # It cannot deploy directly, and finding that out cost a wrong claim. A release
+  # event runs with `github.ref` pointing at the **tag**, and the `github-pages`
+  # environment only admits deployments from the default branch — so v0.0.39
+  # built the site correctly in nineteen seconds and was then refused at the
+  # door: "Tag v0.0.39 is not allowed to deploy to github-pages due to
+  # environment protection rules". The `relay` job below is the fix, and it is
+  # the fix rather than loosening that rule because the rule is doing its job.
   release:
     types: [published]
   workflow_dispatch:
@@ -54,7 +62,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A release cannot deploy; `main` can. So a release asks `main` to.
+  #
+  # The alternative was to allow tags into the `github-pages` environment, which
+  # would mean any tag anybody ever pushes can replace the live site. That
+  # protection is worth more than the round trip this costs, and the round trip
+  # is one API call.
+  #
+  # `actions: write` and nothing else: this job checks out nothing, reads
+  # nothing, and does exactly one thing.
+  relay:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
+          echo "asked pages.yml to run on main; the deploy happens there"
+
   build:
+    # Skipped on a release, where the deploy would be refused anyway — building a
+    # site that cannot be published is nineteen seconds spent to produce a red
+    # tick nobody can act on.
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
