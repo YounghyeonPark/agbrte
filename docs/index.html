@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Agbrte — coding agents that keep working after you close the laptop. A session runs on a host, not in the window watching it.">
-<meta property="og:title" content="Agbrte — the window is not where the work lives">
+<meta property="og:title" content="Agbrte — Agent Bridge Terminal">
 <meta property="og:description" content="Coding agents that keep working after you close the laptop. Open it in a browser and drive the same session from anywhere.">
 <meta property="og:image" content="https://agbrte.dev/shots/01-dashboard.png">
-<title>Agbrte — coding agents that outlive the window</title>
+<title>Agbrte — Agent Bridge Terminal</title>
 <style>
   /* The palette and type of the design page, deliberately unchanged: this page
      argues for the same program and its screenshots are of that program. A
@@ -15,6 +15,26 @@
   :root {
     --bg: #121211; --panel: #1a1a18; --sunken: #0e0e0d; --line: #2b2b28;
     --ink: #e8e8e4; --muted: #8a8a83; --accent: #d9822b;
+    /*
+     * A second edge, only for screenshots.
+     *
+     * `--line` is right for a panel: it separates two surfaces that differ. It is
+     * wrong for a picture of *this app*, because the screenshot is drawn in this
+     * exact palette — a dark interface on a dark page inside a `#2b2b28` border
+     * has nothing anywhere saying where the page stops and the program starts,
+     * and the pictures read as regions of the layout. Bright enough to be a
+     * frame, dark enough not to be a highlight.
+     */
+    --edge: #57574e;
+    /*
+     * A surface that sits above every band below.
+     *
+     * Panels used `--panel`, which was correct while the whole page was one
+     * colour. With a band *at* `--panel` a card on it disappeared, so the thing
+     * that has to be true is the relation rather than the value: a panel is one
+     * step above whatever it is standing on, wherever it stands.
+     */
+    --raised: #232320;
     --grotesque: 'Helvetica Neue', Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
     --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   }
@@ -25,12 +45,49 @@
     font-family: var(--grotesque); font-size: 16px; line-height: 1.65;
     -webkit-font-smoothing: antialiased; margin: 0;
   }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 3.5rem 1.25rem 5rem; }
-  section { margin: 0 0 4.5rem; }
+  /*
+   * Each section is a full-width band with its own ground, and the reading
+   * column sits inside it.
+   *
+   * The obvious way to do this is `margin-left: calc(50% - 50vw)` on a section
+   * inside one centred wrapper, and it is a trap: `100vw` includes the scrollbar,
+   * so every band would be a few pixels wider than the viewport and the document
+   * would scroll sideways. That is the bug this page already had once, from a
+   * glow inset past its edges, and it is why the structure is bands-outside
+   * rather than a width trick inside.
+   */
+  .band { padding: 4.5rem 0; }
+  .inner { max-width: 1080px; margin: 0 auto; padding: 0 1.25rem; }
+  @media (max-width: 700px) { .band { padding: 3rem 0; } }
+
+  /*
+   * The ladder. Six steps inside one dark family, alternating rather than
+   * ramping: a ramp over six sections is either invisible at each boundary or
+   * ends somewhere that is no longer this palette. Alternating gives every
+   * boundary the same small, legible change.
+   *
+   * The gallery gets the lightest one on purpose — the screenshots are of this
+   * program, drawn in these colours, so they need a ground that is not their own.
+   */
+  .band-hero  { background: #0e0e0d; }
+  .band-shots { background: #1a1a18; }
+  .band-model { background: #121211; }
+  .band-buys  { background: #0e0e0d; }
+  .band-start { background: #1a1a18; }
+  .band-foot  { background: #121211; }
+
+  section { margin: 0; }
   p, ul { max-width: 66ch; }
   a { color: var(--accent); }
 
-  h1 { font-size: clamp(2rem, 6vw, 3.1rem); font-weight: 500; letter-spacing: -0.025em; margin: 0 0 1rem; text-wrap: balance; line-height: 1.15; }
+  /*
+   * The name, spelled out. `Agbrte` is what it is called and `Agent Bridge
+   * Terminal` is what that means, and a visitor who only ever sees the
+   * contraction has to guess at the second — which is most of what the program
+   * does, in three words.
+   */
+  h1 { font-size: clamp(2.1rem, 7.5vw, 4.2rem); font-weight: 500; letter-spacing: -0.03em; margin: 0 0 .6rem; text-wrap: balance; line-height: 1.05; }
+  .tagline { font-size: clamp(1.1rem, 2.8vw, 1.45rem); font-weight: 500; letter-spacing: -0.01em; margin: 0 0 .9rem; color: var(--ink); text-wrap: balance; }
   h2 { font-size: clamp(1.25rem, 3.2vw, 1.5rem); font-weight: 500; letter-spacing: -0.01em; margin: 0 0 .5rem; }
   h3 { font-size: 1rem; font-weight: 500; margin: 0 0 .3rem; }
   .eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .16em; color: var(--muted); display: block; margin-bottom: .7rem; }
@@ -76,7 +133,7 @@
      * fall anyway.
      */
     position: absolute;
-    inset: -8rem 0;
+    inset: 0;
     z-index: -1;
     pointer-events: none;
     opacity: 0;
@@ -128,7 +185,7 @@
   @media (min-width: 900px) { .first { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); } }
 
   .release {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 2px;
+    background: var(--raised); border: 1px solid var(--line); border-radius: 2px;
     padding: 1.1rem 1.25rem;
     position: relative; overflow: hidden;
   }
@@ -155,7 +212,7 @@
   .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .6rem; }
   .dl {
     display: block; text-decoration: none; color: inherit;
-    background: var(--panel); border: 1px solid var(--line); border-radius: 2px;
+    background: var(--raised); border: 1px solid var(--line); border-radius: 2px;
     padding: .75rem .9rem; position: relative; overflow: hidden;
     transition: border-color .15s ease;
   }
@@ -174,7 +231,7 @@
      across is one most readers do not finish. */
   .model { display: grid; grid-template-columns: 1fr auto 1fr; gap: 1rem; align-items: center; margin: 2rem 0 1rem; }
   .stack { display: grid; gap: .6rem; }
-  .node { background: var(--panel); border: 1px solid var(--line); border-radius: 2px; padding: .8rem 1rem; transition: border-color .2s ease; }
+  .node { background: var(--raised); border: 1px solid var(--line); border-radius: 2px; padding: .8rem 1rem; transition: border-color .2s ease; }
   .node .what { display: block; color: var(--muted); font-size: .85rem; }
   .node.host { border-color: var(--accent); }
   .arrow { color: var(--muted); font-size: 1.4rem; text-align: center; }
@@ -185,7 +242,7 @@
 
   .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.1rem; }
   @media (max-width: 860px) { .grid3 { grid-template-columns: 1fr; } }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 2px; padding: 1.1rem 1.2rem; position: relative; overflow: hidden; }
+  .card { background: var(--raised); border: 1px solid var(--line); border-radius: 2px; padding: 1.1rem 1.2rem; position: relative; overflow: hidden; }
   .card p { margin: 0; color: var(--muted); font-size: .95rem; }
 
   /*
@@ -217,7 +274,8 @@
    * stays phone-shaped whatever the column does.
    */
   .shots .tall .frame { width: fit-content; margin-inline: auto; }
-  .shots .tall img { max-height: 440px; width: auto; }
+  .shots .tall img { max-height: 560px; width: auto; }
+  .shots .tall figcaption { text-align: center; }
   figure { margin: 0; }
   figcaption { color: var(--muted); font-size: .88rem; margin-top: .7rem; }
 
@@ -228,12 +286,15 @@
    * harder to read — which is the one thing this section exists to do.
    */
   .frame {
-    display: block; width: 100%; border: 1px solid var(--line); border-radius: 2px;
+    display: block; width: 100%; border: 1px solid var(--edge); border-radius: 3px;
     background: var(--sunken); cursor: zoom-in; padding: 0; overflow: hidden;
+    /* Lifted off the band. A screenshot of a dark interface needs to read as an
+       object with an edge, and a shadow says that where a colour cannot. */
+    box-shadow: 0 14px 34px rgba(0, 0, 0, .45);
     transform: perspective(1200px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
     transition: transform .25s ease, border-color .2s ease;
   }
-  .frame:hover { border-color: var(--muted); }
+  .frame:hover { border-color: var(--ink); }
   .frame img { display: block; width: 100%; height: auto; }
 
   /* --- the lightbox ------------------------------------------------------- */
@@ -267,6 +328,22 @@
   footer { border-top: 1px solid var(--line); padding-top: 1.5rem; color: var(--muted); font-size: .9rem; }
   footer a { margin-right: 1.25rem; }
 
+  /* --- arriving on scroll -------------------------------------------------- */
+  /*
+   * The *content* rises into the band, never the band itself.
+   *
+   * Translating the section would slide its background with it and open a strip
+   * of whatever is behind — a gap that appears and closes on every scroll, which
+   * reads as a rendering fault rather than as an entrance. The ground stays put
+   * and the column moves into it.
+   *
+   * The hidden state is applied **by the script**, so a page with no JavaScript
+   * has every section visible rather than a document of empty coloured bands.
+   * That is the one thing this effect must not get wrong.
+   */
+  .band .inner { transition: opacity .55s ease, transform .55s ease; }
+  .band[data-hidden] .inner { opacity: 0; transform: translateY(16px); }
+
   /*
    * Everything above that moves, withdrawn on request.
    *
@@ -278,190 +355,196 @@
   @media (prefers-reduced-motion: reduce) {
     .hero::before, .card::after, .release::after, .dl::after { display: none; }
     .frame, .button, .node { transition: none; transform: none; }
+    /* Belt and braces: the script does not arm the reveal under this setting,
+       and if it ever did, nothing here would be hidden by it. */
+    .band .inner, .band[data-hidden] .inner { transition: none; opacity: 1; transform: none; }
   }
 </style>
 </head>
 <body>
 
-<div class="wrap">
-
-  <header class="hero" id="hero">
+<header class="band band-hero hero" id="hero">
+  <div class="inner">
     <span class="eyebrow">Agbrte</span>
-    <h1>The window is not where the work lives.</h1>
-    <p class="stand">Coding agents that keep working after you close the laptop, and that you can pick back up from a phone. A session belongs to a host process on the machine the work is on &mdash; not to the app watching it.</p>
+    <h1>Agent&nbsp;Bridge&nbsp;Terminal</h1>
+    <p class="tagline">The window is not where the work lives.</p>
+    <p class="stand">Coding agents that keep running after you close the laptop. The session belongs to the machine the work is on, not to the app watching it.</p>
 
     <div class="first">
-    <!-- RELEASE:BEGIN -->
-    <!--
-      Hand-written between the markers so this file is a working page on its own,
-      and replaced wholesale by `pages.yml` at deploy time. If the markers ever
-      stop matching, the workflow fails loudly rather than shipping this — a
-      landing page quietly advertising a version from months ago is the failure
-      being designed against.
-    -->
-    <div class="release" id="release">
-      <div class="release-head">
-        <span class="release-version">0.0.38</span>
-        <span class="release-when">the latest release</span>
-        <span class="release-tag">What changed</span>
-      </div>
-      <ul>
-        <li>Show the screen of a remote machine, because the tunnel answer assumed a server that was not there</li>
-        <li>Call the remote screen <code class="mono">Display</code>, because <code class="mono">Screen</code> was already ten centimetres away</li>
-        <li>Record that the picker race came back, and what the failure rules out</li>
-      </ul>
-      <a class="release-more" href="https://github.com/YounghyeonPark/agbrte/releases/latest">All of it, with the reasoning &rarr;</a>
-    </div>
-    <!-- RELEASE:END -->
-
-    <!-- DOWNLOADS:BEGIN -->
-    <div class="downloads" id="downloads">
-      <a class="dl" data-os="windows" href="https://github.com/YounghyeonPark/agbrte/releases/latest">
-        <span class="os">Windows</span><span class="file">Agbrte-Setup-….exe</span>
-      </a>
-      <a class="dl" data-os="mac" href="https://github.com/YounghyeonPark/agbrte/releases/latest">
-        <span class="os">macOS</span><span class="file">Agbrte-….dmg</span>
-      </a>
-      <a class="dl" data-os="linux" href="https://github.com/YounghyeonPark/agbrte/releases/latest">
-        <span class="os">Linux</span><span class="file">Agbrte-….AppImage</span>
-      </a>
-    </div>
-    <!-- DOWNLOADS:END -->
+<!-- RELEASE:BEGIN -->
+        <!--
+          Hand-written between the markers so this file is a working page on its own,
+          and replaced wholesale by `pages.yml` at deploy time. If the markers ever
+          stop matching, the workflow fails loudly rather than shipping this — a
+          landing page quietly advertising a version from months ago is the failure
+          being designed against.
+        -->
+        <div class="release" id="release">
+          <div class="release-head">
+            <span class="release-version">0.0.38</span>
+            <span class="release-when">the latest release</span>
+            <span class="release-tag">What changed</span>
+          </div>
+          <ul>
+            <li>Show the screen of a remote machine, because the tunnel answer assumed a server that was not there</li>
+            <li>Call the remote screen <code class="mono">Display</code>, because <code class="mono">Screen</code> was already ten centimetres away</li>
+            <li>Record that the picker race came back, and what the failure rules out</li>
+          </ul>
+          <a class="release-more" href="https://github.com/YounghyeonPark/agbrte/releases/latest">All of it, with the reasoning &rarr;</a>
+        </div>
+        <!-- RELEASE:END -->
+<!-- DOWNLOADS:BEGIN -->
+        <div class="downloads" id="downloads">
+          <a class="dl" data-os="windows" href="https://github.com/YounghyeonPark/agbrte/releases/latest">
+            <span class="os">Windows</span><span class="file">Agbrte-Setup-….exe</span>
+          </a>
+          <a class="dl" data-os="mac" href="https://github.com/YounghyeonPark/agbrte/releases/latest">
+            <span class="os">macOS</span><span class="file">Agbrte-….dmg</span>
+          </a>
+          <a class="dl" data-os="linux" href="https://github.com/YounghyeonPark/agbrte/releases/latest">
+            <span class="os">Linux</span><span class="file">Agbrte-….AppImage</span>
+          </a>
+        </div>
+        <!-- DOWNLOADS:END -->
     </div>
 
     <div class="cta">
       <a class="button" href="./app/">Open the client in this browser</a>
       <a class="button ghost" href="https://github.com/YounghyeonPark/agbrte/releases">Every release</a>
     </div>
-    <p class="caveat">Builds are <strong>unsigned</strong>, and saying so is more useful than a workaround: macOS reports an unidentified developer and Windows SmartScreen warns. A session runs on a <strong>host</strong> &mdash; start one with <code class="mono">npx agbrte web .</code> inside a project folder and it prints a link this page will take. Nothing is uploaded anywhere: the page talks to your machine, never to this site.</p>
-  </header>
+    <p class="caveat">Builds are <strong>unsigned</strong> and say so. Nothing is uploaded: this page talks to your own machine.</p>
+  </div>
+</header>
 
-  <section>
+<section class="band band-shots">
+  <div class="inner">
     <span class="eyebrow">What it looks like</span>
-    <h2>Every session on every attached machine, ranked by who needs a human</h2>
-    <p class="lead">Real screenshots of a real run, taken by the end-to-end suite against a local model rather than drawn for this page. Click any of them.</p>
+    <h2>Every session, on every machine you have attached</h2>
+    <p class="lead">Screenshots of a real run, taken by the test suite. Click any of them.</p>
 
-    <div class="shots">
-      <figure class="wide">
-        <button class="frame" type="button" data-shot="./shots/01-dashboard.png" data-caption="The dashboard, with the sessions that need a person first.">
-          <img src="./shots/01-dashboard.png" alt="The dashboard: session cards under a Needs you heading, with a sidebar listing the attached machine" loading="lazy" width="1440" height="900">
-        </button>
-        <figcaption>Cost and tokens per card. No progress bars, because nothing writes a checklist yet and a bar reading 0/0 forever is worse than no bar.</figcaption>
-      </figure>
+<div class="shots">
+          <figure class="wide">
+            <button class="frame" type="button" data-shot="./shots/01-dashboard.png" data-caption="The dashboard, with the sessions that need a person first.">
+              <img src="./shots/01-dashboard.png" alt="The dashboard: session cards under a Needs you heading, with a sidebar listing the attached machine" loading="lazy" width="1440" height="560">
+            </button>
+            <figcaption>Sorted by who needs a human. Cost and tokens on every card.</figcaption>
+          </figure>
 
-      <figure>
-        <button class="frame" type="button" data-shot="./shots/02-session.png" data-caption="One session: the transcript, the roster, and what the turn is spending.">
-          <img src="./shots/02-session.png" alt="A session: transcript on the right, agent roster above it, composer at the foot" loading="lazy" width="1440" height="900">
-        </button>
-        <figcaption>The transcript is the event log rendered, not a chat history kept beside one. Everything that happened is in it, including who approved what.</figcaption>
-      </figure>
+          <!--
+            The two 1440x900 shots are paired on purpose: same aspect, same rendered
+            height, so the row has no hole in it. The first arrangement put the
+            portrait phone here and every row below it started wherever the phone
+            happened to end.
+          -->
+          <figure>
+            <button class="frame" type="button" data-shot="./shots/02-session.png" data-caption="One session: the transcript, the roster, and what the turn is spending.">
+              <img src="./shots/02-session.png" alt="A session: transcript on the right, agent roster above it, composer at the foot" loading="lazy" width="1440" height="760">
+            </button>
+            <figcaption>The transcript is the event log itself &mdash; including who approved what.</figcaption>
+          </figure>
 
-      <figure class="tall">
-        <button class="frame" type="button" data-shot="./shots/03-phone.png" data-caption="The same app at phone width, one pane at a time.">
-          <img src="./shots/03-phone.png" alt="The same dashboard at phone width, one pane at a time" loading="lazy" width="420" height="860">
-        </button>
-        <figcaption>The same app on a phone, over your own network &mdash; driving a run on a build box, answering its permission prompts.</figcaption>
-      </figure>
+          <figure>
+            <button class="frame" type="button" data-shot="./shots/04-declared.png" data-caption="What a project declares: skills and MCP servers as tracked files.">
+              <img src="./shots/04-declared.png" alt="The new-session form listing the skills and MCP servers this workspace declares" loading="lazy" width="1440" height="900">
+            </button>
+            <figcaption>Skills and MCP servers are files in the repo. Keys are named, never stored.</figcaption>
+          </figure>
 
-      <figure>
-        <button class="frame" type="button" data-shot="./shots/04-declared.png" data-caption="What a project declares: skills and MCP servers as tracked files.">
-          <img src="./shots/04-declared.png" alt="The new-session form listing the skills and MCP servers this workspace declares" loading="lazy" width="1440" height="900">
-        </button>
-        <figcaption>A skill or an MCP server is a file in the repository, so a colleague gets it by cloning and a diff records when it arrived. Keys are named, never stored in the file.</figcaption>
-      </figure>
+          <figure class="wide">
+            <button class="frame" type="button" data-shot="./shots/05-workflow.png" data-caption="A workflow document, drawn as the graph it describes.">
+              <img src="./shots/05-workflow.png" alt="The workflow editor: a document on the left, the graph it describes on the right" loading="lazy" width="1440" height="600">
+            </button>
+            <figcaption>A workflow is a file. The editor draws it and refuses it while it is wrong.</figcaption>
+          </figure>
 
-      <figure>
-        <button class="frame" type="button" data-shot="./shots/05-workflow.png" data-caption="A workflow document, drawn as the graph it describes.">
-          <img src="./shots/05-workflow.png" alt="The workflow editor: a document on the left, the graph it describes on the right" loading="lazy" width="1440" height="600">
-        </button>
-        <figcaption>The editor draws the graph and refuses a part while you are still writing it, using the rules a live run would have hit later.</figcaption>
-      </figure>
-    </div>
-  </section>
+          <!-- A row of its own, centred. The only portrait picture in the set, and
+               giving it half a landscape column is what made it either enormous or
+               stranded beside an empty half-column. -->
+          <figure class="wide tall">
+            <button class="frame" type="button" data-shot="./shots/03-phone.png" data-caption="The same app at phone width, one pane at a time.">
+              <img src="./shots/03-phone.png" alt="The same dashboard at phone width, one pane at a time" loading="lazy" width="390" height="844">
+            </button>
+            <figcaption>The same app on a phone, driving a run on a build box.</figcaption>
+          </figure>
+        </div>
+  </div>
+</section>
 
-  <section>
+<section class="band band-model">
+  <div class="inner">
     <span class="eyebrow">How it works</span>
-    <h2>One process owns the work. Everything else is a view of it.</h2>
-    <p class="lead">Most agent tools put the loop inside the application, which makes closing the window a decision about the work. Here the application holds no session state at all.</p>
+    <h2>One process owns the work. Everything else is a view.</h2>
+    <p class="lead">Close the app mid-run, open the same session on another machine, restart the box &mdash; all three are the same arrangement, not three features.</p>
 
     <div class="model">
       <div class="stack">
         <div class="node">Desktop app<span class="what">macOS, Windows, Linux</span></div>
-        <div class="node">Browser<span class="what">a phone on your own network</span></div>
+        <div class="node">Browser<span class="what">a phone on your network</span></div>
         <div class="node">Terminal<span class="what"><span class="mono">agbrte</span>, on a box with no display</span></div>
       </div>
       <div class="arrow" aria-hidden="true">&rarr;</div>
       <div class="stack">
-        <div class="node host">The host<span class="what">owns the event log, the permission gate and the turn queue — and keeps running when every client above has gone</span></div>
-        <div class="node">Your folders<span class="what">each with its own sessions, so moving the folder moves the work</span></div>
+        <div class="node host">The host<span class="what">owns the log, the permission gate and the queue &mdash; and keeps running when every client above has gone</span></div>
+        <div class="node">Your folders<span class="what">each with its own sessions</span></div>
       </div>
     </div>
-    <p class="caveat">Closing the app mid-run, driving one session from a second machine, and resuming after a restart are not three features. They are three consequences of that one arrangement.</p>
-  </section>
+  </div>
+</section>
 
-  <section>
-    <span class="eyebrow">What follows</span>
+<section class="band band-buys">
+  <div class="inner">
+    <span class="eyebrow">What that buys</span>
     <div class="grid3">
       <div class="card">
-        <h3>The run outlives the client</h3>
-        <p>Quitting does not stop a turn. Two machines on one session see one transcript, and a permission prompt raised on either is answerable from the other.</p>
+        <h3>Quitting does not stop a turn</h3>
+        <p>Two machines on one session see one transcript. A prompt raised on either is answerable from the other.</p>
       </div>
       <div class="card">
         <h3>Everything resumes from its log</h3>
-        <p>Which agent ran, under which model, what it did, who approved each thing it needed. A moved folder, a switched provider and a restarted machine are one problem rather than three.</p>
+        <p>Which agent ran, under which model, and who approved each thing it needed.</p>
       </div>
       <div class="card">
         <h3>Sessions can work as a team</h3>
-        <p>Group them and they reach each other — a short message that wakes the other session, or a read of what it has actually been doing. From the desktop or from a terminal.</p>
+        <p>Group them and they reach each other &mdash; a message that wakes one, or a read of what it has been doing.</p>
       </div>
       <div class="card">
-        <h3>A port on that machine comes to this one</h3>
-        <p>A plain tunnel, so it carries a dev server to your browser or that machine's desktop to a remote-desktop client. The app names the ports a browser cannot speak instead of linking them.</p>
+        <h3>A workflow is a file</h3>
+        <p>The decomposition is written down and reviewed in a diff, so an agent can propose one without running it.</p>
       </div>
       <div class="card">
-        <h3>And its screen, with nothing installed there</h3>
-        <p>A remote session that opens a window shows it a few frames a second, over <code class="mono">xwd</code> alone. The frame rate is on screen, because it is a property of the tool and not a target.</p>
+        <h3>That machine&rsquo;s ports and screen</h3>
+        <p>A plain tunnel brings a dev server here. A remote window shows a few frames a second, with nothing installed there.</p>
       </div>
       <div class="card">
         <h3>What is not proven says so</h3>
-        <p>There is a page for what has been tested, what has only been reasoned about, and what is known to be missing. It is kept current because it is embarrassing, not despite it.</p>
+        <p>A page for what is tested, what was only reasoned about, and what is missing.</p>
       </div>
     </div>
-  </section>
+  </div>
+</section>
 
-  <section>
-    <span class="eyebrow">Workflows</span>
-    <h2>Write the decomposition down, and review it like code</h2>
-    <p class="lead">Work that has a shape you already know should not be re-derived every time. A workflow is that shape as a file in the repository: what the parts are, what each one may not touch, what it owes back, and what it waits on.</p>
-    <p>Because it is a file, it is read in a diff — which is what makes a decomposition somebody wrote safe where one a machine invented is not. An agent can propose one, and it proposes by writing the file rather than by starting a run. The editor draws the graph and refuses a part while you are still writing it, using the same rules a live session would have hit later.</p>
-    <p class="caveat">Running one spawns each part as its dependencies finish, with its own log, and a slice of the budget reserved before it exists when the run was given one. A part that fails stops what needed it and nothing else.</p>
+<section class="band band-start">
+  <div class="inner">
+    <span class="eyebrow">Getting started</span>
+    <h2>One command, where your work is</h2>
+    <p class="lead">On your laptop or on a server you reach by ssh. It prints a link with a token in it; that link is what the client wants.</p>
+<pre>npx agbrte web .</pre>
     <div class="cta">
-      <a class="button ghost" href="./idea/#workflows">How it is put together</a>
+      <a class="button" href="./app/">Open the client</a>
+      <a class="button ghost" href="https://github.com/YounghyeonPark/agbrte#get-it">Install it instead</a>
     </div>
-  </section>
+  </div>
+</section>
 
-  <section>
-    <span class="eyebrow">Getting a host</span>
-    <h2>One command where your work is</h2>
-    <p class="lead">A host is whatever you run this on — your laptop, or a server you reach by ssh. It prints a link; that link is what the browser client wants.</p>
-<pre>agbrte web .</pre>
-    <p class="caveat">The link carries a token, and the socket admits nobody without it. The address still decides who can reach the host at all, which is why it binds to loopback unless you name something else.</p>
-    <div class="cta">
-      <a class="button" href="./app/">Open the browser client</a>
-      <a class="button ghost" href="https://github.com/YounghyeonPark/agbrte#get-it">How to install</a>
-    </div>
-  </section>
-
-  <footer>
+<footer class="band band-foot">
+  <div class="inner">
     <a href="./idea/">The idea, and the shape it forces</a>
     <a href="https://github.com/YounghyeonPark/agbrte">Source</a>
     <a href="https://github.com/YounghyeonPark/agbrte/blob/main/DESIGN.md">DESIGN.md</a>
     <a href="https://github.com/YounghyeonPark/agbrte/blob/main/docs/status.md">What is not proven</a>
-    <a href="https://github.com/YounghyeonPark/agbrte/releases">Releases</a>
     <p style="margin-top:1.25rem">Apache-2.0. Builds are unsigned and say so.</p>
-  </footer>
-
-</div>
+  </div>
+</footer>
 
 <dialog class="lightbox" id="lightbox">
   <img id="lb-img" alt="">
@@ -584,6 +667,47 @@
     });
   }
 
+  // ---------------------------------------------------------------- reveal
+
+  /**
+   * Let each band's content arrive as it is scrolled to.
+   *
+   * The hidden state is applied **here**, never in the stylesheet, and that is
+   * the whole of the accessibility argument: a page that hides its sections in
+   * CSS and reveals them with JavaScript is a page that shows a visitor with no
+   * JavaScript five empty coloured rectangles. Hidden only if something is
+   * running that can unhide it.
+   *
+   * The first band is skipped. It is already on screen when the page loads, so
+   * hiding it means the first thing anybody sees is a blank ground that fills in
+   * a moment later — an entrance for content that never went anywhere.
+   *
+   * `unobserve` on the way out, because this is an arrival and not a state: a
+   * band that fades again when scrolled past would make the page feel like it is
+   * forgetting things.
+   */
+  function revealOnScroll() {
+    if (reduced.matches || typeof window.IntersectionObserver !== 'function') return;
+
+    var bands = Array.prototype.slice.call(document.querySelectorAll('.band'));
+    var later = bands.slice(1);
+    later.forEach(function (band) { band.setAttribute('data-hidden', ''); });
+
+    var seen = new window.IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          entry.target.removeAttribute('data-hidden');
+          seen.unobserve(entry.target);
+        });
+      },
+      // A little *into* the viewport rather than at its edge, so a band has
+      // started arriving before it finishes, instead of flicking in at the line.
+      { rootMargin: '0px 0px -10% 0px' },
+    );
+    later.forEach(function (band) { seen.observe(band); });
+  }
+
   // ------------------------------------------------------------- downloads
 
   /*
@@ -658,6 +782,7 @@
   }
 
   trackPointer();
+  revealOnScroll();
   markPlatform();
   wireLightbox();
 })();

@@ -52,8 +52,16 @@ const WANTED = [
   { os: 'linux', label: 'Debian or Ubuntu', match: /^agbrte_[\d.]+_amd64\.deb$/u },
 ];
 
-/** How many changes the first screen carries before it stops being a first screen. */
-const MAX_CHANGES = 6;
+/**
+ * How many changes the first screen carries before it stops being a first screen.
+ *
+ * Four. Six was the whole of a release and made this box the tallest thing above
+ * the fold — a changelog that has to be scrolled is not a summary, it is the
+ * release notes with worse typography. What is dropped is not hidden: the link
+ * underneath counts them when it truncates, so "All 6" is the page saying there
+ * are two more rather than implying there are four.
+ */
+const MAX_CHANGES = 4;
 
 export function escapeHtml(text) {
   return String(text)
@@ -130,8 +138,12 @@ export function replaceRegion(html, name, body) {
 }
 
 function releaseHtml(release) {
-  const changes = changesFrom(release.body).slice(0, MAX_CHANGES);
+  const all = changesFrom(release.body);
+  const changes = all.slice(0, MAX_CHANGES);
   const when = readableDate(release.publishedAt);
+  // Counted only when it truncates. "All 4" beside exactly four is a number that
+  // answers a question nobody asked.
+  const more = all.length > changes.length ? `All ${all.length}` : 'All of it';
   /*
    * A release whose notes have no `What changed` section is rendered without the
    * list rather than with an empty one. `release.yml` omits that heading on
@@ -152,7 +164,7 @@ function releaseHtml(release) {
         <span class="release-when">${escapeHtml(when)}</span>
         <span class="release-tag">What changed</span>
       </div>${items}
-      <a class="release-more" href="${escapeHtml(release.url)}">All of it, with the reasoning &rarr;</a>
+      <a class="release-more" href="${escapeHtml(release.url)}">${more}, with the reasoning &rarr;</a>
     </div>
   `;
 }

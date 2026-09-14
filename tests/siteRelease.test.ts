@@ -82,6 +82,34 @@ describe('what goes on the first screen', () => {
     expect(out).toContain('<!-- RELEASE:END -->');
   });
 
+  it('shows four, and says how many there were when it drops some', () => {
+    /*
+     * Six bullets made this the tallest thing above the fold, which is the
+     * release notes with worse typography rather than a summary. What matters is
+     * that truncating is *visible*: the link counts them, so a reader is told
+     * there are more rather than left to assume four was the whole release.
+     */
+    const body = ['## What changed', '']
+      .concat(['one', 'two', 'three', 'four', 'five', 'six'].map((n) => `- ${n}`))
+      .join('\n');
+    const six = bake(PAGE, fromGh(release({ body })));
+    expect((six.match(/<li>/gu) ?? []).length).toBe(4);
+    expect(six).toContain('All 6, with the reasoning');
+    // The two that were dropped are dropped, not silently reordered in.
+    expect(six).not.toContain('<li>five</li>');
+
+    const two = bake(
+      PAGE,
+      // Joined rather than written with escapes: a heredoc on this machine eats
+      // backslashes, and the first version of this line put real newlines inside
+      // a TypeScript string literal (CLAUDE.md, hazard 5).
+      fromGh(release({ body: ['## What changed', '', '- one', '- two', ''].join('\n') })),
+    );
+    expect((two.match(/<li>/gu) ?? []).length).toBe(2);
+    // Not "All 2": a count beside a complete list answers a question nobody asked.
+    expect(two).toContain('All of it, with the reasoning');
+  });
+
   it('takes only the changes, not the sections after them', () => {
     /*
      * `## What changed` is followed by `## Which file`, which is also a list of
