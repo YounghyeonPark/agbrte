@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Agbrte — coding agents that keep working after you close the laptop. A session runs on a host, not in the window watching it.">
+<meta name="description" content="Agbrte — a desktop app and CLI for running coding agents. Each session runs on the machine the work is on, so closing the app does not stop it.">
 <meta property="og:title" content="Agbrte — Agent Bridge Terminal">
-<meta property="og:description" content="Coding agents that keep working after you close the laptop. Open it in a browser and drive the same session from anywhere.">
+<meta property="og:description" content="A desktop app and CLI for running coding agents. Sessions run on the machine the work is on — your laptop or a server — and open again from a browser or a phone.">
 <meta property="og:image" content="https://agbrte.dev/shots/01-dashboard.png">
 <title>Agbrte — Agent Bridge Terminal</title>
 <style>
@@ -87,7 +87,7 @@
    * does, in three words.
    */
   h1 { font-size: clamp(2.1rem, 7.5vw, 4.2rem); font-weight: 500; letter-spacing: -0.03em; margin: 0 0 .6rem; text-wrap: balance; line-height: 1.05; }
-  .tagline { font-size: clamp(1.1rem, 2.8vw, 1.45rem); font-weight: 500; letter-spacing: -0.01em; margin: 0 0 .9rem; color: var(--ink); text-wrap: balance; }
+  .tagline { font-size: clamp(1.15rem, 3.1vw, 1.65rem); font-weight: 500; letter-spacing: -0.01em; margin: 0 0 1rem; color: var(--ink); text-wrap: balance; }
   h2 { font-size: clamp(1.25rem, 3.2vw, 1.5rem); font-weight: 500; letter-spacing: -0.01em; margin: 0 0 .5rem; }
   h3 { font-size: 1rem; font-weight: 500; margin: 0 0 .3rem; }
   .eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .16em; color: var(--muted); display: block; margin-bottom: .7rem; }
@@ -367,8 +367,17 @@
   <div class="inner">
     <span class="eyebrow">Agbrte</span>
     <h1>Agent&nbsp;Bridge&nbsp;Terminal</h1>
-    <p class="tagline">The window is not where the work lives.</p>
-    <p class="stand">Coding agents that keep running after you close the laptop. The session belongs to the machine the work is on, not to the app watching it.</p>
+    <!--
+      Says what it is before it says what it argues.
+      
+      This line read "The window is not where the work lives." — which is the
+      thesis, and a thesis only means something to somebody who already knows
+      what the thing is. A visitor arriving cold learned the project had an
+      opinion and not what category of program they were looking at. The argument
+      still gets made, further down, where "How it works" is for.
+    -->
+    <p class="tagline">A desktop app and a CLI for running coding agents.</p>
+    <p class="stand">Each session runs in a host process on the machine the work is on &mdash; your laptop, or a server over ssh. Closing the app does not stop a turn, and the same session opens again from a browser or a phone.</p>
 
     <div class="first">
 <!-- RELEASE:BEGIN -->

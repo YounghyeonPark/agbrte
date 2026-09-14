@@ -23,7 +23,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { installStrayPipeGuard } from './strayPipeRead.js';
 import { registerIpc } from './ipc/register.js';
-import { PUSH } from '@shared/ipc/contract.js';
+import { PRODUCT_DESCRIPTION, PUSH } from '@shared/ipc/contract.js';
 import { Notifier } from './notify.js';
 import { Fleet, type FleetRuntime } from './fleet.js';
 import { connectOrSpawnHost } from './host/connectOrSpawn.js';
@@ -468,8 +468,7 @@ app.whenReady().then(async () => {
     about: {
       name: 'Agbrte',
       version: APP_VERSION,
-      description:
-        'Agent Bridge Terminal — durable, bridge-owned agent sessions you attach to from any device.',
+      description: PRODUCT_DESCRIPTION,
       license: 'Apache-2.0',
       homepage: 'https://github.com/YounghyeonPark/agbrte',
       runtime: {

@@ -40,6 +40,7 @@ import { connect } from '@shared/host/socketChannel.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
 import { HostConnection } from '@main/host/hostConnection.js';
 import { newControlToken } from '@shared/host/loopback.js';
+import { PRODUCT_DESCRIPTION } from '@shared/ipc/contract.js';
 import type { SessionId } from '@shared/types/index.js';
 import { KNOWN_COMMANDS, parse } from './args.js';
 import { attach } from './attach.js';
@@ -578,8 +579,7 @@ async function main(): Promise<number> {
         about: {
           name: 'Agbrte',
           version: AGBRTE_VERSION,
-          description:
-            'Agent Bridge Terminal — durable, bridge-owned agent sessions you attach to from any device.',
+          description: PRODUCT_DESCRIPTION,
           license: 'Apache-2.0',
           homepage: 'https://github.com/YounghyeonPark/agbrte',
         },

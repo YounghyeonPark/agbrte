@@ -539,6 +539,25 @@ export interface SessionSnapshot {
  * honest answer is "whatever the server runs". `runtime` is absent in a
  * browser — a tab has no Electron or Node version of its own to report.
  */
+/**
+ * One sentence saying what this program is.
+ *
+ * Here because it was written out twice — once in `main.ts` for the desktop app
+ * and once in `cli/agbrte.ts` for a browser client — and `About.tsx` spends a
+ * paragraph on why those two must agree: the answer is asked of the process
+ * serving the API precisely so the two cannot drift into showing different
+ * truths for one installation. Two copies of the literal is that drift with an
+ * extra step.
+ *
+ * It says what the thing **is** before what it argues. It used to open with
+ * "durable, bridge-owned agent sessions", which names a property of the design
+ * to somebody who has not yet learned what category of program they are looking
+ * at. The landing page made the same mistake in the same words and was told so.
+ */
+export const PRODUCT_DESCRIPTION =
+  'Agent Bridge Terminal — a desktop app and CLI for running coding agents. ' +
+  'Each session runs on the machine the work is on, so closing the app does not stop it.';
+
 export interface AboutInfo {
   name: string;
   version: string;
