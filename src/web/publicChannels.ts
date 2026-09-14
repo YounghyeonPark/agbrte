@@ -32,6 +32,18 @@
  * holding only tools that cannot leave the workspace directory, and from the
  * workspace being a throwaway. A read-only demo would be the recording again,
  * with more machinery.
+ *
+ * ## And what is deliberately not, where the reasoning nearly carried too far
+ *
+ * `files.list` and `files.read` are allowed because the *workspace* bounds them:
+ * a throwaway folder is the whole of what a visitor can read. `display.list` and
+ * `display.grab` (§12.1, v37) look like the same kind of read and are not bounded
+ * by anything — a display is whatever happens to be on the screen of the machine
+ * serving the page, including the mail client of the person who set the demo up.
+ *
+ * So they are absent, and `refusalFor` groups them with capture, which already
+ * says the honest thing: this needs a screen on the serving machine, and the
+ * public demo does not hand one out.
  */
 
 import { CH } from '../shared/ipc/contract.js';
@@ -101,7 +113,13 @@ export function refusalFor(channel: string): string {
       'machine serving this page. Run your own host and you get one.'
     );
   }
-  if (channel.startsWith('agbrte:capture.') || channel.startsWith('agbrte:preview.')) {
+  if (
+    channel.startsWith('agbrte:capture.') ||
+    channel.startsWith('agbrte:preview.') ||
+    // A display is not bounded by the workspace the way a file is: it is whatever
+    // is on the screen of the machine serving this page (§12.1).
+    channel.startsWith('agbrte:display.')
+  ) {
     return (
       'this needs a screen or a server process on the machine serving the page, ' +
       'which the public demo does not hand out. Run your own host and it works.'

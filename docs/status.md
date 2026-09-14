@@ -126,6 +126,30 @@ which is the only thing that proves the part this feature exists for.
 **OCR is not built**, so the redaction sweep reports `scanned: false` rather than
 an empty match list.
 
+**The remote screen has never been read off a real display.** The `xwd` format
+decoder is tested against dumps built field by field — padded rows, either byte
+order, 16/24/32 bits, masks in the wrong order, a colormap in the way — and the
+driver is tested with `spawn` injected, including a display that refuses the
+cookie and one that never answers. The end-to-end run proves the whole path by
+asking a **Windows** host, which genuinely has no X display, and getting that
+answer back through every layer. None of that is a frame off a real GNOME
+session, which only the user's machine can produce.
+
+Two limits are known rather than suspected. **Wayland**: `xwd -root` sees
+XWayland's root and not the compositor's output, so a Wayland session may grab
+little or nothing — the machine this was measured on runs Xorg on vt2. And **X
+authorisation**: a second display on that same machine refused with
+`MIT-MAGIC-COOKIE`, and the refusal names `XAUTHORITY` rather than trying
+candidate cookie paths, because a fallback chain never tested against a failing
+display reports the wrong reason when all of it fails.
+
+**The frame rate is a measurement, not a target.** 0.13s to grab 12.7MB plus
+0.16s to encode 430KB, at 2944×1080, and `xwd` has no damage tracking — so every
+frame is the whole screen and three to five a second is the ceiling. It is
+rendered on screen for that reason. There is no video codec, no input, and no
+agent tool; where a VNC server exists, the port forward is still the better
+answer.
+
 **A public host is confined, not isolated.** `--public` withdraws every
 capability that reaches past the workspace directory, and that much is tested and
 was verified end to end against a real model — an agent on a public host answers

@@ -69,8 +69,28 @@ export async function fillRects(frame: Buffer, rects: readonly Rect[]): Promise<
  */
 export async function scaleToFit(frame: Buffer, maxLongEdge: number): Promise<Buffer> {
   const image = decode(frame);
+  const scaled = scaleRawToFit(image, maxLongEdge);
+  // Untouched means untouched: the original bytes rather than a re-encode of the
+  // same pixels, which is what the early return above was always for.
+  return scaled === image ? frame : encodePng(scaled);
+}
+
+/**
+ * The same scaling, on pixels that are not a PNG yet.
+ *
+ * Split out for the X display path (§12.1), which arrives as an `xwd` dump and
+ * has to leave as a PNG. Going through `scaleToFit` there would encode a
+ * 2944×1080 frame, decode it again and encode the result — three passes, about
+ * 0.4s measured, on a path whose whole purpose is to send a frame every few
+ * hundred milliseconds. One encode is the difference between a live view and a
+ * slideshow.
+ *
+ * Returns the argument itself when it already fits, which is what lets the
+ * caller above avoid a pointless re-encode.
+ */
+export function scaleRawToFit(image: RawImage, maxLongEdge: number): RawImage {
   const longEdge = Math.max(image.width, image.height);
-  if (longEdge <= maxLongEdge) return frame;
+  if (longEdge <= maxLongEdge) return image;
 
   const factor = maxLongEdge / longEdge;
   const width = Math.max(1, Math.round(image.width * factor));
@@ -111,7 +131,7 @@ export async function scaleToFit(frame: Buffer, maxLongEdge: number): Promise<Bu
     }
   }
 
-  return encodePng(out);
+  return out;
 }
 
 /** Dimensions without decoding the whole thing, for sizing decisions. */

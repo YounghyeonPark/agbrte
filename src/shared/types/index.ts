@@ -13,3 +13,4 @@ export * from './inbox.js';
 export * from './terminal.js';
 export * from './files.js';
 export * from './workflow.js';
+export * from './display.js';

@@ -352,6 +352,41 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  *
+ * ## v37 adds `display.list` and `display.grab`, which reach a screen
+ *
+ * §12.1 names three kinds of capture and shipped two. The third — "remote
+ * display grab where a real or virtual display exists" — is the answer to a
+ * question §6.8 cannot answer: an agent on a remote machine opens a *window*, and
+ * a forwarded port reaches a listener while a browser screenshot reaches a URL.
+ * Neither reaches something that is simply on that machine's desktop.
+ *
+ * Two commands rather than one, and it is `files.list` and `files.read`'s split
+ * for a sharper reason. A grab is twelve megabytes of `xwd` output on the
+ * machine this was measured on; a listing that returned frames would cost more
+ * than the view it introduces. So `display.list` probes each display, stops after
+ * the header, and answers with a size — or with **why that display cannot be
+ * read**, which is the field that took the most thought: a display whose cookie
+ * this host does not hold is a real screen somebody can fix, so dropping it would
+ * say "no screen" (§3.3) and listing it as ready would be a control that fails on
+ * press (§3.5).
+ *
+ * **Both are reads**, the treatment `files.list` gets and for its reason: there
+ * is no model on this path, so §13's gate — which is about what a *model* asks
+ * the app for — has nothing to weigh. A person with a window open on a machine
+ * they are already running a session on is not somebody to prompt for permission
+ * to look. Nothing is logged, stored or attached; a frame is rendered and
+ * dropped.
+ *
+ * What that leaves deliberately absent is an **agent tool**. Handing a model the
+ * whole screen of somebody's workstation is a different decision from showing it
+ * to the person sitting there, and it would need its own name at the gate. There
+ * is no input either — no pointer, no keyboard, no clipboard. This is a view, and
+ * VNC remains the better answer for anything interactive.
+ *
+ * A v36 host refuses both by name through `COMMAND_SINCE`, and the degradation is
+ * exactly what shipped: forward `5900` and use a VNC client, which the port table
+ * in `shared/preview/protocols.ts` already names.
+ *
  * ## v36 writes a declaration, so a catalogue can be a shortcut to a file
  *
  * The app knows a couple of well-known servers (`shared/mcp/catalogue.ts`), and
@@ -897,7 +932,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 36;
+export const SESSION_PROTOCOL_VERSION = 37;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -985,6 +1020,8 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'mcp.project': 34,
   'session.attachProject': 35,
   'mcp.declare': 36,
+  'display.list': 37,
+  'display.grab': 37,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -1075,6 +1112,30 @@ export type SessionCommand =
    * gets what a person named when they made it.
    */
   | { t: 'mcp.project'; id: RequestId }
+  /**
+   * The X displays on this machine, and which of them this host can read
+   * (§12.1, v37).
+   *
+   * A read, like `files.list`. Answers with a size per display, or with why one
+   * cannot be grabbed — see `DisplaysReply`.
+   */
+  | { t: 'display.list'; id: RequestId }
+  /**
+   * One frame of one display, as a PNG (§12.1, v37).
+   *
+   * `maxEdge` is the client saying how big a picture it can use, and it exists
+   * because the saving is the whole feature: a full 2944×1080 frame is 430KB of
+   * PNG and a 1600px one is a fraction of that, several times a second, over ssh.
+   * The host only ever scales *down*, so an absent or oversized value means the
+   * screen at its own size rather than an upscale of it.
+   *
+   * **Pull, one frame per request, and that is the backpressure.** The tempting
+   * shape is a stream the host pushes — and a host pushing 430KB frames at a
+   * client that has stopped reading is the one thing the session connection must
+   * not carry. A viewer that asks for the next frame when the last one arrives
+   * cannot outrun the link it is on.
+   */
+  | { t: 'display.grab'; id: RequestId; display: string; maxEdge?: number }
   /**
    * Which named secrets this machine holds — **names only** (§13, v33).
    *

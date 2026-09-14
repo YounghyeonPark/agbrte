@@ -128,6 +128,13 @@ after a restart are not three features but three consequences of that.
 - **A port on a remote machine comes to a local one**, and it is a plain tunnel,
   so it carries a dev server to your browser or that machine's **desktop** to
   your own remote-desktop client.
+- **And you can watch that machine's screen with nothing installed on it.** A
+  remote session that opens a window — an installer, a GUI test, the app it just
+  built — shows it in a `Screen` pane, a few frames a second, over `xwd` alone.
+  Every X display is listed with its size, or with why it cannot be read; the
+  frame rate is on screen, because it is a property of `xwd` rather than a target.
+  Where a VNC server is actually running, the tunnel above is still the better
+  answer, and the app says so.
 - **A real terminal that says when it is off the record.** The PTY pane writes no
   events, passes no permission gate and spends your own allowance, and its header
   says so every time it is open.

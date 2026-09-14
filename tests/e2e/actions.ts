@@ -8,6 +8,7 @@
  */
 
 import { expect, type Page } from '@playwright/test';
+import type { LaunchedApp } from './harness.js';
 
 /**
  * Create a session on a host, addressed by its badge label.
@@ -261,4 +262,47 @@ export async function runtimeOptions(page: Page): Promise<string[]> {
     .evaluateAll((nodes) => nodes.map((n) => n.getAttribute('data-runtime') ?? ''));
   await page.keyboard.press('Escape');
   return [...new Set(values)];
+}
+
+/**
+ * Make the app believe its host is an ssh one, on both paths it learns from.
+ *
+ * Two features are remote-only on purpose — the ports row (§6.8) and the screen
+ * view (§12.1) — because a local dev server is already on `localhost` and this
+ * machine's screen is already on this machine's screen. A checkout has no remote
+ * machine, so the only way to reach either screen is to doctor what the renderer
+ * branches on.
+ *
+ * Wrapped in main rather than stubbed in the page: `contextBridge` hands the
+ * renderer a frozen API, so a stub installed there would be a stub of nothing.
+ * The same technique `setup.spec.ts` uses, and only the two fields the renderer
+ * reads are changed — the rest of the screen stays the real host's answer.
+ */
+export async function pretendRemote(agbrte: LaunchedApp): Promise<void> {
+  await agbrte.app.evaluate(async ({ ipcMain, BrowserWindow }) => {
+    const handlers = (
+      ipcMain as unknown as {
+        _invokeHandlers: Map<string, (...args: unknown[]) => unknown>;
+      }
+    )._invokeHandlers;
+    const original = handlers.get('agbrte:hosts.list');
+    if (original === undefined) throw new Error('no hosts.list handler to wrap');
+
+    const doctor = async (event: unknown): Promise<unknown> => {
+      const hosts = (await original(event)) as Array<Record<string, unknown>>;
+      // Only the two fields the renderer branches on. Everything else is the
+      // real host's own answer, so the rest of the screen is unchanged.
+      return hosts.map((h) => ({ ...h, targetKind: 'ssh', label: 'build-01' }));
+    };
+
+    ipcMain.removeHandler('agbrte:hosts.list');
+    ipcMain.handle('agbrte:hosts.list', doctor);
+
+    // And on the push, because that is the other way the list arrives — a real
+    // push would otherwise put `local` back in the middle of a test.
+    const listed = await doctor(null);
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('agbrte:push.hosts', listed);
+    }
+  });
 }

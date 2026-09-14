@@ -184,6 +184,19 @@ const api: AgbrteApi = {
       ipcRenderer.invoke(CH.filesList, r),
     read: (r: { instanceId: string; path: string }) => ipcRenderer.invoke(CH.filesRead, r),
   },
+  /**
+   * The screen of a host's machine (§12.1).
+   *
+   * Two calls and no subscription, which is the same restraint as `files` above:
+   * a push channel delivering frames would keep pulling them off somebody's
+   * desktop after the window showing them closed. The pane asks for the next
+   * frame when the last one arrives, so the thing that is visible owns the load.
+   */
+  display: {
+    list: (instanceId: string) => ipcRenderer.invoke(CH.displayList, instanceId),
+    grab: (r: { instanceId: string; display: string; maxEdge?: number }) =>
+      ipcRenderer.invoke(CH.displayGrab, r),
+  },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),
     create: (r: CreateSessionRequest) => ipcRenderer.invoke(CH.sessionsCreate, r),

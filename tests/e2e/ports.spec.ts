@@ -33,37 +33,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 import { launch, makeRepo, type LaunchedApp } from './harness.js';
-import { addAgent, createSession, hostGroup } from './actions.js';
-
-/** Make the app believe its host is an ssh one, on both paths it learns from. */
-async function pretendRemote(agbrte: LaunchedApp): Promise<void> {
-  await agbrte.app.evaluate(async ({ ipcMain, BrowserWindow }) => {
-    const handlers = (
-      ipcMain as unknown as {
-        _invokeHandlers: Map<string, (...args: unknown[]) => unknown>;
-      }
-    )._invokeHandlers;
-    const original = handlers.get('agbrte:hosts.list');
-    if (original === undefined) throw new Error('no hosts.list handler to wrap');
-
-    const doctor = async (event: unknown): Promise<unknown> => {
-      const hosts = (await original(event)) as Array<Record<string, unknown>>;
-      // Only the two fields the renderer branches on. Everything else is the
-      // real host's own answer, so the rest of the screen is unchanged.
-      return hosts.map((h) => ({ ...h, targetKind: 'ssh', label: 'build-01' }));
-    };
-
-    ipcMain.removeHandler('agbrte:hosts.list');
-    ipcMain.handle('agbrte:hosts.list', doctor);
-
-    // And on the push, because that is the other way the list arrives — a real
-    // push would otherwise put `local` back in the middle of a test.
-    const listed = await doctor(null);
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('agbrte:push.hosts', listed);
-    }
-  });
-}
+import { addAgent, createSession, hostGroup, pretendRemote } from './actions.js';
 
 const portsRow = (page: Page) => page.locator('[data-testid=ports-row]');
 const portsToggle = (page: Page) => page.locator('[data-testid=toggle-ports]');

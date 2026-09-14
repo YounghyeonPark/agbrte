@@ -81,6 +81,7 @@ import { Preview } from './Preview.js';
 import { TerminalView } from './TerminalView.js';
 import { Shell, type ShellChoice } from './Shell.js';
 import { FileBrowser, FileViewer, VIEWER_DEFAULT } from './FileBrowser.js';
+import { ScreenView } from './ScreenView.js';
 import type {
   EndpointModelsDto,
   ModelInstallDto,
@@ -416,6 +417,12 @@ export function App(): JSX.Element {
    * two devices cannot fight over it.
    */
   const [portsOpen, setPortsOpen] = useState<Record<string, boolean>>({});
+  /*
+   * Whether *this* session's screen view is open, and per session for `portsOpen`'s
+   * reason: it costs the far machine a whole frame several times a second, so it
+   * must not follow somebody to a session they switched to for something else.
+   */
+  const [screenOpen, setScreenOpen] = useState<Record<string, boolean>>({});
   const [filesOpen, setFilesOpen] = useState(false);
   const [openFile, setOpenFile] = useState<string | null>(null);
   /**
@@ -896,6 +903,8 @@ export function App(): JSX.Element {
   const remoteHere = activeHost !== undefined && activeHost.targetKind !== 'local';
   /** Whether *this* session's ports row is unfolded. Folded is the default. */
   const portsShowing = active !== null && portsOpen[active.sessionId] === true;
+  /** Whether *this* session's screen view is open. Closed is the default. */
+  const screenShowing = active !== null && screenOpen[active.sessionId] === true;
 
   /*
    * What the terminal pane can run on this host, and what it opens by default.
@@ -1767,6 +1776,26 @@ export function App(): JSX.Element {
                     remote={remoteHere}
                   />
                 )}
+                {screenShowing && (
+                  /*
+                    Under `Ports`, because it answers the question `Ports` leaves
+                    half-answered (§12.1, §6.8). A forward reaches a *listener* and
+                    a browser capture reaches a *URL*; a window an agent opened on
+                    that machine's desktop is neither, and forwarding 5900 only
+                    helps where somebody already installed a VNC server.
+
+                    Keyed by host: a display name means nothing on another machine,
+                    and reusing the component across a switch would leave one
+                    desktop's frame on screen under another machine's name.
+                  */
+                  <ScreenView
+                    key={active.instanceId}
+                    instanceId={active.instanceId}
+                    onClose={() =>
+                      setScreenOpen((was) => ({ ...was, [active.sessionId]: false }))
+                    }
+                  />
+                )}
                 {/* The newest thing an agent said, for reading aloud (§12.4).
                     Derived here rather than tracked in the store: it is a view
                     of the transcript already in hand, and a second copy of
@@ -1958,6 +1987,30 @@ export function App(): JSX.Element {
                               }
                             >
                               Ports
+                            </button>
+                          )}
+                          {/* Beside `Ports` and remote-only for its reason, with one
+                              of its own: this machine's screen is already on this
+                              machine's screen. What is *not* conditioned on is
+                              whether that host can read a display — asking would
+                              cost a probe of a machine to decide whether to draw a
+                              button, and the answer belongs in the pane, where it
+                              can say `install x11-apps` instead of going quiet
+                              (§3.3). */}
+                          {remoteHere && (
+                            <button
+                              className="btn text-[11px]"
+                              data-testid="toggle-screen"
+                              title="Watch the screen of that machine, a few frames a second"
+                              aria-pressed={screenShowing}
+                              onClick={() =>
+                                setScreenOpen((was) => ({
+                                  ...was,
+                                  [active.sessionId]: was[active.sessionId] !== true,
+                                }))
+                              }
+                            >
+                              Screen
                             </button>
                           )}
                           {/* Not grouped with the three above: grouping it there would

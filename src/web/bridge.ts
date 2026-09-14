@@ -374,6 +374,15 @@ const api: AgbrteApi = {
     list: call(CH.filesList),
     read: call(CH.filesRead),
   },
+  /*
+   * Present so the surface is complete, and refused at the door on a public host
+   * (`publicChannels.ts`). A browser reaching a host somebody runs for themselves
+   * is the case this serves — the same person, a different window.
+   */
+  display: {
+    list: call(CH.displayList),
+    grab: call(CH.displayGrab),
+  },
   sessions: {
     list: call(CH.sessionsList),
     create: call(CH.sessionsCreate),

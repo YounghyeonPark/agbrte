@@ -1074,6 +1074,23 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     fleet.readFile(r.instanceId as InstanceId, r.path),
   );
 
+  /**
+   * A machine's displays, and one frame of one of them (§12.1).
+   *
+   * Thin for `filesList`'s reason: what could be got wrong lives on the host,
+   * which probes each display rather than trusting a socket that once existed,
+   * and refuses a display name that is not one before starting a process.
+   *
+   * No cancellation and no interval here either. A grab is one capped round trip,
+   * and a renderer that has moved on ignores the reply — while a timer in this
+   * layer would keep grabbing frames off a desktop with nothing left watching.
+   */
+  handle(CH.displayList, (instanceId: string) => fleet.listDisplays(instanceId as InstanceId));
+
+  handle(CH.displayGrab, (r: { instanceId: string; display: string; maxEdge?: number }) =>
+    fleet.grabDisplay(r.instanceId as InstanceId, r.display, r.maxEdge),
+  );
+
   handle(CH.previewList, (sessionId: string): ForwardDto[] =>
     deps.previews === undefined ? [] : deps.previews.list(sessionId as SessionId),
   );

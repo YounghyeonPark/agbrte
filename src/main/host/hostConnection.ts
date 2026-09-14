@@ -40,6 +40,8 @@ import {
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import type {
   DirListing,
+  DisplayFrame,
+  Displays,
   FilePreview,
   ReasoningRequest,
   ResultContract,
@@ -1080,6 +1082,35 @@ export class HostConnection extends EventEmitter {
   async readFile(path: string): Promise<FilePreview> {
     this.require('files.read');
     return this.call<FilePreview>({ t: 'files.read', path });
+  }
+
+  /**
+   * The X displays on the machine this host runs on (§12.1, v37).
+   *
+   * `async` for `hasBlob`'s reason: `require` throws, and a synchronous throw out
+   * of a `Promise`-typed method escapes the caller's `.catch`. A host too old for
+   * it says so by name, which is how the viewer can offer the port-forward answer
+   * instead of an empty pane.
+   */
+  async listDisplays(): Promise<Displays> {
+    this.require('display.list');
+    return this.call<Displays>({ t: 'display.list' });
+  }
+
+  /**
+   * One frame of one display (§12.1, v37).
+   *
+   * One request per frame, which is the backpressure: a viewer that asks for the
+   * next frame when the last one lands cannot outrun the link it is on, and
+   * nothing here pushes 430KB at a client that stopped reading.
+   */
+  async grabDisplay(display: string, maxEdge?: number): Promise<DisplayFrame> {
+    this.require('display.grab');
+    return this.call<DisplayFrame>({
+      t: 'display.grab',
+      display,
+      ...(maxEdge !== undefined ? { maxEdge } : {}),
+    });
   }
 
   respondSplit(

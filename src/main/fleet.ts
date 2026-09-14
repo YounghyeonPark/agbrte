@@ -57,6 +57,8 @@ import type { ModelNeed } from './runtime/registry.js';
 import type {
   CreateSessionInput,
   DirListing,
+  DisplayFrame,
+  Displays,
   FilePreview,
   ReasoningRequest,
   AccessRole,
@@ -1620,6 +1622,48 @@ export class Fleet extends EventEmitter {
       );
     }
     return entry.connection.readFile(path);
+  }
+
+  /**
+   * The X displays on a host's machine (§12.1).
+   *
+   * Keyed by `instanceId` like every other host call, though a display belongs to
+   * the *machine* rather than to the session — that is what one host per machine
+   * (§8) buys: the session names the host, and the host is the machine.
+   *
+   * A host too old for it is refused by name here rather than answering with an
+   * empty list, which would read as "that machine has no screen" (§3.3). The
+   * viewer turns this into the older answer, which still works: forward `5900` and
+   * point a VNC client at it.
+   */
+  async listDisplays(instanceId: InstanceId): Promise<Displays> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('display.list')) {
+      throw new Error(
+        `the host for ${entry.workspaceRoot} is older than this app and cannot read a display — ` +
+          'restart it to pick up the current bundle',
+      );
+    }
+    return entry.connection.listDisplays();
+  }
+
+  /**
+   * One frame of one display.
+   *
+   * No caching and no interval: the frame a caller gets is grabbed when it asks.
+   * A timer here would keep pulling frames off a machine after the window showing
+   * them was closed, which is a load on somebody's desktop with nothing watching
+   * it — so the pull belongs to the thing that is visible.
+   */
+  async grabDisplay(instanceId: InstanceId, display: string, maxEdge?: number): Promise<DisplayFrame> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('display.grab')) {
+      throw new Error(
+        `the host for ${entry.workspaceRoot} is older than this app and cannot read a display — ` +
+          'restart it to pick up the current bundle',
+      );
+    }
+    return entry.connection.grabDisplay(display, maxEdge);
   }
 
   /** Keystrokes, routed by `shellId` alone. */

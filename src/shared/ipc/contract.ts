@@ -28,6 +28,8 @@
 
 import type {
   DirListing,
+  DisplayFrame,
+  Displays,
   FilePreview,
   InboxEntry,
   MatrixCell,
@@ -1195,6 +1197,33 @@ export interface AgbrteApi {
      */
     read(r: { instanceId: string; path: string }): Promise<FilePreview>;
   };
+  /**
+   * The screen of a host's machine (§12.1, session protocol v37).
+   *
+   * The third capture §12.1 named and did not build. Client capture sends *your*
+   * screen to a model and `screenshot` takes a headless browser shot of a URL;
+   * neither reaches a window an agent opened on a remote desktop, which is what
+   * this does.
+   */
+  display: {
+    /**
+     * What displays that machine has, and which of them the host can read.
+     *
+     * Each entry carries a size or a reason it cannot be grabbed. Rejects when
+     * the host is too old for the command, so a pane says that rather than
+     * showing an empty list — which would read as "no screen over there" (§3.3).
+     */
+    list(instanceId: string): Promise<Displays>;
+    /**
+     * One frame, as a base64 PNG.
+     *
+     * `maxEdge` is how big a picture the caller can use; the host only ever
+     * scales down, and both the scaled and the real size come back so a viewer
+     * can say what it is looking at. One request per frame is the backpressure —
+     * ask for the next when the last arrives.
+     */
+    grab(r: { instanceId: string; display: string; maxEdge?: number }): Promise<DisplayFrame>;
+  };
   sessions: {
     list(): Promise<Session[]>;
     create(r: CreateSessionRequest): Promise<Session>;
@@ -1579,6 +1608,8 @@ export const CH = {
   sessionsRawLog: 'agbrte:sessions.rawLog',
   filesList: 'agbrte:files.list',
   filesRead: 'agbrte:files.read',
+  displayList: 'agbrte:display.list',
+  displayGrab: 'agbrte:display.grab',
   shellOpen: 'agbrte:shell.open',
   shellWrite: 'agbrte:shell.write',
   shellResize: 'agbrte:shell.resize',

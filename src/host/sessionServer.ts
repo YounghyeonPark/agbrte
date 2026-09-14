@@ -58,6 +58,7 @@ import {
   type McpServerConfig,
   type PermissionRequest,
   type Session,
+  type DisplayFrame,
   type ModelCapabilityHint,
   type RuntimeCapabilities,
   type SessionId,
@@ -65,6 +66,7 @@ import {
 } from '@shared/types/index.js';
 import { BlobIntake } from '@main/store/blobTransfer.js';
 import { listDirectory, readTextFile } from '@main/workspace/files.js';
+import { grabDisplay, listDisplays } from './display.js';
 import { searchWorkspace } from '@main/store/searchSessions.js';
 import { resolve } from 'node:path';
 import {
@@ -1635,6 +1637,41 @@ export class SessionHostServer {
           // trusted from the client: oversized and non-text are refused by name,
           // never truncated (see `readTextFile`).
           return readTextFile(this.bound(client, 'read a file').info.root, command.path);
+
+        case 'display.list':
+          /*
+           * A read, and machine-level rather than workspace-bound — a screen
+           * belongs to the machine, like `models.list`, so there is no `bound()`
+           * call and a connection attached to the machine can still ask.
+           *
+           * Not §13-gated, for `files.list`'s reason: §13's gate covers what a
+           * *model* asks the app for, and there is no agent on this path. This is
+           * a person looking at a machine they are already running a session on,
+           * and prompting them to approve their own click is the theatre §13
+           * warns about.
+           *
+           * `DISPLAY` is passed in because a socket listing is not the whole
+           * truth — an X server reached over TCP appears only in the environment
+           * — and because reading `process.env` inside the module would make it
+           * untestable for the one thing it does.
+           */
+          return listDisplays({ env: process.env['DISPLAY'] });
+
+        case 'display.grab': {
+          // The same read. Nothing is logged, stored as a blob or attached to a
+          // turn: this frame is rendered by whoever asked and then dropped.
+          const frame = await grabDisplay(command.display, {
+            ...(command.maxEdge !== undefined ? { maxEdge: command.maxEdge } : {}),
+          });
+          /*
+           * Base64 at the boundary and nowhere else. The host holds a `Buffer`
+           * and the wire carries a string, which is `blob.get`'s shape — and the
+           * reason the two types are separate is that a `Buffer` reaching
+           * `JSON.stringify` does not fail, it silently becomes
+           * `{"type":"Buffer","data":[…]}` and arrives as a broken image.
+           */
+          return { ...frame, png: frame.png.toString('base64') } satisfies DisplayFrame;
+        }
 
         case 'permission.pending':
           return manager.pendingPermissions();
