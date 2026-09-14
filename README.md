@@ -1,16 +1,16 @@
 # Agbrte
 
-**Coding agents that keep working after you close the laptop.**
+**A desktop app and a CLI for running coding agents.**
 
 [![Download](https://img.shields.io/github/v/release/YounghyeonPark/agbrte?label=download&color=1f6feb)](https://github.com/YounghyeonPark/agbrte/releases/latest)
 [![CI](https://github.com/YounghyeonPark/agbrte/actions/workflows/ci.yml/badge.svg)](https://github.com/YounghyeonPark/agbrte/actions/workflows/ci.yml)
 [![Licence](https://img.shields.io/badge/licence-Apache--2.0-555)](LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21906998.svg)](https://doi.org/10.5281/zenodo.21906998)
 
-An agent-based development workbench. A session runs on a **bridge** — this
-machine, or a server over ssh — and never inside the window you happen to be
-looking at. Quitting the app does not stop a turn. Your phone and your desktop
-show one transcript. A folder that moves takes its sessions with it.
+Each session runs in a host process — a **bridge** — on the machine the work is
+on: this machine, or a server over ssh. It never runs inside the window you
+happen to be looking at, so quitting the app does not stop a turn. Your phone and
+your desktop show one transcript. A folder that moves takes its sessions with it.
 
 ```mermaid
 flowchart LR
