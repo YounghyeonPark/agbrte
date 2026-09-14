@@ -6,6 +6,7 @@
 <meta name="description" content="Agbrte — coding agents that keep working after you close the laptop. A session runs on a host, not in the window watching it.">
 <meta property="og:title" content="Agbrte — the window is not where the work lives">
 <meta property="og:description" content="Coding agents that keep working after you close the laptop. Open it in a browser and drive the same session from anywhere.">
+<meta property="og:image" content="https://agbrte.dev/shots/01-dashboard.png">
 <title>Agbrte — coding agents that outlive the window</title>
 <style>
   /* The palette and type of the design page, deliberately unchanged: this page
@@ -38,15 +39,134 @@
   .mono { font-family: var(--mono); font-size: .9em; }
   strong { font-weight: 500; color: var(--ink); }
 
+  /* --- the hero, and the light that follows the pointer -------------------- */
+  /*
+   * One moving thing on the page, and it is a wash of the accent rather than
+   * anything that moves the layout. The restraint is the same argument the
+   * palette makes: this page's job is to report a program that has exactly one
+   * accent colour, and a landing page doing tricks the app does not would be
+   * describing a different program.
+   *
+   * Painted on a pseudo-element so it composites on its own layer and never
+   * reflows the text under it, and revealed only once the pointer has actually
+   * moved — a glow already sitting under the cursor on load reads as a
+   * rendering artefact rather than as a response.
+   */
+  .hero {
+    position: relative;
+    isolation: isolate;
+    margin: 0 0 3.5rem;
+    padding: 1rem 0 0;
+  }
+  .hero::before {
+    content: '';
+    /*
+     * Vertical bleed only, and the horizontal pair is what this replaced.
+     *
+     * `inset: -8rem -6rem` put the glow ninety-six pixels past each edge, which
+     * is invisible on a desktop and made a phone scroll **sideways by 76px** — a
+     * page arguing that the app works on a phone, that itself did not. A
+     * pseudo-element is also the one overflow that cannot be found by walking
+     * the DOM for wide elements, since it has no element to measure: it was
+     * found by measuring `scrollWidth` against `clientWidth` on a 390px viewport
+     * and then by elimination.
+     *
+     * Above and below is free: the top of the document does not scroll upward,
+     * and the bottom overlaps the next section, which is where the light should
+     * fall anyway.
+     */
+    position: absolute;
+    inset: -8rem 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .5s ease;
+    background: radial-gradient(
+      460px circle at var(--px, 50%) var(--py, 30%),
+      rgba(217, 130, 43, .13), rgba(217, 130, 43, 0) 68%
+    );
+  }
+  .hero.lit::before { opacity: 1; }
+
   /* --- the call to action ------------------------------------------------- */
   .cta { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; margin: 2rem 0 .75rem; }
   .button {
     display: inline-block; padding: .7rem 1.35rem; border-radius: 2px;
     border: 1px solid var(--accent); color: var(--bg); background: var(--accent);
     text-decoration: none; font-size: 1rem;
+    transition: transform .15s ease, filter .15s ease;
   }
   .button.ghost { background: none; color: var(--ink); border-color: var(--line); }
+  .button:hover { filter: brightness(1.08); }
+  .button:active { transform: translateY(1px); }
+  .button.ghost:hover { border-color: var(--muted); filter: none; }
   .caveat { color: var(--muted); font-size: .92rem; margin: 0; max-width: 54ch; }
+
+  /* --- what shipped, on the first screen ---------------------------------- */
+  /*
+   * Baked in by `pages.yml` at deploy time rather than fetched from the GitHub
+   * API in the browser. Three reasons, in the order they mattered: the API is
+   * rate-limited per visitor IP and a limit reached is an empty box where the
+   * version should be; a page that needs JavaScript to say what it is is a page
+   * that says nothing when the script fails; and the deploy already knows the
+   * answer, so asking the network for it at read time is asking twice.
+   *
+   * The workflow runs on `release: published` for exactly this, which means the
+   * cost is that the page is right as of the last release rather than as of this
+   * second. That is the same thing.
+   */
+  /*
+   * Side by side above 900px, stacked below.
+   *
+   * They were two full-width blocks and their right edges disagreed — the
+   * release box stopped at its reading width and the download grid ran on to the
+   * column edge, which on a page whose whole visual argument is alignment read as
+   * a mistake. Paired, both are above the fold on a laptop, which is what this
+   * row is for.
+   */
+  .first { display: grid; gap: 1.25rem; margin: 2rem 0 0; align-items: start; }
+  @media (min-width: 900px) { .first { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); } }
+
+  .release {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 2px;
+    padding: 1.1rem 1.25rem;
+    position: relative; overflow: hidden;
+  }
+  .release-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; margin-bottom: .75rem; }
+  .release-version { font-family: var(--mono); font-size: 1.05rem; color: var(--accent); }
+  .release-when { color: var(--muted); font-size: .85rem; }
+  .release-tag {
+    margin-left: auto; font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--line); border-radius: 2px; padding: .15rem .5rem;
+  }
+  .release ul { margin: 0; padding-left: 1.1rem; }
+  .release li { color: var(--muted); font-size: .93rem; margin-bottom: .3rem; }
+  .release li::marker { color: var(--line); }
+  .release-more { display: block; margin-top: .9rem; font-size: .9rem; }
+
+  /* --- downloads ---------------------------------------------------------- */
+  /*
+   * Every button here names a file that the release actually contains: the list
+   * is written from the published assets, not composed from the version number.
+   * A composed URL is a control that fails on press the first time a build drops
+   * one artifact, and it fails as a 404 on GitHub rather than as anything this
+   * page could explain.
+   */
+  .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .6rem; }
+  .dl {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 2px;
+    padding: .75rem .9rem; position: relative; overflow: hidden;
+    transition: border-color .15s ease;
+  }
+  .dl:hover { border-color: var(--muted); }
+  .dl .os { display: block; font-size: .95rem; }
+  .dl .file { display: block; font-family: var(--mono); font-size: .78rem; color: var(--muted); margin-top: .15rem; word-break: break-all; }
+  /* Marked by the script when the platform is recognised. Never a *removal* of
+     the others: this page cannot tell Apple silicon from Intel, and a browser
+     that reports nothing must not be answered with a guess. */
+  .dl[data-yours] { border-color: var(--accent); }
+  .dl[data-yours] .os::after { content: ' · yours'; color: var(--accent); font-size: .8rem; }
 
   /* --- how it works ------------------------------------------------------- */
   /* A grid rather than an SVG, so it reflows on a phone instead of scrolling
@@ -54,7 +174,7 @@
      across is one most readers do not finish. */
   .model { display: grid; grid-template-columns: 1fr auto 1fr; gap: 1rem; align-items: center; margin: 2rem 0 1rem; }
   .stack { display: grid; gap: .6rem; }
-  .node { background: var(--panel); border: 1px solid var(--line); border-radius: 2px; padding: .8rem 1rem; }
+  .node { background: var(--panel); border: 1px solid var(--line); border-radius: 2px; padding: .8rem 1rem; transition: border-color .2s ease; }
   .node .what { display: block; color: var(--muted); font-size: .85rem; }
   .node.host { border-color: var(--accent); }
   .arrow { color: var(--muted); font-size: 1.4rem; text-align: center; }
@@ -65,44 +185,199 @@
 
   .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.1rem; }
   @media (max-width: 860px) { .grid3 { grid-template-columns: 1fr; } }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 2px; padding: 1.1rem 1.2rem; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 2px; padding: 1.1rem 1.2rem; position: relative; overflow: hidden; }
   .card p { margin: 0; color: var(--muted); font-size: .95rem; }
 
-  .shots { display: grid; grid-template-columns: 2fr 1fr; gap: 1.1rem; align-items: start; margin-top: 1.5rem; }
+  /*
+   * The sheen every hoverable panel gets: a small wash of the accent under the
+   * pointer, on a pseudo-element that is never laid out. One rule for cards,
+   * release box and download tiles, because three implementations of one effect
+   * is three places for it to drift.
+   */
+  .card::after, .release::after, .dl::after {
+    content: '';
+    position: absolute; inset: 0; pointer-events: none;
+    opacity: 0; transition: opacity .25s ease;
+    background: radial-gradient(
+      220px circle at var(--px, 50%) var(--py, 50%),
+      rgba(217, 130, 43, .10), rgba(217, 130, 43, 0) 70%
+    );
+  }
+  .card.lit::after, .release.lit::after, .dl.lit::after { opacity: 1; }
+
+  /* --- the screenshots ---------------------------------------------------- */
+  .shots { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.4rem 1.1rem; align-items: start; margin-top: 1.5rem; }
+  .shots .wide { grid-column: 1 / -1; }
   @media (max-width: 860px) { .shots { grid-template-columns: 1fr; } }
-  .shots img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 2px; }
+  /*
+   * The phone shot is 420x860 and every other one is landscape. Left to the grid
+   * it filled the column width and became eleven hundred pixels tall — the
+   * smallest screen in the set rendered as the largest picture on the page,
+   * beside half a column of nothing. Capped by *height* rather than width, so it
+   * stays phone-shaped whatever the column does.
+   */
+  .shots .tall .frame { width: fit-content; margin-inline: auto; }
+  .shots .tall img { max-height: 440px; width: auto; }
   figure { margin: 0; }
   figcaption { color: var(--muted); font-size: .88rem; margin-top: .7rem; }
+
+  /*
+   * The frame tilts a few degrees toward the pointer. Capped at four, and the
+   * cap is the whole design: a picture of an interface is a picture of straight
+   * lines, and a tilt big enough to notice is a tilt that makes the screenshot
+   * harder to read — which is the one thing this section exists to do.
+   */
+  .frame {
+    display: block; width: 100%; border: 1px solid var(--line); border-radius: 2px;
+    background: var(--sunken); cursor: zoom-in; padding: 0; overflow: hidden;
+    transform: perspective(1200px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+    transition: transform .25s ease, border-color .2s ease;
+  }
+  .frame:hover { border-color: var(--muted); }
+  .frame img { display: block; width: 100%; height: auto; }
+
+  /* --- the lightbox ------------------------------------------------------- */
+  /*
+   * A real `<dialog>`, so Escape, focus containment and the backdrop are the
+   * browser's job rather than four event listeners that each get one case wrong.
+   */
+  dialog.lightbox {
+    border: 1px solid var(--line); border-radius: 2px; background: var(--bg);
+    color: var(--ink); padding: 0; max-width: min(96vw, 1500px); max-height: 94vh;
+    overflow: hidden;
+  }
+  dialog.lightbox::backdrop { background: rgba(8, 8, 7, .86); }
+  dialog.lightbox img { display: block; width: 100%; height: auto; max-height: 82vh; object-fit: contain; background: var(--sunken); }
+  .lb-bar { display: flex; align-items: center; gap: .75rem; padding: .6rem .8rem; border-top: 1px solid var(--line); }
+  .lb-bar p { margin: 0; color: var(--muted); font-size: .88rem; max-width: none; }
+  .lb-bar button {
+    background: none; border: 1px solid var(--line); color: var(--ink);
+    border-radius: 2px; padding: .3rem .7rem; cursor: pointer; font: inherit; font-size: .85rem;
+  }
+  .lb-bar button:hover { border-color: var(--muted); }
+  .lb-bar .spacer { margin-left: auto; }
 
   pre {
     background: var(--sunken); border: 1px solid var(--line); border-radius: 2px;
     padding: 1rem 1.1rem; overflow-x: auto; font-family: var(--mono); font-size: .9rem;
     margin: 1rem 0 0; color: var(--ink);
   }
+  code { font-family: var(--mono); }
 
-  /* The hero is set off the way the design page sets its own: a rule and real
-     space, so the argument below starts rather than continues. */
-  header { border-bottom: 1px solid var(--line); padding-bottom: 2.75rem; margin-bottom: 4rem; }
+  footer { border-top: 1px solid var(--line); padding-top: 1.5rem; color: var(--muted); font-size: .9rem; }
+  footer a { margin-right: 1.25rem; }
 
-  footer { border-top: 1px solid var(--line); margin-top: 1rem; padding-top: 1.75rem; color: var(--muted); font-size: .9rem; }
-  footer a { margin: 0 1.1rem .4rem 0; display: inline-block; }
+  /*
+   * Everything above that moves, withdrawn on request.
+   *
+   * Not a nicety. `prefers-reduced-motion` is set by people for whom motion
+   * causes actual symptoms, and a page that treats it as a suggestion is a page
+   * that makes them ill to look slightly better. The hover *colour* stays,
+   * because colour is not motion.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .hero::before, .card::after, .release::after, .dl::after { display: none; }
+    .frame, .button, .node { transition: none; transform: none; }
+  }
 </style>
 </head>
 <body>
 
 <div class="wrap">
 
-  <header>
-    <span class="eyebrow">Agbrte &nbsp;·&nbsp; <span class="mono">/ˈæɡbərt/</span></span>
-    <h1>The window is not where the work lives</h1>
-    <p class="stand">Coding agents that keep working after you close the laptop. A session runs on a <strong>host</strong> — your machine, or a server over ssh — and every window, browser tab and terminal is only a client of it.</p>
+  <header class="hero" id="hero">
+    <span class="eyebrow">Agbrte</span>
+    <h1>The window is not where the work lives.</h1>
+    <p class="stand">Coding agents that keep working after you close the laptop, and that you can pick back up from a phone. A session belongs to a host process on the machine the work is on &mdash; not to the app watching it.</p>
+
+    <div class="first">
+    <!-- RELEASE:BEGIN -->
+    <!--
+      Hand-written between the markers so this file is a working page on its own,
+      and replaced wholesale by `pages.yml` at deploy time. If the markers ever
+      stop matching, the workflow fails loudly rather than shipping this — a
+      landing page quietly advertising a version from months ago is the failure
+      being designed against.
+    -->
+    <div class="release" id="release">
+      <div class="release-head">
+        <span class="release-version">0.0.38</span>
+        <span class="release-when">the latest release</span>
+        <span class="release-tag">What changed</span>
+      </div>
+      <ul>
+        <li>Show the screen of a remote machine, because the tunnel answer assumed a server that was not there</li>
+        <li>Call the remote screen <code class="mono">Display</code>, because <code class="mono">Screen</code> was already ten centimetres away</li>
+        <li>Record that the picker race came back, and what the failure rules out</li>
+      </ul>
+      <a class="release-more" href="https://github.com/YounghyeonPark/agbrte/releases/latest">All of it, with the reasoning &rarr;</a>
+    </div>
+    <!-- RELEASE:END -->
+
+    <!-- DOWNLOADS:BEGIN -->
+    <div class="downloads" id="downloads">
+      <a class="dl" data-os="windows" href="https://github.com/YounghyeonPark/agbrte/releases/latest">
+        <span class="os">Windows</span><span class="file">Agbrte-Setup-….exe</span>
+      </a>
+      <a class="dl" data-os="mac" href="https://github.com/YounghyeonPark/agbrte/releases/latest">
+        <span class="os">macOS</span><span class="file">Agbrte-….dmg</span>
+      </a>
+      <a class="dl" data-os="linux" href="https://github.com/YounghyeonPark/agbrte/releases/latest">
+        <span class="os">Linux</span><span class="file">Agbrte-….AppImage</span>
+      </a>
+    </div>
+    <!-- DOWNLOADS:END -->
+    </div>
 
     <div class="cta">
-      <a class="button" href="./app/">Open the client</a>
-      <a class="button ghost" href="https://github.com/YounghyeonPark/agbrte/releases/latest">Download</a>
+      <a class="button" href="./app/">Open the client in this browser</a>
+      <a class="button ghost" href="https://github.com/YounghyeonPark/agbrte/releases">Every release</a>
     </div>
-    <p class="caveat">A session runs on a <strong>host</strong>. Start one by running <code class="mono">npx agbrte web .</code> inside a project folder &mdash; one line, Node 22+, nothing installed &mdash; and it prints a link this page will take. Nothing is uploaded anywhere: the page talks to your machine, never to this site.</p>
+    <p class="caveat">Builds are <strong>unsigned</strong>, and saying so is more useful than a workaround: macOS reports an unidentified developer and Windows SmartScreen warns. A session runs on a <strong>host</strong> &mdash; start one with <code class="mono">npx agbrte web .</code> inside a project folder and it prints a link this page will take. Nothing is uploaded anywhere: the page talks to your machine, never to this site.</p>
   </header>
+
+  <section>
+    <span class="eyebrow">What it looks like</span>
+    <h2>Every session on every attached machine, ranked by who needs a human</h2>
+    <p class="lead">Real screenshots of a real run, taken by the end-to-end suite against a local model rather than drawn for this page. Click any of them.</p>
+
+    <div class="shots">
+      <figure class="wide">
+        <button class="frame" type="button" data-shot="./shots/01-dashboard.png" data-caption="The dashboard, with the sessions that need a person first.">
+          <img src="./shots/01-dashboard.png" alt="The dashboard: session cards under a Needs you heading, with a sidebar listing the attached machine" loading="lazy" width="1440" height="900">
+        </button>
+        <figcaption>Cost and tokens per card. No progress bars, because nothing writes a checklist yet and a bar reading 0/0 forever is worse than no bar.</figcaption>
+      </figure>
+
+      <figure>
+        <button class="frame" type="button" data-shot="./shots/02-session.png" data-caption="One session: the transcript, the roster, and what the turn is spending.">
+          <img src="./shots/02-session.png" alt="A session: transcript on the right, agent roster above it, composer at the foot" loading="lazy" width="1440" height="900">
+        </button>
+        <figcaption>The transcript is the event log rendered, not a chat history kept beside one. Everything that happened is in it, including who approved what.</figcaption>
+      </figure>
+
+      <figure class="tall">
+        <button class="frame" type="button" data-shot="./shots/03-phone.png" data-caption="The same app at phone width, one pane at a time.">
+          <img src="./shots/03-phone.png" alt="The same dashboard at phone width, one pane at a time" loading="lazy" width="420" height="860">
+        </button>
+        <figcaption>The same app on a phone, over your own network &mdash; driving a run on a build box, answering its permission prompts.</figcaption>
+      </figure>
+
+      <figure>
+        <button class="frame" type="button" data-shot="./shots/04-declared.png" data-caption="What a project declares: skills and MCP servers as tracked files.">
+          <img src="./shots/04-declared.png" alt="The new-session form listing the skills and MCP servers this workspace declares" loading="lazy" width="1440" height="900">
+        </button>
+        <figcaption>A skill or an MCP server is a file in the repository, so a colleague gets it by cloning and a diff records when it arrived. Keys are named, never stored in the file.</figcaption>
+      </figure>
+
+      <figure>
+        <button class="frame" type="button" data-shot="./shots/05-workflow.png" data-caption="A workflow document, drawn as the graph it describes.">
+          <img src="./shots/05-workflow.png" alt="The workflow editor: a document on the left, the graph it describes on the right" loading="lazy" width="1440" height="600">
+        </button>
+        <figcaption>The editor draws the graph and refuses a part while you are still writing it, using the rules a live run would have hit later.</figcaption>
+      </figure>
+    </div>
+  </section>
 
   <section>
     <span class="eyebrow">How it works</span>
@@ -115,7 +390,7 @@
         <div class="node">Browser<span class="what">a phone on your own network</span></div>
         <div class="node">Terminal<span class="what"><span class="mono">agbrte</span>, on a box with no display</span></div>
       </div>
-      <div class="arrow" aria-hidden="true">→</div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
       <div class="stack">
         <div class="node host">The host<span class="what">owns the event log, the permission gate and the turn queue — and keeps running when every client above has gone</span></div>
         <div class="node">Your folders<span class="what">each with its own sessions, so moving the folder moves the work</span></div>
@@ -139,6 +414,18 @@
         <h3>Sessions can work as a team</h3>
         <p>Group them and they reach each other — a short message that wakes the other session, or a read of what it has actually been doing. From the desktop or from a terminal.</p>
       </div>
+      <div class="card">
+        <h3>A port on that machine comes to this one</h3>
+        <p>A plain tunnel, so it carries a dev server to your browser or that machine's desktop to a remote-desktop client. The app names the ports a browser cannot speak instead of linking them.</p>
+      </div>
+      <div class="card">
+        <h3>And its screen, with nothing installed there</h3>
+        <p>A remote session that opens a window shows it a few frames a second, over <code class="mono">xwd</code> alone. The frame rate is on screen, because it is a property of the tool and not a target.</p>
+      </div>
+      <div class="card">
+        <h3>What is not proven says so</h3>
+        <p>There is a page for what has been tested, what has only been reasoned about, and what is known to be missing. It is kept current because it is embarrassing, not despite it.</p>
+      </div>
     </div>
   </section>
 
@@ -150,21 +437,6 @@
     <p class="caveat">Running one spawns each part as its dependencies finish, with its own log, and a slice of the budget reserved before it exists when the run was given one. A part that fails stops what needed it and nothing else.</p>
     <div class="cta">
       <a class="button ghost" href="./idea/#workflows">How it is put together</a>
-    </div>
-  </section>
-
-  <section>
-    <span class="eyebrow">What it looks like</span>
-    <h2>Every session on every attached machine, ranked by who needs a human</h2>
-    <div class="shots">
-      <figure>
-        <img src="./shots/01-dashboard.png" alt="The dashboard: session cards under a Needs you heading, with a sidebar listing the attached machine" loading="lazy">
-        <figcaption>Cost and tokens per card. No progress bars, because nothing writes a checklist yet and a bar reading 0/0 forever is worse than no bar.</figcaption>
-      </figure>
-      <figure>
-        <img src="./shots/03-phone.png" alt="The same dashboard at phone width, one pane at a time" loading="lazy">
-        <figcaption>The same app on a phone, over your own network — driving a run on a build box.</figcaption>
-      </figure>
     </div>
   </section>
 
@@ -184,11 +456,212 @@
     <a href="./idea/">The idea, and the shape it forces</a>
     <a href="https://github.com/YounghyeonPark/agbrte">Source</a>
     <a href="https://github.com/YounghyeonPark/agbrte/blob/main/DESIGN.md">DESIGN.md</a>
+    <a href="https://github.com/YounghyeonPark/agbrte/blob/main/docs/status.md">What is not proven</a>
     <a href="https://github.com/YounghyeonPark/agbrte/releases">Releases</a>
     <p style="margin-top:1.25rem">Apache-2.0. Builds are unsigned and say so.</p>
   </footer>
 
 </div>
+
+<dialog class="lightbox" id="lightbox">
+  <img id="lb-img" alt="">
+  <div class="lb-bar">
+    <p id="lb-caption"></p>
+    <span class="spacer"></span>
+    <button type="button" id="lb-prev" aria-label="Previous screenshot">&larr;</button>
+    <button type="button" id="lb-next" aria-label="Next screenshot">&rarr;</button>
+    <button type="button" id="lb-close">Close</button>
+  </div>
+</dialog>
+
+<script>
+/*
+ * Everything below is an enhancement and nothing below is load-bearing.
+ *
+ * The page is complete before this runs: the version, the changes and every
+ * download link are real markup written at deploy time, the screenshots are
+ * `<img>` elements, and the lightbox buttons are `<button>`s wrapping them. A
+ * visitor with no JavaScript loses a tilt, a glow and a zoom, and loses nothing
+ * they came for. That ordering is deliberate — a landing page that needs a
+ * script to say which version it is is a page that says nothing when the script
+ * fails, which is the one moment somebody is deciding whether to trust it.
+ */
+(function () {
+  'use strict';
+
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+  /*
+   * A mouse, not a finger. Binding pointer effects on a touch screen produces a
+   * glow that appears where the last tap was and stays there, which reads as a
+   * rendering fault rather than as an effect — and `(pointer: fine)` is the
+   * question actually being asked, unlike a user-agent sniff.
+   */
+  var fine = window.matchMedia('(pointer: fine)');
+
+  // ---------------------------------------------------------------- pointer
+
+  function trackPointer() {
+    if (!fine.matches || reduced.matches) return;
+
+    var hero = document.getElementById('hero');
+    var lit = document.querySelectorAll('.card, .release, .dl');
+    var tilts = document.querySelectorAll('.frame');
+    var pending = null;
+
+    /*
+     * One listener on the document, and the work deferred to a frame.
+     *
+     * A `mousemove` handler that writes styles synchronously runs as often as
+     * the mouse reports — which on a 1000Hz mouse is eight times per frame, each
+     * one invalidating layout for the next. `requestAnimationFrame` collapses
+     * them to exactly one write per painted frame, which is the most that could
+     * ever be seen.
+     */
+    function onMove(event) {
+      if (pending !== null) return;
+      pending = window.requestAnimationFrame(function () {
+        pending = null;
+        paint(event.clientX, event.clientY);
+      });
+    }
+
+    function paint(x, y) {
+      if (hero) {
+        var hb = hero.getBoundingClientRect();
+        var near = x >= hb.left - 120 && x <= hb.right + 120 && y >= hb.top - 120 && y <= hb.bottom + 120;
+        hero.classList.toggle('lit', near);
+        if (near) {
+          // Relative to the box the gradient is painted in, so the light sits
+          // under the cursor rather than near it. The vertical offset is the
+          // `-8rem` the pseudo-element starts above the hero; there is no
+          // horizontal one, because it no longer bleeds sideways.
+          hero.style.setProperty('--px', (x - hb.left) + 'px');
+          hero.style.setProperty('--py', (y - hb.top + 128) + 'px');
+        }
+      }
+
+      var i;
+      for (i = 0; i < lit.length; i += 1) {
+        var el = lit[i];
+        var b = el.getBoundingClientRect();
+        var inside = x >= b.left && x <= b.right && y >= b.top && y <= b.bottom;
+        el.classList.toggle('lit', inside);
+        if (inside) {
+          el.style.setProperty('--px', (x - b.left) + 'px');
+          el.style.setProperty('--py', (y - b.top) + 'px');
+        }
+      }
+
+      for (i = 0; i < tilts.length; i += 1) {
+        var f = tilts[i];
+        var r = f.getBoundingClientRect();
+        // Only while the pointer is over it. A frame that keeps a tilt after the
+        // cursor has left looks broken rather than still.
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) {
+          f.style.setProperty('--rx', '0deg');
+          f.style.setProperty('--ry', '0deg');
+          continue;
+        }
+        // -0.5 … 0.5 from the centre, times the four-degree cap. `rotateX` is
+        // negated because a cursor near the top should push the top *away*.
+        var dx = (x - r.left) / r.width - 0.5;
+        var dy = (y - r.top) / r.height - 0.5;
+        f.style.setProperty('--ry', (dx * 4).toFixed(2) + 'deg');
+        f.style.setProperty('--rx', (-dy * 4).toFixed(2) + 'deg');
+      }
+    }
+
+    document.addEventListener('mousemove', onMove, { passive: true });
+    // Leaving the window should put everything back, or the last position stays
+    // lit under a cursor that is somewhere else entirely.
+    document.addEventListener('mouseleave', function () {
+      if (hero) hero.classList.remove('lit');
+      for (var i = 0; i < lit.length; i += 1) lit[i].classList.remove('lit');
+      for (var j = 0; j < tilts.length; j += 1) {
+        tilts[j].style.setProperty('--rx', '0deg');
+        tilts[j].style.setProperty('--ry', '0deg');
+      }
+    });
+  }
+
+  // ------------------------------------------------------------- downloads
+
+  /*
+   * Mark the tile for the platform this browser admits to, and mark nothing
+   * otherwise.
+   *
+   * Three things it deliberately does not do. It does not hide the others,
+   * because a person downloading for a different machine is an ordinary thing
+   * and a filtered list would be a page arguing with them. It does not guess
+   * between Apple silicon and Intel: Safari on an M-series Mac still reports
+   * `Intel` in its user-agent string, so the honest answer is to mark macOS and
+   * let the two files say which is which. And it treats an unrecognised
+   * platform as unknown rather than as none — the same rule the app follows
+   * about a capability it cannot determine.
+   */
+  function markPlatform() {
+    var data = navigator.userAgentData;
+    var hint = (data && data.platform) || navigator.platform || '';
+    var ua = navigator.userAgent || '';
+    var os = null;
+    if (/win/i.test(hint) || /Windows/i.test(ua)) os = 'windows';
+    else if (/mac/i.test(hint) || /Mac OS X/i.test(ua)) os = 'mac';
+    else if (/linux|x11|cros/i.test(hint) || /Linux|CrOS/i.test(ua)) os = 'linux';
+    if (os === null) return;
+
+    var tiles = document.querySelectorAll('.dl[data-os="' + os + '"]');
+    for (var i = 0; i < tiles.length; i += 1) tiles[i].setAttribute('data-yours', '');
+  }
+
+  // ------------------------------------------------------------- lightbox
+
+  function wireLightbox() {
+    var dialog = document.getElementById('lightbox');
+    var image = document.getElementById('lb-img');
+    var caption = document.getElementById('lb-caption');
+    // `showModal` is what makes Escape, the backdrop and focus containment the
+    // browser's problem. Without it the buttons stay as they are: a link to a
+    // picture the visitor can open however they like.
+    if (!dialog || !image || typeof dialog.showModal !== 'function') return;
+
+    var frames = Array.prototype.slice.call(document.querySelectorAll('.frame'));
+    var at = 0;
+
+    function show(index) {
+      at = (index + frames.length) % frames.length;
+      var frame = frames[at];
+      image.src = frame.getAttribute('data-shot');
+      var inner = frame.querySelector('img');
+      image.alt = inner ? inner.getAttribute('alt') || '' : '';
+      caption.textContent = frame.getAttribute('data-caption') || '';
+    }
+
+    frames.forEach(function (frame, index) {
+      frame.addEventListener('click', function () {
+        show(index);
+        dialog.showModal();
+      });
+    });
+
+    document.getElementById('lb-next').addEventListener('click', function () { show(at + 1); });
+    document.getElementById('lb-prev').addEventListener('click', function () { show(at - 1); });
+    document.getElementById('lb-close').addEventListener('click', function () { dialog.close(); });
+    dialog.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowRight') { event.preventDefault(); show(at + 1); }
+      if (event.key === 'ArrowLeft') { event.preventDefault(); show(at - 1); }
+    });
+    // Clicking the backdrop. The dialog element itself fills only the picture
+    // and the bar, so a click whose target *is* the dialog landed outside them.
+    dialog.addEventListener('click', function (event) {
+      if (event.target === dialog) dialog.close();
+    });
+  }
+
+  trackPointer();
+  markPlatform();
+  wireLightbox();
+})();
+</script>
 
 </body>
 </html>

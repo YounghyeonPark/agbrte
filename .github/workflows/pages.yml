@@ -31,6 +31,15 @@ on:
       - 'src/web/**'
       - 'src/shared/**'
       - '.github/workflows/pages.yml'
+  # And whenever a release is published, because the landing page carries what
+  # shipped. The version bump is a commit touching `package.json` alone, which
+  # the paths above deliberately do not match — so without this the page would
+  # keep advertising the release before last, and would do it confidently.
+  #
+  # `published` rather than `created`: the release workflow makes a **draft**,
+  # and a draft is a build somebody has not yet decided to stand behind.
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -106,6 +115,29 @@ jobs:
           # The docs are linked as files from the README and are read on GitHub;
           # here they only need to be served as they are.
           touch site/.nojekyll
+
+      # What shipped, written into the copy under `site/` — never into the file
+      # in the repository. `docs/index.html` keeps a hand-written block between
+      # the same markers, so it is a working page on its own and a diff of it is
+      # about the page rather than about whatever released that day.
+      #
+      # A failure here fails the deploy, deliberately. The alternative is a site
+      # that goes out advertising the release before last, which nobody can see
+      # is wrong by looking at it — the same argument as the `CNAME` check below.
+      - name: Write the latest release into the landing page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # No tag argument: the latest **published** release, which skips the
+          # draft `release.yml` leaves behind before somebody stands behind it.
+          fields=tagName,url,publishedAt,body,assets
+          if ! gh release view --repo "$GITHUB_REPOSITORY" --json "$fields" > release.json; then
+            echo "could not read the latest release — refusing to deploy a page"
+            echo "that would carry whatever version was baked in last time"
+            exit 1
+          fi
+          node scripts/site-release.mjs release.json site/index.html
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
