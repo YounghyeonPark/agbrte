@@ -7,8 +7,8 @@
 <title>Agbrte — the idea, and the shape it forces</title>
 <style>
   :root {
-    --bg: #121211; --panel: #1a1a18; --sunken: #0e0e0d; --line: #2b2b28;
-    --ink: #e8e8e4; --muted: #8a8a83; --accent: #d9822b; --warn: #d4685c;
+    --bg: #151412; --panel: #1e1c18; --sunken: #0f0e0c; --line: #37332c;
+    --ink: #f2ece0; --muted: #b3aa96; --accent: #ee9633; --warn: #e4766a;
     --grotesque: 'Helvetica Neue', Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
     --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   }
@@ -104,7 +104,7 @@
             <path d="M232,68 L232,200" stroke-opacity=".55" />
             <line x1="232" y1="134" x2="428" y2="134" marker-end="url(#a)" />
 
-            <rect x="440" y="14" width="664" height="292" rx="2" stroke="#d9822b" stroke-dasharray="5 4" />
+            <rect x="440" y="14" width="664" height="292" rx="2" stroke="#ee9633" stroke-dasharray="5 4" />
 
             <rect x="468" y="52" width="300" height="216" rx="2" />
             <rect x="490" y="106" width="256" height="42" rx="2" stroke-opacity=".55" />
@@ -135,7 +135,7 @@
             <text x="330" y="124" text-anchor="middle">session protocol · v7</text>
             <text x="808" y="150" text-anchor="middle">forks</text>
           </g>
-          <text x="772" y="34" text-anchor="middle" fill="#d9822b" font-family="Helvetica, Arial, sans-serif" font-size="11.5" letter-spacing="1.2">SURVIVES THE APP CLOSING</text>
+          <text x="772" y="34" text-anchor="middle" fill="#ee9633" font-family="Helvetica, Arial, sans-serif" font-size="11.5" letter-spacing="1.2">SURVIVES THE APP CLOSING</text>
         </svg>
       </div>
       <figcaption>The app is a client. Everything a session <em>is</em> — its log, its gate, its scheduler — lives inside the marked boundary, in a process the app did not have to stay alive for. Three clients are drawn because all three speak the same protocol; none of them is privileged.</figcaption>
@@ -175,7 +175,7 @@
             <rect x="616" y="26" width="368" height="278" rx="2" />
             <rect x="642" y="76" width="316" height="46" rx="2" stroke-opacity=".55" />
             <rect x="642" y="136" width="316" height="46" rx="2" stroke-opacity=".55" />
-            <rect x="642" y="200" width="316" height="82" rx="2" stroke="#d9822b" />
+            <rect x="642" y="200" width="316" height="82" rx="2" stroke="#ee9633" />
 
             <line x1="288" y1="104" x2="610" y2="104" marker-end="url(#b)" />
             <line x1="288" y1="164" x2="610" y2="164" marker-end="url(#b)" />
@@ -196,7 +196,7 @@
             <text x="470" y="236" text-anchor="end">events only</text>
             <text x="490" y="330" text-anchor="middle">network</text>
           </g>
-          <text x="800" y="264" text-anchor="middle" fill="#d9822b" font-family="Helvetica, Arial, sans-serif" font-size="11.5">file reads, shell, git — all local to here</text>
+          <text x="800" y="264" text-anchor="middle" fill="#ee9633" font-family="Helvetica, Arial, sans-serif" font-size="11.5">file reads, shell, git — all local to here</text>
         </svg>
       </div>
       <figcaption>Nothing is installed system-wide on the target: a private Node is unpacked under <span class="mono">~/.agbrte</span> and the host bundle is copied in version-stamped. Because only events cross the link, a dropped connection is not an interrupted run — reconnecting asks for everything after the last sequence number seen, which loses nothing and repeats nothing.</figcaption>
@@ -227,7 +227,7 @@
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
             </marker>
             <marker id="d2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0,0 L10,5 L0,10 z" fill="#d9822b" />
+              <path d="M0,0 L10,5 L0,10 z" fill="#ee9633" />
             </marker>
           </defs>
           <g fill="none" stroke="currentColor" stroke-width="1">
@@ -247,7 +247,7 @@
             <line x1="644" y1="150" x2="786" y2="150" marker-end="url(#d)" />
             <line x1="334" y1="238" x2="466" y2="238" marker-end="url(#d)" />
           </g>
-          <line x1="786" y1="238" x2="648" y2="238" stroke="#d9822b" stroke-width="1" marker-end="url(#d2)" />
+          <line x1="786" y1="238" x2="648" y2="238" stroke="#ee9633" stroke-width="1" marker-end="url(#d2)" />
 
           <g fill="currentColor" font-family="Helvetica, Arial, sans-serif" font-size="12.5">
             <text x="245" y="67" text-anchor="middle">your laptop, phone</text>
@@ -270,7 +270,7 @@
             <text x="8" y="155">jump host</text>
             <text x="8" y="243">reverse tunnel</text>
           </g>
-          <text x="717" y="228" text-anchor="middle" fill="#d9822b" font-family="Helvetica, Arial, sans-serif" font-size="11.5">it dialled out first</text>
+          <text x="717" y="228" text-anchor="middle" fill="#ee9633" font-family="Helvetica, Arial, sans-serif" font-size="11.5">it dialled out first</text>
         </svg>
       </div>
       <figcaption>Only the third changes who initiates, and that is what makes it work where nothing inbound is possible at all: the agent computer opens the connection outward and keeps it, so the network it sits behind never has to accept anything.</figcaption>
@@ -311,14 +311,14 @@
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
             </marker>
             <marker id="c2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0,0 L10,5 L0,10 z" fill="#d9822b" />
+              <path d="M0,0 L10,5 L0,10 z" fill="#ee9633" />
             </marker>
           </defs>
           <g fill="none" stroke="currentColor" stroke-width="1">
             <rect x="440" y="24" width="240" height="54" rx="2" />
             <rect x="250" y="150" width="200" height="54" rx="2" />
             <rect x="610" y="150" width="200" height="54" rx="2" />
-            <rect x="610" y="262" width="240" height="54" rx="2" stroke="#d9822b" />
+            <rect x="610" y="262" width="240" height="54" rx="2" stroke="#ee9633" />
 
             <path d="M520,80 L392,146" marker-end="url(#c)" />
             <path d="M600,80 L698,146" marker-end="url(#c)" />
@@ -326,9 +326,9 @@
 
             <rect x="900" y="140" width="200" height="76" rx="2" stroke-dasharray="5 4" stroke-opacity=".45" />
             <path d="M812,177 L896,177" stroke-opacity=".35" />
-            <path d="M846,169 L862,185 M862,169 L846,185" stroke="#d4685c" />
+            <path d="M846,169 L862,185 M862,169 L846,185" stroke="#e4766a" />
           </g>
-          <path d="M604,292 C430,302 190,298 172,206 C158,130 300,52 434,52" fill="none" stroke="#d9822b" stroke-width="1" marker-end="url(#c2)" />
+          <path d="M604,292 C430,302 190,298 172,206 C158,130 300,52 434,52" fill="none" stroke="#ee9633" stroke-width="1" marker-end="url(#c2)" />
 
           <g fill="currentColor" font-family="Helvetica, Arial, sans-serif" font-size="12.5">
             <text x="560" y="56" text-anchor="middle" font-size="13.5">root session</text>
@@ -342,7 +342,7 @@
             <text x="1000" y="184" text-anchor="middle">— refused, not faked</text>
             <text x="1100" y="344" text-anchor="end">depth 3 · 8 children · 24 open</text>
           </g>
-          <g fill="#d9822b" font-family="Helvetica, Arial, sans-serif" font-size="11.5">
+          <g fill="#ee9633" font-family="Helvetica, Arial, sans-serif" font-size="11.5">
             <text x="272" y="244">blockage bubbles up,</text>
             <text x="272" y="260">carrying the path to it</text>
           </g>

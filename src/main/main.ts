@@ -348,7 +348,7 @@ async function createWindow(): Promise<void> {
      * warm neutral arrives. Kept in step with `--color-bg` by hand, because
      * Electron needs this before any CSS exists to read.
      */
-    backgroundColor: '#121211',
+    backgroundColor: '#151412',
     /*
      * Packaged builds take their icon from the executable, which electron-builder
      * embeds from `build/`. Unpackaged ones — `npm start`, the e2e suite, anyone

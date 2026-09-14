@@ -34,51 +34,82 @@
  * are not requests, and giving them a hue spends the one signal the eye has on
  * the two states that need nothing.
  *
- * The greys are warm-neutral rather than the old blue-black. A blue-tinted
+ * The ground stays warm-neutral rather than the old blue-black. A blue-tinted
  * ground makes an amber signal read as a colour clash; on a neutral ground it
- * reads as a lamp coming on.
+ * reads as a lamp coming on. That is still true and it is why the obvious
+ * "developer-friendly" answer — Tokyo Night, Nord, GitHub Dark, any of the
+ * blue-leaning darks — is the one direction this palette cannot take.
+ *
+ * ## It was drab, and the reason was measurable
+ *
+ * The complaint was that the interface looked dingy, and the numbers said where
+ * from. `muted` carried most of the text on every screen at **5.39:1** — over
+ * AA, under AAA, and on a dark ground that is the band where text stops looking
+ * read and starts looking grey. It was also *olive*: `#8a8a83` spans seven
+ * levels between its channels, which is a warm cast too small to be a decision
+ * and large enough to look like dirt.
+ *
+ * So the warmth moved from the mid-greys, where it was dinginess, into the
+ * **foreground**, where it is cream. The ground is nearly neutral (three levels
+ * of spread), the text is deliberately warm (twenty-nine), and everything that
+ * carries text gained a point or two of contrast:
+ *
+ *                  before    after
+ *     ink          15.26     15.65:1
+ *     muted         5.39      7.98:1   AA → AAA
+ *     accent        6.41      7.93:1
+ *     fail          5.30      6.22:1
+ *
+ * `--color-line` moved too, from 1.23 to 1.36 against `--color-panel`. A border
+ * is not text and has no WCAG figure, but a panel whose edge cannot be found is
+ * a panel that reads as part of the page behind it.
  *
  * ## Measured against the ground, not judged
- *
- * Every colour that carries text, against `--color-bg`:
- *
- *     ink    15.26:1    muted  5.39:1
- *     accent  6.41:1    fail   5.30:1
  *
  * Worth keeping, because the first `fail` red chosen here measured 4.30:1 — it
  * looked correct and was under AA, on the one state a person most needs to read.
  * Contrast is the property of a palette that confident visual judgement is worst
- * at, and a restrained palette is the kind most likely to drift under it.
+ * at, and a restrained palette is the kind most likely to drift under it. The
+ * drift this time was slower and quieter: nothing failed, everything merely sat
+ * at the bottom of its range until the whole interface looked tired.
  */
 @theme {
-  --color-bg: #121211;
-  --color-panel: #1a1a18;
-  --color-sunken: #0e0e0d;
-  --color-raised: #232320;
-  --color-line: #2b2b28;
-  --color-ink: #e8e8e4;
-  --color-muted: #8a8a83;
+  --color-bg: #151412;
+  --color-panel: #1e1c18;
+  --color-sunken: #0f0e0c;
+  --color-raised: #282520;
+  --color-line: #37332c;
+  --color-ink: #f2ece0;
+  --color-muted: #b3aa96;
 
-  /* Braun's orange, slightly dulled for a dark ground. The interface's only
-     accent: focus, the active control, and a session that needs a person. */
-  --color-accent: #d9822b;
-  --color-state-paused: #d9822b;
+  /* Braun's orange. The interface's only accent: focus, the active control, and
+     a session that needs a person. It used to be dulled for a dark ground and is
+     no longer — a dulled accent on a low-contrast ground was half of why the
+     whole thing looked tired, and 7.93:1 is a lamp rather than a stain. */
+  --color-accent: #ee9633;
+  --color-state-paused: #ee9633;
   /*
    * A warning, and the one thing allowed to disagree with the accent.
    *
-   * Lightened from `#c4574c`, which looked right and measured 4.30:1 against the
+   * Lightened twice, for the same reason and by two different amounts.
+   *
+   * First from `#c4574c`, which looked right and measured 4.30:1 against the
    * ground — under AA, on the one state a person most needs to be able to read.
+   * Then again with the rest of the palette, from `#d4685c` at 5.30:1 to this at
+   * 6.22:1, because a red that merely clears AA on a ground everything else has
+   * left behind is a red that has quietly become the dimmest thing on screen.
+   *
    * Restraint is a legitimate aim and legibility is not the place to spend it.
    * Measured, not eyeballed: contrast is the property of a palette that
    * confident visual judgement is worst at.
    */
-  --color-state-fail: #d4685c;
+  --color-state-fail: #e4766a;
   /* Finished is not an event. It reads as ordinary text and is `muted` in use;
      kept as a token so the state map stays total rather than falling through. */
-  --color-state-done: #8a8a83;
+  --color-state-done: #b3aa96;
 
-  --color-user-bubble: #232320;
-  --color-user-edge: #34342f;
+  --color-user-bubble: #282520;
+  --color-user-edge: #443f35;
 
   /*
    * ## Corner radius, as three tokens rather than twenty-four literals

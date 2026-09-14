@@ -13,19 +13,19 @@
      argues for the same program and its screenshots are of that program. A
      second visual world would misreport them. */
   :root {
-    --bg: #121211; --panel: #1a1a18; --sunken: #0e0e0d; --line: #2b2b28;
-    --ink: #e8e8e4; --muted: #8a8a83; --accent: #d9822b;
+    --bg: #151412; --panel: #1e1c18; --sunken: #0f0e0c; --line: #37332c;
+    --ink: #f2ece0; --muted: #b3aa96; --accent: #ee9633;
     /*
      * A second edge, only for screenshots.
      *
      * `--line` is right for a panel: it separates two surfaces that differ. It is
      * wrong for a picture of *this app*, because the screenshot is drawn in this
-     * exact palette — a dark interface on a dark page inside a `#2b2b28` border
+     * exact palette — a dark interface on a dark page inside a `#37332c` border
      * has nothing anywhere saying where the page stops and the program starts,
      * and the pictures read as regions of the layout. Bright enough to be a
      * frame, dark enough not to be a highlight.
      */
-    --edge: #57574e;
+    --edge: #6b6454;
     /*
      * A surface that sits above every band below.
      *
@@ -34,7 +34,7 @@
      * that has to be true is the relation rather than the value: a panel is one
      * step above whatever it is standing on, wherever it stands.
      */
-    --raised: #232320;
+    --raised: #282520;
     --grotesque: 'Helvetica Neue', Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
     --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   }
@@ -69,12 +69,12 @@
    * The gallery gets the lightest one on purpose — the screenshots are of this
    * program, drawn in these colours, so they need a ground that is not their own.
    */
-  .band-hero  { background: #0e0e0d; }
-  .band-shots { background: #1a1a18; }
-  .band-model { background: #121211; }
-  .band-buys  { background: #0e0e0d; }
-  .band-start { background: #1a1a18; }
-  .band-foot  { background: #121211; }
+  .band-hero  { background: #0f0e0c; }
+  .band-shots { background: #1e1c18; }
+  .band-model { background: #151412; }
+  .band-buys  { background: #0f0e0c; }
+  .band-start { background: #1e1c18; }
+  .band-foot  { background: #151412; }
 
   section { margin: 0; }
   p, ul { max-width: 66ch; }
@@ -140,7 +140,7 @@
     transition: opacity .5s ease;
     background: radial-gradient(
       460px circle at var(--px, 50%) var(--py, 30%),
-      rgba(217, 130, 43, .13), rgba(217, 130, 43, 0) 68%
+      rgba(238, 150, 51, .13), rgba(238, 150, 51, 0) 68%
     );
   }
   .hero.lit::before { opacity: 1; }
@@ -257,7 +257,7 @@
     opacity: 0; transition: opacity .25s ease;
     background: radial-gradient(
       220px circle at var(--px, 50%) var(--py, 50%),
-      rgba(217, 130, 43, .10), rgba(217, 130, 43, 0) 70%
+      rgba(238, 150, 51, .10), rgba(238, 150, 51, 0) 70%
     );
   }
   .card.lit::after, .release.lit::after, .dl.lit::after { opacity: 1; }
@@ -431,10 +431,12 @@
           </figure>
 
           <!--
-            The two 1440x900 shots are paired on purpose: same aspect, same rendered
-            height, so the row has no hole in it. The first arrangement put the
-            portrait phone here and every row below it started wherever the phone
-            happened to end.
+            The two closest in shape are paired here, and the portrait phone is
+            not: the first arrangement gave it half a landscape column, so every
+            row below started wherever an 860-pixel-tall picture happened to end.
+            These two are 1440x760 and 1440x900 — near enough that the row reads
+            level, which is the most a grid of real screenshots can offer without
+            cropping them into a shape they were not taken in.
           -->
           <figure>
             <button class="frame" type="button" data-shot="./shots/02-session.png" data-caption="One session: the transcript, the roster, and what the turn is spending.">

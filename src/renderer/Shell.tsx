@@ -89,10 +89,10 @@ import '@xterm/xterm/css/xterm.css';
  * *this* workspace.
  */
 const THEME = {
-  background: '#0e0e0d',
-  foreground: '#e8e8e4',
-  cursor: '#d9822b',
-  selectionBackground: '#34342f',
+  background: '#0f0e0c',
+  foreground: '#f2ece0',
+  cursor: '#ee9633',
+  selectionBackground: '#443f35',
 } as const;
 
 /** One thing this pane could run, as the parent worked it out from the host. */
