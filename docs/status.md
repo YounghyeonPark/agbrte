@@ -126,14 +126,20 @@ which is the only thing that proves the part this feature exists for.
 **OCR is not built**, so the redaction sweep reports `scanned: false` rather than
 an empty match list.
 
-**The remote screen has never been read off a real display.** The `xwd` format
-decoder is tested against dumps built field by field — padded rows, either byte
-order, 16/24/32 bits, masks in the wrong order, a colormap in the way — and the
-driver is tested with `spawn` injected, including a display that refuses the
-cookie and one that never answers. The end-to-end run proves the whole path by
-asking a **Windows** host, which genuinely has no X display, and getting that
-answer back through every layer. None of that is a frame off a real GNOME
-session, which only the user's machine can produce.
+**The remote screen has now been read off a real display, once.** A GNOME desktop
+on the user's Ubuntu server came back at `:1 · 2944×1080`, `305ms · ~3.3/s` —
+against the 0.13s grab plus 0.16s encode the design was built around, which is
+the measurement holding on the machine it was taken from. What follows is what
+that single confirmation does *not* cover.
+
+The format decoder is tested against dumps built field by field — padded rows,
+either byte order, 16/24/32 bits, masks in the wrong order, a colormap in the
+way — and the driver is tested with `spawn` injected, including a display that
+refuses the cookie and one that never answers. The end-to-end run proves the
+whole path by asking a **Windows** host, which genuinely has no X display, and
+getting that answer back through every layer. One frame off one Xorg desktop is
+not a second machine, a second distribution, or a display that has to be argued
+with.
 
 Two limits are known rather than suspected. **Wayland**: `xwd -root` sees
 XWayland's root and not the compositor's output, so a Wayland session may grab
@@ -178,3 +184,25 @@ that beat seated an agent they had not chosen. What found it was instrumenting
 the thing rather than re-running it. **A test that only fails under load is
 still a test that failed**, and "it passes alone" is a description rather than an
 explanation.
+
+**And it is not fully closed.** The same failure came back once in a full run
+after that fix — `ports.spec.ts` timing out on `[data-testid=runtime-list]`, the
+dropdown that "never appeared" — and the saved page snapshot rules out the cause
+that was found last time: the picker had **settled**. It showed `8 ready on
+build-01` and a local model already preselected, so `modelsBusy` was false, the
+trigger was enabled, and Playwright's click landed. Something after that lost the
+open.
+
+Recorded here rather than fixed, because the honest state is that it has not been
+reproduced. It passes alone, which the paragraph above says is a description; what
+is new is the narrowing — whatever this is, it is *not* the models-arriving tick,
+so the next person should not start there. Two candidates are visible in the code
+and neither is evidence: `entries` is a `useMemo` over `runtimes`, which is
+rebuilt on every host push, so the whole option list is a new array of new objects
+several times a second under load; and `value` is derived from that list, so a
+push that changes the ranking moves a controlled value the same way the original
+defect did. The instrumenting-rather-than-re-running rule applies to both.
+
+Worth knowing for anyone who meets it: the suite grew from 85 deterministic specs
+to 89 when the display view landed, and the run from 8.3 to 8.9 minutes. That
+does not cause a race, but it is more load on the machine that exposes one.
