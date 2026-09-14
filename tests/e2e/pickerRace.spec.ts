@@ -92,3 +92,82 @@ test('the picker opens while the host list is being replaced under it', async ()
     await agbrte.close();
   }
 });
+
+/**
+ * Make the runtime list itself disagree with its previous answer.
+ *
+ * The second candidate, and a sharper one than the first. Every host push makes
+ * the store **re-fetch** `hosts.runtimes` for each host and replace
+ * `runtimesByHost` wholesale — so a push does not merely change an array's
+ * identity, it re-asks a question. The picker's `value` is derived from that
+ * answer (`preferred` is the first entry that can run), and a controlled value
+ * changing in the tick Radix is opening is the *exact* mechanism of the defect
+ * that was found and fixed before.
+ *
+ * So this alternates the answer between the real one and the real one with its
+ * head removed, which moves `preferred` whenever the head was preferred.
+ */
+async function alternateRuntimes(
+  agbrte: Awaited<ReturnType<typeof launch>>,
+): Promise<void> {
+  await agbrte.app.evaluate(async ({ ipcMain }) => {
+    const handlers = (
+      ipcMain as unknown as { _invokeHandlers: Map<string, (...a: unknown[]) => unknown> }
+    )._invokeHandlers;
+    const original = handlers.get('agbrte:hosts.runtimes');
+    if (original === undefined) throw new Error('no hosts.runtimes handler to wrap');
+
+    let flip = false;
+    const doctor = async (event: unknown, instanceId: unknown): Promise<unknown> => {
+      const all = (await original(event, instanceId)) as unknown[];
+      flip = !flip;
+      // Never empty: a host with no runtimes is a different screen entirely, and
+      // this is about the ranking moving rather than about the list vanishing.
+      return flip && all.length > 1 ? all.slice(1) : all;
+    };
+    ipcMain.removeHandler('agbrte:hosts.runtimes');
+    ipcMain.handle('agbrte:hosts.runtimes', doctor);
+  });
+}
+
+test('the picker opens while the answer under it keeps changing its mind', async () => {
+  const repo = await makeRepo();
+  const agbrte = await launch(repo);
+
+  try {
+    const page = agbrte.window;
+    await alternateRuntimes(agbrte);
+    await createSession(page, 'churn');
+
+    await stormHostPushes(agbrte, 12);
+    await page.waitForTimeout(250);
+
+    /*
+     * The test checks itself first, and this is not ceremony.
+     *
+     * If the doctored answer never actually moved `preferred`, the assertion
+     * below would pass while exercising nothing — a green test that proves the
+     * opposite of what it claims. The trigger renders the selected entry's
+     * label, so watching it change *is* watching the controlled value change.
+     */
+    const seen = new Set<string>();
+    for (let i = 0; i < 40; i += 1) {
+      seen.add((await page.locator('[data-testid=runtime-trigger]').innerText()).trim());
+      await page.waitForTimeout(50);
+    }
+    expect(seen.size, `trigger only ever showed ${[...seen].join(' | ')}`).toBeGreaterThan(1);
+
+    /*
+     * Deliberately not `addAgent`, which waits for the list before clicking. The
+     * claim here is about the click and the open, so the click is raw.
+     */
+    await page.click('[data-testid=runtime-trigger]');
+    await expect(page.locator('[data-testid=runtime-list]')).toBeVisible({ timeout: 15_000 });
+    await page.waitForTimeout(600);
+    await expect(page.locator('[data-testid=runtime-list]')).toBeVisible();
+
+    await stopStorm(agbrte);
+  } finally {
+    await agbrte.close();
+  }
+});

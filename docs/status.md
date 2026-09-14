@@ -201,16 +201,30 @@ build-01` and a local model already preselected, so `modelsBusy` was false, the
 trigger was enabled, and Playwright's click landed. Something after that lost the
 open.
 
-One of the two candidates below is now eliminated. `applyHosts` sets a **new
-array** on every host push, so the picker's whole option list is rebuilt several
-times a second under load — which was the obvious suspect and is not the cause:
-`pickerRace.spec.ts` drives that condition on purpose, pushing every eight
-milliseconds while the dropdown is opened, and the list opens and stays open
-every time. That is one candidate gone for the price of a five-second test rather
-than a day, and the test stays as the record.
+**Both recorded candidates are now eliminated, and a third was ruled out by
+reading.** `pickerRace.spec.ts` drives each condition on purpose rather than
+waiting for a one-in-three failure:
 
-The rest is recorded rather than fixed, because the honest state is that it has
-not been reproduced. It passes alone, which the paragraph above says is a description; what
+- *The option list churning.* `applyHosts` sets a new array on every host push
+  and the store then re-fetches `hosts.runtimes` for every host, so the picker's
+  entire list is rebuilt several times a second under load. Pushed every eight
+  milliseconds while the dropdown is opened: it opens, and stays open.
+- *The controlled value moving.* `preferred` is derived from that answer, and a
+  value changing in the tick Radix is opening is the exact mechanism of the
+  defect that was found and fixed before. The runtime list is doctored to
+  alternate, so the ranking really does move — **the test asserts that it moved**
+  before asserting the open survived, because a version that quietly failed to
+  create the condition would be a green test proving the opposite of its name.
+- *An unmount.* The full-pane picker renders only while `active.agents.length ===
+  0`, so anything seating an agent tears it out — which would lose the open for
+  certain. The auto-add effect is the only spurious source, and it cannot fire
+  here: it needs a remembered default, and every launch gets a throwaway profile.
+
+What is left is environmental — a renderer starved of CPU by a full suite — and
+no product change addresses that. So the value of this entry is now what it rules
+*out*: the next person should not start at the models arriving, at the option
+list, or at the ranking, and the tests are there to say why. The rest is recorded
+rather than fixed, because the honest state is that it has not been reproduced. It passes alone, which the paragraph above says is a description; what
 is new is the narrowing — whatever this is, it is *not* the models-arriving tick,
 so the next person should not start there. Two candidates are visible in the code
 and neither is evidence: `entries` is a `useMemo` over `runtimes`, which is
