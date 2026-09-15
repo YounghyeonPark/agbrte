@@ -82,6 +82,21 @@ export interface AgbrteState {
   /** Turns waiting behind the running one, possibly sent from another device. */
   queued: number;
   busy: boolean;
+  /**
+   * The session being opened right now, or `null`.
+   *
+   * Separate from `busy`, which every guarded call sets — sending a turn, adding
+   * an agent, renaming. A shared flag cannot say *which* thing is in flight, so
+   * using it to mean "opening" would put an opening state on screen while
+   * somebody was renaming something else.
+   *
+   * It exists because clicking a session that is not loaded yet does real work:
+   * the host rebuilds it from its event log (§15 Phase 1) and only then is there
+   * a transcript to show. Until this, the pane kept rendering the dashboard or
+   * whatever was open before, so a click on a large session looked like a click
+   * that had missed.
+   */
+  opening: string | null;
   error: string | null;
 
   /** Machines from the user's ssh config, loaded when the attach panel opens. */
@@ -395,6 +410,7 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
   inbox: [],
   sessions: [],
   onDisk: [],
+  opening: null,
   activeId: null,
   active: null,
   events: [],
@@ -591,20 +607,41 @@ export const useAgbrte = create<AgbrteState>((set, get) => ({
   },
 
   async openSession(sessionId, instanceId) {
-    await guard(set, async () => {
-      const loaded = get().sessions.some((s) => s.sessionId === sessionId);
-      // A session listed from disk is not loaded yet. Resuming is what rebuilds
-      // it from the log — the restart path (§15 Phase 1) — and it has to be
-      // resumed on the host that owns it.
-      if (!loaded) {
-        const owner =
-          instanceId ?? get().onDisk.find((s) => s.sessionId === sessionId)?.instanceId;
-        if (owner === undefined) throw new Error('no host is known to own that session');
-        await agbrte().sessions.resume(owner, sessionId);
-      }
-      applySnapshot(set, get, await agbrte().sessions.snapshot(sessionId));
-      set({ sessions: await agbrte().sessions.list() });
-    });
+    /*
+     * Set before the guard and cleared after it, so the window covers the slow
+     * half — `resume` — rather than only the part after it has finished.
+     *
+     * **Outside the guarded body**, which is the part that matters. Clearing it
+     * on the last line inside would look identical and strand the flag on every
+     * failure: an open that is refused would leave the pane saying "opening"
+     * forever, with the reason sitting in the banner above it. That is the
+     * mistake `opening.spec.ts`'s second test is for, and it catches it.
+     *
+     * The `finally` itself is belt-and-braces rather than load-bearing today:
+     * `guard` catches everything and returns `undefined`, so nothing here throws
+     * and a plain statement after the `await` would behave the same. It is a
+     * `finally` so that stops being something to re-check if `guard` ever stops
+     * swallowing, or if anything gains the ability to throw above it.
+     */
+    set({ opening: sessionId });
+    try {
+      await guard(set, async () => {
+        const loaded = get().sessions.some((s) => s.sessionId === sessionId);
+        // A session listed from disk is not loaded yet. Resuming is what rebuilds
+        // it from the log — the restart path (§15 Phase 1) — and it has to be
+        // resumed on the host that owns it.
+        if (!loaded) {
+          const owner =
+            instanceId ?? get().onDisk.find((s) => s.sessionId === sessionId)?.instanceId;
+          if (owner === undefined) throw new Error('no host is known to own that session');
+          await agbrte().sessions.resume(owner, sessionId);
+        }
+        applySnapshot(set, get, await agbrte().sessions.snapshot(sessionId));
+        set({ sessions: await agbrte().sessions.list() });
+      });
+    } finally {
+      set({ opening: null });
+    }
   },
 
   closeSession() {

@@ -357,6 +357,45 @@
 }
 
 /*
+ * ## Saying "opening" only once it has been slow enough to need saying
+ *
+ * Clicking a session that is not loaded makes the host rebuild it from its event
+ * log, and until that lands the pane kept showing whatever was there before — so
+ * a click on a large session looked like a click that had missed.
+ *
+ * The obvious fix flashes. Most opens are quick, and a panel that appears and
+ * vanishes inside 120ms is a blink that reads as a glitch rather than as
+ * progress. So the reveal is *delayed*, and delayed in the stylesheet rather
+ * than with a `setTimeout` in a component: a timer per open is state to cancel
+ * on unmount, and this is one `animation-delay` that cannot leak.
+ *
+ * `backwards` fill is what holds it invisible during the delay — without it the
+ * element is painted at full opacity for the first frame, which is the flash
+ * this exists to avoid.
+ */
+@keyframes settle-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.after-a-moment {
+  animation: settle-in 0.18s ease-out 0.25s backwards;
+}
+
+/* No delay and no fade for somebody who has asked motion to stop: they get the
+   state immediately, which is the honest trade — the flash this avoids is a
+   cosmetic cost and a missing state is an informational one. */
+@media (prefers-reduced-motion: reduce) {
+  .after-a-moment {
+    animation: none;
+  }
+}
+
+/*
  * ## Motion that says *this one is running*, and only while it is
  *
  * The dots above were the whole of it, and they sit at the tail of a transcript

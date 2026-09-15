@@ -492,7 +492,7 @@ export function App(): JSX.Element {
    * stages, and a progress display with its own stages hands them back.
    */
   const [starting, setStarting] = useState<string | null>(null);
-  const { hosts, runtimesByHost, conformanceByHost, inbox, sessions, onDisk, active, events, pending, queued, error, notice, busy } =
+  const { hosts, runtimesByHost, conformanceByHost, inbox, sessions, onDisk, active, events, pending, queued, error, notice, busy, opening } =
     store;
 
   /*
@@ -1356,6 +1356,21 @@ export function App(): JSX.Element {
               setAttaching('remote');
             }}
           />
+        ) : opening !== null && active?.sessionId !== opening ? (
+          /*
+             The gap between the click and the transcript, which was silent.
+             
+             Opening a session that is not loaded makes its host rebuild it from
+             the event log, and until that lands `active` is still whatever it
+             was — so the pane kept showing the dashboard, or the session
+             somebody had just navigated away from, and a click on a large
+             session looked like a click that had missed.
+             
+             Placed above the dashboard branch on purpose: it is the one that
+             would otherwise be showing, and putting this below it would mean
+             rendering the thing being replaced.
+          */
+          <Opening name={nameOfSession(opening, sessions, onDisk)} />
         ) : active === null && sessions.length > 0 ? (
           /* The dashboard once there is something to show, the welcome when
              there is not. An empty grid teaches nothing and a greeting is noise
@@ -2053,6 +2068,55 @@ export function App(): JSX.Element {
           </>
         )}
       </main>
+    </div>
+  );
+}
+
+/**
+ * The title of a session that may not be loaded yet.
+ *
+ * Both lists, because the interesting case is the one that is *not* in
+ * `sessions`: a session listed from disk is exactly the one whose open is slow,
+ * so a lookup that only searched the loaded list would have nothing to show
+ * precisely when there was something to say.
+ */
+function nameOfSession(
+  sessionId: string,
+  sessions: Session[],
+  onDisk: Array<{ sessionId: string; title: string }>,
+): string | null {
+  return (
+    sessions.find((s) => s.sessionId === sessionId)?.title ??
+    onDisk.find((s) => s.sessionId === sessionId)?.title ??
+    null
+  );
+}
+
+/**
+ * What the pane shows while a session is being rebuilt from its log.
+ *
+ * It says what is happening rather than spinning at somebody. "Rebuilding from
+ * its log" is the actual work — the host replays the events that session is made
+ * of (§15 Phase 1) — and a person who knows that is waiting for something,
+ * where a bare spinner leaves them deciding whether the app has hung.
+ *
+ * `after-a-moment` holds it back for a quarter second, because most opens are
+ * quicker than that and a panel that appears and vanishes reads as a glitch. The
+ * delay is an `animation-delay` in the stylesheet rather than a timer here: a
+ * timer per open is state to cancel on unmount, and this cannot leak.
+ */
+function Opening({ name }: { name: string | null }): JSX.Element {
+  return (
+    <div className="m-auto grid max-w-sm gap-2 p-6 text-center" data-testid="opening">
+      <span className="after-a-moment grid gap-2">
+        <span className="text-sm">
+          Opening{name === null ? '' : ` ${name}`}
+          <WorkingDots />
+        </span>
+        <span className="text-muted text-xs leading-relaxed">
+          Its host is rebuilding it from the event log. A long session takes a moment.
+        </span>
+      </span>
     </div>
   );
 }
@@ -3312,7 +3376,17 @@ function HostGroup({
                 already said this. See `quietTone`. */}
             <span className={`${LABEL} flex min-w-0 gap-2`}>
               <LiveDot state={s.state} />
-              <span className={quietTone(s.state)}>{s.state.replace(/_/g, ' ')}</span>
+              {/* The row says it too, because the row is where the click landed
+                  and where the eye already is. The pane is the larger answer;
+                  this is the one that is under the cursor. */}
+              {store.opening === s.sessionId ? (
+                <span className="text-accent" data-testid="row-opening">
+                  opening
+                  <WorkingDots />
+                </span>
+              ) : (
+                <span className={quietTone(s.state)}>{s.state.replace(/_/g, ' ')}</span>
+              )}
               <FolderTag name={folderOf(s.instanceId)} />
               {s.workflow !== undefined && <WorkflowTag id={s.workflow} />}
               {s.group !== undefined && <GroupTag name={s.group.name} />}
