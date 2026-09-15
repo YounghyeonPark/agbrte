@@ -43,7 +43,7 @@ import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { ROOT, makeRepo } from './harness.js';
-import { addAgent, createSession } from './actions.js';
+import { addAgent, createSession, fromComposerMenu } from './actions.js';
 
 const PACKAGED: Record<string, string> = {
   win32: 'release/win-unpacked/Agbrte.exe',
@@ -89,7 +89,7 @@ test('a packaged app starts its own CLI on the session in the pane', async () =>
     await createSession(window, 'Packaged');
     // A seat with no vendor binary, which is the case the CLI option exists for.
     await addAgent(window, 'echo');
-    await window.click('[data-testid=show-shell][data-choice="agbrte"]');
+    await fromComposerMenu(window, '[data-testid=show-shell][data-choice="agbrte"]');
 
     const pane = window.locator('[data-testid=pty-terminal]');
     await expect(pane.locator('[data-testid=pty-running]')).toHaveText('Agbrte CLI', {

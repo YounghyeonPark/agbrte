@@ -298,11 +298,96 @@ export async function pretendRemote(agbrte: LaunchedApp): Promise<void> {
     ipcMain.removeHandler('agbrte:hosts.list');
     ipcMain.handle('agbrte:hosts.list', doctor);
 
-    // And on the push, because that is the other way the list arrives — a real
-    // push would otherwise put `local` back in the middle of a test.
-    const listed = await doctor(null);
+    /*
+     * And on **every** push, not one.
+     *
+     * This used to send a single doctored list and say it was covering the other
+     * way the list arrives. It was not: a real push carries main's own array, so
+     * the next one put `local` back and the pretence lasted until whenever that
+     * happened. It held because nothing in these tests took long enough to meet
+     * one — and a spec that grew a few more awaits started failing in full runs
+     * with `toggle-ports` simply absent, which reads as a broken control rather
+     * than as a host that had quietly become local again.
+     *
+     * So `send` itself is wrapped for that one channel. Every push, however it
+     * originates, arrives doctored for as long as the window lives.
+     */
     for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('agbrte:push.hosts', listed);
+      const contents = win.webContents as unknown as {
+        send: (channel: string, ...args: unknown[]) => void;
+        __realSend?: (channel: string, ...args: unknown[]) => void;
+      };
+      contents.__realSend ??= contents.send.bind(contents);
+      contents.send = (channel: string, ...args: unknown[]): void => {
+        if (channel === 'agbrte:push.hosts' && Array.isArray(args[0])) {
+          const hosts = (args[0] as Array<Record<string, unknown>>).map((h) => ({
+            ...h,
+            targetKind: 'ssh',
+            label: 'build-01',
+          }));
+          contents.__realSend?.(channel, hosts);
+          return;
+        }
+        contents.__realSend?.(channel, ...args);
+      };
+      contents.send('agbrte:push.hosts', await original(null));
     }
   });
+}
+
+/**
+ * Press a control that now lives in the composer's menu.
+ *
+ * Ten controls stood on the composer's footer — three pane modes, three panes, a
+ * speaker, a microphone, a capture button and Send — and everything that is
+ * *navigation* moved behind one button. The two that stayed are the speaker and
+ * the microphone, because a device that can be live with nothing on screen
+ * saying so must not be hidden.
+ *
+ * A helper rather than two lines at every call site, because the alternative is
+ * six specs that each remember to open the menu first, and the seventh that does
+ * not is a failure about a click rather than about the thing being tested.
+ *
+ * The menu closes on any choice, so a caller that presses two things in a row
+ * opens it twice — which is what a person does too.
+ *
+ * `openComposerMenu` is the other half and matters more than it looks. The panel
+ * renders **only while it is open**, so a `toHaveCount(0)` on something inside it
+ * passes whether or not the control exists — which would quietly turn every
+ * "this is not offered here" assertion into one that cannot fail. Those have to
+ * open the menu and then look.
+ */
+export async function openComposerMenu(page: Page): Promise<boolean> {
+  const menu = page.locator('[data-testid=composer-menu]');
+  /*
+   * Absent on a build that predates the menu, and that is a real case rather
+   * than a defensive one: `packaged.spec.ts` drives an artifact out of
+   * `release/`, which may have been built before any of this existed. The same
+   * reasoning `createSession` already applies to `new-folder` — waiting for a
+   * control an old build does not have fails a test about something else.
+   */
+  /*
+   * Waited for, not counted. A bare `count() === 0` answers about *this instant*,
+   * so a button that is one render away reads as a build that does not have one
+   * — and the helper then returns quietly, the caller carries on with the menu
+   * shut, and the failure lands on whatever it looked for next. That is exactly
+   * how it failed once: `toggle-ports` "not found", in a menu nobody had opened.
+   */
+  const there = await menu
+    .waitFor({ state: 'visible', timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!there) return false;
+  if ((await menu.getAttribute('aria-expanded')) !== 'true') await menu.click();
+  await expect(page.locator('[data-testid=composer-menu-panel]')).toBeVisible();
+  return true;
+}
+
+export async function fromComposerMenu(page: Page, selector: string): Promise<void> {
+  // On a build with no menu the control is still on the row, where it used to
+  // be — so press it there rather than fail about a button that is not the
+  // subject of any of these tests.
+  const inMenu = await openComposerMenu(page);
+  const scope = inMenu ? page.locator('[data-testid=composer-menu-panel]') : page;
+  await scope.locator(selector).click();
 }

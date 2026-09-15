@@ -33,7 +33,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 import { launch, makeRepo, type LaunchedApp } from './harness.js';
-import { addAgent, createSession, hostGroup, pretendRemote } from './actions.js';
+import { addAgent, createSession, hostGroup, openComposerMenu, pretendRemote } from './actions.js';
 
 const portsRow = (page: Page) => page.locator('[data-testid=ports-row]');
 const portsToggle = (page: Page) => page.locator('[data-testid=toggle-ports]');
@@ -65,9 +65,13 @@ test.describe('ports are there when asked for', () => {
        * visible — and a control that does nothing teaches people the feature
        * does nothing.
        */
+      /* Inside the menu now, and it has to be open to be asked about: the panel
+         renders only while it is, so this assertion would pass on a *remote*
+         session too if it looked at a shut one. */
+      await openComposerMenu(page);
       await expect(portsToggle(page)).toHaveCount(0);
       await expect(portsRow(page)).toHaveCount(0);
-      // The other controls in that row are untouched.
+      // The other controls in the menu are untouched.
       await expect(page.locator('[data-testid=toggle-files]')).toBeVisible();
     } finally {
       await agbrte.close();
@@ -108,6 +112,7 @@ test.describe('ports are there when asked for', () => {
 
       await createSession(page, 'watching');
       await addAgent(page, 'echo');
+      await openComposerMenu(page);
       await portsToggle(page).click();
       await expect(portsRow(page)).toBeVisible();
 
@@ -142,7 +147,9 @@ test.describe('ports are there when asked for', () => {
       await addAgent(page, 'echo');
 
       // Folded on arrival: the assertion this change exists for.
+      await openComposerMenu(page);
       await expect(portsToggle(page)).toBeVisible();
+      await openComposerMenu(page);
       await expect(portsToggle(page)).toHaveAttribute('aria-pressed', 'false');
       await expect(portsRow(page)).toHaveCount(0);
       /*
@@ -152,11 +159,14 @@ test.describe('ports are there when asked for', () => {
        * *detected* ports, which is the noise the fold exists to remove — other
        * people's services on a machine this session happens to share.
        */
+      await openComposerMenu(page);
       await expect(portsToggle(page)).toHaveText('Ports');
       await expect(page.locator('[data-testid=detected-port]')).toHaveCount(0);
 
+      await openComposerMenu(page);
       await portsToggle(page).click();
       await expect(portsRow(page)).toBeVisible();
+      await openComposerMenu(page);
       await expect(portsToggle(page)).toHaveAttribute('aria-pressed', 'true');
 
       // Everything it did before is still in it: the port field and Forward,
@@ -187,6 +197,7 @@ test.describe('ports are there when asked for', () => {
       }
 
       await resize(agbrte, 1180, 820);
+      await openComposerMenu(page);
       await portsToggle(page).click();
       await expect(portsRow(page)).toHaveCount(0);
     } finally {
@@ -203,6 +214,7 @@ test.describe('ports are there when asked for', () => {
       await pretendRemote(agbrte);
       await createSession(page, 'the web one');
       await addAgent(page, 'echo');
+      await openComposerMenu(page);
       await portsToggle(page).click();
       await expect(portsRow(page)).toBeVisible();
 
@@ -231,6 +243,7 @@ test.describe('ports are there when asked for', () => {
       await expect(page.locator('[data-testid=composer-input]')).toBeVisible({ timeout: 30_000 });
 
       await expect(portsRow(page)).toHaveCount(0);
+      await openComposerMenu(page);
       await expect(portsToggle(page)).toHaveAttribute('aria-pressed', 'false');
 
       await page.click('[data-testid=session][data-title="the web one"]');

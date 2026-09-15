@@ -28,7 +28,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 import { launch, makeRepo, type LaunchedApp } from './harness.js';
-import { addAgent, createSession, pretendRemote } from './actions.js';
+import { addAgent, createSession, openComposerMenu, pretendRemote } from './actions.js';
 
 /**
  * A real 4×3 PNG in the interface's accent colour.
@@ -79,6 +79,9 @@ test.describe('the screen of that machine', () => {
        * offering to fetch it would be a control that does nothing visible, which
        * is how people learn a feature does nothing.
        */
+      /* Opened first: the panel renders only while it is, so this would pass on
+         a remote session too if it looked at a shut menu. */
+      await openComposerMenu(page);
       await expect(toggle(page)).toHaveCount(0);
       await expect(row(page)).toHaveCount(0);
       // The neighbouring controls are untouched.
@@ -117,9 +120,15 @@ test.describe('the screen of that machine', () => {
        * centimetres from `composer-capture` — also `Screen`, and the control that
        * attaches a picture of *your* screen to the message. One word for "send
        * mine" and "watch theirs", on one row. Pressing the wrong one opens a
-       * capture picker instead of a remote desktop, so the two are pinned as
-       * different words here.
+       * capture picker instead of a remote desktop.
+       *
+       * The row they shared is gone — both live in the composer's menu now, one
+       * under *Show* and one under *This message*, so they can no longer be
+       * mistaken for neighbours. The names are still pinned apart, because the
+       * menu put them **closer** rather than further: they are four lines from
+       * each other in one panel instead of across a row.
        */
+      await openComposerMenu(page);
       await expect(toggle(page)).toHaveText('Display');
       const capture = page.locator('[data-testid=composer-capture]');
       if ((await capture.count()) > 0) {
@@ -176,6 +185,7 @@ test.describe('the screen of that machine', () => {
       );
       await createSession(page, 'watching');
       await addAgent(page, 'echo');
+      await openComposerMenu(page);
       await toggle(page).click();
 
       const frame = page.locator('[data-testid=screen-frame]');
@@ -249,6 +259,7 @@ test.describe('the screen of that machine', () => {
       );
       await createSession(page, 'wayland box');
       await addAgent(page, 'echo');
+      await openComposerMenu(page);
       await toggle(page).click();
 
       const warned = page.locator('[data-testid=screen-wayland]');
@@ -287,6 +298,7 @@ test.describe('the screen of that machine', () => {
       });
       await createSession(page, 'refused');
       await addAgent(page, 'echo');
+      await openComposerMenu(page);
       await toggle(page).click();
 
       const missing = page.locator('[data-testid=screen-no-tool]');

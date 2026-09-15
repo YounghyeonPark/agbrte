@@ -36,7 +36,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { launch, makeRepo } from './harness.js';
-import { addAgent, createSession } from './actions.js';
+import { addAgent, createSession, fromComposerMenu, openComposerMenu } from './actions.js';
 
 const MARKER = 'the-file-browser-can-see-this';
 
@@ -106,7 +106,7 @@ test.describe('the workspace file browser', () => {
       const before = await log(repo);
       const closed = await transcriptBox(agbrte.window);
 
-      await agbrte.window.click('[data-testid=toggle-files]');
+      await fromComposerMenu(agbrte.window, '[data-testid=toggle-files]');
       const tree = agbrte.window.locator('[data-testid=file-browser]');
       await expect(tree).toBeVisible();
 
@@ -173,6 +173,10 @@ test.describe('the workspace file browser', () => {
        * the tree. It is gone rather than dead, and this is the assertion that
        * notices if somebody puts it back.
        */
+      /* Opened first, and that is load-bearing: the panel renders only while it
+         is open, so a `toHaveCount(0)` on a control inside a shut menu passes
+         whether or not the control exists. */
+      await openComposerMenu(agbrte.window);
       await expect(agbrte.window.locator('[data-testid=show-file]')).toHaveCount(0);
       await expect(agbrte.window.locator('[data-testid=show-chat]')).toBeVisible();
 
@@ -242,7 +246,7 @@ test.describe('the workspace file browser', () => {
     try {
       await createSession(agbrte.window, 'Resizing');
       await addAgent(agbrte.window, 'echo');
-      await agbrte.window.click('[data-testid=toggle-files]');
+      await fromComposerMenu(agbrte.window, '[data-testid=toggle-files]');
 
       const tree = agbrte.window.locator('[data-testid=file-browser]');
       await tree.locator('[data-testid=file-tree-file][data-path="README.md"]').click();
@@ -289,7 +293,7 @@ test.describe('the workspace file browser', () => {
     try {
       await createSession(agbrte.window, 'Caps');
       await addAgent(agbrte.window, 'echo');
-      await agbrte.window.click('[data-testid=toggle-files]');
+      await fromComposerMenu(agbrte.window, '[data-testid=toggle-files]');
 
       const rail = agbrte.window.locator('[data-testid=file-browser]');
       const tree = rail.locator('[data-testid=file-tree]');

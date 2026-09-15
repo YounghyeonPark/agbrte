@@ -714,7 +714,24 @@ export function Composer({
           here acts on the message above it, and `Send` sits at the end of the
           line the eye already finishes on. */}
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {tools}
+        {/*
+          Ten controls stood on this line: three pane modes, three panes, a
+          speaker, a microphone, a capture button and Send. Most of them are
+          navigation, and navigation in a row you type into is furniture in a
+          doorway.
+          
+          The rule for what moved is one line: **if a control's state is visible
+          in the layout, it goes in the menu; if it is a device that can be live
+          with nothing on screen saying so, it stays out.** Opening Files puts a
+          rail on the right, a terminal replaces the transcript, the capture
+          picker appears — those announce themselves, so the menu hides only the
+          way in. A speaker that is reading and a microphone that is listening
+          announce nothing, and `Speak`'s own note is about exactly that failure:
+          a machine that starts talking is one people mute once and never unmute.
+        */}
+        {(tools !== undefined && tools !== null) || sessionId !== undefined ? (
+          <ComposerMenu sessionId={sessionId} tools={tools} onCapture={() => setPicking((p) => !p)} />
+        ) : null}
         {sessionId !== undefined && (
           <Speak {...(lastAgentText !== undefined ? { agentText: lastAgentText } : {})} />
         )}
@@ -727,17 +744,6 @@ export function Composer({
               setText((prev) => (prev.trim() === '' ? spoken : `${prev.trimEnd()} ${spoken}`))
             }
           />
-        )}
-        {sessionId !== undefined && (
-          <button
-            className="btn-quiet shrink-0"
-            data-testid="composer-capture"
-            type="button"
-            title="Attach a screen capture"
-            onClick={() => setPicking((p) => !p)}
-          >
-            Screen
-          </button>
         )}
         {/* Sending into a silent queue reads as a broken app, and with several
             clients the backlog may not be yours. */}
@@ -756,6 +762,121 @@ export function Composer({
         </button>
       </div>
     </form>
+  );
+}
+
+/**
+ * One button for everything that is navigation (DESIGN.md §3.5, §14).
+ *
+ * ## Hand-rolled, and the two things it is not are the interesting part
+ *
+ * Not a Radix menu. `@radix-ui/react-select` is the only Radix package here and
+ * the eight runtime dependencies are a deliberate number; a dropdown is not
+ * worth the ninth.
+ *
+ * Not the platform's `popover` either, which was the first choice and is the
+ * reason this comment exists. `popover` gives light-dismiss, Escape and the top
+ * layer for free — the same argument that made the landing page's lightbox a
+ * real `<dialog>`. But a top-layer element's containing block is the viewport,
+ * so anchoring it beside this button means either CSS anchor positioning, which
+ * Safari and Firefox do not have and the browser client runs in whatever the
+ * visitor opened, or coordinates in viewport terms, which move whenever a rail
+ * opens. The platform primitive would have cost more fragility than it saved.
+ *
+ * So: a relative wrapper, an absolute panel, and the two listeners the browser
+ * would have given. They are written out rather than assumed — Escape, and a
+ * pointer down anywhere else.
+ */
+function ComposerMenu({
+  sessionId,
+  tools,
+  onCapture,
+}: {
+  // `| undefined` written out, because `exactOptionalPropertyTypes` is on: an
+  // optional property and one that may hold `undefined` are different types
+  // here, and the caller genuinely has both.
+  sessionId: string | undefined;
+  tools: JSX.Element | null | undefined;
+  onCapture: () => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const shut = (event: Event): void => {
+      // A press inside the panel is a press on a menu item, and closing on it
+      // here would beat the item's own handler to the event.
+      if (box.current !== null && event.target instanceof Node && box.current.contains(event.target)) {
+        return;
+      }
+      setOpen(false);
+    };
+    const key = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', shut);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('pointerdown', shut);
+      document.removeEventListener('keydown', key);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative shrink-0" ref={box}>
+      <button
+        type="button"
+        className="btn shrink-0"
+        data-testid="composer-menu"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        title="Panes, terminals, and attaching a capture"
+        onClick={() => setOpen((was) => !was)}
+      >
+        &#8943;
+      </button>
+      {open && (
+        /*
+           Upwards, because the composer is pinned to the foot of the pane and a
+           menu that opened downward would open off the window.
+           
+           It closes on a press of any item: every one of these either changes
+           what the main pane shows or opens a rail, so the menu has done its job
+           the moment one is chosen and staying open would cover the thing it
+           just revealed.
+        */
+        <div
+          className="border-line bg-raised rounded-surface absolute bottom-full left-0 z-20 mb-2 grid w-max min-w-52 gap-2 border p-2 shadow-lg"
+          data-testid="composer-menu-panel"
+          role="menu"
+          onClick={() => setOpen(false)}
+        >
+          {tools !== undefined && tools !== null && (
+            <div className="grid gap-1.5" data-testid="menu-panes">
+              <span className="text-muted px-1 text-[10px] tracking-wider uppercase">Show</span>
+              <div className="flex flex-wrap items-center gap-1.5">{tools}</div>
+            </div>
+          )}
+          {sessionId !== undefined && (
+            <div className="grid gap-1.5" data-testid="menu-message">
+              <span className="text-muted px-1 text-[10px] tracking-wider uppercase">
+                This message
+              </span>
+              <button
+                className="btn-quiet w-full text-left text-[11px]"
+                data-testid="composer-capture"
+                type="button"
+                title="Attach a screen capture"
+                onClick={onCapture}
+              >
+                Attach a screen capture
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

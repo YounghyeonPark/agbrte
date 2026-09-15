@@ -27,7 +27,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { launch, makeRepo } from './harness.js';
-import { addAgent, createSession } from './actions.js';
+import { addAgent, createSession, fromComposerMenu, openComposerMenu } from './actions.js';
 
 /**
  * What the *program* has drawn, without the pane's own chrome.
@@ -81,6 +81,10 @@ test.describe('your own terminal', () => {
        * so a skip means "this host has no Claude Code" and never "the test asked
        * the wrong question".
        */
+      /* The menu has to be open to be asked: the panel renders only while it is,
+         so a count of zero on a shut one would skip this test on every host
+         whether or not it has Claude Code — a skip that means nothing. */
+      await openComposerMenu(agbrte.window);
       const claude = agbrte.window.locator(
         '[data-testid=show-shell][data-choice="cli:claude-code"]',
       );
@@ -177,7 +181,7 @@ test.describe('your own terminal', () => {
       // which is what makes the pane's third choice the only one that can open
       // on the session at all.
       await addAgent(agbrte.window, 'echo');
-      await agbrte.window.click('[data-testid=show-shell][data-choice="agbrte"]');
+      await fromComposerMenu(agbrte.window, '[data-testid=show-shell][data-choice="agbrte"]');
 
       const pane = agbrte.window.locator('[data-testid=pty-terminal]');
       await expect(pane).toBeVisible();
@@ -274,7 +278,7 @@ test.describe('your own terminal', () => {
        * a second client sending a turn is indistinguishable from the composer
        * doing it — that is the claim, and this is where it is checked.
        */
-      await agbrte.window.click('[data-testid=show-chat]');
+      await fromComposerMenu(agbrte.window, '[data-testid=show-chat]');
       for (const text of [marker, fromWindow]) {
         await expect(
           agbrte.window.locator(`[data-testid=row-user]:has-text("${text}")`),
@@ -322,7 +326,7 @@ test.describe('your own terminal', () => {
        * reaching your shell should depend on what else this machine happens to
        * have installed.
        */
-      await agbrte.window.click('[data-testid=show-shell][data-choice="shell"]');
+      await fromComposerMenu(agbrte.window, '[data-testid=show-shell][data-choice="shell"]');
       await expect(pane.locator('[data-testid=pty-running]')).toHaveText('Your shell');
       await expect(pane).toContainText('nothing here enters the transcript');
 
@@ -398,7 +402,7 @@ test.describe('your own terminal', () => {
     try {
       await createSession(agbrte.window, 'Refusal');
       await addAgent(agbrte.window, 'echo');
-      await agbrte.window.click('[data-testid=show-shell][data-choice="shell"]');
+      await fromComposerMenu(agbrte.window, '[data-testid=show-shell][data-choice="shell"]');
       await expect(agbrte.window.locator('[data-testid=pty-where]')).toBeVisible({
         timeout: 30_000,
       });
@@ -471,7 +475,7 @@ test.describe('your own terminal', () => {
       await createSession(agbrte.window, 'Shell lifetime');
       await addAgent(agbrte.window, 'echo');
 
-      await agbrte.window.click('[data-testid=show-shell][data-choice="shell"]');
+      await fromComposerMenu(agbrte.window, '[data-testid=show-shell][data-choice="shell"]');
       await expect(agbrte.window.locator('[data-testid=pty-where]')).toBeVisible({
         timeout: 30_000,
       });
@@ -480,11 +484,11 @@ test.describe('your own terminal', () => {
       // Back to the transcript. The PTY goes with the pane — a terminal is a
       // view, and one with no reader is a program blocked on a prompt nobody can
       // answer. The chat is still there, because none of this touched it.
-      await agbrte.window.click('[data-testid=show-chat]');
+      await fromComposerMenu(agbrte.window, '[data-testid=show-chat]');
       await expect(agbrte.window.locator('[data-testid=pty-terminal]')).toHaveCount(0);
       await expect(agbrte.window.locator('[data-testid=composer-input]')).toBeVisible();
 
-      await agbrte.window.click('[data-testid=show-shell][data-choice="shell"]');
+      await fromComposerMenu(agbrte.window, '[data-testid=show-shell][data-choice="shell"]');
       await expect(agbrte.window.locator('[data-testid=pty-where]')).toBeVisible({
         timeout: 30_000,
       });

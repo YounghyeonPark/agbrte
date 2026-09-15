@@ -13,6 +13,7 @@ import { devices, expect, test } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { serveWebFixture } from './harness.js';
+import { fromComposerMenu } from './actions.js';
 
 test.use({ ...devices['iPhone 14 Pro Max'] });
 
@@ -108,7 +109,7 @@ test('gives the pane to one rail at a time, with no room for three columns', asy
     const width = page.viewportSize()?.width ?? 0;
 
     // The tree takes the screen, rather than a 224px slice of it.
-    await page.locator('[data-testid=toggle-files]').click();
+    await fromComposerMenu(page, '[data-testid=toggle-files]');
     const tree = page.locator('[data-testid=file-browser]');
     await expect(tree).toBeVisible();
     expect(Math.abs(((await tree.boundingBox())?.width ?? 0) - width)).toBeLessThanOrEqual(1);
