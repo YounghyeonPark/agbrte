@@ -606,6 +606,7 @@ export function Composer({
   lastAgentText,
   meta,
   tools,
+  warning,
 }: {
   onSend: (text: string, blocks?: ContentBlock[]) => void;
   disabled: boolean;
@@ -621,6 +622,17 @@ export function Composer({
   meta?: JSX.Element | null;
   /** Controls that belong to the turn's surroundings — the pane, its files. */
   tools?: JSX.Element | null;
+  /**
+   * The one thing from `meta` that stays on screen.
+   *
+   * `Roster.tsx` marks one of the three gating modes as "the one that matters
+   * most to see": an agent whose calls nothing checks, where the filesystem view
+   * is the only boundary (§9). Sweeping the seat line into a menu would have
+   * hidden that along with the ordinary cases, trading a safety signal for
+   * tidiness — so the caller passes a line here when, and only when, there is
+   * something a person should not have to open a menu to find out.
+   */
+  warning?: JSX.Element | null;
   /** Turns waiting behind the running one — possibly sent from another device. */
   queued?: number;
   /** Which session a capture is stored against (§12.1). Absent hides the button. */
@@ -673,8 +685,18 @@ export function Composer({
           onClose={() => setPicking(false)}
         />
       )}
-      {meta !== undefined && meta !== null && (
-        <div className="text-muted border-line/60 min-w-0 border-b pb-2">{meta}</div>
+      {/*
+        What the session *is* moved into the menu (`menu-session`). It was three
+        rows standing permanently above the box you type into — a seat line, a
+        group fold and an MCP fold — read rarely, changed rarely, and in the way
+        every time.
+        
+        `warning` is what did **not** move. See its prop.
+      */}
+      {warning !== undefined && warning !== null && (
+        <div className="min-w-0" data-testid="composer-warning">
+          {warning}
+        </div>
       )}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -730,7 +752,12 @@ export function Composer({
           a machine that starts talking is one people mute once and never unmute.
         */}
         {(tools !== undefined && tools !== null) || sessionId !== undefined ? (
-          <ComposerMenu sessionId={sessionId} tools={tools} onCapture={() => setPicking((p) => !p)} />
+          <ComposerMenu
+            sessionId={sessionId}
+            tools={tools}
+            meta={meta}
+            onCapture={() => setPicking((p) => !p)}
+          />
         ) : null}
         {sessionId !== undefined && (
           <Speak {...(lastAgentText !== undefined ? { agentText: lastAgentText } : {})} />
@@ -790,6 +817,7 @@ export function Composer({
 function ComposerMenu({
   sessionId,
   tools,
+  meta,
   onCapture,
 }: {
   // `| undefined` written out, because `exactOptionalPropertyTypes` is on: an
@@ -797,6 +825,7 @@ function ComposerMenu({
   // here, and the caller genuinely has both.
   sessionId: string | undefined;
   tools: JSX.Element | null | undefined;
+  meta: JSX.Element | null | undefined;
   onCapture: () => void;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
@@ -850,16 +879,25 @@ function ComposerMenu({
           className="border-line bg-raised rounded-surface absolute bottom-full left-0 z-20 mb-2 grid w-max min-w-52 gap-2 border p-2 shadow-lg"
           data-testid="composer-menu-panel"
           role="menu"
-          onClick={() => setOpen(false)}
         >
+          {/*
+            Closing is per section, not per panel.
+            
+            It used to be one `onClick` on the whole thing, which is right for a
+            navigation item — the menu has done its job the moment one is chosen,
+            and staying open would cover what it just revealed. It is wrong for
+            the section below, which holds two forms: a group to join and an MCP
+            server to attach. A panel that shut on the first keystroke's click
+            would make those unusable.
+          */}
           {tools !== undefined && tools !== null && (
-            <div className="grid gap-1.5" data-testid="menu-panes">
+            <div className="grid gap-1.5" data-testid="menu-panes" onClick={() => setOpen(false)}>
               <span className="text-muted px-1 text-[10px] tracking-wider uppercase">Show</span>
               <div className="flex flex-wrap items-center gap-1.5">{tools}</div>
             </div>
           )}
           {sessionId !== undefined && (
-            <div className="grid gap-1.5" data-testid="menu-message">
+            <div className="grid gap-1.5" data-testid="menu-message" onClick={() => setOpen(false)}>
               <span className="text-muted px-1 text-[10px] tracking-wider uppercase">
                 This message
               </span>
@@ -872,6 +910,26 @@ function ComposerMenu({
               >
                 Attach a screen capture
               </button>
+            </div>
+          )}
+          {meta !== undefined && meta !== null && (
+            /*
+               What the session *is*, rather than what it is doing: which seat is
+               filled and under what gating, the group it belongs to, the MCP
+               servers attached to it. Read rarely and changed rarely, and it sat
+               permanently above the box you type into.
+               
+               Scrollable, because the two disclosures in here open: a menu that
+               grows past the window is one whose bottom cannot be reached.
+            */
+            <div
+              className="border-line/60 grid max-h-96 gap-1.5 overflow-y-auto border-t pt-2"
+              data-testid="menu-session"
+            >
+              <span className="text-muted px-1 text-[10px] tracking-wider uppercase">
+                This session
+              </span>
+              <div className="text-muted min-w-0">{meta}</div>
             </div>
           )}
         </div>

@@ -20,7 +20,14 @@ import { expect, test } from '@playwright/test';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { launch, makeRepo } from './harness.js';
-import { addAgent, closeWorkflows, createSession, openSession, openWorkflows } from './actions.js';
+import {
+  addAgent,
+  closeWorkflows,
+  createSession,
+  openComposerMenu,
+  openSession,
+  openWorkflows,
+} from './actions.js';
 
 /**
  * One node of the sweep the workflow tests below run, filled in enough to be
@@ -333,8 +340,12 @@ test.describe('a session says which group it is in', () => {
        * *closes* the fold the first one opened. Asking first is the difference
        * between driving the UI and hoping about it.
        */
+      await openComposerMenu(page);
       const fold = page.locator('[data-testid=group]');
       const openFold = async (): Promise<void> => {
+        // The menu as well as the fold: a session switch closes the first and
+        // the second is the `<details>` the old comment below is about.
+        await openComposerMenu(page);
         if ((await fold.getAttribute('open')) === null) await fold.locator('summary').click();
         await expect(fold).toHaveAttribute('open', '');
       };

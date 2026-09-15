@@ -26,6 +26,7 @@ import {
   openSession,
   runtimeOptions,
   send,
+  openComposerMenu,
 } from './actions.js';
 
 const MODEL = 'qwen2.5:7b';
@@ -302,6 +303,11 @@ test.describe('the shell', () => {
       await expect(agbrte.window.locator('[data-testid=picker]')).toBeVisible();
       await addAgent(agbrte.window, 'echo');
       await expect(agbrte.window.locator('[data-testid=picker]')).toHaveCount(0);
+      /* The roster moved into the composer's menu, which has to be open to be
+         asked: the panel renders only while it is, so these counts would all be
+         zero — and `roster-all` is asserted *as* zero, which would have passed
+         for the wrong reason. */
+      await openComposerMenu(agbrte.window);
       await expect(agbrte.window.locator('[data-testid=roster-agent]')).toHaveCount(1);
       await expect(agbrte.window.locator('[data-testid=roster-retired]')).toHaveCount(1);
       // A filter with one option is noise, so there is no `Everyone` to press.
@@ -1007,6 +1013,10 @@ test.describe('reasoning effort', () => {
       // a local model and the one a greyed-out dropdown would misdescribe.
       await addAgent(agbrte.window, 'echo');
 
+      /* The seat line is in the composer's menu now, which has to be open to be
+         asked. The second assertion is the one that would have rotted quietly:
+         a count of zero is true of every control in a shut panel. */
+      await openComposerMenu(agbrte.window);
       await expect(agbrte.window.locator('[data-testid=roster-effort-unavailable]')).toBeVisible();
       await expect(agbrte.window.locator('[data-testid=roster-effort]')).toHaveCount(0);
     } finally {
@@ -1036,6 +1046,7 @@ test.describe('reasoning effort', () => {
       await createSession(agbrte.window, 'Effort');
       await addAgent(agbrte.window, 'agbrte-harness', thinker);
 
+      await openComposerMenu(agbrte.window);
       const effort = agbrte.window.locator('[data-testid=roster-effort]');
       // Admitted at the default rather than left for the person to set.
       await expect(effort).toHaveValue('max');

@@ -1826,6 +1826,29 @@ export function App(): JSX.Element {
                   queued={queued}
                   sessionId={active.sessionId}
                   {...(lastAgentText !== undefined ? { lastAgentText } : {})}
+                  /*
+                     The one line from the roster that does not go in the menu.
+                     
+                     `Roster.tsx` calls `all-or-nothing` "the one that matters
+                     most to see": nothing checks that agent's calls, so its
+                     filesystem view is the only boundary (§9). Everything else
+                     the seat line says — which model, where it runs, what it was
+                     before — is a fact you look up. This is a fact you should not
+                     be able to miss, and folding it into a menu with the rest
+                     would have traded a safety signal for a tidier row.
+                     
+                     `null` in every ordinary case, which is what keeps it a
+                     signal: a badge that is always there is one nobody reads.
+                  */
+                  warning={
+                    active.agents.some(
+                      (a) => a.resolvedCapabilities.permissionFidelity === 'all-or-nothing',
+                    ) ? (
+                      <span className="text-state-fail text-xs" data-testid="ungated-warning">
+                        This seat is not gated per call — its sandbox is the only boundary.
+                      </span>
+                    ) : null
+                  }
                   meta={
                     <>
                         {/* §13: a heterogeneous roster is gated heterogeneously, and the

@@ -26,7 +26,7 @@ import { createRequire } from 'node:module';
 import { readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { launch, makeRepo, modelAvailable, warmModel, ROOT } from './harness.js';
-import { addAgent, createSession, send } from './actions.js';
+import { addAgent, createSession, openComposerMenu, send } from './actions.js';
 
 /** The fixture, quoted because a temp path on any platform may contain a space. */
 const FIXTURE = `"${join(ROOT, 'tests', 'fixtures', 'mcpServer.cjs').replace(/\\/g, '/')}"`;
@@ -176,6 +176,10 @@ test.describe('a server attached to a session that is already open', () => {
       await createSession(page, 'Tools later');
       await addAgent(page, 'echo');
 
+      // In the composer's menu now, and the menu deliberately does not close on
+      // a click in that section — this panel is a form, and a menu that shut on
+      // the first keystroke's click would make it unusable.
+      await openComposerMenu(page);
       const panel = page.locator('[data-testid=mcp-panel]');
       await panel.locator('summary').click();
       await panel.locator('[data-testid=mcp-id]').fill('fixture');
