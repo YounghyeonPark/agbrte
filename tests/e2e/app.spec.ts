@@ -949,11 +949,17 @@ test.describe('the first screen, the guide, and about', () => {
   });
 
   test('about says what is running, from the process that knows', async () => {
+    /*
+     * Reached through Settings now. About was a top-level destination because the
+     * menu bar used to be the one place an About lived; it is a section of the
+     * settings pane, and the `about` testid moved with it rather than being
+     * re-pointed at something else.
+     */
     const repo = await makeRepo();
     const agbrte = await launch(repo);
 
     try {
-      await agbrte.window.click('[data-testid=show-about]');
+      await agbrte.window.click('[data-testid=show-settings]');
       const about = agbrte.window.locator('[data-testid=about]');
       await expect(about).toBeVisible();
 
@@ -974,7 +980,7 @@ test.describe('the first screen, the guide, and about', () => {
       await expect(about.locator('[data-testid=about-license]')).toHaveText('Apache-2.0');
 
       // A toggle, not a one-way door.
-      await agbrte.window.click('[data-testid=show-about]');
+      await agbrte.window.click('[data-testid=show-settings]');
       await expect(about).toBeHidden();
     } finally {
       await agbrte.close();

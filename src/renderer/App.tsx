@@ -40,7 +40,7 @@ import { Group } from './Group.js';
 import { agentLabel } from './attribution.js';
 import { StartGuide } from './StartGuide.js';
 import { Welcome } from './Welcome.js';
-import { About } from './About.js';
+import { Settings } from './Settings.js';
 import type {
   ProjectServerSummary,
   SkillSummary,
@@ -272,7 +272,7 @@ export function App(): JSX.Element {
    * session showing, because a page you can only reach from an empty window is
    * unreachable exactly when it is wanted.
    */
-  const [view, setView] = useState<'none' | 'guide' | 'about' | 'workflows'>('none');
+  const [view, setView] = useState<'none' | 'guide' | 'settings' | 'workflows'>('none');
   /**
    * Workflow documents per attached workspace, fetched when the pane opens.
    *
@@ -1088,16 +1088,21 @@ export function App(): JSX.Element {
             >
               Guide
             </button>
-            {/* The menu bar used to be the one place an About lived; with the
-                bar gone this button is its whole surface. */}
+            {/* `Settings`, and `About` is a section inside it.
+                
+                About was a top-level button because the menu bar used to be the
+                one place an About lived — and a version number is not a place to
+                go. What actually wanted this slot was everything a person can
+                change: the palette, and the two preferences this client keeps
+                that had no control at all. */}
             <button
               className="btn"
-              data-testid="show-about"
-              title="Version and license"
-              aria-pressed={view === 'about'}
-              onClick={() => setView((open) => (open === 'about' ? 'none' : 'about'))}
+              data-testid="show-settings"
+              title="Appearance, what this client remembers, and about"
+              aria-pressed={view === 'settings'}
+              onClick={() => setView((open) => (open === 'settings' ? 'none' : 'settings'))}
             >
-              About
+              Settings
             </button>
             <button
               /* Two columns, because it is the long label — which fills the row
@@ -1337,8 +1342,8 @@ export function App(): JSX.Element {
               return saved.problems;
             }}
           />
-        ) : view === 'about' ? (
-          <About />
+        ) : view === 'settings' ? (
+          <Settings hosts={hosts} />
         ) : view === 'guide' ? (
           <StartGuide
             hasHosts={hosts.length > 0}

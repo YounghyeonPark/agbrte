@@ -39,6 +39,32 @@ function readAll(): Record<string, AgentDefault> {
   }
 }
 
+/**
+ * Every host this client has remembered a choice for.
+ *
+ * There was no reader for the whole map and no way to remove an entry, which is
+ * how a convenience became something a person could not undo: one successful add
+ * teaches the default, and from then on every zero-agent session on that host is
+ * seated silently before the picker can be shown. That is the right behaviour
+ * and it was unreachable — nothing anywhere said it was happening or offered to
+ * stop it. See `Settings.tsx`.
+ */
+export function listAgentDefaults(): Array<{ instanceId: string; choice: AgentDefault }> {
+  return Object.entries(readAll()).map(([instanceId, choice]) => ({ instanceId, choice }));
+}
+
+/** Forget one host's default, so the next session there asks again. */
+export function forgetAgentDefault(instanceId: string): void {
+  try {
+    const all = readAll();
+    delete all[instanceId];
+    localStorage.setItem(KEY, JSON.stringify(all));
+  } catch {
+    // Same as above: a default is a convenience, and failing to drop one is not
+    // worth an error in front of somebody who is tidying up.
+  }
+}
+
 export function loadAgentDefault(instanceId: string): AgentDefault | null {
   const entry = readAll()[instanceId];
   // Shape-checked because localStorage survives app versions and the value may
