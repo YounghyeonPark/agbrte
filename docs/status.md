@@ -141,21 +141,44 @@ getting that answer back through every layer. One frame off one Xorg desktop is
 not a second machine, a second distribution, or a display that has to be argued
 with.
 
-Two limits are known rather than suspected. **Wayland**: `xwd -root` sees
-XWayland's root and not the compositor's output, so a Wayland session may grab
-little or nothing — the machine this was measured on runs Xorg on vt2. The
-*capture* is still missing there and will stay missing until somebody builds the
-portal path, but it is no longer silent: the host looks for a compositor socket
-under `/run/user/<uid>/` and the viewer says so before the frame arrives, because
-a black rectangle with nothing explaining it was the worst shape this feature
-could fail in. Found on the filesystem rather than from `XDG_SESSION_TYPE`,
-which a host started over ssh almost never has. Nobody has run it against a real
-Wayland machine; what is tested is the detection, against built directories.
+**The Wayland path is built and has never produced a frame.** That sentence is
+the whole of it, and the rest of this paragraph is why both halves are true.
 
-And **X authorisation**: a second display on that same machine refused with
-`MIT-MAGIC-COOKIE`, and the refusal names `XAUTHORITY` rather than trying
-candidate cookie paths, because a fallback chain never tested against a failing
-display reports the wrong reason when all of it fails.
+`xwd -root` sees XWayland's root and not the compositor's output, so under a
+Wayland session it grabs little or nothing. v37 detected that and said so; v38
+asks the compositor instead, through `org.freedesktop.portal.ScreenCast`, and the
+desktop now appears as its own row beside the X displays.
+
+What was measured, on the user's real GNOME 46 machine, before any of it was
+written: the **Screenshot** portal is not usable here — with `interactive: false`
+it refuses in 0.01s with response code 2, and with `interactive: true` it raises a
+dialog per still. **ScreenCast v5** is where `persist_mode` lives, which is the
+only shape in which an unattended viewer can exist at all: consent once, and a
+`restore_token` that restores silently afterwards. `CreateSession` and
+`SelectSources` both returned success with exactly the options the helper sends,
+PipeWire was running, and GStreamer had `pipewiresrc`, `videoconvert` and
+`pngenc`. `Start` was seen to raise its dialog — `"Share Screen"` from
+`xdg-desktop-portal-gnome`, 782×622 at −61,−23.
+
+**Nothing past that dialog has ever run.** Two attempts ended with it still on the
+screen after four minutes, because nobody was at the machine to press it. So no
+approval has been given, no `restore_token` has come back, no PipeWire node has
+been opened and no frame has been read through one. Everything downstream of the
+consent — the token being written to `~/.agbrte/screencast.json`, the silent
+restore on the second grab, the held cast, the PNG arriving at all — is tested
+against an injected `spawn` and has never met a portal. That is a larger unproven
+stretch than anything else in this file, and it is unproven in the one way this
+project cannot fix from here: it needs somebody standing at a Wayland machine.
+
+The X-side detection is unchanged and still tested against built directories: the
+host looks for a compositor socket under `/run/user/<uid>/` rather than reading
+`XDG_SESSION_TYPE`, which a host started over ssh almost never has.
+
+And **X authorisation** is the other known limit, unchanged: a second display on
+that same machine refused with `MIT-MAGIC-COOKIE`, and the refusal names
+`XAUTHORITY` rather than trying candidate cookie paths, because a fallback chain
+never tested against a failing display reports the wrong reason when all of it
+fails.
 
 **The frame rate is a measurement, not a target.** 0.13s to grab 12.7MB plus
 0.16s to encode 430KB, at 2944×1080, and `xwd` has no damage tracking — so every

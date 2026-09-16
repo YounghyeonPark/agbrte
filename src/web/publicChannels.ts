@@ -44,6 +44,13 @@
  * So they are absent, and `refusalFor` groups them with capture, which already
  * says the honest thing: this needs a screen on the serving machine, and the
  * public demo does not hand one out.
+ *
+ * `display.approve` (v38) is the sharpest case of the three and needs no separate
+ * argument, because the refusal matches the whole `display.` prefix. Worth naming
+ * anyway: it does not read a screen, it raises a dialog **on the serving
+ * machine's own monitor** and waits minutes for somebody to answer it. A visitor
+ * who could reach it could make a stranger's desktop ask to be shared, which is
+ * not a data leak but is an unmistakable way to lose somebody's trust.
  */
 
 import { CH } from '../shared/ipc/contract.js';

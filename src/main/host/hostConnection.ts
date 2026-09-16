@@ -1113,6 +1113,20 @@ export class HostConnection extends EventEmitter {
     });
   }
 
+  /**
+   * Ask the far machine's owner, once, to allow its Wayland screen to be read
+   * (§12.1, v38).
+   *
+   * Minutes rather than seconds, and the call carries no timeout of its own
+   * because the thing being waited for is somebody walking to a monitor. The
+   * viewer says so while it waits, which is the difference between a pause and a
+   * failure (§4.1).
+   */
+  async approveDisplay(): Promise<{ remembered: boolean }> {
+    this.require('display.approve');
+    return this.call<{ remembered: boolean }>({ t: 'display.approve' });
+  }
+
   respondSplit(
     sessionId: SessionId,
     proposalId: string,

@@ -15,19 +15,24 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { decodePng } from '../src/main/content/png.js';
+import { decodePng, encodePng } from '../src/main/content/png.js';
 import {
+  approveDisplay,
+  closeHeldCast,
   DisplayUnreachable,
   grabDisplay,
   listDisplays,
+  NeedsApproval,
   NoDisplayTool,
+  waylandRow,
   waylandSockets,
   type Spawn,
 } from '../src/host/display.js';
+import { WAYLAND_DISPLAY } from '../src/shared/types/display.js';
 import { makeXwd } from './support/xwdDump.js';
 
 const XWD = '/usr/bin/xwd';
@@ -39,6 +44,14 @@ interface Scripted {
   code?: number;
   /** Emits nothing and never closes, for the timeout path. */
   hang?: boolean;
+  /**
+   * Answers and then stays running, which is what the portal helper does.
+   *
+   * Different from `hang`: the helper prints its one line of JSON and only then
+   * holds the session open, because letting it exit would close the bus
+   * connection the portal session belongs to and the stream would vanish.
+   */
+  hold?: boolean;
 }
 
 /**
@@ -84,7 +97,7 @@ function fakeSpawn(reply: (args: readonly string[]) => Scripted): {
           child.stdout.emit('data', chunk);
         }
       }
-      if (dead || script.hang === true) return;
+      if (dead || script.hang === true || script.hold === true) return;
       child.emit('close', script.code ?? 0);
     });
 
@@ -114,6 +127,13 @@ function screen(width: number, height: number): Buffer {
 
 afterEach(() => {
   vi.useRealTimers();
+  /*
+   * The held portal session is module state, and that is the point of it — one
+   * cast reused across frames rather than three round trips per frame. Module
+   * state is also how one test's cast becomes the next test's mysterious pass,
+   * so every test starts with none.
+   */
+  closeHeldCast();
 });
 
 describe('listing the displays on a machine', () => {
@@ -281,6 +301,15 @@ describe('a compositor this cannot see', () => {
       tool: XWD,
       socketDir: dirWith(['X1']),
       runtimeDir: run,
+      /*
+       * `null` is "do not offer the portal row", which is what this test is
+       * about: the caution beside the **X** displays. Passed rather than left to
+       * default for a second reason worth stating — the default probes this
+       * machine for `python3` and reads `~/.agbrte`, so a test that omitted it
+       * would be asserting against whatever the developer's laptop happens to
+       * have installed.
+       */
+      portal: null,
     });
 
     expect(found.wayland).toEqual(['1000/wayland-0']);
@@ -409,3 +438,254 @@ function dirWith(names: readonly string[]): string {
   for (const name of names) writeFileSync(join(dir, name), '');
   return dir;
 }
+
+/**
+ * The Wayland half (§12.1, v38).
+ *
+ * `xwd` reads an X display, and under a compositor that is XWayland — whose root
+ * window is not the output, so the frame comes back black while the desktop is
+ * plainly on the monitor. These cover the route that asks the compositor itself.
+ *
+ * Both processes are faked, and they are told apart by their first argument:
+ * python is invoked as `-c <script>` and GStreamer as `-q <pipeline>`. Nothing
+ * here talks to a real portal — that half was measured by hand against a live
+ * GNOME 46 machine, and `docs/status.md` records exactly how far it got.
+ */
+describe('the desktop, through the portal', () => {
+  const TOOLS = {
+    python: '/usr/bin/python3',
+    gst: '/usr/bin/gst-launch-1.0',
+    bus: 'unix:path=/run/user/1000/bus',
+  };
+  const AGREED = `${JSON.stringify({ ok: true, node: 42, restoreToken: 'tok', session: '/s' })}\n`;
+
+  /** A real PNG, because the frame path reads its header for the size. */
+  function png(width: number, height: number): Buffer {
+    return encodePng({ width, height, rgba: Buffer.alloc(width * height * 4, 0x40) });
+  }
+
+  /** A machine with a portal that agrees and a pipeline that produces a frame. */
+  function portalMachine(frame: Buffer): ReturnType<typeof fakeSpawn> {
+    return fakeSpawn((args) =>
+      args[0] === '-c' ? { stdout: Buffer.from(AGREED, 'utf8'), hold: true } : { stdout: frame },
+    );
+  }
+
+  /** A `/run/user/<uid>/wayland-0`, which is how a compositor is found at all. */
+  function runtimeWithCompositor(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'agbrte-run-'));
+    mkdirSync(join(dir, '1000'));
+    writeFileSync(join(dir, '1000', 'wayland-0'), '');
+    return dir;
+  }
+
+  it('names the package for each thing that is missing, and never goes quiet', () => {
+    /*
+     * Every branch produces a row. That is the invariant under test rather than
+     * any one sentence: a machine running a compositor has a screen, and a list
+     * that omitted it would answer "there is no screen over there" (§3.3) to
+     * somebody looking straight at one.
+     */
+    expect(waylandRow({ tools: { ...TOOLS, python: null }, token: undefined })).toMatchObject({
+      display: WAYLAND_DISPLAY,
+      unreachable: expect.stringContaining('python3'),
+    });
+    expect(waylandRow({ tools: { ...TOOLS, bus: null }, token: undefined })).toMatchObject({
+      unreachable: expect.stringContaining('session bus'),
+    });
+    expect(waylandRow({ tools: { ...TOOLS, gst: null }, token: undefined })).toMatchObject({
+      unreachable: expect.stringContaining('gstreamer1.0-tools'),
+    });
+  });
+
+  it('separates "nobody has said yes yet" from "this cannot work"', () => {
+    /*
+     * The distinction that needed a third field. A row waiting for consent is one
+     * click from working on that machine's own monitor; a row that is unreachable
+     * is a problem to go and fix. §4.1 is about this exact pair — a pause and a
+     * failure must never blur — and collapsing them would be wrong in whichever
+     * direction it was done: as ready it is a control that fails on press (§3.5),
+     * as unreachable it is a `no` about a machine that works.
+     */
+    const waiting = waylandRow({ tools: TOOLS, token: undefined });
+    expect(waiting.unreachable).toBeUndefined();
+    expect(waiting.needsApproval).toContain('remembered');
+
+    const approved = waylandRow({ tools: TOOLS, token: 'tok' });
+    expect(approved.unreachable).toBeUndefined();
+    expect(approved.needsApproval).toBeUndefined();
+    // And no size, because the portal does not report one until a frame arrives.
+    // A guess here would be a number on screen that nothing had checked.
+    expect(approved.width).toBeUndefined();
+  });
+
+  it('puts the desktop first, ahead of the XWayland displays beside it', async () => {
+    /*
+     * The order is load-bearing rather than cosmetic. The viewer opens on the
+     * first row it can read, and on a Wayland machine every X row beside this one
+     * is XWayland — so the wrong order lands somebody on a black rectangle while
+     * the working view sits one entry below it.
+     */
+    const { run } = fakeSpawn(() => ({ stdout: chunked(screen(1920, 1080)) }));
+    const found = await listDisplays({
+      run,
+      tool: XWD,
+      socketDir: dirWith(['X1']),
+      runtimeDir: runtimeWithCompositor(),
+      portal: { tools: TOOLS, token: 'tok' },
+    });
+
+    expect(found.displays.map((d) => d.display)).toEqual([WAYLAND_DISPLAY, ':1']);
+  });
+
+  it('offers no portal row on a machine with no compositor on it', async () => {
+    // Offering one would be a control that fails on press (§3.5): there is
+    // nothing on that machine for the portal to be a portal to.
+    const { run } = fakeSpawn(() => ({ stdout: chunked(screen(64, 48)) }));
+    const found = await listDisplays({
+      run,
+      tool: XWD,
+      socketDir: dirWith(['X1']),
+      runtimeDir: mkdtempSync(join(tmpdir(), 'agbrte-run-')),
+    });
+
+    expect(found.displays.map((d) => d.display)).toEqual([':1']);
+    expect(found.wayland).toBeUndefined();
+  });
+
+  it('refuses to grab before anybody has approved, and says so as a question', async () => {
+    const { run, started } = portalMachine(png(64, 48));
+    await expect(
+      grabDisplay(WAYLAND_DISPLAY, { run, portal: { tools: TOOLS, token: undefined } }),
+    ).rejects.toThrow(NeedsApproval);
+    // And nothing was spawned. A grab that opened a cast first would put a dialog
+    // on somebody's monitor as the *side effect* of a refusal.
+    expect(started).toEqual([]);
+  });
+
+  it('reads a frame, and keeps the source size rather than the scaled one', async () => {
+    const { run } = portalMachine(png(2000, 1000));
+    const frame = await grabDisplay(WAYLAND_DISPLAY, {
+      run,
+      maxEdge: 500,
+      portal: { tools: TOOLS, token: 'tok' },
+    });
+
+    expect(frame.display).toBe(WAYLAND_DISPLAY);
+    expect(frame.sourceWidth).toBe(2000);
+    expect(frame.sourceHeight).toBe(1000);
+    // Scaled to fit, and the picture says what it actually is — the pane shows
+    // both, because a 500px frame of a 2000px desktop otherwise reads as a small
+    // monitor.
+    expect(frame.width).toBe(500);
+    expect(decodePng(frame.png).width).toBe(500);
+  });
+
+  it('does not decode a frame that is already small enough', async () => {
+    /*
+     * A screen already within the size asked for comes back untouched — the same
+     * bytes, not a re-encode of the same picture.
+     *
+     * Worth knowing what this does and does not pin down. A revert-check found it
+     * still green with `grabWayland`'s own size check removed, because
+     * `scaleToFit` independently returns its argument when nothing needed
+     * scaling. So this is a test of the *behaviour*, which two mechanisms
+     * currently guarantee, and not a test of either one of them.
+     *
+     * The check in `grabWayland` earns its place anyway, and it is not the one
+     * this measures: `scaleToFit` decodes the PNG before discovering it had
+     * nothing to do, and skipping that is a decode per frame on the far machine.
+     * Nothing observable from out here distinguishes the two, which is why there
+     * is no assertion for it rather than a contrived one.
+     */
+    const original = png(400, 300);
+    const { run } = portalMachine(original);
+    const frame = await grabDisplay(WAYLAND_DISPLAY, {
+      run,
+      maxEdge: 800,
+      portal: { tools: TOOLS, token: 'tok' },
+    });
+
+    expect(frame.png.equals(original)).toBe(true);
+    expect(frame.width).toBe(400);
+  });
+
+  it('holds one cast across frames, because opening one is most of a second', async () => {
+    /*
+     * Three round trips to the portal and a PipeWire node being set up, per
+     * frame, would put this under one frame a second — slower than the X path it
+     * exists to beat. So the session is held between pulls, and what proves it is
+     * that the second frame spawns only the pipeline.
+     */
+    const machine = portalMachine(png(64, 48));
+    const opts = { run: machine.run, portal: { tools: TOOLS, token: 'tok' } };
+
+    await grabDisplay(WAYLAND_DISPLAY, opts);
+    await grabDisplay(WAYLAND_DISPLAY, opts);
+
+    expect(machine.started.filter((args) => args[0] === '-c')).toHaveLength(1);
+    expect(machine.started.filter((args) => args[0] === '-q')).toHaveLength(2);
+  });
+
+  it('lets go of the cast when a frame fails, so the next grab can recover', async () => {
+    /*
+     * A node that stops answering is usually a session the compositor ended — the
+     * person revoked it, the screen locked, the monitor changed. Holding the dead
+     * handle would make every later grab fail with the same stale error, and the
+     * view would never come back without restarting the app.
+     */
+    let pipelines = 0;
+    const machine = fakeSpawn((args) => {
+      if (args[0] === '-c') return { stdout: Buffer.from(AGREED, 'utf8'), hold: true };
+      pipelines += 1;
+      return pipelines === 1
+        ? { stderr: 'ERROR: could not link pipewiresrc', code: 1 }
+        : { stdout: png(64, 48) };
+    });
+    const opts = { run: machine.run, portal: { tools: TOOLS, token: 'tok' } };
+
+    await expect(grabDisplay(WAYLAND_DISPLAY, opts)).rejects.toThrow(/pipewiresrc/u);
+    await expect(grabDisplay(WAYLAND_DISPLAY, opts)).resolves.toMatchObject({ width: 64 });
+
+    // Two helpers, because the first cast was dropped rather than reused.
+    expect(machine.started.filter((args) => args[0] === '-c')).toHaveLength(2);
+  });
+
+  it('keeps the approval and does not leave a screencast running to get it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agbrte-approve-'));
+    const file = join(dir, 'screencast.json');
+    const { run, killed } = portalMachine(png(64, 48));
+
+    expect(await approveDisplay({ run, tools: TOOLS, file })).toEqual({ remembered: true });
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ restoreToken: 'tok' });
+    /*
+     * Closed immediately. What is wanted from this step is the token, not a
+     * frame, and a session left open would leave a screencast indicator lit on
+     * somebody's desktop for as long as the app was running — precisely the
+     * impression this feature must not give.
+     */
+    expect(killed).toEqual(['SIGKILL']);
+  });
+
+  it('says when a machine agrees but will not remember, which is not a success', async () => {
+    /*
+     * A portal is allowed to honour a screencast request and hand back no
+     * `restore_token`. The result is a dialog on that monitor for *every frame*,
+     * which is not a view — and somebody who learns that by watching it happen
+     * concludes the app is broken rather than that their portal is old.
+     */
+    const forgetful = `${JSON.stringify({ ok: true, node: 42, session: '/s' })}\n`;
+    const { run } = fakeSpawn((args) =>
+      args[0] === '-c'
+        ? { stdout: Buffer.from(forgetful, 'utf8'), hold: true }
+        : { stdout: png(8, 8) },
+    );
+    const dir = mkdtempSync(join(tmpdir(), 'agbrte-approve-'));
+    const file = join(dir, 'screencast.json');
+
+    expect(await approveDisplay({ run, tools: TOOLS, file })).toEqual({ remembered: false });
+    // And nothing was written, so the row still says it needs permission rather
+    // than claiming an approval that would not survive the next frame.
+    expect(existsSync(file)).toBe(false);
+  });
+});

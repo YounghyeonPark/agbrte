@@ -382,6 +382,7 @@ const api: AgbrteApi = {
   display: {
     list: call(CH.displayList),
     grab: call(CH.displayGrab),
+    approve: call(CH.displayApprove),
   },
   sessions: {
     list: call(CH.sessionsList),

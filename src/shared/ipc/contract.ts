@@ -1242,6 +1242,15 @@ export interface AgbrteApi {
      * ask for the next when the last arrives.
      */
     grab(r: { instanceId: string; display: string; maxEdge?: number }): Promise<DisplayFrame>;
+    /**
+     * The one-time consent a Wayland machine needs (v38).
+     *
+     * `remembered: false` is a real answer and not a failure: a portal may agree
+     * and hand back no `restore_token`, in which case every frame will ask again.
+     * Returning it rather than swallowing it is what lets the pane say so, instead
+     * of leaving somebody to discover it as a dialog per frame.
+     */
+    approve(instanceId: string): Promise<{ remembered: boolean }>;
   };
   sessions: {
     list(): Promise<Session[]>;
@@ -1629,6 +1638,7 @@ export const CH = {
   filesRead: 'agbrte:files.read',
   displayList: 'agbrte:display.list',
   displayGrab: 'agbrte:display.grab',
+  displayApprove: 'agbrte:display.approve',
   shellOpen: 'agbrte:shell.open',
   shellWrite: 'agbrte:shell.write',
   shellResize: 'agbrte:shell.resize',

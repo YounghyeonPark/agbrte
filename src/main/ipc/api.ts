@@ -1091,6 +1091,13 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     fleet.grabDisplay(r.instanceId as InstanceId, r.display, r.maxEdge),
   );
 
+  // Minutes, not milliseconds: this one waits for a person to reach a monitor.
+  // Nothing here caps it, because a cap would turn "they were not there yet" into
+  // "it does not work" — the distinction §4.1 exists for.
+  handle(CH.displayApprove, (instanceId: string) =>
+    fleet.approveDisplay(instanceId as InstanceId),
+  );
+
   handle(CH.previewList, (sessionId: string): ForwardDto[] =>
     deps.previews === undefined ? [] : deps.previews.list(sessionId as SessionId),
   );

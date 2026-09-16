@@ -66,7 +66,7 @@ import {
 } from '@shared/types/index.js';
 import { BlobIntake } from '@main/store/blobTransfer.js';
 import { listDirectory, readTextFile } from '@main/workspace/files.js';
-import { grabDisplay, listDisplays } from './display.js';
+import { approveDisplay, grabDisplay, listDisplays } from './display.js';
 import { searchWorkspace } from '@main/store/searchSessions.js';
 import { resolve } from 'node:path';
 import {
@@ -1683,6 +1683,24 @@ export class SessionHostServer {
            */
           return { ...frame, png: frame.png.toString('base64') } satisfies DisplayFrame;
         }
+
+        case 'display.approve':
+          /*
+           * The one time this asks anybody for anything.
+           *
+           * Still not a §13 gate, and for §13's own reason: the gate is about what
+           * a *model* asks the app for, and there is no model here. The thing
+           * being asked is the far machine's compositor, and it asks the person
+           * sitting at it — which is a permission prompt this app neither owns nor
+           * can route around, and should not.
+           *
+           * Machine-level like `display.list`, so a connection attached to the
+           * machine can approve it without naming a workspace. The token it
+           * returns is kept in `~/.agbrte` (§5.1) and never travels: what comes
+           * back over the wire is whether the machine will remember, not what it
+           * remembered.
+           */
+          return approveDisplay();
 
         case 'permission.pending':
           return manager.pendingPermissions();

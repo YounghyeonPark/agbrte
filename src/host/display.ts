@@ -71,14 +71,39 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { encodePng } from '@main/content/png.js';
-import { scaleRawToFit } from '@main/content/pixels.js';
+import { scaleRawToFit, scaleToFit, sizeOf } from '@main/content/pixels.js';
 import { decodeXwd, readXwdHeader, UnsupportedXwd } from '@main/content/xwd.js';
-import type { DisplayFrame, DisplayInfo, Displays } from '@shared/types/index.js';
+import { WAYLAND_DISPLAY, type DisplayFrame, type DisplayInfo, type Displays } from '@shared/types/index.js';
+import {
+  frameFrom,
+  openCast,
+  portalTools,
+  readToken,
+  tokenFile,
+  writeToken,
+  type PortalStream,
+  type PortalTools,
+} from './portalCapture.js';
 
 export class NoDisplayTool extends Error {
   constructor(reason: string) {
     super(reason);
     this.name = 'NoDisplayTool';
+  }
+}
+
+/**
+ * The far machine has a screen and nobody has said yes to it yet.
+ *
+ * Its own class rather than a `DisplayUnreachable` with a friendlier sentence,
+ * because the two mean opposite things to whoever is reading: unreachable is a
+ * problem to go and fix, and this is a question waiting for an answer. §4.1 is
+ * about exactly this pair — a pause and a failure must never blur.
+ */
+export class NeedsApproval extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'NeedsApproval';
   }
 }
 
@@ -355,6 +380,79 @@ export function findDisplayTool(candidates: readonly string[] = TOOLS): string |
 }
 
 /**
+ * What this host knows about the portal route, gathered once per listing.
+ *
+ * `null` means "do not ask", which the tests use and which is also what a machine
+ * with no compositor gets: there is nothing to offer and no row to add.
+ */
+export interface PortalSide {
+  tools: PortalTools;
+  /** The approval this machine already holds, where somebody has given one. */
+  token: string | undefined;
+}
+
+/**
+ * The Wayland screen, as a row in the same list as the X displays.
+ *
+ * Every branch here produces a row. None of them produces *silence*, which is
+ * the failure this whole module is arranged against: a machine running a
+ * compositor has a screen, and a list that simply omitted it would answer "there
+ * is no screen over there" (§3.3) to somebody looking straight at one.
+ *
+ * The order of the checks is the order somebody has to fix them in, and each
+ * names the package rather than the symptom. `python3-gi` is not checked here —
+ * it is inside python, so asking would mean running python, and a missing binding
+ * is reported by the helper's own first line when a grab is actually attempted.
+ */
+export function waylandRow(portal: PortalSide): DisplayInfo {
+  if (portal.tools.python === null) {
+    return {
+      display: WAYLAND_DISPLAY,
+      unreachable:
+        'that machine runs Wayland, and its screen can only be read through the desktop ' +
+        'portal — which needs python3 on it',
+    };
+  }
+  if (portal.tools.bus === null) {
+    return {
+      display: WAYLAND_DISPLAY,
+      unreachable:
+        'no session bus reachable from this host, so there is nothing owning that desktop ' +
+        'to ask',
+    };
+  }
+  if (portal.tools.gst === null) {
+    return {
+      display: WAYLAND_DISPLAY,
+      unreachable:
+        'the portal can be asked but the stream cannot be read — install gstreamer1.0-tools ' +
+        'on that machine',
+    };
+  }
+  if (portal.token === undefined) {
+    /*
+     * The state that needed a third field.
+     *
+     * Not `unreachable`, because it is reachable — one click away, on that
+     * machine's own monitor. Not ready either: a grab from here would raise a
+     * dialog on a screen nobody may be sitting at, and the viewer would show a
+     * spinner for three minutes and then an error (§3.5). Measured, on a real
+     * machine: two four-minute waits ended with the dialog still up, unanswered.
+     */
+    return {
+      display: WAYLAND_DISPLAY,
+      needsApproval:
+        'Wayland will not let a program read a desktop without being asked. This puts a ' +
+        'dialog on that machine, on its own monitor, once — approving it is remembered and ' +
+        'it will not ask again.',
+    };
+  }
+  // Approved. No size, because the portal does not report one until a frame
+  // arrives — and a guess here would be a number on screen that nothing checked.
+  return { display: WAYLAND_DISPLAY };
+}
+
+/**
  * What displays this machine has, and which of them this host can read.
  *
  * Every display is probed rather than assumed, which is §6.4's rule about hosts
@@ -374,6 +472,15 @@ export async function listDisplays(
     runtimeDir?: string;
     /** The two variables that name a Wayland session, where this host has them. */
     session?: { XDG_SESSION_TYPE?: string | undefined; WAYLAND_DISPLAY?: string | undefined };
+    /**
+     * The portal route, injected the way `tool` is — or `null` to leave it out.
+     *
+     * Absent means "find out": the tools are looked for and the stored approval
+     * is read from disk. `null` is how a caller says it does not want the row at
+     * all, which is what the X-only tests want and what keeps them from touching
+     * this machine's real `~/.agbrte`.
+     */
+    portal?: PortalSide | null;
   } = {},
 ): Promise<Displays> {
   const tool = opts.tool !== undefined ? opts.tool : findDisplayTool(opts.candidates);
@@ -394,17 +501,40 @@ export async function listDisplays(
 
   // Carried on every answer rather than only where it changes one, because the
   // caution is about what the *picture* will contain and that is true whether or
-  // not this host has a tool to take it with.
+  // not this host has a tool to take it with. It is about the **X** rows: the
+  // portal row below is the compositor answering for itself, and the caution does
+  // not apply to it.
   const note = wayland.length > 0 ? { wayland } : {};
+
+  /*
+   * The compositor's own screen, first in the list.
+   *
+   * First because on a Wayland machine it is the row that works and every X row
+   * beside it is XWayland — so the viewer's "pick the first readable one" lands
+   * on the picture instead of on the black rectangle. Only added where a
+   * compositor was actually found: offering a portal row on a machine with no
+   * Wayland on it would be a control that fails on press (§3.5).
+   */
+  const portal =
+    opts.portal !== undefined
+      ? opts.portal
+      : wayland.length > 0
+        ? { tools: portalTools(), token: await readToken() }
+        : null;
+  const first: DisplayInfo[] = portal === null ? [] : [waylandRow(portal)];
 
   if (tool === null) {
     // Listed without sizes: the displays are real and the reason each one has no
     // size is the same missing tool, already named in `tool`. Repeating it per
     // row would read as four problems.
-    return { tool: null, displays: names.map((display) => ({ display })), ...note };
+    return {
+      tool: null,
+      displays: [...first, ...names.map((display) => ({ display }))],
+      ...note,
+    };
   }
 
-  const displays: DisplayInfo[] = [];
+  const displays: DisplayInfo[] = [...first];
   for (const display of names) {
     try {
       const head = await collect(
@@ -436,6 +566,198 @@ export async function listDisplays(
 }
 
 /**
+ * How long an approved cast is kept open with nothing pulling from it.
+ *
+ * A cast is not free to open: even with a token that restores silently, `Start`
+ * is three round trips to the portal and a PipeWire node being set up, which is
+ * most of a second. Paying that per frame would put the viewer under one frame a
+ * second — slower than the X path it exists to beat — so the session is held
+ * between pulls.
+ *
+ * Held, and not held forever. A portal session is a thing on somebody else's
+ * machine: GNOME shows a running screencast in its status area, and leaving one
+ * up after the window watching it was closed would be this app appearing to
+ * record a desktop nobody is looking at. Thirty seconds is comfortably longer
+ * than the gap between frames and far shorter than somebody would notice.
+ */
+const CAST_IDLE_MS = 30_000;
+
+interface HeldCast {
+  stream: PortalStream;
+  close: () => void;
+  /** Absent between a frame landing and the next idle timer being armed. */
+  timer?: NodeJS.Timeout;
+}
+
+let held: HeldCast | null = null;
+
+/**
+ * The open in flight, so two callers cannot each start one.
+ *
+ * The promise is shared rather than the result, which is the difference between
+ * this and the obvious version. `if (held === null) { held = await open() }` reads
+ * the state before an await and writes it after: two grabs arriving together —
+ * two panes, or two clients on one host — both see `null`, both open a cast, and
+ * the second assignment drops the first on the floor with nothing left holding
+ * its `close`. A portal session leaked that way is not a leaked object; it is a
+ * screencast indicator that stays lit on somebody else's desktop.
+ */
+let opening: Promise<HeldCast> | null = null;
+
+/**
+ * Bumped whenever the held cast is dropped, so an open that was already in flight
+ * knows its answer is no longer wanted and closes itself instead of being stored.
+ */
+let generation = 0;
+
+/** Let go of the portal session, now. Exported because shutdown has to call it. */
+export function closeHeldCast(): void {
+  generation += 1;
+  opening = null;
+  if (held === null) return;
+  if (held.timer !== undefined) clearTimeout(held.timer);
+  held.close();
+  held = null;
+}
+
+async function heldCast(run: Spawn | undefined, tools: PortalTools, token: string): Promise<HeldCast> {
+  if (held !== null) return held;
+  if (opening === null) {
+    const mine = generation;
+    opening = openCast({ ...(run !== undefined ? { run } : {}), tools, token })
+      .then((opened) => {
+        const cast: HeldCast = { stream: opened.stream, close: opened.close };
+        if (generation !== mine) {
+          // Somebody closed the cast while this one was being opened. Storing it
+          // now would resurrect a session the caller had already let go of.
+          opened.close();
+          return cast;
+        }
+        held = cast;
+        return cast;
+      })
+      .finally(() => {
+        // Cleared whichever way it went, so a portal that refused once does not
+        // make every later attempt await the same rejected promise.
+        opening = null;
+      });
+  }
+  return opening;
+}
+
+function keepAlive(): void {
+  if (held === null) return;
+  if (held.timer !== undefined) clearTimeout(held.timer);
+  const timer = setTimeout(closeHeldCast, CAST_IDLE_MS);
+  // Unref'd so a held cast cannot be the reason this host stays alive. The timer
+  // exists to end something, and a process kept running by its own cleanup timer
+  // is the shape that turns a tidy-up into a leak.
+  timer.unref?.();
+  held.timer = timer;
+}
+
+/**
+ * One frame of the compositor's screen, through the portal.
+ *
+ * Scaled from the PNG rather than from raw pixels, which is the opposite of the
+ * X path above and right for the opposite reason: GStreamer hands over a PNG
+ * already, so raw pixels would mean decoding one in order to avoid decoding one.
+ * And the decode is skipped outright when the screen is already within the size
+ * asked for — the common case on a laptop panel, and the cheapest frame there is.
+ */
+async function grabWayland(opts: {
+  run?: Spawn;
+  tools?: PortalTools;
+  maxEdge: number;
+  token?: string | undefined;
+}): Promise<DisplayGrab> {
+  const began = Date.now();
+  const token = opts.token !== undefined ? opts.token : await readToken();
+  if (token === undefined) {
+    throw new NeedsApproval(
+      'that machine has not approved this yet. Wayland will not let a program read a desktop ' +
+        'without being asked, so ask it once — the answer is remembered.',
+    );
+  }
+
+  const tools = opts.tools ?? portalTools();
+  const cast = await heldCast(opts.run, tools, token);
+  const node = cast.stream.node;
+  keepAlive();
+
+  let png: Buffer;
+  try {
+    png = await frameFrom(node, { ...(opts.run !== undefined ? { run: opts.run } : {}), tools });
+  } catch (err) {
+    /*
+     * Let go of the session before reporting.
+     *
+     * A node that stopped answering is usually a session the compositor ended —
+     * the person revoked it, the monitor changed, the session locked — and
+     * holding a dead handle would make every later grab fail with the same stale
+     * error. Dropping it means the next attempt reopens, which is the one thing
+     * that can actually recover.
+     */
+    closeHeldCast();
+    throw err;
+  }
+
+  /*
+   * The size from the header alone, and the scaling skipped where there is none
+   * to do.
+   *
+   * `scaleToFit` would also return these exact bytes — it compares first and
+   * hands back its argument untouched — so this is not about the re-encode. It is
+   * about the *decode* it does before finding that out, which on a path pulling
+   * several frames a second is a whole PNG decode per frame on somebody else's
+   * machine. `sizeOf` reads the header and stops.
+   */
+  const source = sizeOf(png);
+  const big = Math.max(source.width, source.height) > opts.maxEdge;
+  const fitted = big ? await scaleToFit(png, opts.maxEdge) : png;
+  const shown = big ? sizeOf(fitted) : source;
+  return {
+    display: WAYLAND_DISPLAY,
+    png: fitted,
+    width: shown.width,
+    height: shown.height,
+    sourceWidth: source.width,
+    sourceHeight: source.height,
+    tookMs: Date.now() - began,
+  };
+}
+
+/**
+ * Ask the far machine, once, and keep the answer.
+ *
+ * The cast is opened and immediately closed. What is wanted is not a frame but
+ * the `restore_token` that comes back with the approval — and holding the
+ * session open afterwards would leave a screencast indicator up on somebody's
+ * desktop for as long as the app was running, which is precisely the impression
+ * this feature must not give.
+ *
+ * A portal that agrees and returns no token is not a failure, and it is not a
+ * success either: it means every grab will ask again. Said out loud, because
+ * discovering it as a dialog per frame is how somebody concludes the app is
+ * broken.
+ */
+export async function approveDisplay(
+  opts: { run?: Spawn; tools?: PortalTools; file?: string } = {},
+): Promise<{ remembered: boolean }> {
+  const { stream, close } = await openCast({
+    ...(opts.run !== undefined ? { run: opts.run } : {}),
+    ...(opts.tools !== undefined ? { tools: opts.tools } : {}),
+    mayAsk: true,
+  });
+  close();
+
+  const token = stream.restoreToken;
+  if (token === undefined || token === '') return { remembered: false };
+  await writeToken(token, opts.file ?? tokenFile());
+  return { remembered: true };
+}
+
+/**
  * One frame of a display, as a PNG.
  *
  * Scaled on the raw pixels before encoding, which is the difference between a
@@ -445,8 +767,24 @@ export async function listDisplays(
  */
 export async function grabDisplay(
   display: string,
-  opts: { run?: Spawn; tool?: string | null; candidates?: readonly string[]; maxEdge?: number } = {},
+  opts: {
+    run?: Spawn;
+    tool?: string | null;
+    candidates?: readonly string[];
+    maxEdge?: number;
+    /** The portal route, for the Wayland row; injected the way `tool` is. */
+    portal?: PortalSide;
+  } = {},
 ): Promise<DisplayGrab> {
+  if (display === WAYLAND_DISPLAY) {
+    // Branched before `checkName`, which judges X display names and would reject
+    // this one — correctly, since it is not one.
+    return grabWayland({
+      ...(opts.run !== undefined ? { run: opts.run } : {}),
+      ...(opts.portal !== undefined ? { tools: opts.portal.tools, token: opts.portal.token } : {}),
+      maxEdge: opts.maxEdge ?? DEFAULT_MAX_EDGE,
+    });
+  }
   checkName(display);
   const tool = opts.tool !== undefined ? opts.tool : findDisplayTool(opts.candidates);
   if (tool === null) {

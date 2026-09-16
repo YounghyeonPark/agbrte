@@ -352,6 +352,35 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  *
+ * ## v38 adds `display.approve`, because Wayland is allowed to say no
+ *
+ * v37 reads an **X** display with `xwd`, and under a Wayland session the X server
+ * a client meets is XWayland — whose root window is not the compositor's output.
+ * The grab comes back black while the desktop is plainly there on the monitor,
+ * which is the one failure a viewer must never produce quietly. v37 said so as a
+ * caution and stopped there.
+ *
+ * Asking the compositor instead means `org.freedesktop.portal.ScreenCast`, and
+ * that portal exists to make silent desktop reads impossible. Measured on a real
+ * GNOME 46 machine: the Screenshot portal refuses unattended in 0.01s, and
+ * ScreenCast raises a dialog by name. What makes a *viewer* possible at all is
+ * `persist_mode` — consent once, and a token that restores silently afterwards —
+ * so the dialog happens on a day somebody chooses rather than on every frame.
+ *
+ * That one-time step is this command, and it is deliberately not a flag on
+ * `display.grab`. A grab is a fraction of a second; this puts a dialog on
+ * somebody's monitor and waits minutes for them to walk to it. One command
+ * meaning both would leave the viewer with no honest label for the button and no
+ * way to show the waiting as waiting rather than as a slow frame (§4.1).
+ *
+ * The approval is a machine fact, so it is kept in `~/.agbrte` (§5.1) and never
+ * in a workspace, a template or the log. It is not a §13 credential — it grants
+ * nothing to anybody who is not already on that machine's session bus — but it
+ * is the machine's, and §5.1 is where the machine's own facts live.
+ *
+ * A v37 host refuses it by name, and the degradation is what v37 already shipped:
+ * the Wayland caution beside the X displays.
+ *
  * ## v37 adds `display.list` and `display.grab`, which reach a screen
  *
  * §12.1 names three kinds of capture and shipped two. The third — "remote
@@ -932,7 +961,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 37;
+export const SESSION_PROTOCOL_VERSION = 38;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -1022,6 +1051,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'mcp.declare': 36,
   'display.list': 37,
   'display.grab': 37,
+  'display.approve': 38,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -1136,6 +1166,16 @@ export type SessionCommand =
    * cannot outrun the link it is on.
    */
   | { t: 'display.grab'; id: RequestId; display: string; maxEdge?: number }
+  /**
+   * Ask the far machine's owner, once, for permission to read its Wayland screen.
+   *
+   * Separate from `display.grab` because it is a separate thing to happen: a grab
+   * is a read that takes a fraction of a second, and this raises a dialog on
+   * somebody's monitor and waits minutes for them to walk to it. Folding it into
+   * the grab as a flag would have made one command mean two things, and the
+   * viewer would have had no honest label for the button.
+   */
+  | { t: 'display.approve'; id: RequestId }
   /**
    * Which named secrets this machine holds — **names only** (§13, v33).
    *

@@ -319,4 +319,164 @@ test.describe('the screen of that machine', () => {
       await agbrte.close();
     }
   });
+
+  /**
+   * Answer the three display channels for a Wayland machine that has not been
+   * approved yet, and let the approval actually change the answer.
+   *
+   * The state lives in main rather than in the test, because that is where it
+   * lives in the wild: the approval is a file on the far machine, and the pane
+   * learns about it by asking again. A helper that flipped a variable in the
+   * renderer would prove the button changed the renderer's mind about a machine
+   * it had not spoken to.
+   */
+  async function doctorWayland(
+    agbrte: LaunchedApp,
+    outcome: { remembered: boolean },
+    frame: Record<string, unknown>,
+  ): Promise<void> {
+    await agbrte.app.evaluate(
+      async ({ ipcMain }, given) => {
+        let approved = false;
+
+        ipcMain.removeHandler('agbrte:display.list');
+        ipcMain.handle('agbrte:display.list', async () => ({
+          // No `xwd` on this machine, which is ordinary on a Wayland box and must
+          // not produce an "install x11-apps" instruction for a view that works.
+          tool: null,
+          wayland: ['1000/wayland-0'],
+          displays: [
+            approved
+              ? { display: 'wayland' }
+              : {
+                  display: 'wayland',
+                  needsApproval:
+                    'Wayland will not let a program read a desktop without being asked. ' +
+                    'This puts a dialog on that machine, on its own monitor, once — ' +
+                    'approving it is remembered and it will not ask again.',
+                },
+          ],
+        }));
+
+        ipcMain.removeHandler('agbrte:display.approve');
+        ipcMain.handle('agbrte:display.approve', async () => {
+          // Only a remembered answer changes what the machine reports, which is
+          // the whole difference between the two tests below.
+          if (given.outcome.remembered) approved = true;
+          return given.outcome;
+        });
+
+        ipcMain.removeHandler('agbrte:display.grab');
+        ipcMain.handle('agbrte:display.grab', async () => {
+          if (!approved) throw new Error('grabbed before anybody approved it');
+          return given.frame;
+        });
+      },
+      { outcome, frame },
+    );
+  }
+
+  const DESKTOP = {
+    display: 'wayland', png: FRAME, width: 1280, height: 800,
+    sourceWidth: 2560, sourceHeight: 1600, tookMs: 90,
+  };
+
+  test('asks once for a Wayland desktop, and watches it after the answer', async () => {
+    /*
+     * The state that needed a third field in `DisplayInfo` (§12.1, v38).
+     *
+     * A desktop nobody has approved is neither ready nor unreachable. Offered as
+     * ready it is a control that fails on press (§3.5) — a grab would raise a
+     * dialog on a monitor nobody may be sitting at and wait minutes; listed as
+     * unreachable it is a `no` about a machine that is one click from working
+     * (§3.3). So the pane shows the question and a button that asks it, and the
+     * *watch* control is not there at all until there is something to watch.
+     *
+     * The grab handler throws if it is called early, so a regression that started
+     * the pull loop against an unapproved row fails here rather than passing
+     * quietly on a machine that happened to answer.
+     */
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      const page = agbrte.window;
+      await pretendRemote(agbrte);
+      await doctorWayland(agbrte, { remembered: true }, DESKTOP);
+      await createSession(page, 'wayland desktop');
+      await addAgent(page, 'echo');
+      await openComposerMenu(page);
+      await toggle(page).click();
+
+      // The question, and the control that asks it.
+      const asks = page.locator('[data-testid=screen-needs-approval]');
+      await expect(asks).toBeVisible({ timeout: 20_000 });
+      await expect(asks).toContainText('without being asked');
+      const button = page.locator('[data-testid=screen-approve]');
+      await expect(button).toBeEnabled();
+      // And no watch control, because there is nothing yet to watch.
+      await expect(page.locator('[data-testid=screen-live]')).toHaveCount(0);
+
+      /*
+       * The XWayland caution is *absent*, and that is a real assertion rather
+       * than a tidy-up. This row is the compositor answering for itself through
+       * the portal; a warning that the picture may be black would send somebody
+       * to doubt a frame that is correct. v37 showed it on every Wayland machine
+       * because every Wayland machine only had XWayland to offer.
+       */
+      await expect(page.locator('[data-testid=screen-wayland]')).toHaveCount(0);
+      // Nor the missing-`xwd` line: there is no X display listed, so nothing here
+      // is waiting on `x11-apps` and saying so would be a wrong instruction that
+      // looks like a right one.
+      await expect(page.locator('[data-testid=screen-no-tool]')).toHaveCount(0);
+
+      await button.click();
+
+      // Approved, remembered, and watching — the question is gone rather than
+      // merely joined by a picture.
+      const shown = page.locator('[data-testid=screen-frame]');
+      await expect(shown).toBeVisible({ timeout: 30_000 });
+      await expect(shown).toHaveAttribute('data-display', 'wayland');
+      await expect(page.locator('[data-testid=screen-approve]')).toHaveCount(0);
+      await expect(page.locator('[data-testid=screen-live]')).toBeEnabled();
+      await expect(page.locator('[data-testid=screen-error]')).toHaveCount(0);
+    } finally {
+      await agbrte.close();
+    }
+  });
+
+  test('says when a machine agrees but will not remember it', async () => {
+    /*
+     * A portal may honour a screencast request and hand back no `restore_token`,
+     * and the result is a dialog on that monitor for *every frame* — which is not
+     * a view. Somebody who meets that without being told concludes the app is
+     * broken rather than that their portal is old, so the pane says it once and
+     * stays on the question instead of pretending to have been approved.
+     */
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      const page = agbrte.window;
+      await pretendRemote(agbrte);
+      await doctorWayland(agbrte, { remembered: false }, DESKTOP);
+      await createSession(page, 'forgetful portal');
+      await addAgent(page, 'echo');
+      await openComposerMenu(page);
+      await toggle(page).click();
+
+      await expect(page.locator('[data-testid=screen-approve]')).toBeEnabled({ timeout: 20_000 });
+      await page.locator('[data-testid=screen-approve]').click();
+
+      const said = page.locator('[data-testid=screen-error]');
+      await expect(said).toBeVisible({ timeout: 30_000 });
+      await expect(said).toContainText('will not remember');
+      // Still the question, and still no watching: nothing was gained, and a pane
+      // that moved on would be claiming an approval the machine did not keep.
+      await expect(page.locator('[data-testid=screen-approve]')).toBeVisible();
+      await expect(page.locator('[data-testid=screen-frame]')).toHaveCount(0);
+    } finally {
+      await agbrte.close();
+    }
+  });
 });

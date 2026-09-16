@@ -43,7 +43,7 @@
  */
 
 import { useEffect, useRef, useState, type JSX } from 'react';
-import type { DisplayFrame, Displays } from '@shared/types/index.js';
+import { WAYLAND_DISPLAY, type DisplayFrame, type Displays } from '@shared/types/index.js';
 
 /**
  * A floor between frames.
@@ -81,6 +81,15 @@ export function ScreenView({
   const [frame, setFrame] = useState<DisplayFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState(true);
+  /**
+   * Whether a consent dialog is up on the far machine right now.
+   *
+   * A pause and not a failure (§4.1), and the pane has to say which. This wait is
+   * minutes long by design — it is somebody walking to a monitor — and a button
+   * that simply went quiet for three minutes would be read as a hang by anybody
+   * who did not already know what it had done.
+   */
+  const [asking, setAsking] = useState(false);
   const [maxEdge, setMaxEdge] = useState(SIZES[1]?.maxEdge ?? 1280);
 
   /*
@@ -101,10 +110,22 @@ export function ScreenView({
       (answer) => {
         if (stale) return;
         setFound(answer);
-        // The first one that can actually be read, which is usually the only one.
-        // Picking a display that is listed-but-refused would open the pane on an
-        // error somebody did not ask for.
-        setDisplay(answer.displays.find((d) => d.unreachable === undefined)?.display ?? null);
+        /*
+         * The first one that can actually be read, which is usually the only one.
+         * Picking a display that is listed-but-refused would open the pane on an
+         * error somebody did not ask for.
+         *
+         * A row still waiting for approval is not that, and it is not ready
+         * either — so it is the *second* choice: taken only when nothing is
+         * readable, because then it is the thing somebody came here to do, and
+         * skipped whenever a real display exists, because landing on a consent
+         * prompt in front of a screen that was already available would be the
+         * app asking for something it did not need.
+         */
+        const rows = answer.displays;
+        const ready = rows.find((d) => d.unreachable === undefined && d.needsApproval === undefined);
+        const askable = rows.find((d) => d.unreachable === undefined);
+        setDisplay((ready ?? askable)?.display ?? null);
       },
       (err: unknown) => {
         if (stale) return;
@@ -138,10 +159,53 @@ export function ScreenView({
    * to be the *current* answer at the moment the frame lands, not the answer that
    * was true when the effect ran.
    */
+  const chosen = found?.displays.find((d) => d.display === display);
+  /*
+   * Computed above the loop rather than beside the markup, because the loop has
+   * to be gated on it. A pull against a row nobody has approved does not fail
+   * quickly — it raises a dialog on somebody else's monitor and waits minutes —
+   * so "watch" must not start here at all until the asking is done.
+   */
+  const waiting = chosen?.needsApproval;
+
+  /**
+   * Ask the far machine once, and then ask it what it has.
+   *
+   * The re-listing at the end is the part worth keeping: the approval lives on
+   * that machine, in `~/.agbrte`, and this side has no business deciding it
+   * worked. Flipping `needsApproval` off locally on a successful reply would be
+   * this pane's opinion about another machine's state — the shape §6.4 rules out
+   * for hosts, for the same reason. So it asks again and believes the answer.
+   */
+  const askFor = async (): Promise<void> => {
+    setAsking(true);
+    setError(null);
+    try {
+      const { remembered } = await window.agbrte.display.approve(instanceId);
+      setFound(await window.agbrte.display.list(instanceId));
+      if (!remembered) {
+        /*
+         * Agreed, and will not remember. A portal is allowed to honour a
+         * screencast request and hand back no `restore_token`, and the result is
+         * a dialog on that monitor for *every frame* — which is not a view. Said
+         * here rather than discovered there.
+         */
+        setError(
+          'that machine allowed it but will not remember the answer, so it would ask again ' +
+            'for every frame. Its portal does not support persistent screen sharing.',
+        );
+      }
+    } catch (err) {
+      setError(message(err));
+    } finally {
+      setAsking(false);
+    }
+  };
+
   const size = useRef(maxEdge);
   size.current = maxEdge;
   useEffect(() => {
-    if (!live || display === null) return undefined;
+    if (!live || display === null || waiting !== undefined) return undefined;
     let stopped = false;
 
     void (async () => {
@@ -179,9 +243,8 @@ export function ScreenView({
     return () => {
       stopped = true;
     };
-  }, [live, display, instanceId]);
+  }, [live, display, instanceId, waiting]);
 
-  const chosen = found?.displays.find((d) => d.display === display);
   const fps = frame === null ? null : Math.round((1000 / Math.max(frame.tookMs, 1)) * 10) / 10;
 
   return (
@@ -238,14 +301,17 @@ export function ScreenView({
                      (§3.5) — the reason is below. */
                   disabled={d.unreachable !== undefined}
                 >
-                  {d.display}
+                  {d.display === WAYLAND_DISPLAY ? 'the desktop' : d.display}
                   {d.width !== undefined ? ` · ${d.width}×${d.height}` : ''}
                   {d.unreachable !== undefined ? ' · cannot be read' : ''}
+                  {/* Selectable, unlike a refused display: choosing it is how
+                      somebody reaches the button that asks. */}
+                  {d.needsApproval !== undefined ? ' · needs permission' : ''}
                 </option>
               ))}
             </select>
 
-            {found.wayland !== undefined && (
+            {found.wayland !== undefined && display !== WAYLAND_DISPLAY && (
               /*
                * A caution, not a refusal.
                *
@@ -259,6 +325,12 @@ export function ScreenView({
                * The button stays enabled: some compositors do put something on
                * the XWayland root, this host cannot know which, and refusing on a
                * guess would withhold a view that might have worked (§3.3).
+               *
+               * Hidden once the desktop row is the one selected, because then it
+               * is not true: that row is the compositor answering for itself
+               * through the portal, and a warning about XWayland beside a picture
+               * that is not XWayland would send somebody to doubt a frame that is
+               * correct (v38).
                */
               <span className="text-state-paused" data-testid="screen-wayland">
                 that machine runs Wayland — xwd sees only XWayland, so this may be
@@ -266,10 +338,16 @@ export function ScreenView({
               </span>
             )}
 
-            {found.tool === null && (
+            {found.tool === null && found.displays.some((d) => d.display !== WAYLAND_DISPLAY) && (
               /* The informative case §3.3 is about: there *is* a screen and this
                  host cannot read it yet. An empty list would have sent somebody
-                 to look at their X server instead of at one package. */
+                 to look at their X server instead of at one package.
+
+                 Only where an X row is actually listed. A Wayland-only machine
+                 with no `xwd` on it is not missing anything — the portal reads
+                 its screen — and telling somebody to install `x11-apps` to fix a
+                 view that already works is a wrong instruction that looks like a
+                 right one. */
               <span className="text-state-paused" data-testid="screen-no-tool">
                 that host has no xwd — install x11-apps on it
               </span>
@@ -281,15 +359,50 @@ export function ScreenView({
               </span>
             )}
 
-            <button
-              className="btn text-[11px]"
-              data-testid="screen-live"
-              aria-pressed={live}
-              disabled={display === null || found.tool === null}
-              onClick={() => setLive((on) => !on)}
-            >
-              {live ? 'Pause' : 'Watch'}
-            </button>
+            {waiting !== undefined && (
+              /*
+               * The consent step, said before it happens rather than after.
+               *
+               * Amber and not red (§4.1): nothing has gone wrong. Wayland exists
+               * to stop a program reading a desktop unasked, and this is the ask
+               * — once, remembered afterwards. Somebody who presses without
+               * knowing that a dialog will appear on the far machine has been
+               * surprised by their own app.
+               */
+              <span className="text-state-paused" data-testid="screen-needs-approval">
+                {asking
+                  ? 'waiting for somebody at that machine to accept the dialog on its screen…'
+                  : waiting}
+              </span>
+            )}
+
+            {waiting !== undefined ? (
+              <button
+                className="btn text-[11px]"
+                data-testid="screen-approve"
+                disabled={asking}
+                onClick={() => {
+                  void askFor();
+                }}
+              >
+                {asking ? 'Asking…' : 'Ask that machine'}
+              </button>
+            ) : (
+              <button
+                className="btn text-[11px]"
+                data-testid="screen-live"
+                aria-pressed={live}
+                /* `tool` is the `xwd` this host found, so it decides nothing about
+                   the desktop row — that one is read through the portal and works
+                   on a machine with no X tools on it at all. */
+                disabled={
+                  display === null || (found.tool === null && display !== WAYLAND_DISPLAY)
+                }
+                onClick={() => setLive((on) => !on)}
+              >
+                {live ? 'Pause' : 'Watch'}
+              </button>
+            )}
 
             <select
               className="bg-panel border-line focus:border-accent rounded border px-2 py-1 text-xs outline-none"

@@ -196,6 +196,7 @@ const api: AgbrteApi = {
     list: (instanceId: string) => ipcRenderer.invoke(CH.displayList, instanceId),
     grab: (r: { instanceId: string; display: string; maxEdge?: number }) =>
       ipcRenderer.invoke(CH.displayGrab, r),
+    approve: (instanceId: string) => ipcRenderer.invoke(CH.displayApprove, instanceId),
   },
   sessions: {
     list: () => ipcRenderer.invoke(CH.sessionsList),

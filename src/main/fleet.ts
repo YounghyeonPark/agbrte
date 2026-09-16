@@ -1666,6 +1666,24 @@ export class Fleet extends EventEmitter {
     return entry.connection.grabDisplay(display, maxEdge);
   }
 
+  /**
+   * The one-time approval a Wayland machine needs before it will show its screen.
+   *
+   * Refused by name on an older host rather than silently doing nothing, which is
+   * the same choice the two above make: a button that appears to work and changes
+   * nothing is worse than one that says why it cannot (§3.5).
+   */
+  async approveDisplay(instanceId: InstanceId): Promise<{ remembered: boolean }> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('display.approve')) {
+      throw new Error(
+        `the host for ${entry.workspaceRoot} is older than this app and cannot ask its ` +
+          'compositor for permission — restart it to pick up the current bundle',
+      );
+    }
+    return entry.connection.approveDisplay();
+  }
+
   /** Keystrokes, routed by `shellId` alone. */
   async writeShell(shellId: string, data: string): Promise<boolean> {
     const entry = this.shellHost(shellId);

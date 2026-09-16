@@ -21,9 +21,19 @@
  * than something a client has to infer.
  */
 
-/** One X display, and what is known about it. */
+/**
+ * The reserved name of the Wayland screen, which is not an X display at all.
+ *
+ * One list rather than two, because the question a person asks is "show me that
+ * machine's screen" and they should not have to know which display server
+ * answered it. The name is not a `DISPLAY` value and cannot collide with one:
+ * every real display name starts with a colon.
+ */
+export const WAYLAND_DISPLAY = 'wayland';
+
+/** One screen, and what is known about it. */
 export interface DisplayInfo {
-  /** As `DISPLAY` carries it: `:1`. */
+  /** As `DISPLAY` carries it: `:1` — or `wayland` for the compositor itself. */
   display: string;
   width?: number;
   height?: number;
@@ -36,6 +46,17 @@ export interface DisplayInfo {
    * and listing it as ready would be a control that fails on press (§3.5).
    */
   unreachable?: string;
+  /**
+   * What pressing this will ask the far machine's owner, where it must ask.
+   *
+   * The Wayland row, before anybody has approved it. It is neither ready nor
+   * unreachable, and collapsing it into either would be wrong in a way somebody
+   * pays for: as ready it is a control that fails on press (§3.5), because a
+   * grab would raise a dialog on a screen nobody is sitting at and time out; as
+   * unreachable it is a `no` about a machine that is one click from working
+   * (§3.3). So it is a third state with the sentence in it.
+   */
+  needsApproval?: string;
 }
 
 export interface Displays {
