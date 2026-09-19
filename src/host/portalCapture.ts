@@ -225,6 +225,19 @@ export async function openCast(
   const child = run(tools.python, ['-c', PORTAL_HELPER, opts.token ?? '', String(wait)], {
     windowsHide: true,
     env: { ...process.env, DBUS_SESSION_BUS_ADDRESS: tools.bus },
+    /*
+     * Spelled out because the helper depends on it, and the dependency is not
+     * visible from there.
+     *
+     * Once it has answered, the helper blocks reading **stdin** and ends itself
+     * when that read returns empty — which is how it notices a host that went
+     * away without running any cleanup. Nothing is ever written to it; the pipe
+     * exists purely so that closing it means something. Changing this to
+     * `'ignore'` would hand the helper an immediate EOF and every cast would end
+     * the moment it opened, and changing it to `'inherit'` would hand it a
+     * terminal that never ends and bring the orphan back.
+     */
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 
   const answer = await new Promise<HelperAnswer>((resolve, reject) => {

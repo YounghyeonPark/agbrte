@@ -66,7 +66,7 @@ import {
 } from '@shared/types/index.js';
 import { BlobIntake } from '@main/store/blobTransfer.js';
 import { listDirectory, readTextFile } from '@main/workspace/files.js';
-import { approveDisplay, grabDisplay, listDisplays } from './display.js';
+import { approveDisplay, closeHeldCast, grabDisplay, listDisplays } from './display.js';
 import { searchWorkspace } from '@main/store/searchSessions.js';
 import { resolve } from 'node:path';
 import {
@@ -1786,6 +1786,17 @@ export class SessionHostServer {
     // loop below rather than something this line states.
     for (const workspace of this.heldWorkspaces()) workspace.shells?.closeAll();
     this.opts.shells?.closeAll();
+    /*
+     * And the portal session, for the shells' reason carried one step further.
+     *
+     * A held screencast is a child process holding a compositor session open, and
+     * the compositor keeps a screen-sharing indicator lit for as long as it lives
+     * — so one left behind is not a stray process, it is this app appearing to
+     * record somebody's desktop with nothing left that knows how to stop it. The
+     * helper also ends itself when this process's stdin pipe closes, which covers
+     * the ways a host dies without reaching this line; this is the orderly one.
+     */
+    closeHeldCast();
     this.broadcast({ t: 'push.closing', reason });
     for (const client of this.clients) client.channel.close();
     this.clients.clear();

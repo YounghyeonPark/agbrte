@@ -43,7 +43,7 @@
  * parses one thing and a stray warning from a library cannot become a field.
  */
 export const PORTAL_HELPER = String.raw`
-import json, os, sys
+import json, os, sys, threading
 
 try:
     import gi
@@ -152,9 +152,34 @@ try:
     }
     # The session has to stay alive while somebody reads the stream, and this
     # process owns it: closing the connection closes the session and the node
-    # disappears. So the answer goes out and then it waits to be killed.
+    # disappears. So the answer goes out and then it waits.
     print(json.dumps(answer), flush=True)
-    GLib.MainLoop().run()
+
+    # Waits to be killed, or for whoever spawned it to stop existing.
+    #
+    # The second half is the one that matters, and it is not tidiness. An orphan
+    # here is not a stray process: it is holding a portal session open, so the
+    # compositor keeps a screen-sharing indicator lit on somebody's desktop with
+    # nothing left in the world that knows how to turn it off. A host killed with
+    # -9, a crash, a machine powered down mid-session - none of them run any
+    # cleanup, and all of them close this pipe.
+    #
+    # Reading stdin is how that is noticed. The host never writes to it, so the
+    # read blocks until the write end is gone and then returns empty. A thread
+    # rather than a GLib fd watch because the condition wanted is plainly "the
+    # pipe ended", and GLib.idle_add is the documented way back onto the loop's
+    # own thread.
+    loop = GLib.MainLoop()
+
+    def parent_gone():
+        try:
+            sys.stdin.buffer.read()
+        except Exception:
+            pass
+        GLib.idle_add(loop.quit)
+
+    threading.Thread(target=parent_gone, daemon=True).start()
+    loop.run()
 except Exception as err:
     print(json.dumps({"ok": False, "reason": "threw", "detail": "%s: %s" % (type(err).__name__, err)}))
 `;
