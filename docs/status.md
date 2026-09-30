@@ -197,6 +197,30 @@ acceptable for a demo of what the program is and is not a foundation for
 anything else. Per-visitor workspaces, session and turn caps, and a reset are not
 built.
 
+**The app's window did not appear under Wayland on one real machine, and why is
+half known.** Ubuntu 24.04, GNOME 46 under Wayland, the display driven by a server
+board's ASPEED BMC VGA. Agbrte 0.0.41 created its window, loaded the page, and
+kept the renderer alive for seventeen hours with nothing on screen and nothing in
+the journal. `--disable-gpu` did not change that; `--ozone-platform=x11` did. So
+it is Electron's native Wayland path on that machine — Electron has chosen Wayland
+by default since 38 — and not GL.
+
+What is not known is which half of that path. Either the hidden window never
+painted, so `ready-to-show` never fired and the app never called `show()` — which
+was the window's only route onto the screen — or the Wayland surface does not map
+even when shown. The first was ours regardless, and it is fixed: the window is
+shown after five seconds without the event, and says so on stderr. That fix is
+also the experiment. Launched on that machine with no flags, a window that appears
+means the event was the whole problem and the Wayland default can stay; one that
+does not means Linux launchers should default to X11, at the cost of blurry text
+at fractional scaling on every Wayland desktop that works. That is a decision for
+after the measurement, not before it.
+
+Until then that machine launches through a per-user desktop entry that adds the
+X11 flag. It shadows the packaged launcher entirely and survives upgrades, which is
+why it has to be deleted once the measurement is made — while it exists, no change
+to the packaged launcher reaches that account.
+
 ## And what a test suite cannot see
 
 A whole class of defect is only visible on a real remote machine: binding to the

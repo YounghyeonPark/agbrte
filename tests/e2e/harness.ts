@@ -29,7 +29,7 @@ export const ROOT = resolve(import.meta.dirname, '../..');
  * Hardcoding `node_modules/electron/dist/electron.exe` worked and was wrong: it
  * is Windows-only, and on macOS the binary lives inside `Electron.app`.
  */
-const ELECTRON = createRequire(import.meta.url)('electron') as unknown as string;
+export const ELECTRON = createRequire(import.meta.url)('electron') as unknown as string;
 
 export interface LaunchedApp {
   app: ElectronApplication;

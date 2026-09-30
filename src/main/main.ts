@@ -22,6 +22,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { installStrayPipeGuard } from './strayPipeRead.js';
+import { revealWhenReady } from './revealWindow.js';
 import { registerIpc } from './ipc/register.js';
 import { PRODUCT_DESCRIPTION, PUSH } from '@shared/ipc/contract.js';
 import { Notifier } from './notify.js';
@@ -119,7 +120,41 @@ installStrayPipeGuard({
  */
 if (process.platform !== 'darwin') Menu.setApplicationMenu(null);
 
+/*
+ * One app per profile.
+ *
+ * There was no lock, so a second launch started a second complete app: its own
+ * window, its own attach to the same hosts, and a second Chromium on a profile
+ * whose storage the first already held — so the second one's `localStorage` was
+ * not even reliably its own. Nobody chose that; it is what a double-click does
+ * when the first click seemed not to work.
+ *
+ * Which is exactly how it was met. On a machine where the window never appeared
+ * (see `revealWindow.ts`), the person launched again after fifteen seconds and
+ * got a second app just as invisible as the first. With the lock, that second
+ * launch reaches the first one instead — and `second-instance` below *shows* its
+ * window, so the natural reaction to an app that seems not to have started now
+ * rescues it rather than doubling it.
+ *
+ * Keyed on the profile directory, which is Chromium's rule and the right one:
+ * the e2e suite launches with a `--user-data-dir` per test, so its apps never
+ * contend, and a developer's checkout does not share a profile with the
+ * installed app. Hosts are unaffected — they run as plain Node under
+ * `ELECTRON_RUN_AS_NODE` and never reach this line.
+ */
+const primary = app.requestSingleInstanceLock();
+if (!primary) app.quit();
+
 let fleet: Fleet | null = null;
+/**
+ * The app's own window, tracked rather than found.
+ *
+ * `BrowserWindow.getAllWindows()[0]` would be the obvious lookup and is wrong
+ * during a capture: the region overlays (`capture/overlay.ts`) are windows too,
+ * one per display, and a second launch arriving mid-capture would bring an
+ * overlay forward instead of the app.
+ */
+let mainWindow: BrowserWindow | null = null;
 let restorer: MachineRestorer | undefined;
 let ipc: { dispose: () => void } | null = null;
 let previews: PreviewForwards | null = null;
@@ -378,7 +413,29 @@ async function createWindow(): Promise<void> {
     if (!isDev && target.protocol !== 'file:') event.preventDefault();
   });
 
-  win.once('ready-to-show', () => win.show());
+  mainWindow = win;
+  win.once('closed', () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+  /*
+   * Shown on `ready-to-show`, or after five seconds without it — see
+   * `revealWindow.ts` for the machine where the event never came.
+   *
+   * Five, against a measurement rather than a feeling: on the development
+   * machine a warm window reached `ready-to-show` in 135–243ms, and a *cold* one
+   * — the first renderer of a fresh process, which is exactly what launch is —
+   * took **2,035ms**. A fallback near two seconds would race the normal path on
+   * a working machine, flash an unpainted window at people it was never meant
+   * for, and write a warning that was false. Five is two and a half times the
+   * cold figure; what it costs on the broken path is five seconds before a
+   * window, against never.
+   */
+  revealWhenReady(win, {
+    fallbackMs: 5_000,
+    report: (line) => {
+      process.stderr.write(line);
+    },
+  });
 
   if (DEV_URL !== undefined) {
     await win.loadURL(DEV_URL);
@@ -389,6 +446,11 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // A second launch has already handed itself to the first and is on its way
+  // out. `ready` still arrives before the quit completes, and doing any of what
+  // follows — attaching hosts, opening a window — would be the second app this
+  // guard exists to prevent, alive for a moment.
+  if (!primary) return;
   fleet = buildFleet();
 
   // `AGBRTE_WORKSPACE_ROOT` lets a test — or a developer — start attached to a
@@ -532,6 +594,27 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
+});
+
+/*
+ * Somebody launched the app again. Bring this one forward.
+ *
+ * `show()` before `focus()`, and unconditionally, because the case that
+ * motivated the lock is a window that was never shown: a person who could not
+ * see the app launched it again, and this is where that second click lands. On
+ * a working machine `show()` on a visible window is a no-op, so nothing is lost
+ * by always calling it.
+ *
+ * No window yet means the first launch is still starting — attaching hosts
+ * happens before the window exists — and it will show its own window when it
+ * gets there. Creating one here would race that.
+ */
+app.on('second-instance', () => {
+  const win = mainWindow;
+  if (win === null || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
 });
 
 /**
