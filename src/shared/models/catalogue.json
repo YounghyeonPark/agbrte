@@ -1,5 +1,5 @@
 {
-  "verifiedAt": "2026-09-02",
+  "verifiedAt": "2026-10-19",
   "registry": "registry.ollama.ai",
   "models": [
     {
@@ -36,19 +36,19 @@
       "tag": "gemma3:4b",
       "label": "Gemma 3 4B",
       "note": "Google's small open model.",
-      "bytes": 3338801315
+      "bytes": 3350272259
     },
     {
       "tag": "gemma3:12b",
       "label": "Gemma 3 12B",
       "note": "Larger Gemma; wants a GPU.",
-      "bytes": 8149189763
+      "bytes": 8164039587
     },
     {
       "tag": "gpt-oss:20b",
       "label": "GPT-OSS 20B",
       "note": "OpenAI's open-weight release. Large; check disk first.",
-      "bytes": 13793440755
+      "bytes": 13793441427
     },
     {
       "tag": "deepseek-r1:7b",
