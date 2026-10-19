@@ -197,29 +197,36 @@ acceptable for a demo of what the program is and is not a foundation for
 anything else. Per-visitor workspaces, session and turn caps, and a reset are not
 built.
 
-**The app's window did not appear under Wayland on one real machine, and why is
-half known.** Ubuntu 24.04, GNOME 46 under Wayland, the display driven by a server
-board's ASPEED BMC VGA. Agbrte 0.0.41 created its window, loaded the page, and
-kept the renderer alive for seventeen hours with nothing on screen and nothing in
-the journal. `--disable-gpu` did not change that; `--ozone-platform=x11` did. So
-it is Electron's native Wayland path on that machine — Electron has chosen Wayland
-by default since 38 — and not GL.
+**The app's window once did not appear under Wayland, and why was never found.**
+Ubuntu 24.04, GNOME 46 under Wayland, the display driven by a server board's
+ASPEED BMC VGA. Agbrte 0.0.41 created its window, loaded the page, and kept the
+renderer alive for seventeen hours with nothing on screen and nothing in the
+journal. `--disable-gpu` did not change that; `--ozone-platform=x11` did.
 
-What is not known is which half of that path. Either the hidden window never
-painted, so `ready-to-show` never fired and the app never called `show()` — which
-was the window's only route onto the screen — or the Wayland surface does not map
-even when shown. The first was ours regardless, and it is fixed: the window is
-shown after five seconds without the event, and says so on stderr. That fix is
-also the experiment. Launched on that machine with no flags, a window that appears
-means the event was the whole problem and the Wayland default can stay; one that
-does not means Linux launchers should default to X11, at the cost of blurry text
-at fractional scaling on every Wayland desktop that works. That is a decision for
-after the measurement, not before it.
+The part that was ours is fixed regardless of cause. The window was created hidden
+and shown only on `ready-to-show`, so an event that never fired kept it hidden for
+ever and said nothing. 0.0.42 shows it after five seconds without the event and
+writes a line naming what did not arrive, and a second launch now brings the first
+window forward instead of starting another invisible app.
 
-Until then that machine launches through a per-user desktop entry that adds the
-X11 flag. It shadows the packaged launcher entirely and survives upgrades, which is
-why it has to be deleted once the measurement is made — while it exists, no change
-to the packaged launcher reaches that account.
+**Then it did not reproduce.** Three weeks later, 0.0.42 launched on the same
+machine in a Wayland session — confirmed by the session type and by the GPU
+process running with `--ozone-platform=wayland` — and its window appeared with
+**no fallback line**: `ready-to-show` arrived normally. So the measurement this
+fix was built to make did not happen; there was no failure left to measure. In
+between, the machine had taken a kernel update and new Mesa, mutter and NVIDIA
+driver packages, and any of them may be what changed. Nobody knows which, and the
+fallback stays as insurance rather than as a cure for a known cause. Wayland stays
+the Linux default, since the one reason to move off it no longer stands.
+
+Two things this taught that are worth keeping. A desktop terminal is not proof of
+a Wayland session: GDM sets `PreferredDisplayServer=xorg` on a machine with the
+NVIDIA driver bound, so a plain `Ubuntu` login after a reboot came up on Xorg and
+the first attempt at this test silently ran X11 — `echo $XDG_SESSION_TYPE` before
+measuring is the check. And the GPU process logs `MESA-LOADER: failed to open
+dri … dri_gbm.so: Permission denied` there, which is the GPU sandbox refusing
+Mesa's GBM backend; it was harmless on both platforms this time, and it is the
+first suspect if a Wayland window ever goes missing again.
 
 ## And what a test suite cannot see
 

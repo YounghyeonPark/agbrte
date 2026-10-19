@@ -16,12 +16,13 @@
  * saw an app that had not launched, launched it again, and got a second one
  * exactly as invisible.
  *
- * `--disable-gpu` did not change it and `--ozone-platform=x11` did, so it is
- * Electron's native Wayland path on that machine rather than GL. Whether showing
- * the window would have been enough there — or whether the surface itself never
- * maps — is **not known yet**, and this does not pretend to settle it. What it
- * settles is the part that was ours: a window whose only route onto the screen
- * was one event, with nothing said when that event did not come.
+ * `--disable-gpu` did not change it and `--ozone-platform=x11` did, so it was
+ * Electron's native Wayland path on that machine rather than GL. The cause was
+ * never found: three weeks later, after kernel, Mesa, mutter and NVIDIA driver
+ * updates, the same machine under Wayland delivered `ready-to-show` normally and
+ * the fallback below never fired (`docs/status.md`). What this settles is the
+ * part that was ours whatever the cause: a window whose only route onto the
+ * screen was one event, with nothing said when that event did not come.
  *
  * ## The fallback, and what it costs
  *
