@@ -25,7 +25,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { noConsoleWindow } from './support/noConsoleWindow.js';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   assertSafeAlias,
@@ -33,8 +33,14 @@ import {
   discoveryScript,
   parseDiscovery,
   DISCOVERY_MAX_DEPTH,
+  BACKSLASH_VAR,
+  JSON_UNESCAPE_SED,
+  SERVED_ROOT_SED,
+  spelledWithoutBackslashes,
 } from '@main/host/discoverWorkspaces.js';
 import type { SshRunner } from '@main/host/sshTransport.js';
+import { openWorkspace } from '@main/store/identity.js';
+import { writeKnownWorkspaces } from '../src/host/workspaces.js';
 
 /*
  * A budget that reflects what these tests actually do.
@@ -143,6 +149,37 @@ describe('the command that is sent', () => {
     expect(a.aliases).toEqual(['build-01']);
   });
 
+  it('prints what the host serves before the block the cap can cut', () => {
+    // `head` bounds the walk, and a home directory with hundreds of repositories
+    // reaches it. Whatever is inside that block can be cut off the stream before
+    // this side ever sees it, so the served folders must come before it.
+    const lines = discoveryScript().split('\n');
+    const served = lines.indexOf(`printf '=served\\n'`);
+    const capped = lines.indexOf('{');
+    expect(served).toBeGreaterThan(-1);
+    expect(capped).toBeGreaterThan(-1);
+    expect(served).toBeLessThan(capped);
+  });
+
+  it('never sends two backslashes in a row', () => {
+    /*
+     * Measured on the laptop this feature was built for: a doubled backslash in
+     * an `ssh` argument arrives intact through Windows OpenSSH and *halved*
+     * through Git's MSYS `ssh`, and which of the two `spawn('ssh')` finds is a
+     * matter of somebody's PATH. The served section's `sed` needs doubled
+     * backslashes, and through MSYS it became a program `sed` refused — silently,
+     * behind the `2>/dev/null`. So the whole script, not just that section, is
+     * held to the rule: one backslash at a time, and any pair built on the far
+     * side.
+     */
+    const script = discoveryScript();
+    const pair = String.fromCharCode(92).repeat(2);
+    expect(script.includes(pair)).toBe(false);
+    // And the programs still need their pairs — this is about how they travel,
+    // not about the programs themselves.
+    expect(SERVED_ROOT_SED.includes(pair)).toBe(true);
+  });
+
   it('carries a timeout, because a slow machine must not be a hang', async () => {
     const runner = fakeRunner({ stdout: answer });
     await discoverRemoteWorkspaces('build-01', { runner, timeoutMs: 4_000 });
@@ -215,6 +252,97 @@ describe('reading what came back', () => {
     const { candidates, truncated } = parseDiscovery(lines.join('\n'), { cap: 5 });
     expect(candidates).toHaveLength(5);
     expect(truncated).toBe(true);
+  });
+
+  it('offers what the machine already serves, as the strongest kind there is', () => {
+    /*
+     * A served folder is a workspace the host holds, checked on the far side to
+     * still have its directory — the same claim a `.agbrte` marker makes. It must
+     * rank with those, not below a git repository, and when the walk *also*
+     * found it the two must merge into one row rather than appear twice.
+     */
+    const { candidates } = parseDiscovery(
+      [
+        '=roots',
+        '/home/x',
+        '=served',
+        '/home/x/.config/display-test',
+        '/home/x/proj',
+        '=marks',
+        '/home/x/proj/.agbrte',
+        '/home/x/repo/.git',
+        '=dirs',
+        '/home/x/Documents',
+      ].join('\n'),
+    );
+    expect(candidates).toEqual([
+      { path: '/home/x/proj', kind: 'workspace' },
+      { path: '/home/x/.config/display-test', kind: 'workspace' },
+      { path: '/home/x/repo', kind: 'git' },
+      { path: '/home/x/Documents', kind: 'folder' },
+    ]);
+  });
+
+  it('does not mistake the machine’s own directory for a workspace', () => {
+    /*
+     * `~/.agbrte` is where the machine keeps its host record and its install;
+     * a workspace keeps its sessions in a directory of the same name. On a real
+     * machine the walk saw the first, offered the home directory as "used by
+     * Agbrte before", and put it first — the folder one press opens on a first
+     * attach, and the one folder `assertNotInstallRoot` refuses to open.
+     */
+    const { candidates } = parseDiscovery(
+      [
+        '=home',
+        '/home/x',
+        '=roots',
+        '/home/x',
+        '=marks',
+        '/home/x/.agbrte',
+        '/home/x/.git',
+        '/home/x/proj/.agbrte',
+      ].join('\n'),
+    );
+    expect(candidates).toEqual([
+      { path: '/home/x/proj', kind: 'workspace' },
+      // A home that is a dotfiles repository is still that, and still offered.
+      { path: '/home/x', kind: 'git' },
+    ]);
+  });
+
+  it('does not change which folder one press opens', () => {
+    /*
+     * The attach panel opens the first workspace candidate on a machine it has
+     * not been on. Sorted by path alone, a registry-only folder under
+     * `~/.config` would take that place — `.` sorts before every letter — and on
+     * a machine where the desktop app has run, one press would open the app's
+     * own profile directory instead of the project the walk found. Listing more
+     * must not quietly change what the shortcut does.
+     */
+    const { candidates } = parseDiscovery(
+      [
+        '=roots',
+        '/home/x',
+        '=served',
+        '/home/x/.config/agbrte',
+        '=marks',
+        '/home/x/work/.agbrte',
+      ].join('\n'),
+    );
+    expect(candidates.find((c) => c.kind === 'workspace')?.path).toBe('/home/x/work');
+    // Still offered — behind, not dropped.
+    expect(candidates.map((c) => c.path)).toContain('/home/x/.config/agbrte');
+  });
+
+  it('keeps the served folders when the list is cut to the cap', () => {
+    // This side's half of it: the cap applies to the ranked list, and a served
+    // folder ranks with the workspaces, so a home with more repositories than the
+    // cap still leads with what the host is already serving. The far side's half
+    // — that the stream itself cannot be cut before them — is the next test.
+    const lines = ['=roots', '/home/x', '=served', '/home/x/.config/kept', '=marks'];
+    for (let i = 0; i < 12; i += 1) lines.push(`/home/x/repo${i}/.git`);
+    const { candidates } = parseDiscovery(lines.join('\n'), { cap: 5 });
+    expect(candidates[0]).toEqual({ path: '/home/x/.config/kept', kind: 'workspace' });
   });
 
   it('does not claim there are more when the extras were duplicates', () => {
@@ -418,6 +546,91 @@ describe.skipIf(sh === null)('the script, under a real shell', () => {
     // …and nothing hidden is offered as a plain folder either.
     expect([...byPath.keys()].some((p) => p.includes('/.'))).toBe(false);
     expect(truncated).toBe(false);
+  });
+
+  it('finds what the machine already serves, even under a hidden directory', async () => {
+    /*
+     * The case that was reported. The walk prunes every hidden directory, so a
+     * workspace in `~/.config/…` — where the desktop app keeps its own default
+     * — could never be found from another machine, while the host there was
+     * serving it. The machine's own registry is what answers that.
+     */
+    const home = await mkdtemp(join(tmpdir(), 'agbrte served '));
+    await mkdir(join(home, '.agbrte'), { recursive: true });
+    await mkdir(join(home, '.config', 'display-test', '.agbrte'), { recursive: true });
+    // The old workspace name, which §5.1 reads for ever.
+    await mkdir(join(home, '.config', 'older', '.devagents'), { recursive: true });
+    // Listed but no longer a workspace, and listed but deleted: the registry is a
+    // hint, and offering either would be a row that fails on press.
+    await mkdir(join(home, '.config', 'plain'), { recursive: true });
+
+    const posixHome =
+      process.platform === 'win32'
+        ? execFileSync(sh!, ['-c', 'pwd'], { cwd: home, encoding: 'utf8', ...noConsoleWindow }).trim()
+        : home;
+    const listed = ['display-test', 'older', 'plain', 'gone'].map((n) => `${posixHome}/.config/${n}`);
+    // A quote in a folder name is legal everywhere but Windows, and it is the
+    // escape the second `sed` exists to undo.
+    const quoted = `${posixHome}/.config/with "quote"`;
+    if (process.platform !== 'win32') {
+      await mkdir(join(home, '.config', 'with "quote"', '.agbrte'), { recursive: true });
+      listed.push(quoted);
+    }
+    // In the writer's own shape — pinned against the real writer by the next test.
+    await writeFile(
+      join(home, '.agbrte', 'workspaces.json'),
+      `${JSON.stringify({ workspaces: listed.map((root) => ({ root, instanceId: 'x' })) }, null, 2)}\n`,
+    );
+
+    const stdout = execFileSync(sh!, ['-c', discoveryScript()], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: posixHome },
+      maxBuffer: 4 * 1024 * 1024,
+      ...noConsoleWindow,
+    });
+    const byPath = new Map(parseDiscovery(stdout).candidates.map((c) => [c.path, c.kind]));
+
+    expect(byPath.get(`${posixHome}/.config/display-test`)).toBe('workspace');
+    expect(byPath.get(`${posixHome}/.config/older`)).toBe('workspace');
+    if (process.platform !== 'win32') expect(byPath.get(quoted)).toBe('workspace');
+    expect(byPath.has(`${posixHome}/.config/plain`)).toBe(false);
+    expect(byPath.has(`${posixHome}/.config/gone`)).toBe(false);
+    // This home has a `.agbrte` of its own — the machine directory the registry
+    // lives in — and it is not a workspace.
+    expect(byPath.has(posixHome)).toBe(false);
+  });
+
+  it('reads the registry exactly as the host writes it', async () => {
+    /*
+     * The coupling the served section accepts, made into a test. The far side
+     * has no JSON parser, so the `sed` relies on `writeKnownWorkspaces` putting
+     * each `"root"` on a line of its own. This writes the file with the real
+     * writer, for real workspaces, and reads it back with the real programs — so
+     * a writer that switched to compact JSON fails here, by name, instead of
+     * making every served folder quietly disappear from the list.
+     */
+    const home = await mkdtemp(join(tmpdir(), 'agbrte registry '));
+    const roots = [join(home, 'a project'), join(home, '.config', 'hidden one')];
+    if (process.platform !== 'win32') roots.push(join(home, 'with "quote" and \\ slash'));
+    const known = [];
+    for (const root of roots) {
+      await mkdir(root, { recursive: true });
+      const identity = await openWorkspace(root);
+      known.push({ root, instanceId: identity.instanceId });
+    }
+    await writeKnownWorkspaces(known, home);
+
+    // In the form that travels, so this runs exactly what the far side runs.
+    const out = execFileSync(
+      sh!,
+      [
+        '-c',
+        `${BACKSLASH_VAR}; sed -n -E ${spelledWithoutBackslashes(SERVED_ROOT_SED)} workspaces.json` +
+          ` | sed -E ${spelledWithoutBackslashes(JSON_UNESCAPE_SED)}`,
+      ],
+      { cwd: join(home, '.agbrte'), encoding: 'utf8', ...noConsoleWindow },
+    );
+    expect(out.split('\n').filter((line) => line !== '')).toEqual(roots.map((r) => resolve(r)));
   });
 });
 

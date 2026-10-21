@@ -140,6 +140,60 @@ export const PRUNED_NAMES = [
   'dist',
 ] as const;
 
+/**
+ * The two `sed` programs that read the machine's own list of workspaces.
+ *
+ * The far side has a POSIX shell and nothing that parses JSON, so this leans on
+ * the one thing that is guaranteed about the file: `writeKnownWorkspaces` writes
+ * it with `JSON.stringify(…, null, 2)`, which puts every entry's `"root": "…"`
+ * on a line of its own. `tests/discoverWorkspaces.test.ts` pins that against the
+ * real writer, so a change to the format fails there by name rather than here by
+ * silence.
+ *
+ * The first takes the string out of that line, allowing JSON's escapes inside
+ * it; the second undoes the escapes a path can actually need — a quote and a
+ * backslash (and an escaped slash, which is legal JSON nobody writes). Anything
+ * stranger — a newline or a unicode escape in a folder name — comes out wrong,
+ * fails the existence test that follows, and is simply not offered. That is the
+ * failure direction this wants: a folder missing from the list can still be
+ * typed, and a wrong path in it would be a row that fails on press.
+ *
+ * `String.raw` because these pass through TypeScript and then a shell, and two
+ * layers of backslash escaping in one literal is how a working `sed` becomes a
+ * subtly different one.
+ */
+export const SERVED_ROOT_SED = String.raw`s/^[[:space:]]*"root"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*$/\1/p`;
+export const JSON_UNESCAPE_SED = String.raw`s/\\(["\\/])/\1/g`;
+
+/**
+ * One backslash, made on the far side, so the command that travels has none.
+ *
+ * Measured rather than assumed: handed to `ssh` as an argument from Node on
+ * Windows, a doubled backslash arrives intact through Windows OpenSSH and
+ * arrives **halved** through Git's MSYS `ssh` — and which one `spawn('ssh')`
+ * finds is decided by somebody's PATH, which on the machine this was written on
+ * put Git's first. The two programs above need doubled backslashes, so through
+ * MSYS they reached `sed` as different programs, `sed` refused them, and the
+ * `2>/dev/null` that keeps a missing file quiet made the whole served list
+ * disappear without a word. A single backslash before a digit survived both, so
+ * `printf '\134'` is the one backslash sent, and every other one is built from
+ * it where the command runs.
+ */
+export const BACKSLASH_VAR = String.raw`b=$(printf '\134')`;
+
+/**
+ * A program as a shell word that becomes it on the far side, with no backslash
+ * in the text that is sent: single-quoted pieces, joined by `"$b"`.
+ *
+ * Requires {@link BACKSLASH_VAR} to have run first in the same shell.
+ */
+export function spelledWithoutBackslashes(program: string): string {
+  return program
+    .split(String.fromCharCode(92))
+    .map((piece) => shellQuote(piece))
+    .join('"$b"');
+}
+
 /** What a candidate is, which is the whole reason they are not one flat list. */
 export type WorkspaceCandidateKind =
   /** Holds a `.agbrte/` — this project has run here, and sessions may exist. */
@@ -224,8 +278,12 @@ function rootTokens(): string[] {
  * stream still be parsed:
  *
  * ```
- * =roots                      a section marker
+ * =home                       a section marker
+ * /home/a b                   the far side's $HOME, whose .agbrte is not a workspace
+ * =roots
  * /home/a b                   a root that exists and was searched
+ * =served
+ * /home/a b/.config/scratch   a folder this machine's host already serves
  * =marks
  * /home/a b/proj/.git         a marker; the workspace is its parent
  * ?/srv                       this root's walk was cut short by the timeout
@@ -236,6 +294,28 @@ function rootTokens(): string[] {
  * The roots are printed **before** the capped block and the markers **before**
  * the plain directories, so neither a full home directory nor a `head` cutting
  * the stream can crowd out the answer that matters.
+ *
+ * ## `=served`, and why a walk was not enough
+ *
+ * The walk prunes every hidden directory, which is what keeps it from being a
+ * hang — and which means it can never find a workspace that lives under one. On
+ * a real machine that was not hypothetical: the desktop app there keeps its own
+ * default workspace in `~/.config/agbrte`, a session was made in
+ * `~/.config/display-test`, and from a laptop attached to the same host neither
+ * could be found. The host was serving both; nothing on the attaching side
+ * asked it.
+ *
+ * So the machine's own list is read — `~/.agbrte/workspaces.json`, the registry
+ * §5.1 keeps for exactly this ("sessions in a folder nobody has opened this
+ * launch still have to be findable") — and every entry that still holds a
+ * workspace directory is printed. Checked here rather than believed, because the
+ * registry is a hint: a folder deleted since it was written is still in it, and
+ * offering it would be a row that fails on press (§3.5).
+ *
+ * Outside the capped block for the same reason the roots are: these are the
+ * strongest answer on the machine, and a home directory with two hundred
+ * repositories in it must not push them off the end. They are capped on their
+ * own instead.
  */
 export function discoveryScript(
   opts: { depth?: number; cap?: number; findSeconds?: number } = {},
@@ -257,8 +337,24 @@ export function discoveryScript(
     // "run a program whose name is the empty string".
     `T=`,
     `command -v timeout >/dev/null 2>&1 && T=${shellQuote(`timeout ${seconds}`)}`,
+    // The home directory, named, so this side can tell the machine's own
+    // `~/.agbrte` apart from a workspace's — see `parseDiscovery`.
+    `printf '=home\\n'`,
+    `printf '%s\\n' "$HOME"`,
     `printf '=roots\\n'`,
     `for r in ${roots}; do [ -d "$r" ] && printf '%s\\n' "$r"; done`,
+    `printf '=served\\n'`,
+    // `~/.agbrte` is `remoteRoot` on the far side. `AGBRTE_HOME` is not honoured:
+    // an ssh shell does not have it, and `FIND_HOST_SCRIPT` reads the same
+    // directory for the same reason.
+    `f="$HOME/.agbrte/workspaces.json"`,
+    BACKSLASH_VAR,
+    `[ -f "$f" ] && sed -n -E ${spelledWithoutBackslashes(SERVED_ROOT_SED)} "$f" 2>/dev/null` +
+      ` | sed -E ${spelledWithoutBackslashes(JSON_UNESCAPE_SED)} 2>/dev/null` +
+      ` | while IFS= read -r w; do` +
+      ` { [ -d "$w/${WORKSPACE_DIR}" ] || [ -d "$w/${LEGACY_WORKSPACE_DIR}" ]; }` +
+      ` && printf '%s\\n' "$w";` +
+      ` done | head -n ${cap}`,
     `{`,
     `printf '=marks\\n'`,
     `for r in ${roots}; do`,
@@ -298,6 +394,10 @@ export function parseDiscovery(
   const cap = opts.cap ?? DISCOVERY_MAX_RESULTS;
   const roots: string[] = [];
   const found: WorkspaceCandidate[] = [];
+  /** Paths the walk reached, so a served folder it also found is not "registry only". */
+  const walked = new Set<string>();
+  const served = new Set<string>();
+  let home: string | null = null;
   let partial = false;
   let section = '';
 
@@ -316,21 +416,61 @@ export function parseDiscovery(
     }
     if (!line.startsWith('/')) continue;
 
-    if (section === 'roots') {
+    if (section === 'home') {
+      home = line;
+    } else if (section === 'roots') {
       roots.push(line);
+    } else if (section === 'served') {
+      // Checked on the far side to still hold a workspace directory, so this is
+      // the same claim a `.agbrte` marker makes — arrived at by asking the
+      // machine rather than by walking it.
+      found.push({ path: line, kind: 'workspace' });
+      served.add(line);
     } else if (section === 'marks') {
       const marker = [WORKSPACE_DIR, LEGACY_WORKSPACE_DIR].find((name) =>
         line.endsWith(`/${name}`),
       );
       if (marker !== undefined) {
-        found.push({ path: line.slice(0, -(marker.length + 1)), kind: 'workspace' });
+        const path = line.slice(0, -(marker.length + 1));
+        /*
+         * `~/.agbrte` is the machine's install directory, not a workspace's —
+         * the two share a name, and the walk cannot tell them apart. Found on a
+         * real machine, where the home directory topped the list as "used by
+         * Agbrte before" and was the folder one press would open on a first
+         * attach. `assertNotInstallRoot` refuses exactly that folder, so it was
+         * a row that fails on press (§3.5). This mirrors that rule and no more:
+         * a home that is also a git repository is still offered, as one.
+         */
+        if (marker === WORKSPACE_DIR && path === home) continue;
+        found.push({ path, kind: 'workspace' });
+        walked.add(path);
       } else if (line.endsWith('/.git')) {
-        found.push({ path: line.slice(0, -'/.git'.length), kind: 'git' });
+        const path = line.slice(0, -'/.git'.length);
+        found.push({ path, kind: 'git' });
+        walked.add(path);
       }
     } else if (section === 'dirs') {
       found.push({ path: line, kind: 'folder' });
+      walked.add(line);
     }
   }
+
+  /*
+   * A folder known only from the registry is listed, and it does not get to go
+   * first.
+   *
+   * The attach panel opens the *first* workspace candidate in one press on a
+   * machine it has not been on, so the order here is a choice made on somebody's
+   * behalf. Sorting purely by path would hand that choice to whatever sorts
+   * earliest — and `.` sorts before every letter, so the folders this section
+   * exists to surface, the ones under `~/.config`, would win it. On a machine
+   * where the desktop app has been used that is `~/.config/agbrte`, the app's
+   * own profile directory, opened ahead of every project the walk found. Adding
+   * a list must not quietly change what one press does, so registry-only folders
+   * stand behind the ones the walk reached; one the walk also found is simply a
+   * workspace.
+   */
+  const registryOnly = (path: string): number => (served.has(path) && !walked.has(path) ? 1 : 0);
 
   /*
    * One path can arrive several times — the roots overlap (`$HOME` and
@@ -349,7 +489,10 @@ export function parseDiscovery(
   }
 
   const candidates = [...best.values()].sort(
-    (a, b) => RANK[a.kind] - RANK[b.kind] || a.path.localeCompare(b.path),
+    (a, b) =>
+      RANK[a.kind] - RANK[b.kind] ||
+      registryOnly(a.path) - registryOnly(b.path) ||
+      a.path.localeCompare(b.path),
   );
 
   return {
