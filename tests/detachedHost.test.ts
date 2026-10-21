@@ -16,8 +16,9 @@ import { useOwnMachine } from './support/machineHome.js';
 import { mkdtemp, readFile, rm, rename, access } from 'node:fs/promises';
 import { removeTemp } from './support/tempDir.js';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { connectOrSpawnHost } from '@main/host/connectOrSpawn.js';
+import { shippingStamp } from '@main/bundleStamp.js';
 import {
   readHostRecord,
   readMachineRecord,
@@ -116,16 +117,19 @@ describe('a detached host', () => {
      * changes nothing until someone restarts it — and a client comparing files
      * on disk cannot tell whether that has happened. Only the host knows.
      *
-     * Compared against `package.json` rather than a literal, because the value
-     * is stamped onto the bundle at build time and what matters is that the two
-     * agree. A hardcoded string here would pass happily while the build stamped
-     * something else.
+     * Compared against what the *app* compares it with, rather than a literal
+     * or the version alone. This assertion used to read `package.json`'s bare
+     * version and passed — while the app compared `<version>+<digest>`, so the
+     * same host it approved was "out of date" in every window, and its Update
+     * button could not be cleared (`src/main/bundleStamp.ts`). What matters is
+     * not that the host agrees with the build, but that it agrees with the
+     * comparison that decides the button.
      */
     const shipped = JSON.parse(
       await readFile(resolve(import.meta.dirname, '../package.json'), 'utf8'),
     ) as { version: string };
     expect(identity.bundleVersion, 'the host cannot say which bundle it runs').toBe(
-      shipped.version,
+      shippingStamp(shipped.version, dirname(HOST_BUNDLE)),
     );
   }, 40_000);
 

@@ -17,8 +17,8 @@
  * the same one the app used to hold — only the parent changed.
  */
 
-import { closeSync, openSync, readSync } from 'node:fs';
 import { fork, type ChildProcess, type ForkOptions } from 'node:child_process';
+import { readHostStamp } from '@main/bundleStamp.js';
 import type { ModelNeed } from '@main/runtime/registry.js';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -909,25 +909,13 @@ if (invokedDirectly) {
  * development, or a bundle from before this existed. Absent rather than
  * guessed: a wrong version here would make a current host look stale, and the
  * offered remedy is to restart it.
+ *
+ * That sentence came true. The build stamps the bare version, the app compares
+ * against `<version>+<digest>`, and for two months every local host reported
+ * the first, looked stale, and was restarted by its Update button into a host
+ * that reported the first again. `readHostStamp` now completes a bare stamp
+ * with the digest the app computes, by the app's own function.
  */
 function readOwnBundleVersion(): string | null {
-  const self = process.argv[1];
-  if (self === undefined) return null;
-  try {
-    // Only the first line is needed and the bundle is megabytes; reading all of
-    // it to look at 30 bytes is work every host would do at every start.
-    const handle = openSync(self, 'r');
-    try {
-      const head = Buffer.alloc(256);
-      const read = readSync(handle, head, 0, head.length, 0);
-      const first = head.subarray(0, read).toString('utf8').split('\n', 1)[0] ?? '';
-      const match = /^\/\/ agbrte-bundle: (.+)$/.exec(first.trim());
-      return match?.[1]?.trim() ?? null;
-    } finally {
-      closeSync(handle);
-    }
-  } catch {
-    // Unreadable is the same answer as unstamped: nothing can be claimed.
-    return null;
-  }
+  return readHostStamp(process.argv[1]);
 }

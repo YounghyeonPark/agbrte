@@ -19,9 +19,8 @@ import { loadReport } from './conformance.js';
 import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
 import { fileURLToPath } from 'node:url';
 import { delimiter, dirname, join } from 'node:path';
-import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { installStrayPipeGuard } from './strayPipeRead.js';
+import { shippingStamp } from './bundleStamp.js';
 import { revealWhenReady } from './revealWindow.js';
 import { registerIpc } from './ipc/register.js';
 import { PRODUCT_DESCRIPTION, PUSH } from '@shared/ipc/contract.js';
@@ -212,22 +211,14 @@ const HOST_RUNTIMES: FleetRuntime[] = [
  * the "out of date" badge; the hash behind it is what makes the comparison mean
  * anything. Computed once and cached, because it describes files that cannot
  * change while this process runs.
+ *
+ * Computed by `shippingStamp`, which the host calls too — see `bundleStamp.ts`
+ * for the two months in which this side hashed and the local host did not, and
+ * every local host showed an Update button that pressing could not clear.
  */
 let stamp: Promise<string> | undefined;
 function bundleStamp(): Promise<string> {
-  stamp ??= (async () => {
-    const digest = createHash('sha256');
-    for (const file of ['agbrteHost.js', 'agentHost.js', '../cli/agbrte.js']) {
-      try {
-        digest.update(await readFile(join(HERE, file)));
-      } catch {
-        // A bundle that is not there is part of what this build is: hashing the
-        // name keeps the stamp stable and different from a build that has it.
-        digest.update(file);
-      }
-    }
-    return `${APP_VERSION}+${digest.digest('hex').slice(0, 12)}`;
-  })();
+  stamp ??= Promise.resolve().then(() => shippingStamp(APP_VERSION, HERE));
   return stamp;
 }
 

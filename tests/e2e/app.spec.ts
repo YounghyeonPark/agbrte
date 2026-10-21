@@ -992,6 +992,34 @@ test.describe('the first screen, the guide, and about', () => {
       await agbrte.close();
     }
   });
+
+  test('a host this app has just started is not offered an update', async () => {
+    /*
+     * The assertion the comment above was about, and that nobody wrote.
+     *
+     * The badge is "this host is running a different build from the one this
+     * app ships", so a host the app has *just started*, from its own bundle,
+     * must never carry it. It did, twice, from two different causes: first the
+     * app read Electron's version in development, then the shipping stamp became
+     * `<version>+<digest>` while the local host still reported the build's bare
+     * version. Both times every local host looked stale, and pressing Update
+     * restarted it into a host that looked stale again. Both times the version
+     * text above was correct and the test was green, because it checked the
+     * number on the About page rather than the button the number decides.
+     */
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      const page = agbrte.window;
+      const group = hostGroup(page);
+      // Listed and connected, which is when `outdated` has been decided.
+      await expect(group.locator('[data-testid=new-session]')).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator('[data-testid=update-host]')).toHaveCount(0);
+    } finally {
+      await agbrte.close();
+    }
+  });
 });
 
 test.describe('reasoning effort', () => {
