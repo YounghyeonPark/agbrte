@@ -128,6 +128,82 @@ describe('what the app does about an update', () => {
     expect(seen[3]).toEqual({ phase: 'ready', version: '0.0.4' });
   });
 
+  it('keeps "nobody has asked yet" apart from "asked, and nothing newer"', () => {
+    /*
+     * They were one phase, `idle`, which did no harm while the window only ever
+     * showed the ready banner. Once the state is on screen it matters: at launch
+     * nothing has been checked, and calling that "up to date" is an unknown
+     * rendered as a no (§3.3). So a check that finds nothing says so, and says
+     * when.
+     */
+    const seen: UpdateState[] = [];
+    const updater = fakeUpdater();
+    startUpdates({
+      build,
+      updater,
+      onState: (s) => seen.push(s),
+      setInterval: vi.fn() as never,
+      now: () => new Date('2026-10-21T07:42:00Z'),
+    });
+
+    expect(seen[0]).toEqual({ phase: 'idle' });
+    updater.fire('checking-for-update');
+    updater.fire('update-not-available');
+    expect(seen.at(-1)).toEqual({ phase: 'current', checkedAt: '2026-10-21T07:42:00.000Z' });
+  });
+
+  it('says which version it is downloading', () => {
+    // Progress events carry a percentage and nothing else; the version arrives
+    // once, before them, and a line that says "downloading 37%" without saying
+    // of what leaves the person guessing whether it is the release they expect.
+    const seen: UpdateState[] = [];
+    const updater = fakeUpdater();
+    startUpdates({ build, updater, onState: (s) => seen.push(s), setInterval: vi.fn() as never });
+
+    updater.fire('update-available', { version: '0.0.44' });
+    updater.fire('download-progress', { percent: 37.2 });
+    expect(seen.at(-1)).toEqual({ phase: 'downloading', percent: 37, version: '0.0.44' });
+  });
+
+  it('keeps a downloaded update on screen when a later check fails', () => {
+    /*
+     * The timer keeps checking after a download is ready. A laptop that went
+     * offline in the meantime answers with an error, and letting that replace
+     * `ready` took the restart banner away while the update was still downloaded
+     * and would still install on the next quit — a failure report about a check
+     * that changed nothing, hiding the one thing that had worked.
+     */
+    const updater = fakeUpdater();
+    const handle = startUpdates({
+      build,
+      updater,
+      onState: () => undefined,
+      setInterval: vi.fn() as never,
+    });
+
+    updater.fire('update-downloaded', { version: '0.0.44' });
+    updater.fire('checking-for-update');
+    updater.fire('error', new Error('getaddrinfo ENOTFOUND github.com'));
+    expect(handle.state()).toEqual({ phase: 'ready', version: '0.0.44' });
+
+    // A newer one still replaces it.
+    updater.fire('update-downloaded', { version: '0.0.45' });
+    expect(handle.state()).toEqual({ phase: 'ready', version: '0.0.45' });
+  });
+
+  it('checks again when asked, not only on its timer', async () => {
+    const updater = fakeUpdater();
+    const handle = startUpdates({
+      build,
+      updater,
+      onState: () => undefined,
+      setInterval: vi.fn() as never,
+    });
+    const before = updater.checks;
+    await handle.check();
+    expect(updater.checks).toBe(before + 1);
+  });
+
   /**
    * Pressing the button updates; it does not open a form.
    *

@@ -97,12 +97,23 @@ export function updateSupport(build: BuildFacts): UpdateSupport {
   return { supported: true };
 }
 
-/** What the app knows about an update, as the renderer sees it. */
+/**
+ * What the app knows about an update, as the renderer sees it.
+ *
+ * `idle` and `current` are two phases because they are two answers. `idle` is
+ * "nobody has asked yet" — the state at launch, before the first check returns
+ * — and `current` is "asked, and there is nothing newer", with the time it was
+ * asked. They used to be one phase, which was harmless while the only thing the
+ * window showed was a ready banner; it stops being harmless the moment the state
+ * is put on screen, because rendering a check that has not happened as "up to
+ * date" is an unknown rendered as a no (§3.3).
+ */
 export type UpdateState =
   | { phase: 'unsupported'; reason: string }
   | { phase: 'idle' }
   | { phase: 'checking' }
-  | { phase: 'downloading'; percent: number }
+  | { phase: 'current'; checkedAt: string }
+  | { phase: 'downloading'; percent: number; version?: string }
   | { phase: 'ready'; version: string }
   | { phase: 'failed'; reason: string };
 
@@ -122,6 +133,8 @@ export interface UpdateOptions {
   /** How often to look again. Six hours: this app is left running for days. */
   everyMs?: number;
   setInterval?: typeof setInterval;
+  /** The clock `current` is stamped with; injected so a test can read it. */
+  now?: () => Date;
 }
 
 /**
@@ -141,6 +154,17 @@ export function startUpdates(opts: UpdateOptions): {
     support.supported ? { phase: 'idle' } : { phase: 'unsupported', reason: support.reason };
 
   const emit = (next: UpdateState): void => {
+    /*
+     * A downloaded update is not undone by a later check.
+     *
+     * The timer keeps checking every six hours after a download is ready, and a
+     * laptop that has gone offline in the meantime answers that check with an
+     * error. Letting that replace `ready` took the "Restart to update" banner off
+     * the screen while the update sat downloaded and would still install on the
+     * next quit — a failure report about a check that changed nothing, hiding
+     * the one thing that had worked. Only a newer `ready` replaces a `ready`.
+     */
+    if (state.phase === 'ready' && next.phase !== 'ready') return;
     state = next;
     opts.onState(next);
   };
@@ -162,10 +186,23 @@ export function startUpdates(opts: UpdateOptions): {
   // The install waits for a quit the person chose. See the header.
   updater.autoInstallOnAppQuit = true;
 
+  /** The version being fetched, learned from `update-available` — progress events do not say. */
+  let incoming: string | undefined;
+  const now = opts.now ?? ((): Date => new Date());
+
   updater.on('checking-for-update', () => emit({ phase: 'checking' }));
-  updater.on('update-not-available', () => emit({ phase: 'idle' }));
+  updater.on('update-not-available', () =>
+    emit({ phase: 'current', checkedAt: now().toISOString() }),
+  );
+  updater.on('update-available', ((info: { version?: string }) => {
+    incoming = info.version;
+  }) as never);
   updater.on('download-progress', ((p: { percent?: number }) =>
-    emit({ phase: 'downloading', percent: Math.round(p.percent ?? 0) })) as never);
+    emit({
+      phase: 'downloading',
+      percent: Math.round(p.percent ?? 0),
+      ...(incoming !== undefined ? { version: incoming } : {}),
+    })) as never);
   updater.on('update-downloaded', ((info: { version?: string }) =>
     emit({ phase: 'ready', version: info.version ?? 'a new version' })) as never);
   updater.on('error', ((err: Error) =>
@@ -201,6 +238,14 @@ export function startUpdates(opts: UpdateOptions): {
 
   return {
     state: () => state,
+    /*
+     * A check somebody asked for, from the settings pane.
+     *
+     * The same check the timer makes. It exists because the only other ways to
+     * make the app look were to wait up to six hours or to quit and relaunch it —
+     * and quitting is also how a downloaded update installs, which makes "relaunch
+     * to see whether there is an update" a strange instruction to give anybody.
+     */
     check,
     /*
      * Silent, and relaunch afterwards.

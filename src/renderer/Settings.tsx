@@ -35,10 +35,16 @@ import { applyTheme, rememberTheme, storedTheme } from './applyTheme.js';
 import { THEMES } from './themes.js';
 import { forgetAgentDefault, listAgentDefaults } from './agentDefaults.js';
 import { forgetMachine, loadMachines, type Machine } from './machines.js';
-import type { HostInfo } from '@shared/ipc/contract.js';
+import type { HostInfo, UpdateState } from '@shared/ipc/contract.js';
 import { LABEL } from './App.js';
 
-export function Settings({ hosts }: { hosts: HostInfo[] }): JSX.Element {
+export function Settings({
+  hosts,
+  update,
+}: {
+  hosts: HostInfo[];
+  update: UpdateState;
+}): JSX.Element {
   return (
     <div className="m-auto grid w-full max-w-xl gap-6 p-6" data-testid="settings">
       <div className="grid gap-2">
@@ -51,6 +57,7 @@ export function Settings({ hosts }: { hosts: HostInfo[] }): JSX.Element {
 
       <Appearance />
       <Remembered hosts={hosts} />
+      <Updates update={update} />
 
       {/* The About pane, unchanged, as a section rather than a destination. It
           was a top-level button only because the menu bar used to be the one
@@ -59,6 +66,112 @@ export function Settings({ hosts }: { hosts: HostInfo[] }): JSX.Element {
         <span className={`${LABEL} text-muted`}>About</span>
         <About inset />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Where this application's own update stands (`main/update.ts`).
+ *
+ * The window used to show exactly one of the updater's seven states: the banner
+ * that appears once a download is ready. Checking, downloading, failing and
+ * "this build cannot update itself" were all invisible, so a laptop that had
+ * been offline at launch simply stayed on the old version with nothing anywhere
+ * saying it had tried — found the ordinary way, by somebody asking why a release
+ * published an hour earlier had not arrived.
+ *
+ * Every state is a sentence here, and a failure is red rather than muted (§4.1):
+ * it is the one that needs somebody, if only to know that the version on their
+ * screen is not the newest one. "Not checked yet" is kept apart from "up to
+ * date", because before the first check returns nobody knows, and saying "up to
+ * date" then would be an unknown rendered as a no (§3.3).
+ *
+ * And it can be asked. The only other ways to make the app look were to wait up
+ * to six hours or to quit and relaunch it — and quitting is also how a
+ * downloaded update installs, which makes "relaunch to find out" a strange
+ * instruction to give anybody.
+ */
+function Updates({ update }: { update: UpdateState }): JSX.Element {
+  const [asking, setAsking] = useState(false);
+
+  const line = ((): string => {
+    switch (update.phase) {
+      case 'idle':
+        return 'Not checked yet. The app looks when it starts, and every six hours after.';
+      case 'checking':
+        return 'Checking for a new version…';
+      case 'current':
+        return `Up to date. Last checked at ${new Date(update.checkedAt).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        })}.`;
+      case 'downloading':
+        return (
+          `Downloading ${update.version ?? 'a new version'} — ${update.percent}%. ` +
+          'It installs when you close the app.'
+        );
+      case 'ready':
+        return `${update.version} is downloaded. It installs when you close the app, or now:`;
+      case 'failed':
+        return `Could not check for a new version: ${update.reason}`;
+      case 'unsupported':
+        return `This copy does not update itself: ${update.reason}.`;
+    }
+  })();
+
+  const tone =
+    update.phase === 'failed'
+      ? 'text-state-fail'
+      : update.phase === 'ready'
+        ? 'text-accent'
+        : 'text-muted';
+  // Nothing to look for when the build cannot update, and nothing to gain once a
+  // version is waiting — the next step then is the restart, not another check.
+  const canCheck = update.phase !== 'unsupported' && update.phase !== 'ready';
+  const checking = asking || update.phase === 'checking';
+  // Held while a download runs too, but not *labelled* as checking: it is not,
+  // and the line above already says what is happening.
+  const busy = checking || update.phase === 'downloading';
+
+  return (
+    <div className="grid gap-2" data-testid="updates">
+      <span className={`${LABEL} text-muted`}>Updates</span>
+      <p
+        className={`${tone} text-sm leading-relaxed`}
+        data-testid="update-status"
+        data-phase={update.phase}
+      >
+        {line}
+      </p>
+      {(canCheck || update.phase === 'ready') && (
+        <div className="flex gap-2">
+          {update.phase === 'ready' && (
+            <button
+              className="btn text-accent px-3 py-1 text-xs"
+              data-testid="update-restart"
+              onClick={() => void window.agbrte.update.installNow()}
+            >
+              Restart to update
+            </button>
+          )}
+          {canCheck && (
+            <button
+              className="btn px-3 py-1 text-xs"
+              data-testid="update-check"
+              disabled={busy}
+              onClick={() => {
+                setAsking(true);
+                void window.agbrte.update
+                  .check()
+                  .catch(() => undefined)
+                  .finally(() => setAsking(false));
+              }}
+            >
+              {checking ? 'Checking…' : update.phase === 'failed' ? 'Check again' : 'Check for updates'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

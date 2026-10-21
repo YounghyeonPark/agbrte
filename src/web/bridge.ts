@@ -284,6 +284,9 @@ const api: AgbrteApi = {
           'this is the web client; the desktop application updates itself on the machine it runs on',
       }),
     installNow: () => Promise.resolve(),
+    // Not sent: a tab asking the serving machine's updater to fetch a new build
+    // would be a visitor starting a download on somebody else's computer.
+    check: () => Promise.resolve(),
   },
   inbox: {
     list: call(CH.inboxList),

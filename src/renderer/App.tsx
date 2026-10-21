@@ -1343,7 +1343,7 @@ export function App(): JSX.Element {
             }}
           />
         ) : view === 'settings' ? (
-          <Settings hosts={hosts} />
+          <Settings hosts={hosts} update={update} />
         ) : view === 'guide' ? (
           <StartGuide
             hasHosts={hosts.length > 0}

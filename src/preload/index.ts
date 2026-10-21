@@ -91,6 +91,7 @@ const api: AgbrteApi = {
   update: {
     state: () => ipcRenderer.invoke(CH.updateState),
     installNow: () => ipcRenderer.invoke(CH.updateInstall),
+    check: () => ipcRenderer.invoke(CH.updateCheck),
   },
   inbox: {
     list: (limit?: number) => ipcRenderer.invoke(CH.inboxList, limit),

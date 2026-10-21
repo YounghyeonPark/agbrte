@@ -578,9 +578,12 @@ export interface AboutInfo {
  */
 export type UpdateState =
   | { phase: 'unsupported'; reason: string }
+  /** Nobody has asked yet — never to be shown as "up to date". */
   | { phase: 'idle' }
   | { phase: 'checking' }
-  | { phase: 'downloading'; percent: number }
+  /** Asked, and nothing newer, at `checkedAt` (an ISO timestamp). */
+  | { phase: 'current'; checkedAt: string }
+  | { phase: 'downloading'; percent: number; version?: string }
   | { phase: 'ready'; version: string }
   | { phase: 'failed'; reason: string };
 
@@ -1459,6 +1462,13 @@ export interface AgbrteApi {
     state(): Promise<UpdateState>;
     /** Quit and apply a downloaded update. Does nothing unless one is ready. */
     installNow(): Promise<void>;
+    /**
+     * Look for a new version now, rather than at the next six-hourly check.
+     *
+     * Resolves when the question has been asked; what it found arrives as the
+     * usual push. A build that cannot update ignores it.
+     */
+    check(): Promise<void>;
   };
   /** Push channels. Each returns an unsubscribe function. */
   on: {
@@ -1568,6 +1578,7 @@ export const CH = {
   hostsServerReadiness: 'agbrte:hosts.serverReadiness',
   updateState: 'agbrte:update.state',
   updateInstall: 'agbrte:update.install',
+  updateCheck: 'agbrte:update.check',
   appAbout: 'agbrte:app.about',
   hostsRuntimes: 'agbrte:hosts.runtimes',
   hostsConformance: 'agbrte:hosts.conformance',

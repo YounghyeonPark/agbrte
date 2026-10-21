@@ -133,7 +133,7 @@ export interface IpcDeps {
    * Absent in the web bridge, whose client is a browser tab with no standing to
    * replace the program it is looking at.
    */
-  updates?: () => { state(): UpdateState; installNow(): void } | undefined;
+  updates?: () => { state(): UpdateState; installNow(): void; check(): Promise<void> } | undefined;
   /**
    * The bundle version this client would deploy, for comparing hosts against.
    *
@@ -520,6 +520,12 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     // that does. It is behind a person pressing a control that says so.
     deps.updates?.()?.installNow();
     return Promise.resolve();
+  });
+  // A check somebody asked for. Errors are already turned into a `failed` push
+  // by the updater, so there is nothing to throw here — and a thrown error would
+  // arrive as a second, differently worded report of the same failure.
+  handle(CH.updateCheck, async () => {
+    await deps.updates?.()?.check();
   });
 
   handle(CH.hostsSsh, async (): Promise<SshHostInfo[]> =>

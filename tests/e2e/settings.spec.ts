@@ -196,3 +196,92 @@ test.describe('what this client remembers', () => {
     }
   });
 });
+
+/**
+ * The updater's state, on screen (`Settings.tsx` → `Updates`, `main/update.ts`).
+ *
+ * The window used to show one of seven states — the banner once a download is
+ * ready — so a launch that failed to check left somebody on an old version with
+ * nothing saying it had tried. Found by a person asking why a release published
+ * an hour earlier had not arrived.
+ *
+ * The first assertion needs no stub, and is the most valuable one: a test build
+ * is unpackaged, the real updater says it cannot update a development build, and
+ * that sentence crossing main → IPC → renderer is the whole path. The rest push
+ * states from main the way the updater does, because no test that stays offline
+ * can make GitHub publish a release.
+ */
+test.describe('the updater says what it is doing', () => {
+  test('every state is a sentence, a failure is red, and a check can be asked for', async () => {
+    const repo = await makeRepo();
+    const agbrte = await launch(repo);
+
+    try {
+      const page = agbrte.window;
+      await openSettings(page);
+
+      const status = page.locator('[data-testid=update-status]');
+      const check = page.locator('[data-testid=update-check]');
+
+      // The real updater, unstubbed: a development build cannot replace itself,
+      // and there is nothing to check — so no button that would do nothing.
+      await expect(status).toHaveAttribute('data-phase', 'unsupported');
+      await expect(status).toContainText('development build');
+      await expect(check).toHaveCount(0);
+
+      // From here, the states the updater pushes, and a check that answers.
+      await agbrte.app.evaluate(({ ipcMain }) => {
+        const g = globalThis as unknown as { checks: number };
+        g.checks = 0;
+        ipcMain.removeHandler('agbrte:update.check');
+        ipcMain.handle('agbrte:update.check', async (event) => {
+          g.checks += 1;
+          event.sender.send('agbrte:push.update', { phase: 'checking' });
+          event.sender.send('agbrte:push.update', {
+            phase: 'current',
+            checkedAt: new Date().toISOString(),
+          });
+        });
+      });
+      const push = (state: Record<string, unknown>): Promise<void> =>
+        agbrte.app.evaluate(({ BrowserWindow }, s) => {
+          for (const win of BrowserWindow.getAllWindows()) win.webContents.send('agbrte:push.update', s);
+        }, state);
+
+      /*
+       * A failure says so, in red, with the reason — the state that was invisible
+       * and the reason this pane exists. Red rather than muted (§4.1): it is the
+       * one that needs somebody, if only to know their version is not the newest.
+       */
+      await push({ phase: 'failed', reason: 'getaddrinfo ENOTFOUND github.com' });
+      await expect(status).toHaveAttribute('data-phase', 'failed');
+      await expect(status).toContainText('Could not check');
+      await expect(status).toContainText('ENOTFOUND github.com');
+      await expect(status).toHaveClass(/text-state-fail/);
+      await expect(check).toHaveText('Check again');
+
+      // Asking goes through the real channel, and the answer arrives as a push.
+      await check.click();
+      await expect(status).toHaveAttribute('data-phase', 'current');
+      await expect(status).toContainText('Up to date');
+      expect(
+        await agbrte.app.evaluate(() => (globalThis as unknown as { checks: number }).checks),
+      ).toBe(1);
+
+      // Downloading names the version, holds the button, and does not call that
+      // "checking" — it is not, and the line already says what is happening.
+      await push({ phase: 'downloading', percent: 37, version: '9.9.9' });
+      await expect(status).toContainText('Downloading 9.9.9 — 37%');
+      await expect(check).toBeDisabled();
+      await expect(check).not.toHaveText('Checking…');
+
+      // Ready: the restart is offered here too, and there is nothing left to check.
+      await push({ phase: 'ready', version: '9.9.9' });
+      await expect(status).toContainText('9.9.9 is downloaded');
+      await expect(page.locator('[data-testid=update-restart]')).toBeVisible();
+      await expect(check).toHaveCount(0);
+    } finally {
+      await agbrte.close();
+    }
+  });
+});
