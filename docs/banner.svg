@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300" role="img" aria-labelledby="t d">
+  <title id="t">Agent Bridge Terminal</title>
+  <desc id="d">A desktop app and a CLI for running coding agents, drawn as the screen of a dial-up terminal: navy ground, white text, a yellow highlight.</desc>
+  <!--
+    The README's half of one look. GitHub will not let a README carry a
+    stylesheet, so the app's palette arrives here as a picture: the same navy,
+    white and yellow as the app and the landing page, drawn as a 1990s dial-up
+    client's screen.
+
+    The title is fitted with `textLength`. Text in an SVG shown as an image is
+    set in whatever monospace the reader's machine has, and those differ in width
+    by a fifth; fitting the line to a length is what keeps it inside the frame on
+    all of them. The cursor blinks in whole steps and not at all for a reader who
+    has asked for less motion.
+  -->
+  <style>
+    text { font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, 'Liberation Mono', monospace; }
+    .cursor { animation: blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
+  </style>
+
+  <rect width="1200" height="300" fill="#001a6e"/>
+
+  <!-- The menu bar along the top of the screen. -->
+  <rect width="1200" height="34" fill="#cccccc"/>
+  <text x="24" y="23" font-size="15" font-weight="700" fill="#000d45">AGBRTE ─ Agent Bridge Terminal</text>
+  <text x="1176" y="23" font-size="15" font-weight="700" fill="#000d45" text-anchor="end" xml:space="preserve">[1] Download   [2] Docs   [3] Source</text>
+
+  <!-- A double rule, the frame a character screen drew with ═ and ║. -->
+  <rect x="24" y="56" width="1152" height="220" fill="#000d45" stroke="#ffffff" stroke-width="2"/>
+  <rect x="31" y="63" width="1138" height="206" fill="none" stroke="#ffffff" stroke-width="2"/>
+
+  <text x="64" y="148" font-size="54" font-weight="700" fill="#ffff55" textLength="760" lengthAdjust="spacingAndGlyphs">AGENT BRIDGE TERMINAL</text>
+  <rect class="cursor" x="836" y="110" width="30" height="44" fill="#ffff55"/>
+
+  <text x="64" y="196" font-size="23" fill="#ffffff">A desktop app and a CLI for running coding agents.</text>
+  <text x="64" y="240" font-size="19" fill="#cccccc"><tspan fill="#ffff55">$</tspan> npx agbrte web .</text>
+</svg>

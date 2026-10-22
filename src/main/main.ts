@@ -372,9 +372,11 @@ async function createWindow(): Promise<void> {
      * `@theme`, which is exactly how four hardcoded panel colours survived in the
      * TSX. Here it shows as a cold flash at every launch, a moment before the
      * warm neutral arrives. Kept in step with `--color-bg` by hand, because
-     * Electron needs this before any CSS exists to read.
+     * Electron needs this before any CSS exists to read — and held there by
+     * `themes.test.ts`, which reads this line, since "by hand" had already
+     * failed once.
      */
-    backgroundColor: '#151412',
+    backgroundColor: '#001a6e',
     /*
      * Packaged builds take their icon from the executable, which electron-builder
      * embeds from `build/`. Unpackaged ones — `npm start`, the e2e suite, anyone

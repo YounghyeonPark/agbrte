@@ -7,8 +7,12 @@
 <title>Agbrte — the idea, and the shape it forces</title>
 <style>
   :root {
-    --bg: #151412; --panel: #1e1c18; --sunken: #0f0e0c; --line: #37332c;
-    --ink: #f2ece0; --muted: #b3aa96; --accent: #ee9633; --warn: #e4766a;
+    /* The app's palette, which is a dial-up terminal's: navy, white, one yellow.
+       This page is long prose, so — like the app's transcript and unlike the
+       landing page — its body keeps a text face and only the headings go to a
+       terminal's. */
+    --bg: #001a6e; --panel: #0a2688; --sunken: #000d45; --line: #ffffff;
+    --ink: #ffffff; --muted: #cccccc; --accent: #ffff55; --warn: #ff8c8c;
     --grotesque: 'Helvetica Neue', Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
     --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
   }
@@ -25,8 +29,8 @@
   section { margin: 0 0 4.5rem; }
   p, ul, ol { max-width: 68ch; }
 
-  h1 { font-size: 2.4rem; font-weight: 500; letter-spacing: -0.02em; margin: 0 0 .75rem; text-wrap: balance; }
-  h2 { font-size: 1.35rem; font-weight: 500; letter-spacing: -0.01em; margin: 0 0 .35rem; }
+  h1 { font-family: var(--mono); font-size: 2.1rem; font-weight: 700; letter-spacing: 0; margin: 0 0 .75rem; text-wrap: balance; color: var(--accent); }
+  h2 { font-family: var(--mono); font-size: 1.25rem; font-weight: 700; letter-spacing: 0; margin: 0 0 .35rem; }
   h3 { font-size: 1rem; font-weight: 500; margin: 2rem 0 .35rem; }
   .stand { color: var(--muted); font-size: 1.1rem; max-width: 60ch; margin: 0 0 1rem; }
   .eyebrow { font-size: 10px; text-transform: uppercase; letter-spacing: .16em; color: var(--muted); display: block; margin-bottom: .6rem; }
@@ -42,19 +46,19 @@
   }
 
   figure { margin: 2rem 0 0; }
-  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 2px; background: var(--panel); padding: 1.5rem; }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 0; background: var(--panel); padding: 1.5rem; }
   svg { display: block; max-width: 100%; height: auto; min-width: 620px; }
   figcaption { color: var(--muted); font-size: .9rem; margin-top: .85rem; max-width: 68ch; }
 
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
   @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
 
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 2px; padding: 1.15rem 1.25rem; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 0; padding: 1.15rem 1.25rem; }
   .card h3 { margin-top: 0; }
   .card p { margin: 0; color: var(--muted); font-size: .95rem; }
 
   .shots { display: grid; gap: 1.25rem; }
-  .shots img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 2px; }
+  .shots img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 0; }
   .shot-row { display: grid; grid-template-columns: 2fr 1fr; gap: 1.25rem; align-items: start; }
   @media (max-width: 860px) { .shot-row { grid-template-columns: 1fr; } }
 
@@ -104,7 +108,7 @@
             <path d="M232,68 L232,200" stroke-opacity=".55" />
             <line x1="232" y1="134" x2="428" y2="134" marker-end="url(#a)" />
 
-            <rect x="440" y="14" width="664" height="292" rx="2" stroke="#ee9633" stroke-dasharray="5 4" />
+            <rect x="440" y="14" width="664" height="292" rx="2" stroke="#ffff55" stroke-dasharray="5 4" />
 
             <rect x="468" y="52" width="300" height="216" rx="2" />
             <rect x="490" y="106" width="256" height="42" rx="2" stroke-opacity=".55" />
@@ -135,7 +139,7 @@
             <text x="330" y="124" text-anchor="middle">session protocol · v7</text>
             <text x="808" y="150" text-anchor="middle">forks</text>
           </g>
-          <text x="772" y="34" text-anchor="middle" fill="#ee9633" font-family="Helvetica, Arial, sans-serif" font-size="11.5" letter-spacing="1.2">SURVIVES THE APP CLOSING</text>
+          <text x="772" y="34" text-anchor="middle" fill="#ffff55" font-family="Helvetica, Arial, sans-serif" font-size="11.5" letter-spacing="1.2">SURVIVES THE APP CLOSING</text>
         </svg>
       </div>
       <figcaption>The app is a client. Everything a session <em>is</em> — its log, its gate, its scheduler — lives inside the marked boundary, in a process the app did not have to stay alive for. Three clients are drawn because all three speak the same protocol; none of them is privileged.</figcaption>
@@ -175,7 +179,7 @@
             <rect x="616" y="26" width="368" height="278" rx="2" />
             <rect x="642" y="76" width="316" height="46" rx="2" stroke-opacity=".55" />
             <rect x="642" y="136" width="316" height="46" rx="2" stroke-opacity=".55" />
-            <rect x="642" y="200" width="316" height="82" rx="2" stroke="#ee9633" />
+            <rect x="642" y="200" width="316" height="82" rx="2" stroke="#ffff55" />
 
             <line x1="288" y1="104" x2="610" y2="104" marker-end="url(#b)" />
             <line x1="288" y1="164" x2="610" y2="164" marker-end="url(#b)" />
@@ -196,7 +200,7 @@
             <text x="470" y="236" text-anchor="end">events only</text>
             <text x="490" y="330" text-anchor="middle">network</text>
           </g>
-          <text x="800" y="264" text-anchor="middle" fill="#ee9633" font-family="Helvetica, Arial, sans-serif" font-size="11.5">file reads, shell, git — all local to here</text>
+          <text x="800" y="264" text-anchor="middle" fill="#ffff55" font-family="Helvetica, Arial, sans-serif" font-size="11.5">file reads, shell, git — all local to here</text>
         </svg>
       </div>
       <figcaption>Nothing is installed system-wide on the target: a private Node is unpacked under <span class="mono">~/.agbrte</span> and the host bundle is copied in version-stamped. Because only events cross the link, a dropped connection is not an interrupted run — reconnecting asks for everything after the last sequence number seen, which loses nothing and repeats nothing.</figcaption>
@@ -227,7 +231,7 @@
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
             </marker>
             <marker id="d2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0,0 L10,5 L0,10 z" fill="#ee9633" />
+              <path d="M0,0 L10,5 L0,10 z" fill="#ffff55" />
             </marker>
           </defs>
           <g fill="none" stroke="currentColor" stroke-width="1">
@@ -247,7 +251,7 @@
             <line x1="644" y1="150" x2="786" y2="150" marker-end="url(#d)" />
             <line x1="334" y1="238" x2="466" y2="238" marker-end="url(#d)" />
           </g>
-          <line x1="786" y1="238" x2="648" y2="238" stroke="#ee9633" stroke-width="1" marker-end="url(#d2)" />
+          <line x1="786" y1="238" x2="648" y2="238" stroke="#ffff55" stroke-width="1" marker-end="url(#d2)" />
 
           <g fill="currentColor" font-family="Helvetica, Arial, sans-serif" font-size="12.5">
             <text x="245" y="67" text-anchor="middle">your laptop, phone</text>
@@ -270,7 +274,7 @@
             <text x="8" y="155">jump host</text>
             <text x="8" y="243">reverse tunnel</text>
           </g>
-          <text x="717" y="228" text-anchor="middle" fill="#ee9633" font-family="Helvetica, Arial, sans-serif" font-size="11.5">it dialled out first</text>
+          <text x="717" y="228" text-anchor="middle" fill="#ffff55" font-family="Helvetica, Arial, sans-serif" font-size="11.5">it dialled out first</text>
         </svg>
       </div>
       <figcaption>Only the third changes who initiates, and that is what makes it work where nothing inbound is possible at all: the agent computer opens the connection outward and keeps it, so the network it sits behind never has to accept anything.</figcaption>
@@ -311,14 +315,14 @@
               <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
             </marker>
             <marker id="c2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0,0 L10,5 L0,10 z" fill="#ee9633" />
+              <path d="M0,0 L10,5 L0,10 z" fill="#ffff55" />
             </marker>
           </defs>
           <g fill="none" stroke="currentColor" stroke-width="1">
             <rect x="440" y="24" width="240" height="54" rx="2" />
             <rect x="250" y="150" width="200" height="54" rx="2" />
             <rect x="610" y="150" width="200" height="54" rx="2" />
-            <rect x="610" y="262" width="240" height="54" rx="2" stroke="#ee9633" />
+            <rect x="610" y="262" width="240" height="54" rx="2" stroke="#ffff55" />
 
             <path d="M520,80 L392,146" marker-end="url(#c)" />
             <path d="M600,80 L698,146" marker-end="url(#c)" />
@@ -326,9 +330,9 @@
 
             <rect x="900" y="140" width="200" height="76" rx="2" stroke-dasharray="5 4" stroke-opacity=".45" />
             <path d="M812,177 L896,177" stroke-opacity=".35" />
-            <path d="M846,169 L862,185 M862,169 L846,185" stroke="#e4766a" />
+            <path d="M846,169 L862,185 M862,169 L846,185" stroke="#ff8c8c" />
           </g>
-          <path d="M604,292 C430,302 190,298 172,206 C158,130 300,52 434,52" fill="none" stroke="#ee9633" stroke-width="1" marker-end="url(#c2)" />
+          <path d="M604,292 C430,302 190,298 172,206 C158,130 300,52 434,52" fill="none" stroke="#ffff55" stroke-width="1" marker-end="url(#c2)" />
 
           <g fill="currentColor" font-family="Helvetica, Arial, sans-serif" font-size="12.5">
             <text x="560" y="56" text-anchor="middle" font-size="13.5">root session</text>
@@ -342,7 +346,7 @@
             <text x="1000" y="184" text-anchor="middle">— refused, not faked</text>
             <text x="1100" y="344" text-anchor="end">depth 3 · 8 children · 24 open</text>
           </g>
-          <g fill="#ee9633" font-family="Helvetica, Arial, sans-serif" font-size="11.5">
+          <g fill="#ffff55" font-family="Helvetica, Arial, sans-serif" font-size="11.5">
             <text x="272" y="244">blockage bubbles up,</text>
             <text x="272" y="260">carrying the path to it</text>
           </g>

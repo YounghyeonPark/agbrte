@@ -1,19 +1,17 @@
 /**
  * The settings pane, in the real app (DESIGN.md §7, §4.1, §4.2, §14).
  *
- * `themes.test.ts` measures every palette and is where the contrast argument
- * lives. What only a running app can show is the other half: that pressing one
- * of them changes the colours a person is actually looking at, that the choice
- * is still there after a reload, and that the default is what a fresh profile
- * gets.
+ * The pane used to open on a theme picker. There is one palette now — the
+ * terminal's navy, white and yellow, which the landing page and the README
+ * share — so what a running app has to show about colour is only that it is
+ * the colour a person is actually looking at: `themes.test.ts` measures the
+ * palette in the stylesheet, and this checks what the window resolved.
  *
  * The rest of the pane is settings that did not exist rather than settings that
  * moved — see the second describe.
  *
- * Asserted on **computed** colour rather than on a class or an attribute. The
- * theme is applied by setting custom properties on the root element, so a test
- * that checked `data-theme` would pass on a build where the variables were never
- * written — which is precisely the interesting way for this to break.
+ * Asserted on **computed** values rather than on a class or an attribute,
+ * because a class can be present on an element its rule never reaches.
  */
 
 import { expect, test, type Page } from '@playwright/test';
@@ -34,69 +32,16 @@ async function groundOf(page: Page): Promise<string> {
 async function openSettings(page: Page): Promise<void> {
   await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
   await page.click('[data-testid=show-settings]');
-  await expect(page.locator('[data-testid=appearance]')).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator('[data-testid=settings]')).toBeVisible({ timeout: 20_000 });
 }
 
-test.describe('the palette is a choice', () => {
-  test('opens on the default, and offers every theme', async () => {
-    const repo = await makeRepo();
-    const agbrte = await launch(repo);
-
-    try {
-      const page = agbrte.window;
-      await openSettings(page);
-
-      // A fresh profile has stored nothing, so this is the default arriving from
-      // `themeById`'s fallback rather than from anything remembered.
-      await expect(page.locator('[data-theme-id=warm]')).toHaveAttribute('aria-pressed', 'true');
-      // More than one, or the feature is a label.
-      expect(await page.locator('[data-testid=theme-option]').count()).toBeGreaterThan(2);
-    } finally {
-      await agbrte.close();
-    }
-  });
-
-  test('changes what is painted, and keeps it across a reload', async () => {
-    const repo = await makeRepo();
-    const agbrte = await launch(repo);
-
-    try {
-      const page = agbrte.window;
-      await openSettings(page);
-      const before = await groundOf(page);
-
-      await page.click('[data-theme-id=midnight]');
-      /*
-       * The ground actually moved. `toHaveAttribute` on the pressed state would
-       * pass on a build that set `data-theme` and wrote no variables — a theme
-       * picker that marks a choice and paints nothing.
-       */
-      await expect.poll(() => groundOf(page)).not.toBe(before);
-      await expect(page.locator('[data-theme-id=midnight]')).toHaveAttribute(
-        'aria-pressed',
-        'true',
-      );
-      const after = await groundOf(page);
-
-      /*
-       * And it survives. The choice is a *client* preference in `localStorage`,
-       * so the thing that proves it is a reload rather than a navigation — and
-       * it has to be applied before the first paint, which is why `startTheme`
-       * runs in `main.tsx` rather than in an effect.
-       */
-      await page.reload();
-      await page.waitForSelector('[data-testid=app]', { timeout: 30_000 });
-      expect(await groundOf(page)).toBe(after);
-    } finally {
-      await agbrte.close();
-    }
-  });
-
-  test('every theme paints a different ground from every other', async () => {
+test.describe('the terminal look', () => {
+  test('is what the window paints: navy, white edges, square corners', async () => {
     /*
-     * Four entries that look distinct in a list and resolve to the same colour
-     * would be a picker that does nothing three times out of four, and nothing
-     * in the unit tests can see it: they check each palette against *itself*.
+     * One palette and one shape, and the shape is the half a stylesheet test
+     * cannot see. The corners and the white frames are what make it read as a
+     * character screen rather than as a dark theme that happens to be blue, and
+     * both are rules that could be present in the CSS and never reach an element.
      */
     const repo = await makeRepo();
     const agbrte = await launch(repo);
@@ -105,35 +50,34 @@ test.describe('the palette is a choice', () => {
       const page = agbrte.window;
       await openSettings(page);
 
-      const ids = await page
-        .locator('[data-testid=theme-option]')
-        .evaluateAll((els) =>
-          els.map((el) => (el as unknown as { dataset: { themeId: string } }).dataset.themeId),
-        );
+      expect(await groundOf(page)).toBe('rgb(0, 26, 110)');
+      const button = await page.locator('[data-testid=show-guide]').evaluate((el) => {
+        const view = globalThis as unknown as {
+          getComputedStyle: (e: unknown) => { borderTopLeftRadius: string; borderTopColor: string };
+        };
+        const style = view.getComputedStyle(el);
+        return { radius: style.borderTopLeftRadius, edge: style.borderTopColor };
+      });
+      expect(button).toEqual({ radius: '0px', edge: 'rgb(255, 255, 255)' });
 
-      const grounds = new Set<string>();
-      for (const id of ids) {
-        await page.click(`[data-theme-id=${id}]`);
-        await expect(page.locator(`[data-theme-id=${id}]`)).toHaveAttribute('aria-pressed', 'true');
-        grounds.add(await groundOf(page));
-      }
-      expect(grounds.size, `${ids.length} themes painted ${grounds.size} grounds`).toBe(ids.length);
+      // And the highlight bar: the open pane's own button, inverted.
+      const pressed = await page.locator('[data-testid=show-settings]').evaluate((el) => {
+        const view = globalThis as unknown as {
+          getComputedStyle: (e: unknown) => { backgroundColor: string; color: string };
+        };
+        const style = view.getComputedStyle(el);
+        return { bar: style.backgroundColor, text: style.color };
+      });
+      expect(pressed).toEqual({ bar: 'rgb(255, 255, 85)', text: 'rgb(0, 26, 110)' });
+
+      // No picker: a choice of looks the product no longer has would argue with it.
+      await expect(page.locator('[data-testid=theme-option]')).toHaveCount(0);
     } finally {
       await agbrte.close();
     }
   });
 });
 
-/**
- * The two preferences that had no control at all (DESIGN.md §7, §4.2).
- *
- * These are not moved settings; they are settings that did not exist. One
- * successful add teaches a host its default and every zero-agent session there
- * is seated before the picker can be shown — correct behaviour that nothing
- * announced and nothing could undo, so a person who tried one agent once was
- * given it forever. `machines.ts` had a `forgetMachine` from the day it was
- * written and no caller, so the ssh aliases this app offers only ever grew.
- */
 test.describe('what this client remembers', () => {
   test('says nothing is remembered before anything is', async () => {
     const repo = await makeRepo();

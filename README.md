@@ -1,10 +1,12 @@
 # Agbrte
 
+![Agent Bridge Terminal — a desktop app and a CLI for running coding agents](docs/banner.svg)
+
 **A desktop app and a CLI for running coding agents.**
 
-[![Download](https://img.shields.io/github/v/release/YounghyeonPark/agbrte?label=download&color=1f6feb)](https://github.com/YounghyeonPark/agbrte/releases/latest)
+[![Download](https://img.shields.io/github/v/release/YounghyeonPark/agbrte?label=download&color=ffff55&labelColor=001a6e)](https://github.com/YounghyeonPark/agbrte/releases/latest)
 [![CI](https://github.com/YounghyeonPark/agbrte/actions/workflows/ci.yml/badge.svg)](https://github.com/YounghyeonPark/agbrte/actions/workflows/ci.yml)
-[![Licence](https://img.shields.io/badge/licence-Apache--2.0-555)](LICENSE)
+[![Licence](https://img.shields.io/badge/licence-Apache--2.0-001a6e)](LICENSE)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21906998.svg)](https://doi.org/10.5281/zenodo.21906998)
 
 Each session runs in a host process — a **bridge** — on the machine the work is
@@ -13,6 +15,7 @@ happen to be looking at, so quitting the app does not stop a turn. Your phone an
 your desktop show one transcript. A folder that moves takes its sessions with it.
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "ui-monospace, Consolas, monospace", "primaryColor": "#0a2688", "primaryTextColor": "#ffffff", "primaryBorderColor": "#ffffff", "lineColor": "#ffffff", "clusterBkg": "#000d45", "clusterBorder": "#ffffff", "titleColor": "#ffff55", "edgeLabelBackground": "#001a6e"}}}%%
 flowchart LR
   subgraph Bridge["The bridge — one host per machine, here or over ssh"]
     Host["Session host<br/>event log · permission gate · turn queue"]

@@ -3,8 +3,9 @@
  *
  * There was no such pane, and the things that belong in one were scattered or
  * absent. `About` was a top-level button because the menu bar used to be the one
- * place an About lived; the theme picker went in beside it for want of anywhere
- * better; and two preferences this client keeps had **no control at all**.
+ * place an About lived; and two preferences this client keeps had **no control
+ * at all**. (A theme picker lived here too, for as long as there was more than
+ * one theme.)
  *
  * ## What is here because it was missing, not because it was moved
  *
@@ -31,8 +32,6 @@
 
 import { useState, type JSX } from 'react';
 import { About } from './About.js';
-import { applyTheme, rememberTheme, storedTheme } from './applyTheme.js';
-import { THEMES } from './themes.js';
 import { forgetAgentDefault, listAgentDefaults } from './agentDefaults.js';
 import { forgetMachine, loadMachines, type Machine } from './machines.js';
 import type { HostInfo, UpdateState } from '@shared/ipc/contract.js';
@@ -55,7 +54,6 @@ export function Settings({
         </p>
       </div>
 
-      <Appearance />
       <Remembered hosts={hosts} />
       <Updates update={update} />
 
@@ -137,7 +135,7 @@ function Updates({ update }: { update: UpdateState }): JSX.Element {
     <div className="grid gap-2" data-testid="updates">
       <span className={`${LABEL} text-muted`}>Updates</span>
       <p
-        className={`${tone} text-sm leading-relaxed`}
+        className={`${tone} text-xs leading-relaxed`}
         data-testid="update-status"
         data-phase={update.phase}
       >
@@ -172,68 +170,6 @@ function Updates({ update }: { update: UpdateState }): JSX.Element {
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-/**
- * Choosing a palette (§4.1).
- *
- * Applied on press, not on save. There is no state worth confirming: the change
- * is entirely visible, and a palette you cannot see until you press OK is one
- * you have to choose twice.
- *
- * Each row shows the theme rather than describing it — the ground, the text on
- * it, and the accent. Those are the three decisions a palette makes here, and a
- * name like "Slate" says nothing about whether the thing that needs you will
- * stand out on it.
- */
-function Appearance(): JSX.Element {
-  // Read once. Nothing else in the app changes this, so subscribing would be a
-  // listener for an event with exactly one sender sitting next to it.
-  const [chosen, setChosen] = useState(() => storedTheme().id);
-
-  return (
-    <div className="grid gap-2" data-testid="appearance">
-      <span className={`${LABEL} text-muted`}>Appearance</span>
-      <div className="grid gap-1.5">
-        {THEMES.map((theme) => (
-          <button
-            key={theme.id}
-            type="button"
-            data-testid="theme-option"
-            data-theme-id={theme.id}
-            aria-pressed={chosen === theme.id}
-            className={`border-line hover:border-muted flex items-center gap-3 rounded-control border px-3 py-2 text-left ${
-              chosen === theme.id ? 'border-accent' : ''
-            }`}
-            onClick={() => {
-              applyTheme(theme);
-              rememberTheme(theme.id);
-              setChosen(theme.id);
-            }}
-          >
-            {/* Inline styles because these are the *other* theme's values, and
-                utilities read the one that is on. Ground, text, accent — not
-                ground and panel, which sit one step apart by design and rendered
-                every row as one grey block and a dot. */}
-            <span className="border-line flex shrink-0 gap-0.5 rounded-mark border p-0.5">
-              {[theme.palette.bg, theme.palette.ink, theme.palette.accent].map((colour) => (
-                <span
-                  key={colour}
-                  aria-hidden
-                  className="block size-4 rounded-mark"
-                  style={{ background: colour }}
-                />
-              ))}
-            </span>
-            <span className="grid gap-0.5">
-              <span className="text-[13px]">{theme.label}</span>
-              <span className="text-muted text-xs">{theme.hint}</span>
-            </span>
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

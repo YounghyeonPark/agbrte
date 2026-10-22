@@ -40,6 +40,26 @@
  * "developer-friendly" answer — Tokyo Night, Nord, GitHub Dark, any of the
  * blue-leaning darks — is the one direction this palette cannot take.
  *
+ * (Superseded as the *default* — see the next section. Not as an argument: the
+ * blue-leaning darks are still ruled out, for exactly the reason given here.)
+ *
+ * ## Then the default became a terminal, which is a different blue
+ *
+ * The app, its landing page and its README were given one look: navy ground,
+ * white text, a yellow highlight — the screen of a 1990s PC통신 client. That
+ * reads as breaking the rule above and does not. Tokyo Night's ground is a
+ * *tint*: a grey leaning blue by a dozen levels, close enough to the accent's
+ * world to fight it. This ground is a *hue* — saturated navy, a hundred levels
+ * of spread — and the one accent on it is pure yellow, its complement. Nothing
+ * else on that screen can be mistaken for the highlight, which is why those
+ * terminals used it. `themes.test.ts` was changed from "no blue ground" to "no
+ * ground in the band between", which is the rule this section was always about.
+ *
+ * Everything else holds. There is still one accent and it is still the colour
+ * of "this needs you"; the failure red is still the one thing allowed to
+ * disagree with it; and every value below was measured, which is how DOS's own
+ * light red was caught at 4.06:1 on the panel and replaced.
+ *
  * ## It was drab, and the reason was measurable
  *
  * The complaint was that the interface looked dingy, and the numbers said where
@@ -64,20 +84,14 @@
  * is not text and has no WCAG figure, but a panel whose edge cannot be found is
  * a panel that reads as part of the page behind it.
  *
- * ## And it is now one of several, which narrows what a theme may be
+ * ## And then it was one palette again, and this block is it
  *
- * `themes.ts` offers four palettes and this block is the default among them.
- * Everything above is the *reason* rather than the preference, so a theme may
- * vary the temperature of the neutrals and how far apart the surfaces sit — and
- * may not vary that there is one accent, that amber asks and red warns, or that
- * the ground is not blue-tinted. `themes.test.ts` enforces all three, against
- * every palette, along with the contrast floors below.
- *
- * It also reads this block. The literals here and the default palette there are
- * two copies of one fact, because Tailwind needs them at build time and the
- * picker needs them at run time — so a test fails if they ever disagree, which
- * is the only way that drift is visible before somebody ships a picker whose
- * "Warm" is not the warm they have been looking at.
+ * For a while `themes.ts` offered five palettes and this block was the default
+ * among them, with a test holding the two copies together. The app, its landing
+ * page and its README were then given one look, the terminal's, and the other
+ * four went: a picker whose every other choice is a look the product no longer
+ * has is a setting that argues with the product. So these literals are the
+ * palette, the only copy, and `themes.test.ts` measures them where they are.
  *
  * ## Measured against the ground, not judged
  *
@@ -89,20 +103,20 @@
  * at the bottom of its range until the whole interface looked tired.
  */
 @theme {
-  --color-bg: #151412;
-  --color-panel: #1e1c18;
-  --color-sunken: #0f0e0c;
-  --color-raised: #282520;
-  --color-line: #37332c;
-  --color-ink: #f2ece0;
-  --color-muted: #b3aa96;
+  --color-bg: #001a6e;
+  --color-panel: #0a2688;
+  --color-sunken: #000d45;
+  --color-raised: #163596;
+  --color-line: #ffffff;
+  --color-ink: #ffffff;
+  --color-muted: #cccccc;
 
-  /* Braun's orange. The interface's only accent: focus, the active control, and
-     a session that needs a person. It used to be dulled for a dark ground and is
-     no longer — a dulled accent on a low-contrast ground was half of why the
-     whole thing looked tired, and 7.93:1 is a lamp rather than a stain. */
-  --color-accent: #ee9633;
-  --color-state-paused: #ee9633;
+  /* The terminal's yellow. The interface's only accent: focus, the active
+     control, and a session that needs a person. It was Braun's orange on the
+     warm ground; on navy it is DOS's bright yellow, 11.96:1 on the panel and
+     the complement of everything else on screen. */
+  --color-accent: #ffff55;
+  --color-state-paused: #ffff55;
   /*
    * A warning, and the one thing allowed to disagree with the accent.
    *
@@ -118,13 +132,13 @@
    * Measured, not eyeballed: contrast is the property of a palette that
    * confident visual judgement is worst at.
    */
-  --color-state-fail: #e4766a;
+  --color-state-fail: #ff8c8c;
   /* Finished is not an event. It reads as ordinary text and is `muted` in use;
      kept as a token so the state map stays total rather than falling through. */
-  --color-state-done: #b3aa96;
+  --color-state-done: #cccccc;
 
-  --color-user-bubble: #282520;
-  --color-user-edge: #443f35;
+  --color-user-bubble: #163596;
+  --color-user-edge: #ffffff;
 
   /*
    * ## Corner radius, as three tokens rather than twenty-four literals
@@ -145,9 +159,12 @@
    * Named by role rather than by size, so a later change means changing what a
    * *card* is rather than finding every `rounded-[10px]`.
    */
-  --radius-mark: 3px;
-  --radius-control: 6px;
-  --radius-surface: 10px;
+  /* All three are zero now: a character screen had no other kind of corner, and
+     the terminal look the app wears is the only one it has. The tokens stay,
+     named by role, because that is what made squaring every corner one edit. */
+  --radius-mark: 0px;
+  --radius-control: 0px;
+  --radius-surface: 0px;
 }
 
 @layer base {
@@ -517,4 +534,40 @@ body,
        back — the layout is left scaled up until the user pinches out. */
     font-size: 16px;
   }
+}
+
+/*
+ * ## The terminal's shape
+ *
+ * Colour alone gets a navy window most of the way to a 1990s terminal and not
+ * all of it. Three more things carried that look, and each is here because it
+ * is cheap and keeps doing its job:
+ *
+ *   - **Square corners.** A character-cell screen had no other kind. Done by
+ *     zeroing the three radius tokens rather than touching any component, which
+ *     is what naming them by role was for.
+ *   - **The highlight bar.** A menu on those screens marked the item under the
+ *     cursor by inverting it — the item's own text, in the background colour,
+ *     on a bar of the highlight. Here that is a button under the pointer and a
+ *     toggle that is on, which are both "the active control", the accent's job
+ *     already. Unlayered so it beats the utilities' own hover colours without
+ *     an `!important` anywhere.
+ *   - **Monospace titles.** Headings only. The transcript is the thing read for
+ *     minutes at a time and stays in the text face; a terminal's look does not
+ *     need a terminal's line length, and a whole interface in monospace is ~20%
+ *     wider in every row that was laid out in the grotesque.
+ *
+ * These were keyed on `data-theme` while other palettes existed, so those kept
+ * the shapes they had been measured with. There is one now, and they apply
+ * unconditionally; the corners are the radius tokens in `@theme`.
+ */
+:is(.btn, .btn-quiet):is(:hover, [aria-pressed='true']):not(:disabled) {
+  background-color: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-bg);
+}
+
+:is(h1, h2, h3) {
+  font-family: var(--font-mono);
+  letter-spacing: 0;
 }

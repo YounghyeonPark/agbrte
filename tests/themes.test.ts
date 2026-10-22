@@ -1,5 +1,5 @@
 /**
- * Every palette, measured (DESIGN.md §4.1, §14).
+ * The palette, measured where it lives (DESIGN.md §4.1, §14).
  *
  * `styles.css` argues at length that contrast is the property of a palette that
  * confident visual judgement is worst at, and it has the scar to prove it: the
@@ -7,19 +7,20 @@
  * the one state a person most needs to be able to read. That was one palette,
  * checked by hand, once.
  *
- * A theme picker makes it four palettes maintained by hand, which is that bug
- * waiting to happen four times. So the rule stops being a paragraph and becomes
- * a gate: every colour that carries text, against its own theme's ground.
+ * For a while there were five palettes and this file walked all of them. There
+ * is one again — the terminal's navy, white and yellow — and it lives only in
+ * the stylesheet's `@theme` block, so that is what is read. The gate stays a
+ * gate: a palette that is the only one is also the one every screen is drawn
+ * in, and the period's own colours already failed it once (DOS's light red,
+ * 4.06:1 on the panel).
  *
- * The floors are the ones the shipped palette already clears rather than the
- * bare standard. A new theme that merely scraped AA would pass a WCAG check and
- * still be the dingiest thing in the list — which is exactly the complaint that
- * started this work.
+ * The floors are the ones the shipped palette clears rather than the bare
+ * standard. A palette that merely scraped AA would pass a WCAG check and still
+ * look dingy — which is exactly the complaint that started this work.
  */
 
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { cssVariables, DEFAULT_THEME, THEMES, themeById } from '../src/renderer/themes.js';
 
 /** WCAG relative luminance, and the ratio between two of them. */
 function luminance(hex: string): number {
@@ -34,7 +35,7 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-/** How far a colour leans from grey, and which way. */
+/** How far a colour leans from grey. */
 function spread(hex: string): number {
   const [r, g, b] = [1, 3, 5].map((at) => parseInt(hex.slice(at, at + 2), 16)) as [
     number,
@@ -53,136 +54,166 @@ function isBlueLeaning(hex: string): boolean {
   return b > r;
 }
 
-describe('every theme is legible on its own ground', () => {
-  for (const theme of THEMES) {
-    describe(theme.label, () => {
-      const p = theme.palette;
-      // Three grounds, because a card sits on a panel and a panel sits on the
-      // window: text that clears the darkest and fails the lightest is text that
-      // fails wherever it is actually read.
-      const grounds = [p.sunken, p.bg, p.panel] as const;
-
-      it('carries body text well past AA', () => {
-        /*
-         * Seven, not 4.5. `muted` carries most of the text on every screen, and
-         * it sat at 5.39:1 for a long time — over AA, under AAA, and in the band
-         * where text stops looking read and starts looking grey. That measurement
-         * is what "the interface looks drab" turned out to mean, so the floor is
-         * set above it on purpose.
-         *
-         * Against `panel` too, which is the strictest of the three and the one a
-         * card's own text is actually on.
-         */
-        for (const ground of grounds) {
-          expect(contrast(p.muted, ground), `muted on ${ground}`).toBeGreaterThanOrEqual(6.5);
-        }
-      });
-
-      it('keeps the heading text far above everything else', () => {
-        for (const ground of grounds) {
-          expect(contrast(p.ink, ground), `ink on ${ground}`).toBeGreaterThanOrEqual(12);
-        }
-      });
-
-      it('makes the two signals readable, the warning most of all', () => {
-        /*
-         * §4.1: a pause and a failure must never blur. Both are read as text, and
-         * `fail` is the one somebody most needs to be able to read — it was under
-         * AA once and the comment in `styles.css` still records it.
-         */
-        for (const ground of grounds) {
-          expect(contrast(p.accent, ground), `accent on ${ground}`).toBeGreaterThanOrEqual(5.5);
-          expect(contrast(p.fail, ground), `fail on ${ground}`).toBeGreaterThanOrEqual(4.6);
-        }
-      });
-
-      it('keeps the two signals apart from each other', () => {
-        // Not a contrast requirement — a hue one. Amber and red at the same
-        // lightness on the same ground is exactly the blur §4.1 forbids, and a
-        // reader who cannot tell them apart has lost the distinction whatever
-        // the label says.
-        const red = parseInt(p.fail.slice(1, 3), 16) - parseInt(p.fail.slice(3, 5), 16);
-        const amber = parseInt(p.accent.slice(1, 3), 16) - parseInt(p.accent.slice(3, 5), 16);
-        expect(Math.abs(amber - red), `${theme.id}: accent and fail are too close in hue`)
-          .toBeGreaterThan(20);
-      });
-
-      it('gives a border enough to be found', () => {
-        // Not text, so there is no WCAG figure for it — and a panel whose edge
-        // cannot be found reads as part of the window behind it, which is a real
-        // complaint this palette has already had.
-        expect(contrast(p.line, p.panel), `line on panel`).toBeGreaterThanOrEqual(1.3);
-        expect(contrast(p.edge, p.bubble), `edge on bubble`).toBeGreaterThanOrEqual(1.25);
-      });
-
-      it('stacks its surfaces in the order they are named', () => {
-        // `sunken` under `bg` under `panel` under `raised`. A theme that got this
-        // backwards would compile, render, and be quietly wrong everywhere a
-        // depth is meant to say something.
-        const steps = [p.sunken, p.bg, p.panel, p.raised].map(luminance);
-        for (let i = 1; i < steps.length; i += 1) {
-          expect(steps[i] as number, `${theme.id}: surface ${i} is not above ${i - 1}`)
-            .toBeGreaterThan(steps[i - 1] as number);
-        }
-      });
-
-      it('does not put an amber signal on a blue ground', () => {
-        /*
-         * The rule that rules out a whole family, and the reason there is no
-         * Tokyo Night here. The interface *was* Tokyo Night and moved off it: a
-         * blue-tinted ground makes an amber signal read as a colour clash, where
-         * on a neutral ground it reads as a lamp coming on.
-         *
-         * Stated as a bound rather than a ban, because `slate` is deliberately a
-         * little cool. What it may not be is *blue* — a handful of levels is a
-         * temperature, thirty is a hue.
-         */
-        for (const ground of [p.bg, p.panel]) {
-          if (isBlueLeaning(ground)) {
-            expect(spread(ground), `${theme.id}: ${ground} is blue rather than cool`).toBeLessThan(
-              12,
-            );
-          }
-        }
-      });
-    });
+/** The colour tokens of `@theme`, by name, lowercased. */
+function readPalette(): Map<string, string> {
+  const css = readFileSync('src/renderer/styles.css', 'utf8');
+  const block = css.slice(css.indexOf('@theme {'), css.indexOf('@layer base'));
+  const declared = new Map<string, string>();
+  for (const line of block.split('\n')) {
+    const found = /^\s*--color-([a-z-]+):\s*(#[0-9a-fA-F]{6});/u.exec(line);
+    if (found !== null) declared.set(found[1] as string, (found[2] as string).toLowerCase());
   }
-});
+  return declared;
+}
 
-describe('the default and the stylesheet cannot drift apart', () => {
-  it('sets exactly what `@theme` already says', () => {
+const tokens = readPalette();
+const token = (name: string): string => {
+  const value = tokens.get(name);
+  if (value === undefined) throw new Error(`--color-${name} is not declared in @theme`);
+  return value;
+};
+
+const p = {
+  sunken: token('sunken'),
+  bg: token('bg'),
+  panel: token('panel'),
+  raised: token('raised'),
+  line: token('line'),
+  ink: token('ink'),
+  muted: token('muted'),
+  accent: token('accent'),
+  paused: token('state-paused'),
+  fail: token('state-fail'),
+  bubble: token('user-bubble'),
+  edge: token('user-edge'),
+};
+
+// Three grounds, because a card sits on a panel and a panel sits on the window:
+// text that clears the darkest and fails the lightest is text that fails
+// wherever it is actually read.
+const grounds = [p.sunken, p.bg, p.panel] as const;
+
+describe('the palette is legible on its own grounds', () => {
+  it('carries body text well past AA', () => {
     /*
-     * The one duplication in this feature, and the reason it is safe.
-     *
-     * Tailwind reads `styles.css` at build time and needs literals there; the
-     * picker sets variables at run time and needs them here. Two copies of one
-     * fact is one that gets updated and one that does not — so this reads the
-     * stylesheet and fails if the default theme and the shipped palette ever
-     * disagree, which is the only way that drift becomes visible before somebody
-     * ships a picker whose "Warm" is not the warm they have been looking at.
+     * Six and a half, not 4.5. `muted` carries most of the text on every screen,
+     * and it sat at 5.39:1 for a long time — over AA, under AAA, and in the band
+     * where text stops looking read and starts looking grey. That measurement is
+     * what "the interface looks drab" turned out to mean.
      */
-    const css = readFileSync('src/renderer/styles.css', 'utf8');
-    const block = css.slice(css.indexOf('@theme {'), css.indexOf('@layer base'));
-    const declared = new Map<string, string>();
-    for (const line of block.split('\n')) {
-      const found = /^\s*(--color-[a-z-]+):\s*(#[0-9a-fA-F]{6});/u.exec(line);
-      if (found !== null) declared.set(found[1] as string, (found[2] as string).toLowerCase());
-    }
-    expect(declared.size, 'no colour tokens found in @theme').toBeGreaterThan(8);
-
-    const wanted = cssVariables(themeById(DEFAULT_THEME).palette);
-    for (const [name, value] of Object.entries(wanted)) {
-      expect(declared.get(name), `${name} in styles.css`).toBe(value.toLowerCase());
+    for (const ground of grounds) {
+      expect(contrast(p.muted, ground), `muted on ${ground}`).toBeGreaterThanOrEqual(6.5);
     }
   });
 
-  it('names every theme once, with an id a stored preference can survive', () => {
-    const ids = THEMES.map((t) => t.id);
-    expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toContain(DEFAULT_THEME);
-    // Falls back rather than throwing: `localStorage` outlives app versions, so
-    // a theme that was removed must land on the default instead of a blank app.
-    expect(themeById('a theme that no longer exists').id).toBe(DEFAULT_THEME);
-    expect(themeById(null).id).toBe(DEFAULT_THEME);
+  it('keeps the heading text far above everything else', () => {
+    for (const ground of grounds) {
+      expect(contrast(p.ink, ground), `ink on ${ground}`).toBeGreaterThanOrEqual(12);
+    }
+  });
+
+  it('makes the two signals readable, the warning most of all', () => {
+    // §4.1: a pause and a failure must never blur. Both are read as text, and
+    // `fail` is the one somebody most needs to be able to read.
+    for (const ground of grounds) {
+      expect(contrast(p.accent, ground), `accent on ${ground}`).toBeGreaterThanOrEqual(5.5);
+      expect(contrast(p.fail, ground), `fail on ${ground}`).toBeGreaterThanOrEqual(4.6);
+    }
+  });
+
+  it('keeps the two signals apart from each other', () => {
+    // Not a contrast requirement — a hue one. Two signals at one lightness on
+    // one ground with nearly one hue is exactly the blur §4.1 forbids.
+    const red = parseInt(p.fail.slice(1, 3), 16) - parseInt(p.fail.slice(3, 5), 16);
+    const highlight = parseInt(p.accent.slice(1, 3), 16) - parseInt(p.accent.slice(3, 5), 16);
+    expect(Math.abs(highlight - red), 'accent and fail are too close in hue').toBeGreaterThan(20);
+  });
+
+  it('uses the accent as the one signal that asks', () => {
+    // There is one accent and it is the colour of "this needs you". A paused
+    // state drawn in anything else would be a second accent by the back door.
+    expect(p.paused).toBe(p.accent);
+  });
+
+  it('gives a border enough to be found', () => {
+    expect(contrast(p.line, p.panel), 'line on panel').toBeGreaterThanOrEqual(1.3);
+    expect(contrast(p.edge, p.bubble), 'edge on bubble').toBeGreaterThanOrEqual(1.25);
+  });
+
+  it('stacks its surfaces in the order they are named', () => {
+    // `sunken` under `bg` under `panel` under `raised`. Backwards would compile,
+    // render, and be quietly wrong everywhere a depth is meant to say something.
+    const steps = [p.sunken, p.bg, p.panel, p.raised].map(luminance);
+    for (let i = 1; i < steps.length; i += 1) {
+      expect(steps[i] as number, `surface ${i} is not above ${i - 1}`).toBeGreaterThan(
+        steps[i - 1] as number,
+      );
+    }
+  });
+
+  it('puts no ground in the blue-grey band that fights the signal', () => {
+    /*
+     * The interface *was* Tokyo Night and moved off it: a desaturated blue-grey
+     * ground makes an amber signal read as a colour clash. Two kinds of blue
+     * ground exist, and only one is that:
+     *
+     *   - a *tint* — grey leaning blue by a dozen to a few dozen levels, the
+     *     Tokyo Night and Nord band, close enough to the accent to fight it;
+     *   - a *hue* — saturated navy, sixty levels of spread and more, carrying a
+     *     yellow, its complement. That is a dial-up terminal's screen, and the
+     *     palette this app now has.
+     *
+     * Under a dozen levels is a temperature and passes too. What may not exist
+     * is the band in between, or a saturated blue carrying anything but yellow.
+     */
+    const [ar, ag, ab] = [1, 3, 5].map((at) => parseInt(p.accent.slice(at, at + 2), 16)) as [
+      number,
+      number,
+      number,
+    ];
+    const yellow = Math.abs(ar - ag) <= 16 && ab <= 0x80 && ar >= 0xc0;
+    for (const ground of [p.bg, p.panel]) {
+      if (!isBlueLeaning(ground)) continue;
+      const s = spread(ground);
+      if (s < 12) continue;
+      expect(s, `${ground} is a blue tint rather than a temperature or a hue`).toBeGreaterThanOrEqual(60);
+      expect(yellow, `a saturated blue ground needs a yellow accent, not ${p.accent}`).toBe(true);
+    }
+  });
+});
+
+describe('the literals outside the stylesheet cannot drift from it', () => {
+  it('paints the window the palette ground before any CSS exists', () => {
+    /*
+     * `main.ts` gives Electron a `backgroundColor` for the frames before the
+     * renderer loads, and it is a literal because no stylesheet exists yet. Its
+     * comment once said "kept in step by hand" and records the time it was not
+     * — a cold flash of an old ground on every launch after a restyle walked
+     * past it. So the hand is a test.
+     */
+    const main = readFileSync('src/main/main.ts', 'utf8');
+    const painted = /backgroundColor:\s*'(#[0-9a-fA-F]{6})'/u.exec(main)?.[1];
+    expect(painted, 'no backgroundColor literal in main.ts').toBeDefined();
+    expect(painted?.toLowerCase()).toBe(p.bg);
+  });
+
+  it('gives the landing page the same palette', () => {
+    // The page reports this program and its screenshots are of it; a second set
+    // of colours there would misreport them. Read from its `:root`.
+    const page = readFileSync('docs/index.html', 'utf8');
+    const root = page.slice(page.indexOf(':root {'), page.indexOf('}', page.indexOf(':root {')));
+    for (const [name, value] of [
+      ['bg', p.bg],
+      ['panel', p.panel],
+      ['sunken', p.sunken],
+      ['line', p.line],
+      ['ink', p.ink],
+      ['muted', p.muted],
+      ['accent', p.accent],
+    ] as const) {
+      expect(new RegExp(`--${name}:\\s*${value}`, 'iu').test(root), `--${name} on the landing page`).toBe(
+        true,
+      );
+    }
   });
 });

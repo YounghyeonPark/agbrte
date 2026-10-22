@@ -87,13 +87,38 @@ import '@xterm/xterm/css/xterm.css';
  * as an embedded iframe from another program — which is the opposite of the
  * impression wanted here, where the point is that this is *your* terminal in
  * *this* workspace.
+ *
+ * Read from the palette that is applied, at the moment the terminal is made.
+ * These were four literals copied from the warm palette, so choosing any other
+ * theme left the terminal warm inside a window that was not — the one pane
+ * that kept the old look, and the one that most wants the new one, since the
+ * theme this app now ships *is* a terminal's. xterm needs colours as values,
+ * not as `var()`, so the custom properties are resolved here rather than in CSS.
+ *
+ * Selection is the highlight bar: the selected text in the ground's colour on
+ * the accent. It was the bubble's edge colour, which was a dim border until the
+ * terminal theme made every edge white — and white selection behind white text
+ * is a selection nobody can read. Inverting is what a character screen did with
+ * a selection anyway, and it reads on every palette here.
  */
-const THEME = {
-  background: '#0f0e0c',
-  foreground: '#f2ece0',
-  cursor: '#ee9633',
-  selectionBackground: '#443f35',
-} as const;
+function terminalTheme(): {
+  background: string;
+  foreground: string;
+  cursor: string;
+  selectionBackground: string;
+  selectionForeground: string;
+} {
+  const css = getComputedStyle(document.documentElement);
+  const read = (name: string, fallback: string): string =>
+    css.getPropertyValue(name).trim() || fallback;
+  return {
+    background: read('--color-sunken', '#000d45'),
+    foreground: read('--color-ink', '#ffffff'),
+    cursor: read('--color-accent', '#ffff55'),
+    selectionBackground: read('--color-accent', '#ffff55'),
+    selectionForeground: read('--color-sunken', '#000d45'),
+  };
+}
 
 /** One thing this pane could run, as the parent worked it out from the host. */
 export interface ShellChoice {
@@ -167,7 +192,7 @@ export function Shell({
       cursorBlink: true,
       fontSize: 12,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      theme: THEME,
+      theme: terminalTheme(),
       // The bound. Past this the oldest lines go, which is what a terminal has
       // always done and what keeps a week-long session from becoming a heap.
       scrollback: SHELL_SCROLLBACK,
