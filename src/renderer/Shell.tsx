@@ -101,6 +101,12 @@ import '@xterm/xterm/css/xterm.css';
  * terminal theme made every edge white — and white selection behind white text
  * is a selection nobody can read. Inverting is what a character screen did with
  * a selection anyway, and it reads on every palette here.
+ *
+ * The ground is the window's own navy, not the darker sunken shade it was. A
+ * near-black box inside a navy window read as a hole cut in it, and the owner
+ * asked for it to be the same navy, for reading: the terminal is where the text
+ * is, and it was the one place in the app on a different ground. The pane's
+ * white edges are what separate it now, as they separate everything else.
  */
 export function terminalTheme(): {
   background: string;
@@ -113,11 +119,11 @@ export function terminalTheme(): {
   const read = (name: string, fallback: string): string =>
     css.getPropertyValue(name).trim() || fallback;
   return {
-    background: read('--color-sunken', '#000d45'),
+    background: read('--color-bg', '#00124f'),
     foreground: read('--color-ink', '#ffffff'),
     cursor: read('--color-accent', '#ffff55'),
     selectionBackground: read('--color-accent', '#ffff55'),
-    selectionForeground: read('--color-sunken', '#000d45'),
+    selectionForeground: read('--color-bg', '#00124f'),
   };
 }
 
@@ -195,6 +201,14 @@ export function Shell({
       fontSize: 12,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       theme: terminalTheme(),
+      /*
+       * A program picks its own colours for a black terminal, and on navy some
+       * of them stop being text: ANSI blue, and the purple Git for Windows puts
+       * in its prompt, measured under 2:1. xterm lightens a foreground that
+       * falls below this ratio against its background, which keeps the
+       * program's hue and makes it readable — 4.5 is WCAG's floor for text.
+       */
+      minimumContrastRatio: 4.5,
       // The bound. Past this the oldest lines go, which is what a terminal has
       // always done and what keeps a week-long session from becoming a heap.
       scrollback: SHELL_SCROLLBACK,

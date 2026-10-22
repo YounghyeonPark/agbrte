@@ -249,6 +249,14 @@ export function useLiveShell({
       fontSize: 12,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       theme: terminalTheme(),
+      /*
+       * A program picks its own colours for a black terminal, and on navy some
+       * of them stop being text: ANSI blue, and the purple Git for Windows puts
+       * in its prompt, measured under 2:1. xterm lightens a foreground that
+       * falls below this ratio against its background, which keeps the
+       * program's hue and makes it readable — 4.5 is WCAG's floor for text.
+       */
+      minimumContrastRatio: 4.5,
       scrollback: SHELL_SCROLLBACK,
       rows: LIVE_ROWS,
       // Decorations — the bars — are behind xterm's proposed switch.
@@ -468,7 +476,17 @@ export function LiveShellArea({ live, shellMode }: { live: LiveShell; shellMode:
     >
       <div
         ref={live.frame}
-        className={live.fullscreen ? 'relative min-h-0 flex-1 overflow-hidden' : 'relative overflow-hidden'}
+        /* Edged in white like every other box, once it is on screen: on the
+           same navy as the scrollback, an unedged prompt was a line of text
+           floating above the composer. `box-content`, because the height set
+           on this box is the emulator's rows, and the edge must not eat one. No vertical padding either:
+           the box clips at its padding edge, so padding above the rows
+           showed the bottom of the line before them. */
+        className={
+          live.fullscreen
+            ? 'relative min-h-0 flex-1 overflow-hidden'
+            : `relative box-content overflow-hidden ${shown ? 'border-line border px-2' : ''}`
+        }
       >
         <div ref={live.mount} className={live.fullscreen ? 'h-full' : ''} />
       </div>
@@ -510,7 +528,7 @@ export function ShellBlockRow({ block }: { block: LiveBlock }): JSX.Element {
       {block.output !== '' && (
         <pre
           data-testid="shell-block-output"
-          className="bg-sunken text-ink mt-1 max-h-96 overflow-auto px-2 py-1 font-mono text-xs whitespace-pre-wrap break-all"
+          className="border-line text-ink mt-1 max-h-96 overflow-auto border px-2 py-1 font-mono text-xs whitespace-pre-wrap break-all"
         >
           {block.truncated && <span className="text-muted">… earlier output is in the terminal’s history only{'\n'}</span>}
           {block.output}

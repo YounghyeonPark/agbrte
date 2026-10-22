@@ -50,7 +50,7 @@ test.describe('the terminal look', () => {
       const page = agbrte.window;
       await openSettings(page);
 
-      expect(await groundOf(page)).toBe('rgb(0, 26, 110)');
+      expect(await groundOf(page)).toBe('rgb(0, 18, 79)');
       const button = await page.locator('[data-testid=show-guide]').evaluate((el) => {
         const view = globalThis as unknown as {
           getComputedStyle: (e: unknown) => { borderTopLeftRadius: string; borderTopColor: string };
@@ -68,7 +68,7 @@ test.describe('the terminal look', () => {
         const style = view.getComputedStyle(el);
         return { bar: style.backgroundColor, text: style.color };
       });
-      expect(pressed).toEqual({ bar: 'rgb(255, 255, 85)', text: 'rgb(0, 26, 110)' });
+      expect(pressed).toEqual({ bar: 'rgb(255, 255, 85)', text: 'rgb(0, 18, 79)' });
 
       // No picker: a choice of looks the product no longer has would argue with it.
       await expect(page.locator('[data-testid=theme-option]')).toHaveCount(0);

@@ -376,7 +376,7 @@ async function createWindow(): Promise<void> {
      * `themes.test.ts`, which reads this line, since "by hand" had already
      * failed once.
      */
-    backgroundColor: '#001a6e',
+    backgroundColor: '#00124f',
     /*
      * Packaged builds take their icon from the executable, which electron-builder
      * embeds from `build/`. Unpackaged ones — `npm start`, the e2e suite, anyone

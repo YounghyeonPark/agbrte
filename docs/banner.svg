@@ -20,15 +20,15 @@
     @media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
   </style>
 
-  <rect width="1200" height="300" fill="#001a6e"/>
+  <rect width="1200" height="300" fill="#00124f"/>
 
   <!-- The menu bar along the top of the screen. -->
   <rect width="1200" height="34" fill="#cccccc"/>
-  <text x="24" y="23" font-size="15" font-weight="700" fill="#000d45">AGBRTE ─ Agent Bridge Terminal</text>
-  <text x="1176" y="23" font-size="15" font-weight="700" fill="#000d45" text-anchor="end" xml:space="preserve">[1] Download   [2] Docs   [3] Source</text>
+  <text x="24" y="23" font-size="15" font-weight="700" fill="#000a30">AGBRTE ─ Agent Bridge Terminal</text>
+  <text x="1176" y="23" font-size="15" font-weight="700" fill="#000a30" text-anchor="end" xml:space="preserve">[1] Download   [2] Docs   [3] Source</text>
 
   <!-- A double rule, the frame a character screen drew with ═ and ║. -->
-  <rect x="24" y="56" width="1152" height="220" fill="#000d45" stroke="#ffffff" stroke-width="2"/>
+  <rect x="24" y="56" width="1152" height="220" fill="#000a30" stroke="#ffffff" stroke-width="2"/>
   <rect x="31" y="63" width="1138" height="206" fill="none" stroke="#ffffff" stroke-width="2"/>
 
   <text x="64" y="148" font-size="54" font-weight="700" fill="#ffff55" textLength="760" lengthAdjust="spacingAndGlyphs">AGENT BRIDGE TERMINAL</text>

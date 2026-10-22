@@ -93,6 +93,14 @@
  * has is a setting that argues with the product. So these literals are the
  * palette, the only copy, and `themes.test.ts` measures them where they are.
  *
+ * The navy went one step darker once the terminal was on it. The first ground,
+ * `#001a6e`, was chosen for the frame around a terminal; when the terminal and
+ * its output moved onto the same ground it became the colour behind every line
+ * a person reads, and the owner asked for it darker. Every surface moved
+ * together — ground `#00124f`, panel `#071c66`, sunken `#000a30`, raised
+ * `#0f2878` — so the steps between them, which are what say "a panel" and "a
+ * well", stayed where they were. Text gained contrast from it; nothing lost any.
+ *
  * ## Measured against the ground, not judged
  *
  * Worth keeping, because the first `fail` red chosen here measured 4.30:1 — it
@@ -103,10 +111,10 @@
  * at the bottom of its range until the whole interface looked tired.
  */
 @theme {
-  --color-bg: #001a6e;
-  --color-panel: #0a2688;
-  --color-sunken: #000d45;
-  --color-raised: #163596;
+  --color-bg: #00124f;
+  --color-panel: #071c66;
+  --color-sunken: #000a30;
+  --color-raised: #0f2878;
   --color-line: #ffffff;
   --color-ink: #ffffff;
   --color-muted: #cccccc;
@@ -137,7 +145,7 @@
      kept as a token so the state map stays total rather than falling through. */
   --color-state-done: #cccccc;
 
-  --color-user-bubble: #163596;
+  --color-user-bubble: #0f2878;
   --color-user-edge: #ffffff;
 
   /*
