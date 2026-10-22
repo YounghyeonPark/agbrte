@@ -460,6 +460,13 @@ export interface ShellDto {
   cwd: string;
   cols: number;
   rows: number;
+  /**
+   * What the shell was taught to say about where its commands are (§17 Q23):
+   * `full` marks prompts, output and exit status, `prompt` only prompts. Absent
+   * is unknown — an older host, or a program that is not a shell — and the pane
+   * reads the marks themselves either way.
+   */
+  integration?: 'full' | 'prompt' | 'none';
 }
 
 /**

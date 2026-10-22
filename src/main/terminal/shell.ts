@@ -85,7 +85,9 @@
 
 import { createRequire } from 'node:module';
 import { TERM_NAME, TerminalPrograms, terminalEnv } from './programs.js';
+import { integrate } from './integration.js';
 import type { ShellProgram } from '@shared/types/index.js';
+import type { IntegrationLevel } from '@shared/terminal/marks.js';
 
 /** What one open terminal looks like to whoever is holding it. */
 export interface ShellHandle {
@@ -117,6 +119,16 @@ export interface ShellHandle {
   cwd: string;
   cols: number;
   rows: number;
+  /**
+   * What the shell was taught to say about its commands (`integration.ts`).
+   *
+   * Present only for a shell that was taught. Absent is "unknown" rather than
+   * "none" (§3.3): an older host never sends it, a CLI is never taught, and a
+   * pane that read absence as a promise of no marks would be wrong about the
+   * first of those. The pane reads the marks themselves either way; this is
+   * what lets it say *before* the first prompt that blocks are coming.
+   */
+  integration?: IntegrationLevel;
 }
 
 /** How a terminal ended, so a pane can say so instead of going quiet. */
@@ -344,6 +356,12 @@ export class Shells<Owner extends object = object> {
        * the one place the label carries weight.
        */
       programs?: TerminalPrograms;
+      /**
+       * Where shell startup scripts are written. Absent means the machine
+       * directory (`integrationDir`), which is what a host uses; a test names a
+       * temporary one rather than writing into somebody's `~/.agbrte`.
+       */
+      integrationDir?: string;
       /** Injectable so a test drives time rather than sleeping through it. */
       setTimer?: (fn: () => void, ms: number) => NodeJS.Timeout;
       clearTimer?: (h: NodeJS.Timeout) => void;
@@ -389,7 +407,22 @@ export class Shells<Owner extends object = object> {
      * would put a per-program exception in the function whose whole value is
      * that it has none.
      */
-    const env = { ...terminalEnv(this.opts.env ?? process.env), ...chosen.env };
+    const base = { ...terminalEnv(this.opts.env ?? process.env), ...chosen.env };
+    /*
+     * Only the person's shell is taught to mark its commands. A CLI draws its own
+     * interface and our own client is not a shell; giving either a startup
+     * script would at best do nothing. `integrate` also leaves alone a shell it
+     * does not know or one that arrived with arguments, and says so with a
+     * `null` shell, which is why `integration` below is conditional.
+     */
+    const taught =
+      (opts?.program?.kind ?? 'shell') === 'shell'
+        ? integrate(chosen, {
+            env: base,
+            ...(this.opts.integrationDir !== undefined ? { dir: this.opts.integrationDir } : {}),
+          })
+        : null;
+    const env = { ...base, ...(taught?.env ?? {}) };
     const cols = clamp(opts?.cols ?? DEFAULT_COLS);
     const rows = clamp(opts?.rows ?? DEFAULT_ROWS);
 
@@ -404,9 +437,10 @@ export class Shells<Owner extends object = object> {
       cwd: this.workspaceRoot,
       cols,
       rows,
+      ...(taught !== null && taught.shell !== null ? { integration: taught.level } : {}),
     };
 
-    const pty = spawner(chosen.file, chosen.args, {
+    const pty = spawner(taught?.file ?? chosen.file, taught?.args ?? chosen.args, {
       cwd: this.workspaceRoot,
       cols,
       rows,

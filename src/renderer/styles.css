@@ -571,3 +571,36 @@ body,
   font-family: var(--font-mono);
   letter-spacing: 0;
 }
+
+/*
+ * A command's bar in the terminal pane (`commandMarks.ts`, §17 Q23).
+ *
+ * xterm places the decoration over the first cell of the line the command was
+ * typed on and sizes it to that cell. The cell itself is left alone — painting
+ * it would cover the prompt's first character — and the bar is drawn in the
+ * pane's left padding instead, where nothing else is. Same three meanings as
+ * everywhere else in the app: the accent for something in progress, the ink for
+ * done, the failure colour for a failure; and muted for "finished, status
+ * unknown", which `cmd.exe` is and which must not read as a success.
+ */
+.term-mark {
+  pointer-events: auto;
+}
+.term-mark::before {
+  content: '';
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  left: -10px;
+  width: 3px;
+  background-color: var(--color-muted);
+}
+.term-mark[data-state='running']::before {
+  background-color: var(--color-accent);
+}
+.term-mark[data-state='ok']::before {
+  background-color: var(--color-ink);
+}
+.term-mark[data-state='fail']::before {
+  background-color: var(--color-state-fail);
+}

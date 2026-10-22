@@ -378,6 +378,25 @@ test.describe('your own terminal', () => {
         .toBeGreaterThanOrEqual(2);
 
       /*
+       * The shell was taught to mark its commands (§17 Q23), and the pane read
+       * the marks: one bar beside the line that was typed, and a count above.
+       *
+       * Which shell this is depends on the machine — `cmd.exe` on Windows, which
+       * can mark its prompts and not its exit status, a bash or zsh elsewhere —
+       * so the assertion is about agreement: a pane that says it has full marks
+       * shows a success, one that has prompt marks shows "unknown", and neither
+       * shows nothing. A pane whose header claimed marks with no bar under it is
+       * the failure this exists to catch.
+       */
+      const blocks = pane.locator('[data-testid=pty-blocks]');
+      await expect(blocks).toContainText('1 run', { timeout: 30_000 });
+      const level = await blocks.getAttribute('data-level');
+      expect(['full', 'prompt']).toContain(level);
+      const bar = agbrte.window.locator('[data-testid=command-mark]');
+      await expect(bar).toHaveCount(1);
+      await expect(bar).toHaveAttribute('data-state', level === 'full' ? 'ok' : 'unknown');
+
+      /*
        * And none of it reached the durable record (§7, §13).
        *
        * A terminal that worked but quietly appended to the session log would

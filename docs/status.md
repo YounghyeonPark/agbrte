@@ -33,6 +33,15 @@ browser or a remote machine's desktop to a remote-desktop client.
 
 ## What is not proven, named rather than glossed
 
+**Command boundaries have run in four shells on one Windows machine.** Git for
+Windows' bash 5.3, Windows PowerShell 5.1 with PSReadLine, and `cmd.exe`, each in
+a real pty, with the exact line, the exit status and a `cd` that is still in force
+on the next line checked (`tests/integration.test.ts`), and the pane's bars seen
+in the app. zsh, `pwsh`, and bash on Linux or macOS have not run here — the zsh
+test skips by name on a machine without it — and neither has a terminal opened on
+a remote host, which is the same code bundled into the host and is where it most
+needs seeing: one shell pane on a real server, a failing command, a red bar.
+
 **The second model provider has never called the vendor, and will not here.**
 The `anthropic` adapter exists to validate the provider boundary — one
 implementation is not an abstraction — and it did that, finding two places where

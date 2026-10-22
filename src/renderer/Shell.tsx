@@ -77,6 +77,7 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SHELL_SCROLLBACK, type ShellDto } from '@shared/ipc/contract.js';
+import { markCommands, type CommandSummary } from './commandMarks.js';
 import type { ShellProgram } from '../shared/types/index.js';
 import '@xterm/xterm/css/xterm.css';
 
@@ -158,6 +159,7 @@ export function Shell({
   const [shell, setShell] = useState<ShellDto | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ended, setEnded] = useState<number | null>(null);
+  const [commands, setCommands] = useState<CommandSummary | null>(null);
 
   /*
    * The selector, flattened to a string for the dependency list.
@@ -196,10 +198,15 @@ export function Shell({
       // The bound. Past this the oldest lines go, which is what a terminal has
       // always done and what keeps a week-long session from becoming a heap.
       scrollback: SHELL_SCROLLBACK,
+      // Decorations are still behind xterm's "proposed" switch, and they are how
+      // a command's bar sits on its line (`commandMarks.ts`). Nothing else here
+      // uses a proposed API.
+      allowProposedApi: true,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(mount);
+    const marks = markCommands(term, setCommands);
 
     /**
      * Measure, and refuse to act on a measurement that cannot be right.
@@ -331,6 +338,7 @@ export function Shell({
       offData();
       offExit();
       typed.dispose();
+      marks.dispose();
       // The PTY dies with the pane. Awaiting it would be pointless — nothing is
       // left to tell — and the host closes it anyway when this client goes.
       if (opened !== null) void window.agbrte.shell.close(opened.shellId).catch(() => undefined);
@@ -373,6 +381,19 @@ export function Shell({
               ? 'Agbrte’s own client, attached to this session — what you send here is a real turn: it queues with the chat pane’s, and it is in the transcript and the session log'
               : 'you are typing, not the agent — nothing here enters the transcript or the session log'}
         </span>
+        {/* What the shell was taught to say about its commands, and — once one
+            has finished — how many ran and how many failed. Silent for a program
+            that is not a shell, and for a shell that could not be taught, rather
+            than a line saying so on every CLI pane. */}
+        {(shell?.integration === 'full' || shell?.integration === 'prompt') && (
+          <span data-testid="pty-blocks" data-level={commands?.level ?? shell.integration}>
+            {(commands?.level ?? shell.integration) === 'full'
+              ? 'each command marked'
+              : 'each command marked — this shell does not report exit status'}
+            {commands !== null &&
+              ` · ${commands.commands} run${commands.failed > 0 ? `, ${commands.failed} failed` : ''}`}
+          </span>
+        )}
         {shell !== null && (
           <span data-testid="pty-where" className="ml-auto font-mono">
             {shell.program} in {shell.cwd} on {hostLabel}
