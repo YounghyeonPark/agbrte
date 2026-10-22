@@ -263,14 +263,15 @@ describe.skipIf(powershell === null)(`PowerShell, for real (${powershell ?? 'not
         commandFrom: 'exact',
         exitCode: 0,
       });
-      expect(plainText((await s.run('(Get-Location).Path')).output)).toMatch(/sub dir$/u);
+      expect(plainText((await s.run('(Get-Location).Path')).output).trim()).toMatch(/sub dir$/u);
       // A native program's status, which PowerShell keeps in LASTEXITCODE.
       expect(await s.run('cmd /c exit 3')).toMatchObject({ exitCode: 3 });
       // A failed cmdlet has no number of its own; failure is still failure.
       expect((await s.run('Get-Item nowhere-at-all')).exitCode).not.toBe(0);
       const both = await s.run("Write-Output 'a;b'");
       expect(both).toMatchObject({ command: "Write-Output 'a;b'", exitCode: 0 });
-      expect(plainText(both.output)).toBe('a;b');
+      // pwsh on Linux and macOS follows output with blank lines.
+      expect(plainText(both.output).trim()).toBe('a;b');
     } finally {
       s.close();
     }
