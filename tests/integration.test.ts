@@ -30,7 +30,19 @@ import { findExecutable, terminalEnv } from '../src/main/terminal/programs.js';
 
 const made: string[] = [];
 afterAll(() => {
-  for (const dir of made) rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+  /*
+   * Best effort. Windows will not remove a directory a process is standing in,
+   * and a shell killed a moment ago can still be — CI failed a run whose every
+   * assertion had passed with `EBUSY` here. `Session.close` waits for the exit;
+   * this is what is left if that wait ran out.
+   */
+  for (const dir of made) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    } catch {
+      // A temp directory, left for the OS.
+    }
+  }
 });
 function scratch(): string {
   const dir = mkdtempSync(join(tmpdir(), 'agbrte-integration-'));
@@ -150,12 +162,18 @@ class Session {
     await this.until('the first prompt', () => /\u001b\]133;B(\u0007|\u001b\\)/u.test(this.raw));
   }
 
-  close(): void {
+  /** Kill it, and wait until it has gone, so its working directory is free. */
+  async close(): Promise<void> {
+    const exited = new Promise<void>((done) => {
+      this.term.onExit(() => done());
+      setTimeout(done, 5_000);
+    });
     try {
       this.term.kill();
     } catch {
-      // Already gone.
+      return;
     }
+    await exited;
   }
 }
 
@@ -245,7 +263,7 @@ describe.skipIf(bash === null)(`bash, for real (${bash ?? 'not on this machine'}
       expect(plainText(hidden.output)).toBe('hidden');
       expect(s.stream.level).toBe(bashHasPs0 ? 'full' : 'prompt');
     } finally {
-      s.close();
+      await s.close();
     }
   }, 60_000);
 });
@@ -264,8 +282,10 @@ describe.skipIf(powershell === null)(`PowerShell, for real (${powershell ?? 'not
         exitCode: 0,
       });
       expect(plainText((await s.run('(Get-Location).Path')).output).trim()).toMatch(/sub dir$/u);
-      // A native program's status, which PowerShell keeps in LASTEXITCODE.
-      expect(await s.run('cmd /c exit 3')).toMatchObject({ exitCode: 3 });
+      // A native program's status, which PowerShell keeps in LASTEXITCODE —
+      // through whichever native shell this platform has.
+      const native = process.platform === 'win32' ? 'cmd /c exit 3' : "sh -c 'exit 3'";
+      expect(await s.run(native)).toMatchObject({ exitCode: 3 });
       // A failed cmdlet has no number of its own; failure is still failure.
       expect((await s.run('Get-Item nowhere-at-all')).exitCode).not.toBe(0);
       const both = await s.run("Write-Output 'a;b'");
@@ -273,7 +293,7 @@ describe.skipIf(powershell === null)(`PowerShell, for real (${powershell ?? 'not
       // pwsh on Linux and macOS follows output with blank lines.
       expect(plainText(both.output).trim()).toBe('a;b');
     } finally {
-      s.close();
+      await s.close();
     }
   }, 90_000);
 });
@@ -293,7 +313,7 @@ describe.skipIf(cmd === null)(`cmd.exe, for real (${cmd ?? 'not on this machine'
       expect(plainText((await s.run('echo one')).output).trim()).toBe('one');
       expect(s.stream.level).toBe('prompt');
     } finally {
-      s.close();
+      await s.close();
     }
   }, 60_000);
 });
@@ -317,7 +337,7 @@ describe.skipIf(zsh === null)(`zsh, for real (${zsh ?? 'not on this machine'})`,
       expect(await s.run('false')).toMatchObject({ exitCode: 1 });
       expect(plainText((await s.run('echo $FROM_ZSHRC')).output).trim()).toBe('yes');
     } finally {
-      s.close();
+      await s.close();
     }
   }, 60_000);
 });
