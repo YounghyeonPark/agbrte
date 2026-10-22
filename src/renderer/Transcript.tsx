@@ -11,6 +11,7 @@ import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react';
 import type { AgbrteEvent, ContentBlock, SplitProposal } from '../shared/types/index.js';
 import { AttachmentChip, CapturePicker, type Attachment } from './Capture.js';
 import { Dictate } from './Dictate.js';
+import { isModeKey } from './LiveShell.js';
 
 const META_ROW = 'text-muted flex items-baseline gap-2 text-xs';
 const CODE = 'text-accent rounded-mark bg-raised px-2 py-px font-mono text-[11px]';
@@ -36,13 +37,28 @@ export function WorkingDots(): JSX.Element {
   );
 }
 
+/**
+ * A row that is not an event, placed after the event it followed.
+ *
+ * The person's shell blocks (§17 Q23): they are not in the log yet, so they
+ * cannot be events, and they still have to sit where they happened.
+ */
+export interface Interleaved {
+  key: string;
+  afterSeq: number;
+  node: ReactNode;
+}
+
 export function Transcript({
   events,
   renderRow,
+  interleave = [],
   working = false,
 }: {
   events: AgbrteEvent[];
   renderRow: (event: AgbrteEvent) => ReactNode;
+  /** In the order they happened; each is drawn after the last event at or before its `afterSeq`. */
+  interleave?: Interleaved[];
   /**
    * True while the session's turn is in flight, so the tail shows motion where
    * the next event will land. Session state, not an event: it is the one thing
@@ -59,7 +75,23 @@ export function Transcript({
   // bottom just as a new event does.
   useEffect(() => {
     if (atBottomRef.current) endRef.current?.scrollIntoView({ block: 'end' });
-  }, [events, working]);
+  }, [events, working, interleave.length]);
+
+  /*
+   * One pass, both lists already in order. By `seq` rather than by time: a
+   * block's `afterSeq` is what the view had when it finished, so this is the
+   * order somebody watching saw things happen, with no clock to disagree.
+   */
+  const rows: ReactNode[] = [];
+  let next = 0;
+  for (const event of events) {
+    while (next < interleave.length && (interleave[next]?.afterSeq ?? 0) < event.seq) {
+      rows.push(interleave[next]?.node);
+      next += 1;
+    }
+    rows.push(renderRow(event));
+  }
+  for (; next < interleave.length; next += 1) rows.push(interleave[next]?.node);
 
   return (
     <div
@@ -102,7 +134,7 @@ export function Transcript({
         it.
       */}
       <div className="mx-auto grid w-full max-w-3xl [grid-template-columns:minmax(0,1fr)] content-start gap-3">
-        {events.map((event) => renderRow(event))}
+        {rows}
       {working && (
         /* A whisper at the tail, in the meta-row voice: mid-turn the place the
            next event will appear shows life rather than a frozen last line. */
@@ -607,9 +639,24 @@ export function Composer({
   meta,
   tools,
   warning,
+  mode,
+  onMode,
+  onShellLine,
 }: {
   onSend: (text: string, blocks?: ContentBlock[]) => void;
   disabled: boolean;
+  /**
+   * Who the input is talking to, where the session has a shell (§17 Q23).
+   * Absent where it does not, and then the box is the agent's alone, as it was.
+   *
+   * In `shell` the box gives its line to the shell's own prompt above it —
+   * a text box imitating a shell would get completion, history and key
+   * bindings each slightly wrong — and keeps only what is not about typing.
+   */
+  mode?: 'agent' | 'shell';
+  onMode?: (mode: 'agent' | 'shell') => void;
+  /** A line that starts with `!` in agent mode: run in the shell, without switching. */
+  onShellLine?: (line: string) => void;
   /**
    * What this seat is, above the message being written to it.
    *
@@ -643,8 +690,32 @@ export function Composer({
   const [text, setText] = useState('');
   const [picking, setPicking] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const shellMode = mode === 'shell';
+  /*
+   * The prefix, read the way the prompt shows it: a line that starts with `!`
+   * is a line for the shell. Only where there is a shell to give it to — with
+   * none, `!` is just a character somebody typed to the agent.
+   */
+  const shellLine = onShellLine !== undefined && text.trimStart().startsWith('!');
+
+  // Back from the shell: the box takes the keys again, or the next thing typed
+  // would go nowhere.
+  const wasShell = useRef(shellMode);
+  useEffect(() => {
+    if (wasShell.current && !shellMode) inputRef.current?.focus();
+    wasShell.current = shellMode;
+  }, [shellMode]);
 
   const submit = (): void => {
+    if (shellLine) {
+      const line = text.trimStart().slice(1).trim();
+      if (line === '') return;
+      onShellLine?.(line);
+      setText('');
+      return;
+    }
+    if (disabled) return;
     // An attachment on its own is a message. "Look at this" with nothing typed
     // is the most natural way to use a screenshot, and requiring a sentence
     // would be a rule invented by the form rather than by the user.
@@ -717,25 +788,59 @@ export function Composer({
       )}
       {/* Borderless inside the box: the box is the field now, and a second
           outline around the text would draw a frame inside a frame. */}
-      <textarea
-        className="text-ink placeholder:text-muted max-h-44 min-h-[44px] w-full resize-none bg-transparent px-1 py-1 outline-none"
-        data-testid="composer-input"
-        value={text}
-        placeholder={disabled ? 'Working…' : 'Ask the agent to do something'}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          // Enter sends, Shift+Enter newlines — the convention for this shape of
-          // input, and worth matching so muscle memory works.
-          if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            submit();
+      {shellMode ? (
+        <p data-testid="composer-shell-hint" className="text-muted px-1 py-1 text-xs">
+          Typing goes to your shell, above. Ctrl+` for the agent, or{' '}
+          <span className="font-mono">?</span> at an empty prompt for one message.
+        </p>
+      ) : (
+        <textarea
+          ref={inputRef}
+          className="text-ink placeholder:text-muted max-h-44 min-h-[44px] w-full resize-none bg-transparent px-1 py-1 outline-none"
+          data-testid="composer-input"
+          data-shell-line={shellLine ? 'true' : undefined}
+          value={text}
+          placeholder={
+            disabled
+              ? 'Working…'
+              : onShellLine !== undefined
+                ? 'Ask the agent to do something — or start with ! to run a line in your shell'
+                : 'Ask the agent to do something'
           }
-        }}
-      />
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (onMode !== undefined && isModeKey(e)) {
+              e.preventDefault();
+              onMode('shell');
+              return;
+            }
+            // Enter sends, Shift+Enter newlines — the convention for this shape of
+            // input, and worth matching so muscle memory works.
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+        />
+      )}
       {/* The row inside the box, which is what makes it one thing: everything
           here acts on the message above it, and `Send` sits at the end of the
           line the eye already finishes on. */}
       <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {/* The mode, as the prompt shows it — `$` for the shell, `>` for the
+            agent — and the way to change it with a pointer. */}
+        {mode !== undefined && onMode !== undefined && (
+          <button
+            type="button"
+            className="btn-quiet shrink-0 font-mono"
+            data-testid="input-mode"
+            data-mode={mode}
+            title="Switch between your shell and the agent (Ctrl+`)"
+            onClick={() => onMode(shellMode ? 'agent' : 'shell')}
+          >
+            {shellMode ? '$ shell' : '> agent'}
+          </button>
+        )}
         {/*
           Ten controls stood on this line: three pane modes, three panes, a
           speaker, a microphone, a capture button and Send. Most of them are
@@ -762,7 +867,7 @@ export function Composer({
         {sessionId !== undefined && (
           <Speak {...(lastAgentText !== undefined ? { agentText: lastAgentText } : {})} />
         )}
-        {sessionId !== undefined && (
+        {sessionId !== undefined && !shellMode && (
           <Dictate
             sessionId={sessionId}
             // Appended rather than replacing: dictating after typing is adding
@@ -779,14 +884,20 @@ export function Composer({
             {queued} waiting
           </span>
         )}
-        <button
-          className="btn ml-auto shrink-0"
-          data-testid="composer-send"
-          type="submit"
-          disabled={disabled || (text.trim() === '' && attachments.length === 0)}
-        >
-          Send
-        </button>
+        {!shellMode && (
+          <button
+            className="btn ml-auto shrink-0"
+            data-testid="composer-send"
+            type="submit"
+            disabled={
+              shellLine
+                ? text.trimStart().slice(1).trim() === ''
+                : disabled || (text.trim() === '' && attachments.length === 0)
+            }
+          >
+            {shellLine ? 'Run' : 'Send'}
+          </button>
+        )}
       </div>
     </form>
   );

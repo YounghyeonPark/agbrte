@@ -80,6 +80,7 @@ import { pendingToolSeq } from './pendingTool.js';
 import { Preview } from './Preview.js';
 import { TerminalView } from './TerminalView.js';
 import { Shell, type ShellChoice } from './Shell.js';
+import { LiveShellArea, ShellBlockRow, useLiveShell } from './LiveShell.js';
 import { FileBrowser, FileViewer, VIEWER_DEFAULT } from './FileBrowser.js';
 import { ScreenView } from './ScreenView.js';
 import type {
@@ -364,6 +365,16 @@ export function App(): JSX.Element {
    */
   const [sessionPane, setSessionPane] = useState<'chat' | 'raw' | 'shell'>('chat');
   /**
+   * Who the composer is talking to: the agent, or the person's own shell in the
+   * session view (§17 Q23). View state for the same reason as the pane — it is
+   * where somebody's keys are going, not a fact about the session — and back to
+   * the agent on every session switch, because a shell is opened per view and
+   * the next session has not got one yet.
+   */
+  const [inputMode, setInputMode] = useState<'agent' | 'shell'>('agent');
+  /** `?` at an empty prompt asked for one message to the agent, then the shell again. */
+  const backToShell = useRef(false);
+  /**
    * The two right-hand rails: whether the tree is showing, and which file the
    * viewer is holding.
    *
@@ -605,6 +616,8 @@ export function App(): JSX.Element {
   // a PTY open on a machine the user has navigated away from.
   useEffect(() => {
     setSessionPane('chat');
+    setInputMode('agent');
+    backToShell.current = false;
     setRawAvailable(false);
     // The open file goes too, which closes the viewer rail with it. A path is
     // relative to *a* workspace, and the next session may be on another machine
@@ -892,6 +905,27 @@ export function App(): JSX.Element {
    * does not exist.
    */
   const shellHere = activeHost?.shells ?? activeHost?.targetKind === 'local';
+  /*
+   * The person's shell inside the session view. Started only when somebody
+   * turns to it (`LiveShell.tsx`), and given no session at all where the host
+   * cannot open one — which is what keeps the mode switch off a machine that
+   * would refuse it.
+   */
+  const liveShell = useLiveShell({
+    instanceId: shellHere === true && active !== null ? active.instanceId : null,
+    sessionId: shellHere === true && active !== null ? active.sessionId : null,
+    lastSeq: events[events.length - 1]?.seq ?? 0,
+    onAgentKey: (oneLine) => {
+      backToShell.current = oneLine;
+      setInputMode('agent');
+    },
+  });
+  const { open: openLiveShell, focus: focusLiveShell } = liveShell;
+  useEffect(() => {
+    if (inputMode !== 'shell') return;
+    openLiveShell();
+    focusLiveShell();
+  }, [inputMode, openLiveShell, focusLiveShell, liveShell.status]);
   /**
    * Whether this session's workspace is on another machine (§6.8).
    *
@@ -1621,7 +1655,16 @@ export function App(): JSX.Element {
                         hostLabel={activeHost?.label ?? active.instanceId}
                       />
                     ) : (
+                    <>
+                    {/* A full-screen program in the shell takes the pane; the
+                        scrollback is still all here when it hands it back. */}
+                    {!liveShell.fullscreen && (
                     <Transcript
+                      interleave={liveShell.blocks.map((block) => ({
+                        key: block.key,
+                        afterSeq: block.afterSeq,
+                        node: <ShellBlockRow key={block.key} block={block} />,
+                      }))}
                       events={
                         paneAgent === null
                           ? events
@@ -1652,6 +1695,11 @@ export function App(): JSX.Element {
                          reads as "busy" rather than "hung" (see WorkingDots). */
                       working={active.state === 'working'}
                     />
+                    )}
+                    {shellHere === true && (
+                      <LiveShellArea live={liveShell} shellMode={inputMode === 'shell'} />
+                    )}
+                    </>
                     )}
                   </div>
                   {filesOpen && (
@@ -1821,7 +1869,31 @@ export function App(): JSX.Element {
                     of the transcript already in hand, and a second copy of
                     "what was said last" is a second thing to keep in step. */}
                 <Composer
-                  onSend={(t, blocks) => void store.send(t, paneAgent ?? undefined, blocks)}
+                  onSend={(t, blocks) => {
+                    void store.send(t, paneAgent ?? undefined, blocks);
+                    // The one message `?` asked for has gone; the keys go back
+                    // to the shell they came from.
+                    if (backToShell.current) {
+                      backToShell.current = false;
+                      setInputMode('shell');
+                    }
+                  }}
+                  {...(shellHere === true
+                    ? {
+                        mode: inputMode,
+                        onMode: (mode: 'agent' | 'shell') => {
+                          backToShell.current = false;
+                          // The shell lives in the session view, so turning to
+                          // it from another pane brings the view back.
+                          if (mode === 'shell') setSessionPane('chat');
+                          setInputMode(mode);
+                        },
+                        onShellLine: (line: string) => {
+                          setSessionPane('chat');
+                          liveShell.sendLine(line);
+                        },
+                      }
+                    : {})}
                   disabled={active.state === 'working'}
                   queued={queued}
                   sessionId={active.sessionId}

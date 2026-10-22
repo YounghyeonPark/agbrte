@@ -10,7 +10,11 @@
   // `tests/rendererStore.test.ts` and `tests/attachDiscovery.test.ts` are
   // renderer code and belong to the web project: importing the store here would
   // drag `window` into a project whose lib is deliberately Node-only.
-  "exclude": ["tests/rendererStore.test.ts", "tests/attachDiscovery.test.ts"],
+  // `tests/commandMarks.test.ts` likewise: xterm's typings carry
+  // `/// <reference lib="dom"/>`, and one import of them here put the DOM lib -
+  // without its iterable half - under every e2e spec, which broke one that
+  // spreads a NodeList.
+  "exclude": ["tests/rendererStore.test.ts", "tests/attachDiscovery.test.ts", "tests/commandMarks.test.ts"],
   "include": [
     "src/main/**/*.ts",
     "src/preload/**/*.ts",

@@ -42,6 +42,17 @@ test skips by name on a machine without it — and neither has a terminal opened
 a remote host, which is the same code bundled into the host and is where it most
 needs seeing: one shell pane on a real server, a failing command, a red bar.
 
+**The unified view has run with `cmd.exe`, Git for Windows' bash and Windows
+PowerShell on this machine**: blocks in order between agent turns, a running
+command growing in place, `?`, `!` and the mode key (`tests/e2e/unified.spec.ts`
+for the default shell, the others by hand). One thing did not work and is not
+ours to fix: Git for Windows' `vim`, started at the emulator's sixteen rows,
+keeps them after the pane gives it the whole height. The pty *is* resized — a
+program that asks after the switch is told 43 rows — but an msys program
+already running is not told it changed. A Linux kernel delivers `SIGWINCH`, so
+on a server it should redraw; that is unseen, along with everything else here on
+a remote host.
+
 **The second model provider has never called the vendor, and will not here.**
 The `anthropic` adapter exists to validate the provider boundary — one
 implementation is not an abstraction — and it did that, finding two places where

@@ -604,3 +604,13 @@ body,
 .term-mark[data-state='fail']::before {
   background-color: var(--color-state-fail);
 }
+
+/*
+ * The shell's window in the session view (`LiveShell.tsx`). The emulator is
+ * shown through a clipping box that follows the prompt and the running command,
+ * so its own scrollbar would be a bar for a history the box is deliberately not
+ * showing — finished commands are read in the scrollback above.
+ */
+.live-shell .xterm-viewport {
+  overflow-y: hidden;
+}

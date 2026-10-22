@@ -102,7 +102,7 @@ import '@xterm/xterm/css/xterm.css';
  * is a selection nobody can read. Inverting is what a character screen did with
  * a selection anyway, and it reads on every palette here.
  */
-function terminalTheme(): {
+export function terminalTheme(): {
   background: string;
   foreground: string;
   cursor: string;
@@ -206,7 +206,7 @@ export function Shell({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(mount);
-    const marks = markCommands(term, setCommands);
+    const marks = markCommands(term, { summary: setCommands });
 
     /**
      * Measure, and refuse to act on a measurement that cannot be right.
