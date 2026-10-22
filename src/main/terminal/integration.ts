@@ -51,15 +51,21 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { machineRoot } from '../../host/machine.js';
 import type { IntegrationLevel } from '@shared/terminal/marks.js';
 
 export type ShellKind = 'bash' | 'zsh' | 'powershell' | 'cmd';
 
-/** Which shell a file is, by its name; `null` for one this cannot teach. */
+/**
+ * Which shell a file is, by its name; `null` for one this cannot teach.
+ *
+ * Split on both separators rather than with `path.basename`, which on Linux
+ * and macOS does not treat a backslash as one — so `C:\...\pwsh.exe` was a
+ * file called all of that, and CI on those machines said so.
+ */
 export function shellKind(file: string): ShellKind | null {
-  const name = basename(file).toLowerCase().replace(/\.exe$/u, '');
+  const name = (file.split(/[\\/]/u).pop() ?? '').toLowerCase().replace(/\.exe$/u, '');
   if (name === 'bash') return 'bash';
   if (name === 'zsh') return 'zsh';
   if (name === 'pwsh' || name === 'powershell') return 'powershell';
@@ -199,9 +205,14 @@ if ($null -eq $global:__agbrteOriginalPrompt) {
     $out += "$e]133;B$b"
     $out
   }
-  if (Get-Module -Name PSReadLine) {
+  # PSReadLine's own function, wrapped rather than re-implemented. This called
+  # [PSConsoleReadLine]::ReadLine directly, which PSReadLine 2.3 (pwsh 7.4)
+  # answers with an empty line at once, for ever: the prompt looped without
+  # waiting for a key. Its function knows its own signature.
+  $global:__agbrteReadLine = $function:PSConsoleHostReadLine
+  if ($null -ne $global:__agbrteReadLine) {
     function global:PSConsoleHostReadLine {
-      $line = [Microsoft.PowerShell.PSConsoleReadLine]::ReadLine($Host.Runspace, $ExecutionContext)
+      $line = [string](& $global:__agbrteReadLine)
       $e = [char]27; $b = [char]7
       $safe = $line.Replace('\', '\\').Replace(';', '\x3b').Replace([string][char]10, '\x0a').Replace([string][char]13, '\x0d')
       [Console]::Write("$e]633;E;$safe$b$e]133;C$b")

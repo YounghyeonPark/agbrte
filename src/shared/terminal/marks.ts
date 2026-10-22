@@ -110,19 +110,36 @@ export interface Block {
 /** The end of a long output is kept rather than its start: that is where an error is. */
 export const DEFAULT_MAX_OUTPUT = 256 * 1024;
 
-/** Strip what a terminal draws but a reader of the text does not see. */
+/**
+ * Strip what a terminal draws but a reader of the text does not see.
+ *
+ * A carriage return goes back to the start of the line and what follows writes
+ * *over* it, as on a screen. Dropping `\r` instead kept every state a progress
+ * bar passed through, and kept zsh's end-of-line mark — a `%` and a line of
+ * spaces it prints after any output and then rubs out with `\r` — as part of
+ * the output it follows. Trailing spaces on a line are not something a reader
+ * can see either, so they go.
+ */
 export function plainText(raw: string): string {
-  let out = '';
+  const lines: string[][] = [[]];
+  let col = 0;
   for (const ch of raw
     // CSI (colours, cursor moves), OSC (titles, marks), and two-byte escapes.
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, '')
     .replace(/\u001b\][^\u0007\u001b]*(\u0007|\u001b\\)/gu, '')
     .replace(/\u001b[@-Z\\-_]/gu, '')) {
-    if (ch === '\b') out = out.slice(0, -1);
-    else if (ch === '\r') continue;
-    else out += ch;
+    const line = lines[lines.length - 1]!;
+    if (ch === '\n') {
+      lines.push([]);
+      col = 0;
+    } else if (ch === '\r') col = 0;
+    else if (ch === '\b') col = Math.max(0, col - 1);
+    else {
+      line[col] = ch;
+      col += 1;
+    }
   }
-  return out;
+  return lines.map((line) => Array.from(line, (ch) => ch ?? ' ').join('').trimEnd()).join('\n');
 }
 
 type Region = 'idle' | 'prompt' | 'input' | 'output';

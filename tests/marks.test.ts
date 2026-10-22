@@ -172,4 +172,10 @@ describe('plain text', () => {
     expect(plainText(`${ESC}[31mred${ESC}[0m and ${ESC}[1;32mgreen${ESC}[0m`)).toBe('red and green');
     expect(plainText('a\r\nb')).toBe('a\nb');
   });
+
+  it('writes over a line a carriage return went back to, as a screen does', () => {
+    // A progress bar, and zsh's end-of-line mark rubbed out after an output.
+    expect(plainText('10%\r50%\r100% done')).toBe('100% done');
+    expect(plainText(`yes\r\n${ESC}[7m%${ESC}[27m${' '.repeat(20)}\r \r`)).toBe('yes\n');
+  });
 });

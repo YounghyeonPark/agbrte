@@ -16,6 +16,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BlockStream, plainText, type Block } from '../src/shared/terminal/marks.js';
@@ -177,6 +178,25 @@ function workspace(): { root: string; sub: string } {
 }
 
 const bash = spawnPty === null ? null : findBash();
+/**
+ * Whether this bash has `PS0`, which is what reports the exact line (4.4 and
+ * later). macOS still ships 3.2 as `/bin/bash`, and CI runs there: a 3.2 bash
+ * gets prompts and status but no output mark, so its line is read off the echo.
+ */
+const bashHasPs0 = ((): boolean => {
+  if (bash === null) return false;
+  try {
+    const [major, minor] = execFileSync(bash, ['-c', 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'], {
+      encoding: 'utf8',
+    })
+      .trim()
+      .split(' ')
+      .map(Number);
+    return (major ?? 0) > 4 || ((major ?? 0) === 4 && (minor ?? 0) >= 4);
+  } catch {
+    return false;
+  }
+})();
 const powershell =
   spawnPty === null
     ? null
@@ -204,24 +224,26 @@ describe.skipIf(bash === null)(`bash, for real (${bash ?? 'not on this machine'}
       await s.ready();
       expect(s.raw).toContain('mine> ');
 
-      expect(await s.run('cd "sub dir"')).toMatchObject({ command: 'cd "sub dir"', commandFrom: 'exact', exitCode: 0 });
+      const from = bashHasPs0 ? 'exact' : 'echo';
+      expect(await s.run('cd "sub dir"')).toMatchObject({ command: 'cd "sub dir"', commandFrom: from, exitCode: 0 });
       const pwd = await s.run('pwd');
       // The shell is one shell: the `cd` above is still in force.
-      expect(pwd.output).toMatch(/sub dir$/u);
+      expect(plainText(pwd.output)).toMatch(/sub dir$/u);
       expect(await s.run('false')).toMatchObject({ command: 'false', exitCode: 1 });
       expect(await s.run('(exit 42)')).toMatchObject({ exitCode: 42 });
       // A `;` inside the line survives the escaping it travels in.
-      expect(await s.run('echo "a;b" \\\\x')).toMatchObject({ command: 'echo "a;b" \\\\x', commandFrom: 'exact' });
-      expect((await s.run('echo $FROM_BASHRC')).output).toBe('yes');
-      expect(Number((await s.run('echo $USER_HOOK')).output)).toBeGreaterThan(1);
+      expect(await s.run('echo "a;b" \\\\x')).toMatchObject({ command: 'echo "a;b" \\\\x', commandFrom: from });
+      expect(plainText((await s.run('echo $FROM_BASHRC')).output)).toBe('yes');
+      expect(Number(plainText((await s.run('echo $USER_HOOK')).output))).toBeGreaterThan(1);
       /*
        * A line history did not record (`ignorespace`) has no exact line to
        * report. What must not happen is reporting the *previous* command in its
        * place, which reading `history 1` without checking would do.
        */
       const hidden = await s.run(' echo hidden');
-      expect(hidden).toMatchObject({ command: 'echo hidden', commandFrom: 'echo', output: 'hidden' });
-      expect(s.stream.level).toBe('full');
+      expect(hidden).toMatchObject({ command: 'echo hidden', commandFrom: 'echo' });
+      expect(plainText(hidden.output)).toBe('hidden');
+      expect(s.stream.level).toBe(bashHasPs0 ? 'full' : 'prompt');
     } finally {
       s.close();
     }
@@ -241,12 +263,14 @@ describe.skipIf(powershell === null)(`PowerShell, for real (${powershell ?? 'not
         commandFrom: 'exact',
         exitCode: 0,
       });
-      expect((await s.run('(Get-Location).Path')).output).toMatch(/sub dir$/u);
+      expect(plainText((await s.run('(Get-Location).Path')).output)).toMatch(/sub dir$/u);
       // A native program's status, which PowerShell keeps in LASTEXITCODE.
       expect(await s.run('cmd /c exit 3')).toMatchObject({ exitCode: 3 });
       // A failed cmdlet has no number of its own; failure is still failure.
       expect((await s.run('Get-Item nowhere-at-all')).exitCode).not.toBe(0);
-      expect(await s.run("Write-Output 'a;b'")).toMatchObject({ command: "Write-Output 'a;b'", output: 'a;b', exitCode: 0 });
+      const both = await s.run("Write-Output 'a;b'");
+      expect(both).toMatchObject({ command: "Write-Output 'a;b'", exitCode: 0 });
+      expect(plainText(both.output)).toBe('a;b');
     } finally {
       s.close();
     }
@@ -283,9 +307,14 @@ describe.skipIf(zsh === null)(`zsh, for real (${zsh ?? 'not on this machine'})`,
     try {
       await s.ready();
       expect(await s.run('cd "sub dir"')).toMatchObject({ command: 'cd "sub dir"', commandFrom: 'exact', exitCode: 0 });
-      expect((await s.run('pwd')).output).toMatch(/sub dir$/u);
+      /*
+       * Read as a person reads it. zsh follows every output with its end-of-line
+       * mark — a `%`, a line of spaces, and a carriage return that rubs them out
+       * — and the raw block carries all of it.
+       */
+      expect(plainText((await s.run('pwd')).output).trim()).toMatch(/sub dir$/u);
       expect(await s.run('false')).toMatchObject({ exitCode: 1 });
-      expect((await s.run('echo $FROM_ZSHRC')).output).toBe('yes');
+      expect(plainText((await s.run('echo $FROM_ZSHRC')).output).trim()).toBe('yes');
     } finally {
       s.close();
     }
