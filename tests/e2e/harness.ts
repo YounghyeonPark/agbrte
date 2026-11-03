@@ -62,7 +62,7 @@ export async function launch(...workspaces: string[]): Promise<LaunchedApp> {
  * of them care.
  */
 export async function launchWith(
-  seed: { endpoints?: unknown },
+  seed: { endpoints?: unknown; ui?: 'terminal' | 'classic' },
   ...workspaces: string[]
 ): Promise<LaunchedApp> {
   if (workspaces.length === 0) throw new Error('launch needs at least one workspace');
@@ -88,6 +88,12 @@ export async function launchWith(
   // — the production default is minutes, which is right for a person and wrong
   // for a test that makes a dozen throwaway workspaces.
   env['AGBRTE_HOST_LINGER_MS'] = '3000';
+  /*
+   * Which interface the window opens on (§17 Q24). The app opens on a terminal
+   * now; the suite was written against the sidebar and the session view, which
+   * are still there, so it asks for them. A test of the terminal asks for that.
+   */
+  env['AGBRTE_UI'] = seed.ui ?? 'classic';
   /*
    * Its own machine directory, per launch (§8).
    *
@@ -177,7 +183,11 @@ export async function launchWith(
   // `data-testid`, not a styling class: the previous `.app` selector broke on a
   // pure restyle and reported it as five failing tests.
   try {
-    await window.waitForSelector('[data-testid=app]');
+    // The classic view's root, or the terminal's (§17 Q24) — whichever this
+    // launch asked for (`AGBRTE_UI`).
+    await window.waitForSelector(
+      seed.ui === 'terminal' ? '[data-testid=terminal-app]' : '[data-testid=app]',
+    );
   } catch (err) {
     /*
      * Everything that distinguishes the possible causes, in one message.

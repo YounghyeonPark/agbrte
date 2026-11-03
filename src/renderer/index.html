@@ -33,10 +33,23 @@
       that reaches the DOM cannot become a network call or an executed script.
       `unsafe-inline` for style is Vite's dev-server requirement; script-src is
       not relaxed.
+
+      `blob:` for images only: a picture a program draws in the terminal is
+      shown from an object URL this page made from the bytes in the stream
+      (`terminalImages.ts`). It names nothing outside the page — a blob URL can
+      only be minted by this document — so it opens no channel a remote origin
+      would. `media-src blob:` for the same reason and the same source: a video
+      or a sound a program sends to the terminal is played from bytes in the
+      stream, never fetched from a place the program names.
+
+      `agbrte-media:` for both, for a file the host streams (Q24 step 5): the
+      app's own scheme, answered in main from the pane's host by a token the host
+      gave out (`mediaProtocol.ts`). Like `blob:`, it reaches no remote origin and
+      names no path.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws://localhost:* http://localhost:*"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: agbrte-media:; media-src blob: agbrte-media:; font-src 'self'; connect-src 'self' ws://localhost:* http://localhost:*"
     />
   </head>
   <body>

@@ -33,6 +33,79 @@ browser or a remote machine's desktop to a remote-desktop client.
 
 ## What is not proven, named rather than glossed
 
+**The terminal with the agent in it has run on Windows only.** cmd.exe, Git for
+Windows' bash and PowerShell, in the app (`tests/e2e/terminal.spec.ts` with the
+default shell, the others by hand) and in unit tests of the routing. It has not
+run on Linux or macOS, nor on a remote host, where the agent and the shell are
+both on the server and only the screen travels. And `agbrte attach` on a real
+terminal — the CLI's half — has been exercised only through its routing tests,
+not in Windows Terminal, iTerm or tmux.
+
+**The app opens on that terminal, in tabs**, on Windows (`tests/e2e/tabs.spec.ts`).
+Settings, the inbox, workflows and attaching a host are still the classic view,
+reached from the palette; nothing of them has been rebuilt for the terminal yet.
+
+**Pictures in the terminal have been drawn from a script, in `cmd.exe`, on
+Windows** (`tests/e2e/images.spec.ts`): iTerm2's, a sixel and kitty's in chunks,
+through Windows' pseudoconsole. No real `imgcat`, `chafa`, `img2sixel` or
+`icat` has been run against it, and none of the programs that decide by asking
+the terminal (device attributes, kitty's query) — on Windows the pseudoconsole
+may answer those questions itself before they reach the app. The agent's own
+pictures in the terminal are proven by unit tests of the routing only: the echo
+agent the end-to-end suite uses produces none.
+
+**A picture from a program that is not ours still leaves cmd.exe and PowerShell
+out of step on Windows.** The terminal makes a picture's rows itself, and the
+pseudoconsole never sees those line feeds, so it draws the next prompt where it
+thinks the cursor is — rows up, over the picture. Our own `agbrte show` feeds
+the rows itself and is right (`rows=`, `terminalImages.ts`); the script in the
+pictures test is not, and that test checks the line the script printed, not the
+prompt after it. Git Bash, and every shell on Linux and macOS, have no
+pseudoconsole to disagree, but have not been looked at for this.
+
+**Video and sound have played in `cmd.exe` on Windows** (`tests/e2e/media.spec.ts`):
+`agbrte play` and `agbrte show` typed at the tab's prompt, through the launcher
+the host puts on the shell's PATH and the CLI under the app's own Electron — a
+WAV, a WebM the page recorded itself, and a PNG, each loaded by the browser,
+with the prompt after each one where it belongs. Not run: an MP4 or MP3 (the
+H.264, AAC and MP3 decoders are in Electron's Chromium, and nothing here has
+played one), the launcher from PowerShell or Git Bash, `agbrte play` on Linux or
+macOS or over ssh, and a player scrolled half off the screen, which is placed by
+hand and has only been seen whole. Replies read aloud in a tab are proven as far
+as the switch and the speaker icon on the tab; nothing in the suite makes the
+machine talk, so the speech itself was not heard.
+
+**Streaming has played from this machine's host only.** A 40 MB WAV past the
+inline cap, `agbrte show` in `cmd.exe`, loaded with its true length and sought
+to 2,400 seconds of 2,500; a 64 KB-plus PNG beside it (`tests/e2e/media.spec.ts`).
+The point of the step is a host across ssh, and **nothing has streamed from a
+remote host yet** — the path is the same code on both ends, which is the shape
+that has hidden four remote-only bugs before (CLAUDE.md). It needs exercising on
+a server: `agbrte play` of a large file in a tab on that host, seeking, and a
+tab left open long enough for the ssh link to drop and come back. An MP4 has not
+been streamed either; one with its index at the end makes the player read the
+end first, which ranges allow and nothing here has watched happen.
+
+**Opening a streamed file still blocks the host for as long as the open and a
+1 MB read take.** A FIFO, a UNC path and a device path are refused before that
+(an independent review's findings, `mediaOffers.ts`); a slow local mount — NFS,
+sshfs, a cloud-storage placeholder — is not, and stalls every session on the
+machine while it answers. The cmd.exe launcher still passes its arguments
+through `%*`, the npm-shim exposure: a hostile filename with `&` in it, passed
+unquoted from PowerShell, runs as a command.
+
+**The host's output buffer can still cut a large picture a program sends
+itself.** A pane holds 256 KB of output between sends and drops the oldest past
+it (`MAX_PENDING_BYTES`), which for a multi-megabyte inline picture from `imgcat`
+or a script is likely to be the start of the sequence — base64 on the screen.
+`agbrte show` no longer sends anything that large inline in the app's shell, so
+this is reasoned from the code, not seen, and not fixed for other programs.
+
+**One end-to-end failure in the media spec was not explained.** In two runs of
+about thirty, the video player was missing after `agbrte show clip.webm`; it
+did not happen again in forty runs, alone or with the spec's other tests. The
+assertion now prints what was on screen if it does.
+
 **Command boundaries have run in four shells on one Windows machine.** Git for
 Windows' bash 5.3, Windows PowerShell 5.1 with PSReadLine, and `cmd.exe`, each in
 a real pty, with the exact line, the exit status and a `cd` that is still in force

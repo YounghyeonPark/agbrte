@@ -1039,6 +1039,27 @@ export class HostConnection extends EventEmitter {
     return this.call<boolean>({ t: 'shell.input', shellId, data });
   }
 
+  /**
+   * A range of a file a pane of this client's is streaming (v39), or `null`.
+   * Not `require`: a host too old for this never gave out a token to ask with.
+   */
+  async shellMedia(
+    shellId: string,
+    token: string,
+    offset: number,
+    length: number,
+  ): Promise<{ size: number; mime: string; data: Buffer } | null> {
+    if (!this.supports('shell.media')) return null;
+    const got = await this.call<{ size: number; mime: string; data: string } | null>({
+      t: 'shell.media',
+      shellId,
+      token,
+      offset,
+      length,
+    });
+    return got === null ? null : { size: got.size, mime: got.mime, data: Buffer.from(got.data, 'base64') };
+  }
+
   async resizeShell(shellId: string, cols: number, rows: number): Promise<boolean> {
     this.require('shell.resize');
     return this.call<boolean>({ t: 'shell.resize', shellId, cols, rows });

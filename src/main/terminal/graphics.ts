@@ -27,6 +27,9 @@
  * that mostly also accept the iTerm2 form.
  */
 
+import { imageSize } from '@shared/terminal/imageSize.js';
+import { mediaType } from '@shared/terminal/mediaType.js';
+
 /** What the terminal on the other end has said about itself. */
 export type TerminalGraphics = 'kitty' | 'iterm2' | 'none';
 
@@ -61,19 +64,61 @@ export function detectGraphics(env: NodeJS.ProcessEnv = process.env): TerminalGr
   }
   if (env['TERM_PROGRAM'] === 'WezTerm') return 'kitty';
   if (env['TERM_PROGRAM'] === 'iTerm.app' || env['LC_TERMINAL'] === 'iTerm2') return 'iterm2';
+  /*
+   * The app's own terminal (§17 Q24 step 3), which draws all three; iTerm2's
+   * form because it is one sequence and the app's emulator reads it whole
+   * whatever its size. `LC_TERMINAL` as well as `TERM_PROGRAM` for the reason
+   * iTerm2 sets both: ssh forwards `LC_*` by default and nothing else, so a
+   * shell in the app that sshes somewhere still says what is drawing it.
+   */
+  if (env['TERM_PROGRAM'] === 'Agbrte' || env['LC_TERMINAL'] === 'Agbrte') return 'iterm2';
   return 'none';
 }
 
-/** Bytes the terminal will draw, or `null` when it would draw nothing useful. */
+/**
+ * Whether the terminal plays a video or a sound sent the way a picture is
+ * (§17 Q24 step 4) — which only the app's own does. Declared the same way and
+ * for the same reason as pictures: iTerm2 given an MP4 in its file sequence
+ * draws a broken-picture icon, so the bytes go only where they will play.
+ */
+export function playsMedia(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (detectGraphics(env) === 'none') return false;
+  return env['TERM_PROGRAM'] === 'Agbrte' || env['LC_TERMINAL'] === 'Agbrte';
+}
+
+/**
+ * A video or a sound in iTerm2's sequence, with `autoplay=1` when it should
+ * start on its own. `rows`: see `inlineImage`.
+ */
+export function inlineMedia(
+  bytes: Uint8Array,
+  opts: { name?: string; autoplay?: boolean; rows?: number } = {},
+): string {
+  return iterm2(Buffer.from(bytes).toString('base64'), bytes.length, opts.name, {
+    extra: opts.autoplay === true ? ['autoplay=1'] : [],
+    ...(opts.rows !== undefined ? { rows: opts.rows } : {}),
+  });
+}
+
+/**
+ * Bytes the terminal will draw, or `null` when it would draw nothing useful.
+ *
+ * `rows` is for Agbrte's terminal only: the picture is drawn `rows` tall and
+ * the line feeds it takes are written here, after the sequence, rather than
+ * made by the terminal — the only way Windows' pseudoconsole learns that the
+ * cursor moved (`terminalImages.ts`, "Rows the sender feeds").
+ */
 export function inlineImage(
   bytes: Uint8Array,
-  opts: { name?: string; graphics?: TerminalGraphics } = {},
+  opts: { name?: string; graphics?: TerminalGraphics; rows?: number } = {},
 ): string | null {
   const graphics = opts.graphics ?? detectGraphics();
   if (graphics === 'none') return null;
 
   const b64 = Buffer.from(bytes).toString('base64');
-  return graphics === 'kitty' ? kitty(b64) : iterm2(b64, bytes.length, opts.name);
+  return graphics === 'kitty'
+    ? kitty(b64)
+    : iterm2(b64, bytes.length, opts.name, opts.rows !== undefined ? { rows: opts.rows } : {});
 }
 
 /**
@@ -82,14 +127,22 @@ export function inlineImage(
  * `inline=1` is what separates "draw this" from "offer it as a download", and
  * the size is required — iTerm2 uses it to know when the payload is complete.
  */
-function iterm2(b64: string, size: number, name?: string): string {
+function iterm2(
+  b64: string,
+  size: number,
+  name?: string,
+  opts: { extra?: string[]; rows?: number } = {},
+): string {
   const args = [
     'inline=1',
     `size=${size}`,
     ...(name !== undefined ? [`name=${Buffer.from(name).toString('base64')}`] : []),
+    ...(opts.extra ?? []),
+    ...(opts.rows !== undefined ? [`height=${opts.rows}`, `rows=${opts.rows}`] : []),
   ].join(';');
-  // `\x1b]` opens the OSC; `\x07` (BEL) closes it.
-  return `\x1b]1337;File=${args}:${b64}\x07\n`;
+  // `\x1b]` opens the OSC; `\x07` (BEL) closes it. Then the line feeds: the
+  // picture's own when this side feeds them, else the one after it.
+  return `\x1b]1337;File=${args}:${b64}\x07${'\n'.repeat(opts.rows ?? 1)}`;
 }
 
 /** Kitty's chunked form: 4096 base64 characters per escape, `m=1` until the last. */
@@ -106,4 +159,33 @@ function kitty(b64: string): string {
     out += `\x1b_G${control};${piece}\x1b\\`;
   }
   return `${out}\n`;
+}
+
+/**
+ * A blob the session holds, drawn — or `null` where it is not a picture.
+ *
+ * A tool's result blob can be anything (a PDF, a log), and the event does not
+ * say which; the first bytes do (`imageSize`), so a non-picture is passed over
+ * rather than sent to a terminal that would say it cannot read it.
+ */
+export function drawPicture(bytes: Uint8Array, graphics: TerminalGraphics, name?: string): string | null {
+  if (imageSize(bytes) === null) return null;
+  return inlineImage(bytes, { graphics, ...(name !== undefined ? { name } : {}) });
+}
+
+/**
+ * The same for anything the terminal can put on a line: a picture, or — where
+ * `media` says the terminal plays them (`playsMedia`) — a video or a sound, as
+ * a player that waits to be pressed (§17 Q24 step 4). An agent's tool that
+ * returns a recording is the case; it is never started on its own, because the
+ * agent producing a sound is not the person asking to hear it.
+ */
+export function drawBlob(
+  bytes: Uint8Array,
+  graphics: TerminalGraphics,
+  opts: { name?: string; media: boolean },
+): string | null {
+  const picture = drawPicture(bytes, graphics, opts.name);
+  if (picture !== null || !opts.media || mediaType(bytes) === null) return picture;
+  return inlineMedia(bytes, opts.name !== undefined ? { name: opts.name } : {});
 }

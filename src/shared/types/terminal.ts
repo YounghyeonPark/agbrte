@@ -54,4 +54,19 @@ export type ShellProgram =
    * at a session **it** can name — the client sends no path, no argv and no id
    * that is not already a session on that host.
    */
-  | { kind: 'agbrte' };
+  | { kind: 'agbrte' }
+  /**
+   * **The person's shell with the agent in it** (§17 Q24) — what a tab is.
+   *
+   * The machine's own shell, exactly as `{kind:'shell'}` starts it, with the
+   * session's agent woven into the same terminal by the host: `?` on an empty
+   * prompt sends one message, the mode key switches, `!` runs a line from the
+   * agent's prompt (`src/main/terminal/mux/session.ts`). Done by the host
+   * rather than by a program in the pty because the program would have to be
+   * our own CLI under Electron, and on Windows Electron cannot be a terminal
+   * program at all (`programs.ts`, `needsShellRelay`).
+   *
+   * Like `agbrte`, what is sent to the agent from here is a real turn in the
+   * session's log; what is typed to the shell is not.
+   */
+  | { kind: 'terminal' };

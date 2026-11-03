@@ -78,6 +78,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { SHELL_SCROLLBACK, type ShellDto } from '@shared/ipc/contract.js';
 import { markCommands, type CommandSummary } from './commandMarks.js';
+import { showImages } from './terminalImages.js';
 import type { ShellProgram } from '../shared/types/index.js';
 import '@xterm/xterm/css/xterm.css';
 
@@ -143,6 +144,7 @@ export function Shell({
   program,
   /** Shown in the label so a person knows which machine they are typing on. */
   hostLabel,
+  bare = false,
 }: {
   sessionId: string;
   instanceId: string;
@@ -160,6 +162,12 @@ export function Shell({
    */
   program: ShellProgram;
   hostLabel: string;
+  /**
+   * Without the header row: the terminal and nothing else. A tab (`Root.tsx`)
+   * says what it is in its own title and the palette, and a terminal window
+   * that prefaced itself with a paragraph would not read as a terminal.
+   */
+  bare?: boolean;
 }): JSX.Element {
   const mountRef = useRef<HTMLDivElement>(null);
   const [shell, setShell] = useState<ShellDto | null>(null);
@@ -177,7 +185,7 @@ export function Shell({
    * which is the only time this effect should run again.
    */
   const wanted =
-    program.kind === 'cli' ? `cli:${program.cliId}` : program.kind === 'agbrte' ? 'agbrte' : 'shell';
+    program.kind === 'cli' ? `cli:${program.cliId}` : program.kind;
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -216,11 +224,33 @@ export function Shell({
       // a command's bar sits on its line (`commandMarks.ts`). Nothing else here
       // uses a proposed API.
       allowProposedApi: true,
+      /*
+       * The window's size in pixels and a cell's, when a program asks
+       * (`CSI 14 t`, `CSI 16 t`). Off by default in xterm.js as a fingerprinting
+       * guard for a terminal on a web page; here it is how a sixel program —
+       * `chafa`, `img2sixel` — scales a picture to the pane rather than to a
+       * guess (`terminalImages.ts`).
+       */
+      windowOptions: { getWinSizePixels: true, getCellSizePixels: true },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(mount);
     const marks = markCommands(term, { summary: setCommands });
+    // Pictures in the output (Q24 step 3). Its answers to a program's questions
+    // go back the way keys do, so a shell over ssh hears them too.
+    const images = showImages(term, {
+      reply: (data) => term.input(data, false),
+      /*
+       * Where a file the host is streaming plays from (step 5): main's
+       * `agbrte-media:` scheme, which reads ranges from this pane's host. Only
+       * the app's own window has it; a browser client says it cannot.
+       */
+      stream: (token) =>
+        opened === null || !navigator.userAgent.includes('Electron/')
+          ? null
+          : `agbrte-media://pane/${encodeURIComponent(opened.shellId)}/${encodeURIComponent(token)}`,
+    });
 
     /**
      * Measure, and refuse to act on a measurement that cannot be right.
@@ -316,8 +346,9 @@ export function Shell({
 
     const offData = window.agbrte.on.shell((chunk) => {
       if (opened === null || chunk.shellId !== opened.shellId) return;
-      // Straight through. No state, no array, no render.
-      term.write(chunk.data);
+      // Straight through, less the pictures, which are drawn on the cells they
+      // took. No state, no array, no render.
+      term.write(images.write(chunk.data));
     });
 
     const offExit = window.agbrte.on.shellExit((exit) => {
@@ -353,6 +384,7 @@ export function Shell({
       offExit();
       typed.dispose();
       marks.dispose();
+      images.dispose();
       // The PTY dies with the pane. Awaiting it would be pointless — nothing is
       // left to tell — and the host closes it anyway when this client goes.
       if (opened !== null) void window.agbrte.shell.close(opened.shellId).catch(() => undefined);
@@ -369,7 +401,9 @@ export function Shell({
       ? program.cliId
       : program.kind === 'agbrte'
         ? 'Agbrte CLI'
-        : 'Your shell');
+        : program.kind === 'terminal'
+          ? 'Your shell, with the agent'
+          : 'Your shell');
 
   return (
     <div data-testid="pty-terminal" className="flex min-h-0 flex-1 flex-col">
@@ -384,6 +418,7 @@ export function Shell({
           this transcript, and are in `events.jsonl` afterwards. Repeating
           "nothing here enters the transcript" over a pane that is appending to
           it would be the one lie in the pane whose label carries a promise. */}
+      {!bare && (
       <div className="border-line text-muted flex shrink-0 flex-wrap items-baseline gap-x-2 border-b px-6 py-2 text-[11px]">
         <span data-testid="pty-running" className="text-ink font-medium">
           {running}
@@ -393,7 +428,9 @@ export function Shell({
             ? 'you are driving this yourself — it is not a seat in this session, and nothing here enters the transcript or the session log'
             : program.kind === 'agbrte'
               ? 'Agbrte’s own client, attached to this session — what you send here is a real turn: it queues with the chat pane’s, and it is in the transcript and the session log'
-              : 'you are typing, not the agent — nothing here enters the transcript or the session log'}
+              : program.kind === 'terminal'
+                ? '? on an empty prompt asks the agent once · Ctrl+Space switches to it · what you send the agent is a turn in this session; your commands are not recorded'
+                : 'you are typing, not the agent — nothing here enters the transcript or the session log'}
         </span>
         {/* What the shell was taught to say about its commands, and — once one
             has finished — how many ran and how many failed. Silent for a program
@@ -414,6 +451,7 @@ export function Shell({
           </span>
         )}
       </div>
+      )}
 
       {error !== null && (
         <p data-testid="pty-error" className="text-state-fail px-6 py-3 text-xs">

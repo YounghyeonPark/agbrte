@@ -211,13 +211,31 @@ test.describe('your own terminal', () => {
           timeout: 90_000,
           message: 'the Agbrte CLI never attached in the pane',
         })
-        .toMatch(/type to send/);
+        .toMatch(/type to send|your shell, with the agent in it/);
       const attached = await screen(agbrte.window);
       expect(attached).toContain('read-write');
       expect(attached).not.toContain('number, or Enter for a new session');
 
+      /*
+       * Which client this is depends on whether the CLI got a real terminal.
+       * Under Electron on Windows it cannot (`programs.ts`, `needsShellRelay`),
+       * so it is the line client and every line is a turn. Elsewhere it is the
+       * shell with the agent in it (§17 Q24), where keys go to the shell until
+       * `?` on an empty prompt — so the shell's prompt has to be there first,
+       * and every shell's prompt shows the folder the pane opened in.
+       */
       const marker = `from-the-pane-${Date.now().toString(36)}`;
       await pane.click();
+      if (attached.includes('agent in it')) {
+        const folder = repo.split(/[\\/]/).pop()!;
+        await expect
+          .poll(async () => (await screen(agbrte.window)).split('agent in it')[1] ?? '', {
+            timeout: 60_000,
+            message: 'the shell inside the Agbrte CLI never drew its prompt',
+          })
+          .toContain(folder);
+        await agbrte.window.keyboard.type('?');
+      }
       await agbrte.window.keyboard.type(marker);
       await agbrte.window.keyboard.press('Enter');
 

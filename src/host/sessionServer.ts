@@ -30,7 +30,8 @@ import { runWorkflowDocument } from '@main/workflowStart.js';
 import { readSchedules, writeSchedules } from '@main/store/schedules.js';
 import type { EndpointModels, ModelInstallProgress } from '@shared/host/protocol.js';
 import type { PreviewServers } from '@main/preview/servers.js';
-import type { Shells } from '@main/terminal/shell.js';
+import type { AgentBinding, Shells } from '@main/terminal/shell.js';
+import { drawBlob } from '@main/terminal/graphics.js';
 import {
   deleteTemplate,
   fromSession,
@@ -56,6 +57,7 @@ import {
   type InstanceId,
   type LineageId,
   type McpServerConfig,
+  type AgbrteEvent,
   type PermissionRequest,
   type Session,
   type DisplayFrame,
@@ -1580,6 +1582,12 @@ export class SessionHostServer {
             ...(command.program !== undefined ? { program: command.program } : {}),
             ...(command.cols !== undefined ? { cols: command.cols } : {}),
             ...(command.rows !== undefined ? { rows: command.rows } : {}),
+            // The shell with the agent in it (§17 Q24) is the one program that
+            // needs the session itself, and it gets it as this client: a turn
+            // sent from the terminal is this person's, attributed as theirs.
+            ...(command.program?.kind === 'terminal'
+              ? { agent: this.agentBinding(client, command.sessionId as SessionId) }
+              : {}),
           });
         }
 
@@ -1599,6 +1607,19 @@ export class SessionHostServer {
             command.cols,
             command.rows,
           );
+
+        case 'shell.media': {
+          // No `requireWrite`: a read, of a file the person asked this pane to
+          // show — and only by the client that owns the pane (`Shells.media`).
+          const got = await this.shells(client).media(
+            client.shellOwner,
+            command.shellId,
+            command.token,
+            command.offset,
+            command.length,
+          );
+          return got === null ? null : { size: got.size, mime: got.mime, data: got.data.toString('base64') };
+        }
 
         case 'shell.close':
           this.requireWrite(client, 'close a terminal');
@@ -2046,6 +2067,65 @@ export class SessionHostServer {
    * bundle, and that one is refused deeper down by `ShellUnavailable`, which
    * carries the same class of message for the same reason.
    */
+  /**
+   * The session, as a `{kind:'terminal'}` pane needs it (`AgentBinding`).
+   *
+   * Every call goes through the manager with this client's actor, exactly as
+   * the same command over the socket would — the terminal is a way of typing,
+   * not a second route into the session. The agent is looked up at each send
+   * rather than once, because a pane can be opened on a session whose seat is
+   * filled afterwards.
+   */
+  private agentBinding(client: Client, sessionId: SessionId): AgentBinding {
+    const manager = this.opts.manager;
+    const seat = (): AgentId => {
+      const agent = manager.get(sessionId).agents.find((a) => a.status !== 'retired');
+      if (agent === undefined) {
+        throw new Error(
+          'this session has no agent yet — choose one first (in the app: Ctrl+Shift+P, "Choose the agent")',
+        );
+      }
+      return agent.agentId;
+    };
+    return {
+      link: {
+        send: (text) =>
+          manager.send(sessionId, seat(), { content: [{ type: 'text', text }] }, client.actor),
+        interrupt: () => manager.interrupt(sessionId, undefined, client.actor),
+        respond: (requestId, decision) => manager.respondPermission(requestId, decision, client.actor),
+        /*
+         * The agent's pictures, in the terminal they are about (§17 Q24 step
+         * 3). Read from this host's own store — the blob is beside the shell —
+         * and drawn in iTerm2's form, which the app's emulator reads whole; the
+         * client on the other end of a `{kind:'terminal'}` pane is always that
+         * emulator. Ungated for the reason `blob.get` is: a client that can
+         * read the transcript can see the screenshot it is about. A blob that
+         * is a video or a sound gets a player instead (step 4), never started
+         * on its own.
+         */
+        picture: async ({ sha256, mime }) => {
+          const bytes = await manager.readBlob(sessionId, sha256 as Sha256, mime);
+          return bytes === null ? null : drawBlob(bytes, 'iterm2', { name: sha256.slice(0, 12), media: true });
+        },
+      },
+      subscribe: (on) => {
+        const onEvent = (id: SessionId, event: unknown): void => {
+          if (id === sessionId) on.event(event as AgbrteEvent);
+        };
+        const onPermission = (request: unknown): void => {
+          if ((request as PermissionRequest).sessionId === sessionId) on.permission(request as PermissionRequest);
+        };
+        manager.on('event', onEvent);
+        manager.on('permission', onPermission);
+        return () => {
+          manager.off('event', onEvent);
+          manager.off('permission', onPermission);
+        };
+      },
+      pending: () => manager.pendingPermissions().filter((r) => r.sessionId === sessionId),
+    };
+  }
+
   private shells(client: Client): Shells<ShellOwner> {
     const found = client.workspace?.shells ?? this.opts.shells;
     if (found === undefined) {

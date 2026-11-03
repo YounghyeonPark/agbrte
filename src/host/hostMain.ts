@@ -832,6 +832,10 @@ const invokedDirectly =
   process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 
 if (invokedDirectly) {
+  // A host started from inside a pane (`npm run dev` in an Agbrte tab) would
+  // otherwise pass that pane's streaming key to every agent tool it runs; the key
+  // is a bearer for that pane only (`mediaOffers.ts`).
+  delete process.env['AGBRTE_PANE_KEY'];
   const workspaceRoot = process.argv[2] ?? process.env['AGBRTE_WORKSPACE_ROOT'];
   if (workspaceRoot === undefined) {
     process.stderr.write('usage: agbrte-host <workspace-root>\n');

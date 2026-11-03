@@ -22,6 +22,7 @@ import { delimiter, dirname, join } from 'node:path';
 import { installStrayPipeGuard } from './strayPipeRead.js';
 import { shippingStamp } from './bundleStamp.js';
 import { revealWhenReady } from './revealWindow.js';
+import { handleMediaScheme, registerMediaScheme } from './mediaProtocol.js';
 import { registerIpc } from './ipc/register.js';
 import { PRODUCT_DESCRIPTION, PUSH } from '@shared/ipc/contract.js';
 import { Notifier } from './notify.js';
@@ -143,6 +144,9 @@ if (process.platform !== 'darwin') Menu.setApplicationMenu(null);
  */
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
+
+// Streamed players in the terminal (§17 Q24 step 5); must be declared before `ready`.
+registerMediaScheme();
 
 let fleet: Fleet | null = null;
 /**
@@ -434,7 +438,14 @@ async function createWindow(): Promise<void> {
     await win.loadURL(DEV_URL);
     win.webContents.openDevTools({ mode: 'detach' });
   } else {
-    await win.loadFile(join(HERE, '../renderer/index.html'));
+    // `AGBRTE_UI=classic` opens on the sidebar and session view rather than
+    // the terminal (`Root.tsx`); the end-to-end suite written against that
+    // view asks for it.
+    const ui = process.env['AGBRTE_UI'];
+    await win.loadFile(
+      join(HERE, '../renderer/index.html'),
+      ui === 'classic' || ui === 'terminal' ? { query: { ui } } : undefined,
+    );
   }
 }
 
@@ -445,6 +456,8 @@ app.whenReady().then(async () => {
   // guard exists to prevent, alive for a moment.
   if (!primary) return;
   fleet = buildFleet();
+  const built = fleet;
+  handleMediaScheme((shellId, token, offset, length) => built.shellMedia(shellId, token, offset, length));
 
   // `AGBRTE_WORKSPACE_ROOT` lets a test — or a developer — start attached to a
   // known folder. Several may be given, separated by the platform's path

@@ -352,6 +352,22 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  *
+ * ## v39 adds `shell.media`, so a player can ask for the part being watched
+ *
+ * A video in the terminal was carried in the pane's output, whole (§17 Q24
+ * step 4). From a host across an ssh link that is every byte before the prompt
+ * after it, and a burst larger than the pane's output buffer loses its start.
+ * So `agbrte show` in a pane asks the host to stream the file instead, the
+ * host answers in the output with a token (`mediaOffers.ts`), and the client's
+ * player reads ranges by that token — a megabyte at a time, wherever the person
+ * seeks.
+ *
+ * A read, and owned like a keystroke: only the client whose pane gave out the
+ * token is answered, and a token from another pane is `null`. A v38 host is
+ * never asked, because it never gives out a token — the key that lets the CLI
+ * ask for one is put in a shell's environment by a v39 host only, and without
+ * it the CLI sends the file in the stream as before.
+ *
  * ## v38 adds `display.approve`, because Wayland is allowed to say no
  *
  * v37 reads an **X** display with `xwd`, and under a Wayland session the X server
@@ -961,7 +977,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 38;
+export const SESSION_PROTOCOL_VERSION = 39;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -1052,6 +1068,7 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'display.list': 37,
   'display.grab': 37,
   'display.approve': 38,
+  'shell.media': 39,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -1677,6 +1694,12 @@ export type SessionCommand =
   | { t: 'shell.resize'; id: RequestId; shellId: string; cols: number; rows: number }
   /** The pane closed. The PTY goes with it — it is a view, not durable work. */
   | { t: 'shell.close'; id: RequestId; shellId: string }
+  /**
+   * A range of a file this client's pane was asked to stream (v39), by the
+   * token the pane's output carried. Answers `{ size, mime, data }` with
+   * `data` base64 and at most 1 MB, or `null`.
+   */
+  | { t: 'shell.media'; id: RequestId; shellId: string; token: string; offset: number; length: number }
   /**
    * One directory of the workspace, on the machine that owns it (§6.6).
    *

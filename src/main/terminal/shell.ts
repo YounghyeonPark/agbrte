@@ -84,10 +84,30 @@
  */
 
 import { createRequire } from 'node:module';
-import { TERM_NAME, TerminalPrograms, terminalEnv } from './programs.js';
-import { integrate } from './integration.js';
-import type { ShellProgram } from '@shared/types/index.js';
+import { TERM_NAME, TerminalPrograms, findAgbrteCli, terminalEnv } from './programs.js';
+import { integrate, integrationDir } from './integration.js';
+import { type CliLauncher, withOnPath, writeLaunchers } from './cliOnPath.js';
+import { MediaOffers, newPaneKey, OfferFilter, PANE_KEY_ENV } from './mediaOffers.js';
+import type { AgbrteEvent, PermissionRequest, ShellProgram } from '@shared/types/index.js';
 import type { IntegrationLevel } from '@shared/terminal/marks.js';
+import { TerminalSession, type AgentLink } from './mux/session.js';
+import { ansiStyle } from './mux/markdown.js';
+
+/**
+ * The session a `{kind:'terminal'}` pane talks to, supplied by whoever owns the
+ * session — the session server, which knows the client's actor and the manager.
+ * `Shells` stays free of both: it is handed the three things a terminal needs.
+ */
+export interface AgentBinding {
+  link: AgentLink;
+  /** Deliver this session's events and permission requests from now on; returns the unsubscribe. */
+  subscribe(on: {
+    event(e: AgbrteEvent): void;
+    permission(r: PermissionRequest): void;
+  }): () => void;
+  /** Requests already waiting when the pane opened. */
+  pending(): PermissionRequest[];
+}
 
 /** What one open terminal looks like to whoever is holding it. */
 export interface ShellHandle {
@@ -219,6 +239,10 @@ interface Running<Owner> {
   pending: string;
   timer: NodeJS.Timeout | null;
   exited: boolean;
+  /** For `{kind:'terminal'}`: the agent woven into this shell, and how to stop listening. */
+  mux?: { session: TerminalSession; unsubscribe: () => void };
+  /** Files this pane was asked to stream (`mediaOffers.ts`), for a taught shell. */
+  offers?: MediaOffers;
 }
 
 /**
@@ -288,6 +312,46 @@ export function shellsStatus(): { available: boolean; reason?: string } {
   }
 }
 
+/**
+ * The pty spawner, for the one other process that needs a pseudoterminal: the
+ * terminal client, which keeps the person's shell inside it (`src/cli/terminal`).
+ * Same lazy load and the same refusal, so "no terminal here" reads the same from
+ * either place.
+ */
+export function ptySpawner(): PtySpawner {
+  return loadSpawner();
+}
+
+/**
+ * Say, to everything started in a pane, which terminal is drawing it.
+ *
+ * Every pane opened here is drawn by the app's emulator — the desktop window or
+ * the web client, the same renderer — and since it draws pictures (§17 Q24
+ * step 3), programs that decide by environment whether to send one need to be
+ * told: `agbrte attach` (`graphics.ts`), and `viu`, `timg` and friends, which
+ * know `TERM_PROGRAM`. `Agbrte` because that is what it is; claiming
+ * `iTerm.app` would get pictures from more programs and would also get the
+ * escape sequences iTerm2 has that this terminal does not.
+ *
+ * `LC_TERMINAL` for ssh, which forwards `LC_*` and nothing else, so a shell
+ * here that sshes somewhere still says what is drawing it — iTerm2 sets it for
+ * the same reason. And the variables another terminal set about *itself* are
+ * removed: a host started from kitty or iTerm2 would otherwise pass that
+ * terminal's claims to a pane that is not it.
+ *
+ * Not in `terminalEnv`: the standalone client uses that too, and there the
+ * terminal is whatever the person ran it in.
+ */
+function appTerminal(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const key of ['TERM_PROGRAM_VERSION', 'LC_TERMINAL_VERSION', 'KITTY_WINDOW_ID', 'KITTY_PID', 'ITERM_SESSION_ID']) {
+    delete out[key];
+  }
+  out['TERM_PROGRAM'] = 'Agbrte';
+  out['LC_TERMINAL'] = 'Agbrte';
+  return out;
+}
+
 function loadSpawner(): PtySpawner {
   if (cached !== undefined) return cached;
 
@@ -316,6 +380,22 @@ function loadSpawner(): PtySpawner {
         // Windows only, ignored elsewhere: hide the helper console window that
         // ConPTY would otherwise flash on screen.
         windowsHide: true,
+        /*
+         * Windows only: the pseudoconsole that ships with the pty module
+         * (`conpty.dll` + `OpenConsole.exe`), not the one in the OS.
+         *
+         * The OS's keeps its own copy of the screen and repaints from it with
+         * absolute cursor moves. That is harmless while the program is the only
+         * thing writing to the terminal, and wrong the moment anything else
+         * draws there too — which a pane with the agent in it does by design
+         * (`mux/session.ts`). The repaint landed `git status` on top of the
+         * agent's reply, its lines out of order. The bundled one passes the
+         * program's output through as written, and the same steps drew
+         * correctly. `AGBRTE_CONPTY_DLL=0` goes back to the system's.
+         */
+        ...(process.platform === 'win32' && process.env['AGBRTE_CONPTY_DLL'] !== '0'
+          ? { useConptyDll: true }
+          : {}),
       });
     return cached;
   } catch (err) {
@@ -336,6 +416,31 @@ function loadSpawner(): PtySpawner {
 export class Shells<Owner extends object = object> {
   private readonly running = new Map<string, Running<Owner>>();
   private counter = 0;
+  /** The launcher directory, once looked for: a path, `null` for none, `undefined` before the first shell. */
+  private launcher: string | null | undefined;
+
+  /**
+   * Where a taught shell finds `agbrte`, written on the first shell that needs
+   * it. Failing to write it costs the shell nothing but the command, so a
+   * read-only home is a shell without `agbrte` rather than no shell.
+   */
+  private launcherDir(): string | null {
+    if (this.launcher !== undefined) return this.launcher;
+    let cli = this.opts.cli;
+    if (cli === undefined) {
+      const entry = findAgbrteCli(undefined, this.opts.env ?? process.env);
+      cli =
+        entry === null
+          ? null
+          : { execPath: process.execPath, entry, electron: process.versions.electron !== undefined };
+    }
+    try {
+      this.launcher = cli === null ? null : writeLaunchers(this.opts.integrationDir ?? integrationDir(), cli);
+    } catch {
+      this.launcher = null;
+    }
+    return this.launcher;
+  }
 
   constructor(
     private readonly workspaceRoot: string,
@@ -362,6 +467,12 @@ export class Shells<Owner extends object = object> {
        * temporary one rather than writing into somebody's `~/.agbrte`.
        */
       integrationDir?: string;
+      /**
+       * The CLI a taught shell finds as `agbrte` (`cliOnPath.ts`). Absent means
+       * the bundle beside this host, run by this host's runtime; `null` puts
+       * nothing on the PATH.
+       */
+      cli?: CliLauncher | null;
       /** Injectable so a test drives time rather than sleeping through it. */
       setTimer?: (fn: () => void, ms: number) => NodeJS.Timeout;
       clearTimer?: (h: NodeJS.Timeout) => void;
@@ -380,8 +491,19 @@ export class Shells<Owner extends object = object> {
    */
   open(
     owner: Owner,
-    opts?: { program?: ShellProgram; cols?: number; rows?: number; sessionId?: string },
+    opts?: {
+      program?: ShellProgram;
+      cols?: number;
+      rows?: number;
+      sessionId?: string;
+      /** Required for `{kind:'terminal'}`, ignored otherwise. */
+      agent?: AgentBinding;
+    },
   ): ShellHandle {
+    const kind = opts?.program?.kind ?? 'shell';
+    if (kind === 'terminal' && opts?.agent === undefined) {
+      throw new ShellUnavailable('this host cannot put an agent in a terminal for this connection');
+    }
     // Resolved before the spawner is loaded: a refusal for an undetected CLI
     // should say so on a machine with no pty module either, and loading first
     // would answer the wrong question first.
@@ -407,7 +529,7 @@ export class Shells<Owner extends object = object> {
      * would put a per-program exception in the function whose whole value is
      * that it has none.
      */
-    const base = { ...terminalEnv(this.opts.env ?? process.env), ...chosen.env };
+    const base = { ...appTerminal(terminalEnv(this.opts.env ?? process.env)), ...chosen.env };
     /*
      * Only the person's shell is taught to mark its commands. A CLI draws its own
      * interface and our own client is not a shell; giving either a startup
@@ -416,13 +538,30 @@ export class Shells<Owner extends object = object> {
      * `null` shell, which is why `integration` below is conditional.
      */
     const taught =
-      (opts?.program?.kind ?? 'shell') === 'shell'
+      kind === 'shell' || kind === 'terminal'
         ? integrate(chosen, {
             env: base,
             ...(this.opts.integrationDir !== undefined ? { dir: this.opts.integrationDir } : {}),
           })
         : null;
-    const env = { ...base, ...(taught?.env ?? {}) };
+    const shellEnv = { ...base, ...(taught?.env ?? {}) };
+    /*
+     * And `agbrte` on its PATH, so `agbrte show` and `agbrte play` can be typed
+     * in the terminal that plays what they send (`cliOnPath.ts`). For the
+     * shells that were taught only: the same switch turns both off, and a CLI
+     * has no use for a launcher of ours.
+     */
+    const launcher = taught !== null && taught.shell !== null ? this.launcherDir() : null;
+    /*
+     * And the key that lets `agbrte show` in this shell ask the host to stream
+     * a file (`mediaOffers.ts`): only where the launcher is, because the CLI
+     * that uses it is the one the launcher runs.
+     */
+    const paneKey = launcher === null ? null : newPaneKey();
+    const env =
+      launcher === null || paneKey === null
+        ? shellEnv
+        : { ...withOnPath(shellEnv, launcher), [PANE_KEY_ENV]: paneKey };
     const cols = clamp(opts?.cols ?? DEFAULT_COLS);
     const rows = clamp(opts?.rows ?? DEFAULT_ROWS);
 
@@ -447,9 +586,58 @@ export class Shells<Owner extends object = object> {
       env,
     });
     const entry: Running<Owner> = { handle, pty, owner, pending: '', timer: null, exited: false };
+    /*
+     * The program's output, with requests to stream a file answered in place.
+     * Before everything else that reads it — the routing and the coalescer —
+     * so what they see is what the client will.
+     */
+    let output = (data: string): string => data;
+    if (paneKey !== null) {
+      const offers = new MediaOffers();
+      const filter = new OfferFilter(paneKey, offers);
+      entry.offers = offers;
+      output = (data) => filter.write(data);
+    }
     this.running.set(shellId, entry);
 
-    pty.onData((data) => this.absorb(entry, data));
+    if (kind === 'terminal' && opts?.agent !== undefined) {
+      /*
+       * The shell, with the agent woven in by this process. Keystrokes and
+       * output both pass through `TerminalSession`, which hands each key to the
+       * shell or to the agent and draws the agent's side between the shell's
+       * prompts. What reaches the client is a terminal's bytes like any other
+       * pane — the client needs to know nothing about agents to show it.
+       */
+      const agent = opts.agent;
+      const session = new TerminalSession({
+        out: (bytes) => this.absorb(entry, bytes),
+        columns: () => entry.handle.cols,
+        rows: () => entry.handle.rows,
+        // Windows' pseudoconsole repaints by absolute position; see `resync`.
+        resync: process.platform === 'win32',
+        shell: pty,
+        integration: taught?.level ?? 'none',
+        agent: agent.link,
+        style: ansiStyle,
+        // The pty's own exit ends the pane, below; nothing more to do here.
+        exit: () => undefined,
+      });
+      const unsubscribe = agent.subscribe({
+        event: (e) => session.event(e),
+        permission: (r) => session.permission(r),
+      });
+      entry.mux = { session, unsubscribe };
+      pty.onData((data) => {
+        const shown = output(data);
+        if (shown !== '') session.shellOutput(shown);
+      });
+      for (const request of agent.pending()) session.permission(request);
+    } else {
+      pty.onData((data) => {
+        const shown = output(data);
+        if (shown !== '') this.absorb(entry, shown);
+      });
+    }
     pty.onExit(({ exitCode, signal }) => {
       /*
        * Only for a program that ended on its own.
@@ -461,11 +649,16 @@ export class Shells<Owner extends object = object> {
        * here" workaround. `exited` is set before the kill for exactly this.
        */
       if (entry.exited) return;
+      if (entry.mux !== undefined) {
+        entry.mux.session.shellExited(exitCode);
+        entry.mux.unsubscribe();
+      }
       // Flushed first: the last thing a failing command prints is the reason it
       // failed, and losing it to the exit that it caused is the one gap nobody
       // can work around.
       this.flush(entry);
       entry.exited = true;
+      entry.offers?.closeAll();
       this.running.delete(shellId);
       this.opts.onExit(
         { shellId, exitCode, ...(signal !== undefined ? { signal } : {}) },
@@ -480,7 +673,8 @@ export class Shells<Owner extends object = object> {
   write(owner: Owner, shellId: string, data: string): boolean {
     const entry = this.owned(owner, shellId);
     if (entry === null) return false;
-    entry.pty.write(data);
+    if (entry.mux !== undefined) entry.mux.session.input(data);
+    else entry.pty.write(data);
     return true;
   }
 
@@ -489,8 +683,27 @@ export class Shells<Owner extends object = object> {
     if (entry === null) return false;
     entry.handle.cols = clamp(cols);
     entry.handle.rows = clamp(rows);
-    entry.pty.resize(entry.handle.cols, entry.handle.rows);
+    if (entry.mux !== undefined) entry.mux.session.resize(entry.handle.cols, entry.handle.rows);
+    else entry.pty.resize(entry.handle.cols, entry.handle.rows);
     return true;
+  }
+
+  /**
+   * A range of a file this pane was asked to stream (`mediaOffers.ts`), for
+   * the client whose pane it is — and `null` for anyone else, or a token this
+   * pane did not give out. Owned like a keystroke is: the token travels in the
+   * pane's output, and the output is this client's.
+   */
+  async media(
+    owner: Owner,
+    shellId: string,
+    token: string,
+    offset: number,
+    length: number,
+  ): Promise<{ size: number; mime: string; data: Buffer } | null> {
+    const entry = this.owned(owner, shellId);
+    if (entry === null || entry.offers === undefined) return null;
+    return await entry.offers.read(token, offset, length);
   }
 
   /** Close one. The pane going away is the ordinary reason. */
@@ -540,6 +753,8 @@ export class Shells<Owner extends object = object> {
 
   private destroy(entry: Running<Owner>): void {
     this.running.delete(entry.handle.shellId);
+    entry.mux?.unsubscribe();
+    entry.offers?.closeAll();
     if (entry.timer !== null) {
       (this.opts.clearTimer ?? clearTimeout)(entry.timer);
       entry.timer = null;

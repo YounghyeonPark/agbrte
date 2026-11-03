@@ -69,6 +69,10 @@ export const KNOWN_COMMANDS = new Set([
   'group',
   'ungroup',
   'workflows',
+  // Dispatched before `parse` (their arguments are files), and listed so a
+  // mistyped verb is told they exist.
+  'show',
+  'play',
 ]);
 
 /** Flags that consume the next argument; everything else is a boolean. */

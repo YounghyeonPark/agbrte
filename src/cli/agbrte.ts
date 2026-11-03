@@ -66,6 +66,8 @@ const USAGE = `agbrte — an agent workbench, at a terminal
   agbrte interrupt [path]       stop whatever is running here
   agbrte stop [path]            ask the host to exit; refuses while work is running
   agbrte update [path]          restart the host onto this build's bundle
+  agbrte show <file>…           draw a picture, or put a video or sound on the line
+  agbrte play <file>…           the same, playing — video and sound in Agbrte's terminal
   agbrte --version
 
 Path defaults to the current directory. A host is started if none is running,
@@ -77,6 +79,13 @@ Options for attach:
                               This is how the app's terminal pane runs \`agbrte\`
                               against the session you are already looking at.
   --yes                       allow every permission request
+  --plain                     the line client only: no shell inside, even on a
+                              terminal. A pipe always gets this.
+
+On a terminal, attach runs your shell with the agent in it: type commands as
+usual; ? on an empty prompt sends one message to the agent; Ctrl+Space (or
+Ctrl+\`) switches to the agent until pressed again; a line starting with ! from
+the agent's prompt runs in the shell.
 
 Options for web:
   --port <n>                  default 7717
@@ -261,6 +270,16 @@ async function main(): Promise<number> {
     // happens to be standing in a Node project.
     process.stdout.write(`${AGBRTE_VERSION}\n`);
     return 0;
+  }
+
+  /*
+   * Before the parser, because what follows the verb is files, not a workspace:
+   * `parse` would take an existing file for the folder to open, which is the
+   * shape of the `agbrte update` bug `KNOWN_COMMANDS` describes.
+   */
+  if (argv[0] === 'show' || argv[0] === 'play') {
+    const { show } = await import('./show.js');
+    return await show(argv.slice(1), { play: argv[0] === 'play' });
   }
 
   const { command, path: requested, rest, flags, value, mistypedCommand } = parse(argv);
@@ -875,6 +894,7 @@ async function main(): Promise<number> {
         return await attach(connection, {
           path,
           autoApprove: flags.has('--yes'),
+          plain: flags.has('--plain'),
           // Absent means "ask which one", which is right at a real terminal and
           // wrong inside the app's pane — that pane is already showing a
           // session, so it names it. See `AttachOptions.sessionId`.

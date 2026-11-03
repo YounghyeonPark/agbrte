@@ -614,6 +614,54 @@ body,
 }
 
 /*
+ * One row of a picture in the terminal (`terminalImages.ts`): the image as the
+ * row's background, offset by the row, so the rows together are the picture.
+ * Clicks and drags go through to the terminal, so text can still be selected
+ * across a picture. A picture that could not be decoded leaves its rows dim
+ * rather than empty, so the space it took is explained.
+ */
+.term-image {
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+.term-image[data-failed='true'] {
+  background-color: var(--color-panel);
+}
+
+/*
+ * Players in the terminal (`terminalImages.ts`, Q24 step 4). The layer covers
+ * the screen and clips to it, so a player half scrolled off is cut where text
+ * would be; it passes the pointer through except over a player, whose
+ * controls are its own. Above the decorations (6 and 7 in xterm's sheet), so
+ * a picture's row next to a player cannot cover its controls.
+ */
+.term-media-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 8;
+}
+.term-media {
+  position: absolute;
+  pointer-events: auto;
+}
+.term-media video,
+.term-media audio,
+.term-media img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.term-media video {
+  background-color: #000;
+  object-fit: contain;
+}
+.term-media[data-failed='true'] {
+  background-color: var(--color-panel);
+}
+
+/*
  * The shell's window in the session view (`LiveShell.tsx`). The emulator is
  * shown through a clipping box that follows the prompt and the running command,
  * so its own scrollbar would be a bar for a history the box is deliberately not

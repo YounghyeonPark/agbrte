@@ -166,9 +166,31 @@ export class BlockStream {
   private reported: string | null = null;
   private seen = new Set<Mark['kind']>();
   private exitKnown = false;
+  private prompts = 0;
 
   constructor(opts: { maxOutput?: number } = {}) {
     this.maxOutput = opts.maxOutput ?? DEFAULT_MAX_OUTPUT;
+  }
+
+  /**
+   * Where the shell is between its marks: `input` from the end of a prompt
+   * until the line is accepted, `output` while a command runs. A shell that
+   * marks only its prompts (`cmd.exe`) stays in `input` while its command runs,
+   * so a caller asking "is it waiting for a line" must also know whether a line
+   * was sent since — the terminal client tracks that from the keys it forwards.
+   */
+  get position(): 'idle' | 'prompt' | 'input' | 'output' {
+    return this.region;
+  }
+
+  /**
+   * How many prompts have ended so far (`B` marks). Compared before and after a
+   * push, it says a prompt was drawn even when the position reads the same on
+   * both sides — `cmd.exe` never leaves `input`, so its next prompt is visible
+   * only as another `B`.
+   */
+  get promptCount(): number {
+    return this.prompts;
   }
 
   /** What this terminal has shown it can do so far. */
@@ -252,6 +274,7 @@ export class BlockStream {
         this.region = 'prompt';
         return null;
       case 'input':
+        this.prompts += 1;
         this.region = 'input';
         this.input = '';
         this.output = '';

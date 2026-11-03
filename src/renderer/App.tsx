@@ -1042,6 +1042,15 @@ export function App(): JSX.Element {
   const shellChoices: ShellChoice[] = [
     agentCli,
     {
+      key: 'terminal',
+      label: 'Terminal',
+      program: { kind: 'terminal' as const },
+      hint:
+        `Your shell on ${activeHost?.label ?? 'this host'} with the agent in it — ? on an empty ` +
+        'prompt asks the agent once, Ctrl+Space switches to it. What you send the agent is a turn ' +
+        'in this session; the commands you run are not recorded',
+    },
+    {
       key: 'shell',
       label: 'Shell',
       program: { kind: 'shell' as const },

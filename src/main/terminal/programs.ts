@@ -431,6 +431,9 @@ export const TERM_NAME = 'xterm-256color';
  */
 export const AGBRTE_CLI_LABEL = 'Agbrte CLI';
 
+/** What a tab running `{kind:'terminal'}` is called. */
+export const TERMINAL_LABEL = 'Your shell, with the agent';
+
 /**
  * The environment a terminal's program gets.
  *
@@ -449,13 +452,17 @@ export const AGBRTE_CLI_LABEL = 'Agbrte CLI';
  *    which is measurable rather than hopeful: a real `claude` in this pane emits
  *    `38;2;r;g;b` and it renders.
  *
- * Nothing else is scrubbed. A terminal whose environment does not match the rest
+ * Nothing else is scrubbed but one thing of ours: `AGBRTE_PANE_KEY`, which a
+ * host puts in a shell it starts (`mediaOffers.ts`) and which must not reach a
+ * pane started by a host that was itself run from inside one — the key is that
+ * pane's, and is a bearer. A terminal whose environment does not match the rest
  * of the machine is a terminal that cannot be used to debug the machine, which
  * is most of what people open one for.
  */
 export function terminalEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base };
   delete env['ELECTRON_RUN_AS_NODE'];
+  delete env['AGBRTE_PANE_KEY'];
   env['TERM'] = TERM_NAME;
   return env;
 }
@@ -546,6 +553,13 @@ export class TerminalPrograms {
       case 'shell': {
         const name = defaultShell(this.env);
         return { ...this.locate(name, shellMissing(name)), label: 'Your shell' };
+      }
+
+      // The same shell; the agent is the host's doing (`Shells.open`), not an
+      // argument to the program.
+      case 'terminal': {
+        const name = defaultShell(this.env);
+        return { ...this.locate(name, shellMissing(name)), label: TERMINAL_LABEL };
       }
 
       case 'cli': {

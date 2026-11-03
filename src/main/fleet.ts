@@ -1691,6 +1691,18 @@ export class Fleet extends EventEmitter {
     return entry.connection.writeShell(shellId, data);
   }
 
+  /** A range of a file a pane is streaming, routed by `shellId` like a keystroke. */
+  async shellMedia(
+    shellId: string,
+    token: string,
+    offset: number,
+    length: number,
+  ): Promise<{ size: number; mime: string; data: Buffer } | null> {
+    const entry = this.shellHost(shellId);
+    if (entry === null) return null;
+    return await entry.connection.shellMedia(shellId, token, offset, length);
+  }
+
   async resizeShell(shellId: string, cols: number, rows: number): Promise<boolean> {
     const entry = this.shellHost(shellId);
     if (entry === null) return false;

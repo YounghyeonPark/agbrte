@@ -28,8 +28,9 @@
 import { createInterface, type Interface } from 'node:readline';
 import type { HostConnection } from '@main/host/hostConnection.js';
 import type { AgentId, AgbrteEvent, PermissionRequest, Session, SessionId } from '@shared/types/index.js';
-import { detectGraphics, inlineImage } from './graphics.js';
+import { detectGraphics, inlineImage } from '@main/terminal/graphics.js';
 import { c, preview } from './format.js';
+import { canRunTerminal, runTerminal } from './terminal/run.js';
 
 export interface AttachOptions {
   path: string;
@@ -50,6 +51,11 @@ export interface AttachOptions {
    * disagree.
    */
   sessionId?: string;
+  /**
+   * The line client even on a real terminal: no shell inside, readline for the
+   * agent's line. `--plain`, for a terminal the full client draws badly on.
+   */
+  plain?: boolean;
 }
 
 export async function attach(connection: HostConnection, opts: AttachOptions): Promise<number> {
@@ -118,6 +124,24 @@ export async function attach(connection: HostConnection, opts: AttachOptions): P
   if (agentId === null) {
     rl.close();
     return 1;
+  }
+
+  /*
+   * On a real terminal, the shell and the agent in one (§17 Q24). readline is
+   * closed first: it owns stdin while it lives, and the terminal client reads
+   * the keys itself so it can hand them to the shell.
+   */
+  if (opts.plain !== true && canRunTerminal()) {
+    rl.close();
+    say(c.dim('your shell, with the agent in it — ? on an empty prompt asks once · Ctrl+Space switches · ! runs a line from the agent'));
+    const code = await runTerminal({
+      connection,
+      sessionId: session.sessionId,
+      agentId,
+      cwd: opts.path,
+      autoApprove: opts.autoApprove,
+    });
+    return code;
   }
 
   // From here the session is live: everything the host pushes for it is printed,
