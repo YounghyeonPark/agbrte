@@ -83,11 +83,12 @@
  * cannot open a terminal must still serve every session on it.
  */
 
+import { realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { TERM_NAME, TerminalPrograms, findAgbrteCli, terminalEnv } from './programs.js';
 import { integrate, integrationDir } from './integration.js';
 import { type CliLauncher, withOnPath, writeLaunchers } from './cliOnPath.js';
-import { MediaOffers, newPaneKey, OfferFilter, PANE_KEY_ENV } from './mediaOffers.js';
+import { MediaOffers, newPaneKey, notice, OfferFilter, PANE_KEY_ENV } from './mediaOffers.js';
 import type { AgbrteEvent, PermissionRequest, ShellProgram } from '@shared/types/index.js';
 import type { IntegrationLevel } from '@shared/terminal/marks.js';
 import { TerminalSession, type AgentLink } from './mux/session.js';
@@ -220,6 +221,40 @@ export const MAX_PENDING_BYTES = 256 * 1024;
  */
 const ESC = '\u001b';
 export const TRUNCATION_MARKER = `\r\n${ESC}[33m…[output truncated]…${ESC}[0m\r\n`;
+
+/**
+ * An environment variable whose name says its value is a credential —
+ * `GITHUB_TOKEN`, `OPENAI_API_KEY`, `PGPASSWORD`. A pane's shell inherits them,
+ * `env` prints them, and its value is masked exactly before a command is logged.
+ * A name-based guess like §12.1's shapes, which is why it adds to the host's
+ * exact list rather than standing in for it.
+ */
+const CREDENTIAL_NAME = /KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH/iu;
+
+/**
+ * The folder a grant request names, as the person will be asked about it: its
+ * real path, links and `..` resolved, so the dialog shows the folder that would
+ * be granted and not a spelling of it; and nothing in it that could make the
+ * line read as something else — a control character, or a direction mark that
+ * turns a path around on screen. Found by the review of folder grants.
+ */
+function askable(path: string): { path: string } | { refused: string } {
+  let real: string;
+  try {
+    real = realpathSync.native(path);
+  } catch {
+    return { refused: `no folder ${JSON.stringify(path)} on this machine` };
+  }
+  if (/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(real)) {
+    return { refused: 'a folder whose name holds control or direction characters is not asked about' };
+  }
+  return { path: real };
+}
+
+/** What stands in the pane where `agbrte grant` asked: the window decides. */
+function grantAsked(path: string): string {
+  return notice(`asking the window whether the agent may read and write ${path}`);
+}
 
 /**
  * A sensible default size before the pane has measured itself.
@@ -448,6 +483,11 @@ export class Shells<Owner extends object = object> {
       /** Where coalesced output goes. Called once per flush, never per chunk. */
       onData: (shellId: string, data: string, owner: Owner) => void;
       onExit: (exit: ShellExit, owner: Owner) => void;
+      /**
+       * `agbrte grant` typed in a pane (§17 Q24 step 6): asked of the pane's
+       * owner, never granted here. Absent: the request is refused in the pane.
+       */
+      onGrantRequest?: (shellId: string, path: string, owner: Owner) => void;
       /** Injectable so a test needs no native module and no real shell. */
       spawn?: PtySpawner;
       env?: NodeJS.ProcessEnv;
@@ -594,7 +634,19 @@ export class Shells<Owner extends object = object> {
     let output = (data: string): string => data;
     if (paneKey !== null) {
       const offers = new MediaOffers();
-      const filter = new OfferFilter(paneKey, offers);
+      const ask = this.opts.onGrantRequest;
+      const filter = new OfferFilter(
+        paneKey,
+        offers,
+        ask === undefined
+          ? undefined
+          : (path) => {
+              const real = askable(path);
+              if ('refused' in real) return notice(real.refused);
+              ask(shellId, real.path, owner);
+              return grantAsked(real.path);
+            },
+      );
       entry.offers = offers;
       output = (data) => filter.write(data);
     }
@@ -609,6 +661,26 @@ export class Shells<Owner extends object = object> {
        * pane — the client needs to know nothing about agents to show it.
        */
       const agent = opts.agent;
+      /*
+       * What this pane holds that the host's own list does not, for masking its
+       * commands before they are logged (`shellContext.ts`): the pane key, and
+       * the values of the shell's environment whose names say they are
+       * credentials. The pane key first, and it is the reason this exists — an
+       * independent review found `set` in cmd.exe printed it into the log, the
+       * export and the model's context, the one place `mediaOffers.ts` promises
+       * it never goes.
+       */
+      const paneHeld = [
+        ...(paneKey !== null ? [paneKey] : []),
+        ...Object.entries(env)
+          .filter(([name]) => CREDENTIAL_NAME.test(name))
+          .map(([, value]) => value)
+          .filter((value): value is string => typeof value === 'string'),
+      ];
+      const link: AgentLink =
+        agent.link.record === undefined
+          ? agent.link
+          : { ...agent.link, record: (block, held) => agent.link.record!(block, [...(held ?? []), ...paneHeld]) };
       const session = new TerminalSession({
         out: (bytes) => this.absorb(entry, bytes),
         columns: () => entry.handle.cols,
@@ -617,10 +689,12 @@ export class Shells<Owner extends object = object> {
         resync: process.platform === 'win32',
         shell: pty,
         integration: taught?.level ?? 'none',
-        agent: agent.link,
+        agent: link,
         style: ansiStyle,
         // The pty's own exit ends the pane, below; nothing more to do here.
         exit: () => undefined,
+        // A `{kind:'terminal'}` pane is always shown by the app's window.
+        palette: true,
       });
       const unsubscribe = agent.subscribe({
         event: (e) => session.event(e),

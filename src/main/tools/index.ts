@@ -21,6 +21,8 @@
 import { spawn } from 'node:child_process';
 import { readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { machineRoot } from '../../host/machine.js';
+import { offLimits } from '../policy/offLimits.js';
 import { globMatch, isInsideWorkspace } from '../policy/evaluate.js';
 import { fetchTool, vetScreenshotUrl } from './fetch.js';
 import type { WorkspaceLeases } from './leases.js';
@@ -94,6 +96,12 @@ export interface ToolContext {
    * guessing game, and a list with nothing to read it with is a tease.
    */
   readPeerHistory?(sessionId: string, since?: number): Promise<PeerHistory>;
+  /**
+   * Folders the person granted on this machine, absolute (§17 Q24 step 6). A
+   * path inside one is reached as a path inside the workspace is, read and
+   * write; everywhere else is still refused here, whatever the policy says.
+   */
+  granted?: readonly string[];
 }
 
 export interface ToolResult {
@@ -151,17 +159,46 @@ function fail(summary: string): ToolResult {
   return { ok: false, summary, content: summary };
 }
 
-/** Resolve a model-supplied path, refusing anything outside the workspace. */
+/**
+ * The folder `abs` is reached through: the workspace, or the granted folder
+ * that holds it — the narrowest, so a store guard reads paths from the right
+ * place — or `null` for neither.
+ */
+function rootFor(ctx: ToolContext, abs: string): string | null {
+  if (isInsideWorkspace(ctx.workspaceRoot, abs)) return ctx.workspaceRoot;
+  const holding = (ctx.granted ?? []).filter((g) => isInsideWorkspace(g, abs));
+  return holding.sort((a, b) => b.length - a.length)[0] ?? null;
+}
+
+/**
+ * Resolve a model-supplied path, refusing anything outside the workspace and
+ * the folders the person granted. Relative paths are the workspace's, as they
+ * always were; a granted folder is reached by its absolute path.
+ */
 function confine(ctx: ToolContext, raw: unknown): { path: string } | { error: string } {
   if (typeof raw !== 'string' || raw.length === 0) {
     return { error: 'path must be a non-empty string' };
   }
   const abs = resolve(ctx.workspaceRoot, raw);
-  if (!isInsideWorkspace(ctx.workspaceRoot, abs)) {
+  // The machine directory and a store's credentials, whatever is granted —
+  // the same answer the policy gives a runtime whose tools are its own.
+  const off = offLimits(abs);
+  if (off !== null) return { error: `${raw} is refused: ${off}` };
+  if (rootFor(ctx, abs) === null) {
     // Refused by the tool, not only by policy — see the header.
-    return { error: `path escapes the workspace: ${raw}` };
+    return {
+      error:
+        (ctx.granted ?? []).length > 0
+          ? `path is outside the workspace and every folder the person granted: ${raw}`
+          : `path escapes the workspace: ${raw}`,
+    };
   }
   return { path: abs };
+}
+
+/** How a path is shown: relative inside the workspace, absolute anywhere it was granted. */
+function shown(ctx: ToolContext, abs: string): string {
+  return isInsideWorkspace(ctx.workspaceRoot, abs) ? toPosixRel(ctx.workspaceRoot, abs) : abs;
 }
 
 /**
@@ -217,12 +254,22 @@ const STORE_WRITABLE = new Set(['templates', 'memory']);
  */
 function guardStorePath(root: string, abs: string): string | null {
   const parts = relative(root, abs).split(sep);
-  const [dir, inside] = parts;
-  if (dir === undefined || !STORE_DIRS.includes(dir)) return null;
-  if (inside !== undefined && STORE_WRITABLE.has(inside)) return null;
+  /*
+   * At any depth, not only the top. A granted folder can hold whole other
+   * workspaces — grant `C:\dev` and every checkout under it has a store —
+   * and reading the first segment only would have let a write land in
+   * `agbrte/.agbrte/sessions/<id>/events.jsonl`, another session's record.
+   */
+  // Folded on Windows, where `.AGBRTE` is the same folder and got past.
+  const fold = (p: string): string => (process.platform === 'win32' ? p.toLowerCase() : p);
+  const at = parts.findIndex((part) => STORE_DIRS.includes(fold(part)));
+  if (at === -1) return null;
+  const dir = parts[at]!;
+  const inside = parts[at + 1];
+  if (inside !== undefined && STORE_WRITABLE.has(fold(inside))) return null;
   return (
-    `${parts.join('/')} is Agbrte's own store for this workspace, and writing there would ` +
-    `edit the record this session is kept in. ` +
+    `${parts.join('/')} is Agbrte's own store for a workspace, and writing there would ` +
+    `edit the record a session is kept in. ` +
     `${dir}/templates and ${dir}/memory are yours to write; the rest is not.`
   );
 }
@@ -291,7 +338,7 @@ export const readTool: ToolDefinition = {
         .join('\n');
       return {
         ok: true,
-        summary: `read ${toPosixRel(ctx.workspaceRoot, c.path)} (${text.length} chars)`,
+        summary: `read ${shown(ctx, c.path)} (${text.length} chars)`,
         content: truncate(numbered),
       };
     } catch (err) {
@@ -325,7 +372,7 @@ export const writeTool: ToolDefinition = {
       // The agent now knows what is there, so its next edit is not stale
       // against its own write.
       ctx.leases.noteRead(c.path, ctx.agentId, content);
-      const rel = toPosixRel(ctx.workspaceRoot, c.path);
+      const rel = shown(ctx, c.path);
       return { ok: true, summary: `wrote ${rel} (${content.length} chars)`, content: `Wrote ${rel}.` };
     } catch (err) {
       return fail(`could not write: ${(err as Error).message}`);
@@ -367,7 +414,7 @@ export const editTool: ToolDefinition = {
       const updated = text.replace(oldStr, newStr);
       await writeFile(c.path, updated, 'utf8');
       ctx.leases.noteRead(c.path, ctx.agentId, updated);
-      const rel = toPosixRel(ctx.workspaceRoot, c.path);
+      const rel = shown(ctx, c.path);
       return { ok: true, summary: `edited ${rel}`, content: `Edited ${rel}.` };
     } catch (err) {
       return fail(`could not edit: ${(err as Error).message}`);
@@ -375,23 +422,61 @@ export const editTool: ToolDefinition = {
   },
 };
 
+/**
+ * The folder a search walks: the workspace, or a granted folder named by
+ * `folder` (§17 Q24 step 6). Paths found in a granted folder are given back
+ * absolute, so the agent can hand them straight to `read` and `edit`; the
+ * workspace's stay relative, as they always were.
+ */
+async function searchRoot(
+  ctx: ToolContext,
+  folder: unknown,
+): Promise<{ root: string; name: (abs: string) => string; files: string[] } | { error: string }> {
+  let root = ctx.workspaceRoot;
+  if (folder !== undefined) {
+    const c = confine(ctx, folder);
+    if ('error' in c) return c;
+    root = c.path;
+  }
+  const machine = resolve(machineRoot());
+  // A granted home folder holds the machine directory; the walk skips
+  // `.agbrte` by name, and this catches one `AGBRTE_HOME` put elsewhere.
+  const files = (await walk(root, ctx.signal)).filter((f) => !isInsideWorkspace(machine, f));
+  const inWorkspace = root === ctx.workspaceRoot;
+  return {
+    root,
+    files,
+    name: (abs) => (inWorkspace ? toPosixRel(root, abs) : abs.split(sep).join('/')),
+  };
+}
+
+const FOLDER_ARG = {
+  type: 'string',
+  description: 'Optional: a folder the person granted, by absolute path, to search instead of the workspace',
+};
+
 export const globTool: ToolDefinition = {
   name: 'glob',
   description:
-    'Find files whose workspace-relative path matches a glob pattern (* and ? supported), e.g. "src/**" or "*.ts".',
+    'Find files whose workspace-relative path matches a glob pattern (* and ? supported), e.g. "src/**" or "*.ts". ' +
+    'Give folder to search a granted folder instead; its matches come back as absolute paths.',
   schema: {
     type: 'object',
-    properties: { pattern: { type: 'string' } },
+    properties: { pattern: { type: 'string' }, folder: FOLDER_ARG },
     required: ['pattern'],
     additionalProperties: false,
   },
   async run(args, ctx) {
     const pattern = args['pattern'];
     if (typeof pattern !== 'string') return fail('pattern must be a string');
-    const files = await walk(ctx.workspaceRoot, ctx.signal);
-    const matches = files
-      .map((f) => toPosixRel(ctx.workspaceRoot, f))
-      .filter((rel) => globMatch(pattern, rel) || globMatch(pattern, `./${rel}`))
+    const where = await searchRoot(ctx, args['folder']);
+    if ('error' in where) return fail(where.error);
+    const matches = where.files
+      .filter((f) => {
+        const rel = toPosixRel(where.root, f);
+        return globMatch(pattern, rel) || globMatch(pattern, `./${rel}`);
+      })
+      .map(where.name)
       .sort();
     return {
       ok: true,
@@ -403,12 +488,15 @@ export const globTool: ToolDefinition = {
 
 export const grepTool: ToolDefinition = {
   name: 'grep',
-  description: 'Search workspace file contents for a regular expression. Returns matching lines with paths.',
+  description:
+    'Search workspace file contents for a regular expression. Returns matching lines with paths. ' +
+    'Give folder to search a granted folder instead.',
   schema: {
     type: 'object',
     properties: {
       pattern: { type: 'string', description: 'JavaScript regular expression' },
       path_glob: { type: 'string', description: 'Optional glob to restrict which files are searched' },
+      folder: FOLDER_ARG,
     },
     required: ['pattern'],
     additionalProperties: false,
@@ -424,12 +512,13 @@ export const grepTool: ToolDefinition = {
     }
     const restrict = typeof args['path_glob'] === 'string' ? (args['path_glob'] as string) : null;
 
-    const files = await walk(ctx.workspaceRoot, ctx.signal);
+    const where = await searchRoot(ctx, args['folder']);
+    if ('error' in where) return fail(where.error);
     const hits: string[] = [];
-    for (const file of files) {
+    for (const file of where.files) {
       if (hits.length >= MAX_MATCHES) break;
-      const rel = toPosixRel(ctx.workspaceRoot, file);
-      if (restrict && !globMatch(restrict, rel)) continue;
+      if (restrict && !globMatch(restrict, toPosixRel(where.root, file))) continue;
+      const rel = where.name(file);
       let text: string;
       try {
         if ((await stat(file)).size > 2_000_000) continue;
@@ -1023,13 +1112,13 @@ async function guardWrite(ctx: ToolContext, path: string): Promise<string | null
   // Before the lease, because this is a refusal about the *path* and taking a
   // claim on a file nothing may write would leave a lease behind for a write
   // that was never going to happen.
-  const store = guardStorePath(ctx.workspaceRoot, path);
+  const store = guardStorePath(rootFor(ctx, path) ?? ctx.workspaceRoot, path);
   if (store !== null) return store;
 
   const claim = ctx.leases.acquire(path, ctx.agentId);
   if (!claim.ok) {
     return (
-      `${toPosixRel(ctx.workspaceRoot, path)} is being written by another agent ` +
+      `${shown(ctx, path)} is being written by another agent ` +
       `(${claim.heldBy}) until ${claim.until}. Work on something else and come back to it.`
     );
   }
@@ -1045,7 +1134,7 @@ async function guardWrite(ctx: ToolContext, path: string): Promise<string | null
 
   if (ctx.leases.freshness(path, ctx.agentId, current).state !== 'stale') return null;
   return (
-    `${toPosixRel(ctx.workspaceRoot, path)} has changed since you read it. ` +
+    `${shown(ctx, path)} has changed since you read it. ` +
     `Read it again before writing, or your change will discard someone else's.`
   );
 }

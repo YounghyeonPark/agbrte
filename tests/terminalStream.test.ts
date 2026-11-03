@@ -21,7 +21,8 @@ import {
   PANE_KEY_ENV,
 } from '../src/main/terminal/mediaOffers.js';
 import { answer, parseRange } from '../src/main/mediaRanges.js';
-import { Shells, type Pty, type PtySpawner } from '../src/main/terminal/shell.js';
+import { Shells, type AgentBinding, type Pty, type PtySpawner } from '../src/main/terminal/shell.js';
+import type { Block } from '@shared/terminal/marks.js';
 import { TerminalPrograms } from '../src/main/terminal/programs.js';
 import { show, STREAM_ABOVE } from '../src/cli/show.js';
 
@@ -243,7 +244,8 @@ describe('the pane that streams', () => {
       return pty;
     };
     const screen: string[] = [];
-    const env = { AGBRTE_SHELL: '/bin/bash', PATH: '/usr/bin' };
+    // A credential the shell inherits, for the masking of what it prints.
+    const env = { AGBRTE_SHELL: '/bin/bash', PATH: '/usr/bin', GITHUB_TOKEN: 'ghp_inherited0123456789' };
     const shells = new Shells<object>('/work', {
       onData: (_id, data) => screen.push(data),
       onExit: () => undefined,
@@ -260,6 +262,33 @@ describe('the pane that streams', () => {
     });
     return { shells, ptys, envs, screen };
   }
+
+  it('masks its key and its inherited credentials in what it records', () => {
+    // `set` in cmd.exe printed the pane key into the log, the export and the
+    // model's context — the one place the key is promised never to go.
+    const h = harness();
+    const recorded: Array<{ block: Block; held: readonly string[] }> = [];
+    const agent: AgentBinding = {
+      link: {
+        send: async () => undefined,
+        interrupt: async () => undefined,
+        respond: async () => undefined,
+        record: (block, held) => recorded.push({ block, held: held ?? [] }),
+      },
+      subscribe: () => () => undefined,
+      pending: () => [],
+    };
+    h.shells.open({}, { program: { kind: 'terminal' }, agent });
+    const key = h.envs[0]![PANE_KEY_ENV]!;
+    const osc = (body: string): string => '\u001b]' + body + '\u0007';
+    h.ptys[0]!.data!(osc('133;A') + '$ ' + osc('133;B'));
+    h.ptys[0]!.data!(osc('633;E;env') + osc('133;C') + 'AGBRTE_PANE_KEY=' + key + '\r\n' + osc('133;D;0'));
+    h.ptys[0]!.data!(osc('133;A') + '$ ' + osc('133;B'));
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]!.held).toContain(key);
+    expect(recorded[0]!.held).toContain('ghp_inherited0123456789');
+    expect(recorded[0]!.held).not.toContain('/usr/bin');
+  });
 
   it('gives its shell a key, answers that key’s requests, and reads only for its owner', async () => {
     const h = harness();

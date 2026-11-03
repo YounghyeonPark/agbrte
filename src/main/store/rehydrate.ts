@@ -29,6 +29,7 @@ import type {
   SessionProjection,
 } from '@shared/types/index.js';
 import type { SessionStore, SessionMeta } from './sessionStore.js';
+import { shellRecordOf, terminalContext, type ShellBlockRecord } from '../terminal/shellContext.js';
 
 export interface RehydrateOptions {
   /** Ceiling for the assembled seed. Callers pass `contextWindow * 0.5`. */
@@ -120,9 +121,17 @@ function blockText(block: ContentBlock): string {
 /** Reconstruct conversational turns from the durable log. */
 function turnsFrom(events: readonly AgbrteEvent[]): NormalizedTurn[] {
   const turns: NormalizedTurn[] = [];
+  // The terminal's commands since the previous turn, put in front of the next
+  // one as `runTurn` put them when it was sent (§17 Q23 step 4), so a resumed
+  // seat reads the conversation it actually had.
+  let shell: ShellBlockRecord[] = [];
   for (const ev of events) {
-    if (ev.type === 'user.turn') {
-      turns.push({ role: 'user', content: ev.content });
+    if (ev.type === 'shell.block') {
+      shell.push(shellRecordOf(ev));
+    } else if (ev.type === 'user.turn') {
+      const terminal = terminalContext(shell);
+      shell = [];
+      turns.push({ role: 'user', content: terminal !== null ? [terminal, ...ev.content] : ev.content });
     } else if (ev.type === 'agent.text') {
       const last = turns.at(-1);
       // Consecutive agent text is one turn, matching how it was produced.

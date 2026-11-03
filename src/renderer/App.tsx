@@ -232,7 +232,19 @@ export function quietTone(state: SessionState): string {
 
 export const LABEL = 'text-[10px] uppercase tracking-wider';
 
-export function App(): JSX.Element {
+export function App({
+  seats = true,
+}: {
+  /**
+   * Whether this view seats the remembered agent on a session with none.
+   *
+   * Off while the terminal is showing (`Root.tsx`), which seats its own tabs.
+   * This view stays mounted behind it, and a session made from the terminal's
+   * folder panel becomes this view's open session too — so both seated it at
+   * once, each from a snapshot that showed no agent.
+   */
+  seats?: boolean;
+}): JSX.Element {
   const store = useAgbrte();
   /**
    * Sessions picked out of the rail, and the machine they were picked on.
@@ -755,7 +767,7 @@ export function App(): JSX.Element {
    * host's handshake lands, and the effect re-runs when it does.
    */
   useEffect(() => {
-    if (active === null || active.agents.length > 0) return;
+    if (!seats || active === null || active.agents.length > 0) return;
     /*
      * Never a run root (§4.3, §4.4).
      *
@@ -786,7 +798,7 @@ export function App(): JSX.Element {
       .getState()
       .addAgent(args.runtimeId, args.modelId, args.endpointId)
       .finally(() => setAutoAdding((current) => (current === sessionId ? null : current)));
-  }, [active, hosts, runtimesByHost]);
+  }, [seats, active, hosts, runtimesByHost]);
 
   /**
    * Seat this session's model and, if it landed, remember the choice.
@@ -4117,7 +4129,7 @@ const RUNTIME_LABELS: Readonly<Record<string, string>> = {
   'cli:gemini-cli': 'Gemini CLI (installed)',
 };
 
-function runtimeLabel(id: string): string {
+export function runtimeLabel(id: string): string {
   return RUNTIME_LABELS[id] ?? id;
 }
 
@@ -4205,7 +4217,7 @@ function ModelCapabilities({
  * one machine's steps under the other's name — a wrong sentence, not a missing
  * one.
  */
-function machineFor(
+export function machineFor(
   instanceId: string,
   host: HostInfo | undefined,
 ): {
@@ -4287,7 +4299,7 @@ function SkillsAttached({
  * printed in is gone the moment the agent is seated. So it is also raised as a
  * notice, which survives landing in the chat.
  */
-function AgentPicker({
+export function AgentPicker({
   runtimes,
   notes,
   conformance,

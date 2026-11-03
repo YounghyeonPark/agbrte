@@ -141,6 +141,8 @@ import {
   evaluatePolicy,
   standingGrantAnswers,
 } from './policy/evaluate.js';
+import type { Block } from '@shared/terminal/marks.js';
+import { recordBlock, shellRecordOf, terminalContext, type ShellBlockRecord } from './terminal/shellContext.js';
 
 export interface NewAgentInput {
   role: AgentRole;
@@ -418,6 +420,16 @@ interface LiveSession {
   mcp: Map<string, McpConnection>;
   /** Skills injected into this session (§17 Q21). Pure data; rebuilt on resume. */
   skills: SkillConfig[];
+  /**
+   * Commands run in a tab since the last turn was sent, for the next one
+   * (§17 Q23 step 4). Optional so the several places that build a live session
+   * need not each remember it. Not restored on resume, and need not be: the
+   * `shell.block` events are in the log, and `rehydrate` puts them in front of
+   * the turn that follows them when it rebuilds the conversation.
+   */
+  shellSince?: ShellBlockRecord[];
+  /** The commands still being written, in order; a turn waits for them. */
+  shellWriting?: Promise<unknown>;
 }
 
 /**
@@ -514,6 +526,20 @@ export interface SessionManagerDeps {
    * existed.
    */
   defaultReasoningFor?: (endpointId: string) => ReasoningRequest | undefined;
+  /**
+   * The secret values this machine holds outside any session — its secrets
+   * file, its endpoints' API keys — for masking a terminal's output before it is
+   * logged (`shellContext.ts`). Read per command, so a key added a minute ago is
+   * masked now. Only ever compared against, never sent or written. Absent: only
+   * what this manager saw itself (MCP env values) and the shapes are masked.
+   */
+  heldSecrets?: () => Promise<readonly string[]>;
+  /**
+   * The folders the person granted on this machine (§17 Q24 step 6), read as
+   * each handle opens and as each call is gated. Absent or empty: the
+   * workspace alone, which is what every agent had before grants existed.
+   */
+  grantedFolders?: () => readonly string[];
 }
 
 /** Five minutes of complete silence from something that streams as it goes. */
@@ -593,6 +619,14 @@ interface SlotHolder {
 
 export class SessionManager extends EventEmitter {
   private readonly sessions = new Map<SessionId, LiveSession>();
+  /**
+   * The env values of every MCP server this manager attached, for masking a
+   * terminal's output (`recordShellBlock`). In memory only, as the values were
+   * before: §17 Q20 keeps them out of the log, and this keeps them out of it too.
+   */
+  private readonly mcpEnvValues = new Set<string>();
+  /** Every value `heldSecrets` ever answered, so a read that fails masks no less. */
+  private readonly heldEver = new Set<string>();
   /**
    * Workflow runs this host is driving (§4.4).
    *
@@ -1499,6 +1533,78 @@ export class SessionManager extends EventEmitter {
     });
   }
 
+  /**
+   * One command a person ran in a tab's shell, masked and logged (§17 Q23 step
+   * 3), and kept for the next turn sent in this session (step 4).
+   *
+   * Masked here, before `append`, because this is the last point at which the
+   * unmasked output exists only in memory (`shellContext.ts`). What is held for
+   * masking: this machine's secrets and endpoint keys (`heldSecrets`) and the env
+   * values of every MCP server this manager attached — the last of which exist
+   * nowhere else once the attach is over, which is why they are kept here.
+   *
+   * Answers whether anything was logged: a bare Enter is not a command.
+   */
+  recordShellBlock(
+    sessionId: SessionId,
+    block: Block,
+    actor?: Actor,
+    paneHeld: readonly string[] = [],
+  ): Promise<boolean> {
+    const live = this.live(sessionId);
+    /*
+     * In order, and waited for by the next turn (`runTurn`). The command ends
+     * when the shell draws its prompt, which is before anybody can type `?` at
+     * it — but the write reads the secrets file first, and a question sent at
+     * once went out ahead of the error it was asking about.
+     */
+    const written = (live.shellWriting ?? Promise.resolve()).then(() => this.writeShellBlock(live, block, actor, paneHeld));
+    live.shellWriting = written.catch(() => undefined);
+    return written;
+  }
+
+  private async writeShellBlock(
+    live: LiveSession,
+    block: Block,
+    actor: Actor | undefined,
+    paneHeld: readonly string[],
+  ): Promise<boolean> {
+    /*
+     * Every value ever read, not only the ones read now. The review that found
+     * the pane key in the log found this too: a secrets file caught mid-rewrite
+     * or an endpoints file Windows had locked read as "no secrets", and the
+     * command was logged with only the shapes masked and nothing saying so. A
+     * rotated or deleted key may still be live somewhere, so it stays masked.
+     */
+    for (const value of (await this.deps.heldSecrets?.().catch(() => [])) ?? []) this.heldEver.add(value);
+    const record = recordBlock(block, [...this.heldEver, ...this.mcpEnvValues, ...paneHeld]);
+    if (record === null) return false;
+    await live.store.append({ type: 'shell.block', ...record }, actor !== undefined ? { actor } : {});
+    // Only once the list exists: before that, `pendingShell` reads it from the
+    // log, which already has this one.
+    live.shellSince?.push(record);
+    return true;
+  }
+
+  /**
+   * The commands since the last turn, from memory — or, the first time after a
+   * resume, from the log: the `shell.block` events after the last `user.turn`.
+   * A session reopened between running a command and asking about it would
+   * otherwise ask about nothing.
+   */
+  private async pendingShell(live: LiveSession): Promise<ShellBlockRecord[]> {
+    if (live.shellSince !== undefined) return live.shellSince;
+    const since: ShellBlockRecord[] = [];
+    for (const e of await live.store.readEvents()) {
+      if (e.type === 'user.turn') since.length = 0;
+      else if (e.type === 'shell.block') since.push(shellRecordOf(e));
+    }
+    // Recorded while the log was being read: those are in `since` already, and
+    // a list made meanwhile holds them too, so the one that exists wins.
+    live.shellSince ??= since;
+    return live.shellSince;
+  }
+
   /** Turns waiting behind the one running, for a client to display. */
   queueDepth(agentId: AgentId): number {
     return this.queues.get(agentId)?.length ?? 0;
@@ -1732,6 +1838,22 @@ export class SessionManager extends EventEmitter {
       });
     }
 
+    /*
+     * What the person ran in their terminal since the last turn, in front of
+     * what they typed (§17 Q23 step 4) — "fix the error above" is the reason the
+     * shell and the agent share a tab, and it needs the error.
+     *
+     * Taken now, when the turn is logged, so the commands it carries are
+     * exactly the `shell.block` events before this `user.turn` and after the
+     * previous one — which is how `rehydrate` rebuilds it. Not in the logged
+     * turn itself: the log already holds each command once, and a turn whose
+     * text differed from what was typed would be printed twice by the terminal
+     * that sent it (`sentTexts`) and shown to every reader as words the person
+     * never wrote.
+     */
+    await live.shellWriting;
+    const shell = await this.pendingShell(live);
+    const terminal = terminalContext(shell.splice(0));
     await live.store.append(
       { type: 'user.turn', content: fitted.content },
       { agentId, ...(actor !== undefined ? { actor } : {}) },
@@ -1800,7 +1922,7 @@ export class SessionManager extends EventEmitter {
         // what the echo runtime reports outright.
         ...(record.resolvedCapabilities.pricing === 'free' ? { free: true } : {}),
       });
-      await handle.send({ content: fitted.content });
+      await handle.send({ content: terminal !== null ? [terminal, ...fitted.content] : fitted.content });
       outcome = await pumped;
     } finally {
       // Whatever happened, and whichever slot is current. A slot leaked by a
@@ -1876,6 +1998,11 @@ export class SessionManager extends EventEmitter {
     runtime: AgentRuntime,
   ): Promise<AgentHandle> {
     const caps = record.resolvedCapabilities;
+    // Read now, so a grant made since the last turn is there for this one; a
+    // seat on a worktree is reached through that checkout and the grants alike.
+    const granted = this.deps.grantedFolders?.() ?? [];
+    if (granted.length > 0) spec.grantedFolders = [...granted];
+    else delete spec.grantedFolders;
     const ctx = this.contextFor(live, spec);
 
     // Skipped outright after a move, rather than attempted and allowed to fail.
@@ -2607,6 +2734,9 @@ export class SessionManager extends EventEmitter {
       session.mcp.push(refused);
       return refused;
     }
+    // Held for masking what a terminal prints, before the connect that could
+    // fail: a server that would not start was still given the value.
+    for (const value of Object.values(server.env ?? {})) this.mcpEnvValues.add(value);
     try {
       const connection = await McpConnection.connect(server);
       into.set(server.id, connection);
@@ -3123,6 +3253,9 @@ export class SessionManager extends EventEmitter {
     // The workspace root is what makes §13's inside/outside rows evaluable.
     const evaluation = evaluatePolicy(spec.toolPolicy, ask.tool, ask.args, {
       workspaceRoot: this.rootOf(live),
+      // Inside, for the same rows: a grant is the person saying a folder is
+      // as much theirs to work in as this one (§17 Q24 step 6).
+      granted: this.deps.grantedFolders?.() ?? [],
     });
 
     const request: PermissionRequest = {
@@ -4897,7 +5030,8 @@ function mergeUsage(a: AgentRecord['usage'], b: AgentRecord['usage']): AgentReco
 }
 
 function stripWorkspacePath(spec: AgentSpec): Omit<AgentSpec, 'workspacePath'> {
-  const { workspacePath: _drop, ...rest } = spec;
+  // The grants go with it: a path on this machine, environment like the root.
+  const { workspacePath: _drop, grantedFolders: _granted, ...rest } = spec;
   return rest;
 }
 

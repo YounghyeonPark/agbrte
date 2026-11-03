@@ -30,12 +30,19 @@
 
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { PolicyRule, ToolPolicy } from '@shared/types/index.js';
+import { offLimits } from './offLimits.js';
 
 export type PolicyOutcome = 'allow' | 'ask' | 'deny';
 
 export interface PolicyContext {
   /** Required for `scope`d rules to apply at all. */
   workspaceRoot?: string;
+  /**
+   * Folders the person granted (§17 Q24 step 6), which `scope: 'inside'`
+   * covers as it covers the workspace: a grant is read and write, as the
+   * workspace is, so the rules that make the workspace quiet make these quiet.
+   */
+  granted?: readonly string[];
 }
 
 export interface Evaluation {
@@ -247,7 +254,9 @@ function ruleApplies(
     if (ctx.workspaceRoot === undefined) return false;
     if (!PATH_ARG_TOOLS.has(tool.toLowerCase())) return false;
     if (subjects.primary === null) return false;
-    const inside = isInsideWorkspace(ctx.workspaceRoot, subjects.primary);
+    const inside =
+      isInsideWorkspace(ctx.workspaceRoot, subjects.primary) ||
+      (ctx.granted ?? []).some((g) => isInsideWorkspace(g, resolve(ctx.workspaceRoot as string, subjects.primary as string)));
     if (rule.scope === 'inside' && !inside) return false;
     if (rule.scope === 'outside' && inside) return false;
   }
@@ -284,6 +293,25 @@ export function evaluatePolicy(
   }
 
   const subjects = subjectsFor(tool, args);
+  /*
+   * Off limits whatever is granted and whatever a rule says (`offLimits.ts`),
+   * in this tier rather than the tools because a CLI runtime's tools are its
+   * own and this is the only check they meet: Claude Code, told of a granted
+   * home folder, edited `grants.json` through a rule that read the grant as
+   * "inside" — found by the review of folder grants.
+   */
+  if (PATH_ARG_TOOLS.has(tool.toLowerCase()) && subjects.primary !== null) {
+    const off = offLimits(resolve(ctx.workspaceRoot ?? process.cwd(), subjects.primary));
+    if (off !== null) {
+      return {
+        outcome: 'deny',
+        rule: null,
+        subject: subjects.primary,
+        nonOverridable: true,
+        reason: `${subjects.primary} is denied and cannot be granted by policy: ${off}`,
+      };
+    }
+  }
   const applicable = policy.rules.filter((r) => ruleApplies(r, tool, subjects, ctx));
 
   for (const outcome of ['deny', 'ask', 'allow'] as const) {

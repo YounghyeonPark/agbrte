@@ -297,6 +297,13 @@ export interface AgentSpec {
    * Never persisted — this is environment, not identity (§3.2).
    */
   workspacePath: string;
+  /**
+   * Folders the person granted on this machine, absolute (§17 Q24 step 6):
+   * reached as the workspace is, read and write. Environment for the same
+   * reason `workspacePath` is — a path on one machine — so never persisted;
+   * read when a handle opens, so a grant made now is there next turn.
+   */
+  grantedFolders?: string[];
 }
 
 export interface ProgressSignal {

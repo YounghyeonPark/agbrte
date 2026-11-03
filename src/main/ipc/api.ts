@@ -41,6 +41,7 @@ import {
   type ShellChunk,
   type ShellDto,
   type ShellExitDto,
+  type GrantRequestDto,
   type ServerKind,
   type SetupPlanDto,
   type SetupProgressDto,
@@ -377,6 +378,17 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
   fleet.on('detached', onHosts);
   fleet.on('shell', onShell);
   fleet.on('shell-exit', onShellExit);
+  /*
+   * Only for a pane this window opened, as its output is: the request asks the
+   * person at the window whose terminal it was typed in, and a second window
+   * showing the same dialog would be asking somebody who did not type it.
+   */
+  const onGrantRequest = (instanceId: string, shellId: string, path: string): void => {
+    if (!ownShells.has(shellId)) return;
+    const request: GrantRequestDto = { instanceId, shellId, path };
+    broadcast(PUSH.grantRequest, request);
+  };
+  fleet.on('grant-request', onGrantRequest);
 
   // ----------------------------------------------------------------- handlers
 
@@ -631,6 +643,12 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
     CH.projectServersDeclare,
     (instanceId: string, server: { id: string; command: string; args?: string[]; envFrom?: Record<string, string> }) =>
       fleet.declareProjectServer(instanceId as InstanceId, server),
+  );
+
+  handle(CH.grantsList, (instanceId: string) => fleet.grants(instanceId as InstanceId));
+  handle(CH.grantsAdd, (instanceId: string, path: string) => fleet.addGrant(instanceId as InstanceId, path));
+  handle(CH.grantsRemove, (instanceId: string, path: string) =>
+    fleet.removeGrant(instanceId as InstanceId, path),
   );
 
   handle(CH.secretsList, (instanceId: string) => fleet.secretNames(instanceId as InstanceId));
@@ -1282,6 +1300,7 @@ export function createApi(deps: IpcDeps): AgbrteApiHost {
       }
       fleet.off('shell', onShell);
       fleet.off('shell-exit', onShellExit);
+      fleet.off('grant-request', onGrantRequest);
       fleet.off('event', onEvent);
       fleet.off('session', onSession);
       fleet.off('permission', onPermission);

@@ -39,7 +39,7 @@
  * away from putting a key in a reply.
  */
 
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { machineRoot } from './machine.js';
 import { restrictToOwner } from './ownerOnly.js';
@@ -139,6 +139,19 @@ export async function resolveSecrets(
   return out;
 }
 
+/**
+ * Every value held, for masking a terminal's output before it is logged (§17
+ * Q23, `shellContext.ts`).
+ *
+ * A third reader, and the header's rule still holds: these are compared against
+ * text and replaced by `[secret]`, never sent, logged or returned to anybody.
+ * Masking needs the values — a name cannot be found in a build log — and the
+ * caller is the host's own manager, on the machine that holds the file.
+ */
+export async function secretValuesForMasking(path = secretsPath()): Promise<string[]> {
+  return Object.values(await read(path));
+}
+
 async function write(path: string, secrets: Record<string, string>): Promise<void> {
   const dir = dirname(path);
   // `recursive` tolerates an existing directory; the explicit `chmod` is because
@@ -149,10 +162,17 @@ async function write(path: string, secrets: Record<string, string>): Promise<voi
   // Sorted, so a file a person opens is readable and a rewrite is a one-line
   // diff rather than a reshuffle.
   const ordered = Object.fromEntries(Object.entries(secrets).sort(([a], [b]) => a.localeCompare(b)));
-  await writeFile(path, `${JSON.stringify({ secrets: ordered }, null, 2)}\n`, {
+  /*
+   * Beside it and renamed over it, so a reader never sees half a file. One
+   * reader is the masking of a terminal's output (`secretValuesForMasking`),
+   * which read a file caught mid-rewrite as empty and masked nothing from it.
+   */
+  const partial = `${path}.${process.pid}.tmp`;
+  await writeFile(partial, `${JSON.stringify({ secrets: ordered }, null, 2)}\n`, {
     encoding: 'utf8',
     mode: 0o600,
   });
+  await rename(partial, path);
   // `mode` does nothing on Windows, where the ACL is the permission. Same call
   // and same reason as the endpoints file beside it.
   await restrictToOwner(path, 'MCP credentials');

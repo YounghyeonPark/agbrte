@@ -322,6 +322,11 @@ export class HostConnection extends EventEmitter {
       case 'push.shellExit':
         this.emit('shell-exit', message.shellId, message.exitCode, message.signal);
         return;
+      case 'push.grantRequest':
+        // `agbrte grant` in one of this client's panes (v41): a question for
+        // the person, nothing granted yet.
+        this.emit('grant-request', message.shellId, message.path);
+        return;
       case 'push.closing':
         this.emit('closing', message.reason);
         return;
@@ -1058,6 +1063,24 @@ export class HostConnection extends EventEmitter {
       length,
     });
     return got === null ? null : { size: got.size, mime: got.mime, data: Buffer.from(got.data, 'base64') };
+  }
+
+  /** The folders granted on that machine (v41). */
+  async grants(): Promise<string[]> {
+    this.require('grants.list');
+    return this.call<string[]>({ t: 'grants.list' });
+  }
+
+  /** Grant one there; the list after (v41). */
+  async addGrant(path: string): Promise<string[]> {
+    this.require('grants.add');
+    return this.call<string[]>({ t: 'grants.add', path });
+  }
+
+  /** Take one back there; the list after (v41). */
+  async removeGrant(path: string): Promise<string[]> {
+    this.require('grants.remove');
+    return this.call<string[]>({ t: 'grants.remove', path });
   }
 
   async resizeShell(shellId: string, cols: number, rows: number): Promise<boolean> {

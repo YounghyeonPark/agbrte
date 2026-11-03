@@ -10,7 +10,7 @@
  * runs for weeks.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -97,11 +97,24 @@ function harness() {
     programs: new TerminalPrograms({ env: { AGBRTE_SHELL: '/bin/bash' }, lookup: (n) => (n === '/bin/bash' ? '/bin/bash' : null) }),
     integrationDir,
   });
+  /**
+   * A new shell's first prompt, which the routing answers with its greeting and
+   * an Enter, and the fresh prompt the shell draws for that Enter — as a real
+   * one would. After this the pane is at an empty prompt with nothing written.
+   * Waited for, because on Windows the Enter follows a question about the
+   * cursor that this fake terminal never answers (`resync`).
+   */
+  const started = async (pty: FakePty): Promise<void> => {
+    pty.emit(PROMPT);
+    await vi.waitFor(() => expect(pty.written).toEqual(['\r']));
+    pty.written.splice(0);
+    pty.emit(PROMPT);
+  };
   const read = (): string => {
     for (const fn of scheduled.splice(0)) fn();
     return screen.join('');
   };
-  return { shells, ptys, spawns, screen: read, sent, listeners, binding };
+  return { shells, ptys, spawns, screen: read, sent, listeners, binding, started };
 }
 
 describe('a terminal with the agent in it', () => {
@@ -123,7 +136,8 @@ describe('a terminal with the agent in it', () => {
     const owner = {};
     const { shellId } = h.shells.open(owner, { program: { kind: 'terminal' }, agent: h.binding });
     const pty = h.ptys[0]!;
-    pty.emit(PROMPT);
+    await h.started(pty);
+    expect(h.screen()).toContain('asks the agent once');
     h.shells.write(owner, shellId, 'ls');
     expect(pty.written).toEqual(['ls']);
     h.shells.write(owner, shellId, '\u0015');
@@ -136,11 +150,11 @@ describe('a terminal with the agent in it', () => {
     expect(pty.written).not.toContain('?');
   });
 
-  it('shows the session’s replies on the screen the client sees', () => {
+  it('shows the session’s replies on the screen the client sees', async () => {
     const h = harness();
     const owner = {};
     const { shellId } = h.shells.open(owner, { program: { kind: 'terminal' }, agent: h.binding });
-    h.ptys[0]!.emit(PROMPT);
+    await h.started(h.ptys[0]!);
     h.shells.write(owner, shellId, '\u0000');
     h.listeners[0]!.event({ seq: 1, id: 'e1', at: '', type: 'agent.text', text: 'hi **there**' } as unknown as AgbrteEvent);
     expect(h.screen()).toContain('there');

@@ -65,7 +65,9 @@ describe('writing into the store', () => {
       const { root, ctx } = await workspace();
       const result = await writeTool.run({ file_path: path, content: 'mine now' }, ctx);
       expect(result.ok).toBe(false);
-      expect(result.summary).toContain("Agbrte's own store");
+      // `run/` is refused a step earlier, to reads as well, with the host
+      // record beside it (`offLimits.ts`); the rest by the store guard.
+      expect(result.summary).toMatch(/Agbrte's own store|host record or scheduler/u);
       // And nothing happened. A refusal that wrote first would be a worse bug
       // than no refusal, because the message would say it had not.
       const on = join(root, path);

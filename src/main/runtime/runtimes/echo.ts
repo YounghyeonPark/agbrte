@@ -60,6 +60,8 @@ export interface EchoConfig {
   resumeError?: string;
   /** Records the seed the host passed, so tests can assert what was carried. */
   onSeed?: (seed: RuntimeContext['seedHistory']) => void;
+  /** Records each turn as it was handed over, so tests can assert what the agent was shown. */
+  onSend?: (turn: UserTurn) => void;
 }
 
 export const DEFAULT_ECHO_CAPABILITIES: RuntimeCapabilities = {
@@ -142,6 +144,7 @@ class EchoHandle implements AgentHandle {
   }
 
   async send(turn: UserTurn): Promise<void> {
+    this.config.onSend?.(turn);
     const steps = this.config.script ?? defaultScript(turn);
 
     for (const step of steps) {

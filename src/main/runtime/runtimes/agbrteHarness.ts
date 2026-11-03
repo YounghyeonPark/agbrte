@@ -448,7 +448,7 @@ class AgbrteHarnessHandle implements AgentHandle {
           modelId: this.spec.model?.modelId ?? '',
           messages: this.messages,
           maxOutputTokens: this.caps.maxOutputTokens,
-          ...(this.spec.systemPrompt !== undefined ? { system: this.spec.systemPrompt } : {}),
+          ...(systemFor(this.spec) !== undefined ? { system: systemFor(this.spec) as string } : {}),
           ...(declared.length > 0 ? { tools: declared } : {}),
           ...(this.spec.reasoning !== undefined ? { reasoning: this.spec.reasoning } : {}),
         },
@@ -567,6 +567,7 @@ class AgbrteHarnessHandle implements AgentHandle {
     try {
       const result = await tool.run((call.args ?? {}) as Record<string, unknown>, {
         workspaceRoot: this.spec.workspacePath,
+        ...(this.spec.grantedFolders !== undefined ? { granted: this.spec.grantedFolders } : {}),
         signal: this.ctx.abortSignal,
         agentId: this.spec.agentId,
         leases: this.leases,
@@ -774,4 +775,22 @@ function classifyError(err: unknown): StopReason {
   if (/\b401\b|\b403\b|unauthor/i.test(message)) return { kind: 'auth' };
   if (/\b5\d\d\b|ECONNREFUSED|fetch failed/i.test(message)) return { kind: 'unavailable' };
   return { kind: 'transport' };
+}
+
+/**
+ * The seat's system prompt, with the folders it was granted said in it (§17 Q24
+ * step 6). Without the sentence a grant is a capability the model has no reason
+ * to suspect: every path it has seen is relative to the workspace, and it would
+ * never try an absolute one.
+ */
+function systemFor(spec: AgentSpec): string | undefined {
+  const granted = spec.grantedFolders ?? [];
+  const note =
+    granted.length === 0
+      ? undefined
+      : 'Besides the workspace, the person has let you read and write these folders, by absolute path ' +
+        '(glob and grep take one as "folder"):\n' +
+        granted.map((f) => `- ${f}`).join('\n');
+  const parts = [spec.systemPrompt, note].filter((p): p is string => p !== undefined && p !== '');
+  return parts.length === 0 ? undefined : parts.join('\n\n');
 }

@@ -484,6 +484,13 @@ export interface ShellChunk {
 }
 
 /** The program in a terminal ended. `exitCode: -1` means the host went away. */
+/** `agbrte grant` typed in one of this window's panes, asking the person (§17 Q24 step 6). */
+export interface GrantRequestDto {
+  instanceId: string;
+  shellId: string;
+  path: string;
+}
+
 export interface ShellExitDto {
   shellId: string;
   exitCode: number;
@@ -947,6 +954,15 @@ export interface AgbrteApi {
    * one, and §13's rule is about the places a credential must not reach.
    * `set` carries a value *into* the host and nothing back but the name.
    */
+  /**
+   * The folders the agent may reach on a machine besides the workspace (§17 Q24
+   * step 6). `list` is `null` from a host too old to keep any.
+   */
+  grants: {
+    list(instanceId: string): Promise<string[] | null>;
+    add(instanceId: string, path: string): Promise<string[]>;
+    remove(instanceId: string, path: string): Promise<string[]>;
+  };
   secrets: {
     list(instanceId: string): Promise<string[] | null>;
     set(instanceId: string, name: string, value: string): Promise<{ name: string }>;
@@ -1515,6 +1531,8 @@ export interface AgbrteApi {
      */
     shell(cb: (chunk: ShellChunk) => void): () => void;
     shellExit(cb: (exit: ShellExitDto) => void): () => void;
+    /** A pane of this window asked to grant a folder; only this window is asked. */
+    grantRequest(cb: (request: GrantRequestDto) => void): () => void;
   };
   /** Ack the highest `seq` rendered, so main can resume a paused forwarder. */
   ack(sessionId: string, seq: number): void;
@@ -1593,6 +1611,9 @@ export const CH = {
   projectServersList: 'agbrte:projectServers.list',
   projectServersAttach: 'agbrte:projectServers.attach',
   projectServersDeclare: 'agbrte:projectServers.declare',
+  grantsList: 'agbrte:grants.list',
+  grantsAdd: 'agbrte:grants.add',
+  grantsRemove: 'agbrte:grants.remove',
   secretsList: 'agbrte:secrets.list',
   secretsSet: 'agbrte:secrets.set',
   secretsDelete: 'agbrte:secrets.delete',
@@ -1685,6 +1706,7 @@ export const PUSH = {
    */
   shell: 'agbrte:push.shell',
   shellExit: 'agbrte:push.shellExit',
+  grantRequest: 'agbrte:push.grantRequest',
 } as const;
 
 /** §7's batch limits, shared so main and any test agree on one number. */

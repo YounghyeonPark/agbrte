@@ -47,6 +47,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { holdsMachineDir } from '../../policy/offLimits.js';
 import {
   compilePolicy,
   LineSplitter,
@@ -595,6 +596,10 @@ class CliStdioHandle implements AgentHandle {
     }
     if (inv.permissionModeArgs) argv.push(...inv.permissionModeArgs);
     if (inv.workspaceArgs) argv.push(...inv.workspaceArgs(this.spec.workspacePath));
+    // Not a grant that holds the machine directory: the CLI reads inside one
+    // without asking, and the keys and `grants.json` are in it (`offLimits.ts`).
+    const granted = (this.spec.grantedFolders ?? []).filter((f) => !holdsMachineDir(f));
+    if (inv.grantArgs && granted.length > 0) argv.push(...inv.grantArgs(granted));
 
     const allow = [...this.baseAllow, ...this.granted];
     if (inv.allowArgs && allow.length > 0) argv.push(...inv.allowArgs(allow));

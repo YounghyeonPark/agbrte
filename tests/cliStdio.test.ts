@@ -32,6 +32,7 @@ import {
   type CliRun,
   type SpawnCli,
 } from '@main/runtime/runtimes/cliStdio.js';
+import { machineRoot } from '../src/host/machine.js';
 import { CLAUDE_CODE_MANIFEST, GEMINI_CLI_MANIFEST } from '@main/runtime/cli/manifests.js';
 import {
   compilePolicy,
@@ -418,6 +419,39 @@ describe('the arguments a run is given', () => {
     // variadic, and the prompt is the last argument.
     expect(argv.at(-2)).toBe('--');
     expect(argv.at(-1)).toContain('go');
+  });
+
+  it('tells Claude Code the folders the person granted, before the prompt', async () => {
+    // §17 Q24 step 6: the CLI runs its own tools, so a grant reaches it only if
+    // it is told — `--add-dir`, variadic like the tool lists, ended by `--`.
+    const seen: string[][] = [];
+    const runtime = new CliStdioRuntime({
+      manifest: CLAUDE_CODE_MANIFEST,
+      spawnFn: scriptedSpawn([[]], seen),
+    });
+    const handle = await runtime.start(spec({ grantedFolders: ['/srv/docs', '/home/me/notes'] }), context());
+    const drained = drain(handle.events);
+    await handle.send({ content: [{ type: 'text', text: 'go' }] });
+    await drained;
+    const argv = seen[0]!;
+    const at = argv.indexOf('--add-dir');
+    expect(argv.slice(at, at + 3)).toEqual(['--add-dir', '/srv/docs', '/home/me/notes']);
+    expect(argv.at(-2)).toBe('--');
+  });
+
+  it('does not tell it of a grant that holds the machine directory', async () => {
+    // It reads inside an `--add-dir` folder without asking, and the keys and
+    // `grants.json` are in that one (`offLimits.ts`).
+    const home = dirname(machineRoot());
+    const seen: string[][] = [];
+    const runtime = new CliStdioRuntime({ manifest: CLAUDE_CODE_MANIFEST, spawnFn: scriptedSpawn([[]], seen) });
+    const handle = await runtime.start(spec({ grantedFolders: [home, '/srv/docs'] }), context());
+    const drained = drain(handle.events);
+    await handle.send({ content: [{ type: 'text', text: 'go' }] });
+    await drained;
+    const argv = seen[0]!;
+    expect(argv).toContain('/srv/docs');
+    expect(argv).not.toContain(home);
   });
 
   it('suppresses deterministic mode under vendor-cli-session', async () => {

@@ -68,6 +68,7 @@ const USAGE = `agbrte — an agent workbench, at a terminal
   agbrte update [path]          restart the host onto this build's bundle
   agbrte show <file>…           draw a picture, or put a video or sound on the line
   agbrte play <file>…           the same, playing — video and sound in Agbrte's terminal
+  agbrte grant [folder]         ask the window to let the agent reach a folder (in the app's tab)
   agbrte --version
 
 Path defaults to the current directory. A host is started if none is running,
@@ -280,6 +281,11 @@ async function main(): Promise<number> {
   if (argv[0] === 'show' || argv[0] === 'play') {
     const { show } = await import('./show.js');
     return await show(argv.slice(1), { play: argv[0] === 'play' });
+  }
+  // The same reason: what follows is a folder to grant, not one to open.
+  if (argv[0] === 'grant') {
+    const { grant } = await import('./grant.js');
+    return await grant(argv.slice(1));
   }
 
   const { command, path: requested, rest, flags, value, mistypedCommand } = parse(argv);

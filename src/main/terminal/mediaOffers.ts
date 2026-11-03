@@ -101,6 +101,12 @@ export function offerSequence(key: string, request: OfferRequest): string {
   return `${MARKER}${key};${payload}\u0007`;
 }
 
+/** `agbrte grant`'s request on the same channel (`OfferFilter`'s `grant`). */
+export function grantSequence(key: string, path: string): string {
+  const payload = Buffer.from(JSON.stringify({ kind: 'grant', path }), 'utf8').toString('base64');
+  return `${MARKER}${key};${payload}\u0007`;
+}
+
 export function newPaneKey(): string {
   return randomBytes(16).toString('hex');
 }
@@ -272,7 +278,7 @@ function closeFd(fd: number): void {
 }
 
 /** A line in the terminal, dim, where the player would have been. */
-function notice(text: string): string {
+export function notice(text: string): string {
   return `\u001b[2m[agbrte: ${text}]\u001b[22m`;
 }
 
@@ -296,6 +302,13 @@ export class OfferFilter {
   constructor(
     private readonly key: string,
     private readonly offers: MediaOffers,
+    /**
+     * `agbrte grant` in this pane (§17 Q24 step 6): the same key, the same
+     * channel, a different request — `{ kind: 'grant', path }`. Answered with
+     * the line that takes its place; the grant itself is the window's to ask
+     * for. Absent: such a request is refused where it stood.
+     */
+    private readonly grant?: (path: string) => string,
   ) {}
 
   write(chunk: string): string {
@@ -360,8 +373,15 @@ export class OfferFilter {
     }
     let request: OfferRequest;
     try {
-      const parsed = JSON.parse(Buffer.from(body.slice(semi + 1), 'base64').toString('utf8')) as Partial<OfferRequest>;
+      const parsed = JSON.parse(Buffer.from(body.slice(semi + 1), 'base64').toString('utf8')) as Partial<OfferRequest> & {
+        kind?: unknown;
+      };
       if (typeof parsed.path !== 'string' || parsed.path === '') throw new Error('no path');
+      if (parsed.kind === 'grant') {
+        return this.grant === undefined
+          ? notice('this terminal cannot ask for a folder to be granted; use the palette')
+          : this.grant(parsed.path);
+      }
       request = {
         path: parsed.path,
         name: typeof parsed.name === 'string' ? parsed.name : 'file',

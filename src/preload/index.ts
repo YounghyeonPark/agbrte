@@ -35,6 +35,7 @@ import {
   type SetupProgressDto,
   type ShellChunk,
   type ShellExitDto,
+  type GrantRequestDto,
   type UpdateState,
 } from '../shared/ipc/contract.js';
 import type { ReasoningMode } from '../shared/ipc/contract.js';
@@ -103,6 +104,11 @@ const api: AgbrteApi = {
       ipcRenderer.invoke(CH.projectServersAttach, sessionId, serverId),
     declare: (instanceId: string, server: unknown) =>
       ipcRenderer.invoke(CH.projectServersDeclare, instanceId, server),
+  },
+  grants: {
+    list: (instanceId: string) => ipcRenderer.invoke(CH.grantsList, instanceId),
+    add: (instanceId: string, path: string) => ipcRenderer.invoke(CH.grantsAdd, instanceId, path),
+    remove: (instanceId: string, path: string) => ipcRenderer.invoke(CH.grantsRemove, instanceId, path),
   },
   secrets: {
     list: (instanceId: string) => ipcRenderer.invoke(CH.secretsList, instanceId),
@@ -278,6 +284,7 @@ const api: AgbrteApi = {
     // never acked, and must not be delayed by a batch window a person can feel.
     shell: (cb: (c: ShellChunk) => void) => subscribe(PUSH.shell, cb),
     shellExit: (cb: (e: ShellExitDto) => void) => subscribe(PUSH.shellExit, cb),
+    grantRequest: (cb: (r: GrantRequestDto) => void) => subscribe(PUSH.grantRequest, cb),
   },
   ack: (sessionId: string, seq: number) => ipcRenderer.send(CH.ack, sessionId, seq),
 };

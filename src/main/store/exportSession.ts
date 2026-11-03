@@ -177,6 +177,15 @@ function render(
       return `### 🧑 You${who}\n\n${text}`;
     }
 
+    case 'shell.block': {
+      // A person's terminal is part of the session now (§17 Q23 step 3), so it
+      // is part of the export — masked as it was logged, nothing more.
+      const status = event.exitCode === null ? '' : ` (exit ${event.exitCode})`;
+      const output =
+        event.output === '' ? '' : `\n\n~~~~\n${full ? event.output : truncate(event.output, 2000)}\n~~~~`;
+      return `> 🖥️ ran \`${event.command}\`${status}${who}${output}`;
+    }
+
     case 'agent.text':
       return `### 🤖 ${agentName(event.agentId, roleOf)}\n\n${event.text}`;
 

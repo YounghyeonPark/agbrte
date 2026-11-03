@@ -272,6 +272,15 @@ export interface SessionHostOptions {
    * host either has a machine directory to keep secrets in or it does not, and
    * a server that could list but not set would be a state nothing wants.
    */
+  /**
+   * The folders the agent may reach on this machine besides the workspace
+   * (§17 Q24 step 6, `grants.ts`). Absent: this host keeps none, and says so.
+   */
+  grants?: {
+    list: () => Promise<string[]>;
+    add: (path: string) => Promise<string[]>;
+    remove: (path: string) => Promise<string[]>;
+  };
   secrets?: {
     /** **Names only.** There is no reader for a value outside this machine. */
     list: () => Promise<string[]>;
@@ -1348,6 +1357,25 @@ export class SessionHostServer {
           });
         }
 
+        case 'grants.list': {
+          /*
+           * A read, so no gate, as `secrets.list` is not gated: which folders an
+           * agent here may reach is what a watcher needs to know to trust what
+           * it sees the agent do.
+           */
+          return this.opts.grants === undefined ? [] : this.opts.grants.list();
+        }
+
+        case 'grants.add':
+        case 'grants.remove': {
+          // Widening or narrowing what an agent on this machine can touch is
+          // driving it, which a read-only client does not do (§7).
+          this.requireWrite(client, command.t === 'grants.add' ? 'let the agent reach a folder' : 'take a folder back');
+          const grants = this.opts.grants;
+          if (grants === undefined) throw new Error('this host cannot keep folder grants');
+          return command.t === 'grants.add' ? grants.add(command.path) : grants.remove(command.path);
+        }
+
         case 'secrets.list': {
           /*
            * Names, never values (§13). The reply is a list of strings a person
@@ -2092,6 +2120,16 @@ export class SessionHostServer {
         send: (text) =>
           manager.send(sessionId, seat(), { content: [{ type: 'text', text }] }, client.actor),
         interrupt: () => manager.interrupt(sessionId, undefined, client.actor),
+        seated: () => manager.get(sessionId).agents.some((a) => a.status !== 'retired'),
+        // Under this client's actor, like every other way of typing into the
+        // session. A failure to log one command must not take the pane down —
+        // including the synchronous throw of a session that is gone, which
+        // went past a `.catch` and up through the pty's data handler.
+        record: (block, held) => {
+          void Promise.resolve()
+            .then(() => manager.recordShellBlock(sessionId, block, client.actor, held))
+            .catch(() => undefined);
+        },
         respond: (requestId, decision) => manager.respondPermission(requestId, decision, client.actor),
         /*
          * The agent's pictures, in the terminal they are about (§17 Q24 step

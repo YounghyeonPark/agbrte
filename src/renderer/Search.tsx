@@ -26,6 +26,7 @@ import type { SearchHitDto, SearchResults } from '../shared/ipc/contract.js';
 /** What kind of thing matched, in words rather than an event name. */
 const SAYS: Readonly<Record<string, string>> = {
   'user.turn': 'you said',
+  'shell.block': 'you ran',
   'agent.text': 'agent said',
   'agent.tool_use': 'ran',
   'agent.tool_result': 'result',

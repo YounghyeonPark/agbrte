@@ -299,6 +299,11 @@ const api: AgbrteApi = {
     declare: (instanceId: string, server: unknown) =>
       call(CH.projectServersDeclare)(instanceId, server),
   },
+  grants: {
+    list: call(CH.grantsList),
+    add: (instanceId: string, path: string) => call(CH.grantsAdd)(instanceId, path),
+    remove: (instanceId: string, path: string) => call(CH.grantsRemove)(instanceId, path),
+  },
   secrets: {
     list: call(CH.secretsList),
     set: (instanceId: string, name: string, value: string) =>
@@ -449,6 +454,7 @@ const api: AgbrteApi = {
     setup: (cb) => link.on(PUSH.setup, cb as (p: unknown) => void),
     shell: (cb) => link.on(PUSH.shell, cb as (p: unknown) => void),
     shellExit: (cb) => link.on(PUSH.shellExit, cb as (p: unknown) => void),
+    grantRequest: (cb) => link.on(PUSH.grantRequest, cb as (p: unknown) => void),
     // Never pushed to a browser: there is no updater on this side. A no-op
     // unsubscribe rather than an absent method, so the renderer's cleanup is
     // the same shape everywhere.

@@ -215,6 +215,8 @@ describe('the agent’s pictures in the terminal', () => {
       },
       style: plainStyle,
       exit: () => undefined,
+      // The first prompt is where this goes to the agent, not a greeting.
+      greet: false,
     });
     let seq = 0;
     const event = (body: Record<string, unknown>): void =>

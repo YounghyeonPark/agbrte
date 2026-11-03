@@ -11,8 +11,9 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { MODE_KEY, TerminalSession } from '../src/main/terminal/mux/session.js';
+import { MODE_KEY, TerminalSession, greeting } from '../src/main/terminal/mux/session.js';
 import { plainStyle } from '../src/main/terminal/mux/markdown.js';
+import type { Block } from '@shared/terminal/marks.js';
 import type { AgbrteEvent, PermissionRequest } from '@shared/types/index.js';
 
 const ESC = '\u001b';
@@ -20,13 +21,18 @@ const BEL = '\u0007';
 const osc = (body: string): string => `${ESC}]${body}${BEL}`;
 const PROMPT = osc('133;A') + '$ ' + osc('133;B');
 
-function harness(integration: 'full' | 'prompt' | 'none' = 'full', resync = false) {
+/**
+ * Off unless a test is about it: the greeting takes the first prompt and asks
+ * the shell for another, which every other test here would have to step past.
+ */
+function harness(integration: 'full' | 'prompt' | 'none' = 'full', resync = false, greet = false, seated = true) {
   const screen: string[] = [];
   const toShell: string[] = [];
   const sent: string[] = [];
   const answers: Array<{ requestId: string; decision: unknown }> = [];
   const interrupts = vi.fn(async () => undefined);
   const exits: number[] = [];
+  const records: Block[] = [];
   const session = new TerminalSession({
     out: (b) => screen.push(b),
     columns: () => 80,
@@ -42,9 +48,13 @@ function harness(integration: 'full' | 'prompt' | 'none' = 'full', resync = fals
       respond: async (requestId, decision) => {
         answers.push({ requestId, decision });
       },
+      seated: () => seated,
+      record: (b) => records.push(b),
     },
     style: plainStyle,
     exit: (code) => exits.push(code),
+    greet,
+    palette: true,
   });
   let seq = 0;
   const event = (body: Record<string, unknown>): void =>
@@ -58,10 +68,75 @@ function harness(integration: 'full' | 'prompt' | 'none' = 'full', resync = fals
     answers,
     interrupts,
     exits,
+    records,
     event,
     prompt: () => session.shellOutput(PROMPT),
   };
 }
+
+describe('the greeting', () => {
+  it('says how to reach the agent above the first prompt, once, and gives the shell its prompt back', () => {
+    const h = harness('full', false, true);
+    h.prompt();
+    expect(h.screen()).toContain('? asks the agent once');
+    expect(h.screen()).toContain('Ctrl+Space talks until Esc');
+    expect(h.screen()).not.toContain('no agent');
+    // The Enter on the empty line that makes the shell draw a fresh prompt.
+    expect(h.toShell).toEqual(['\r']);
+    h.prompt();
+    h.clearScreen();
+    h.prompt();
+    expect(h.screen()).not.toContain('asks the agent');
+    // And the first ? after it is the agent's, as on any prompt.
+    h.session.input('?');
+    expect(h.session.currentMode).toBe('agent');
+  });
+
+  it('says how to choose an agent when the tab has none', () => {
+    const h = harness('full', false, true, false);
+    h.prompt();
+    expect(h.screen()).toContain('no agent in this tab yet');
+    expect(h.screen()).toContain('Choose the agent for this tab');
+  });
+
+  it('is not drawn where ? cannot be recognised, nor names a palette a terminal does not have', () => {
+    const h = harness('none', false, true);
+    h.prompt();
+    expect(h.screen()).not.toContain('asks the agent');
+    const plain = greeting(plainStyle, { palette: false, seated: false }).join('\n');
+    expect(plain).not.toContain('Ctrl+Shift+P');
+    expect(plain).toContain('choose one in the app');
+  });
+});
+
+describe('what is recorded', () => {
+  it('hands each command the shell finished to the session, and never what the agent drew', async () => {
+    const h = harness();
+    h.prompt();
+    h.session.input('ls\r');
+    h.session.shellOutput(osc('633;E;ls') + osc('133;C') + 'a.txt\r\n' + osc('133;D;0'));
+    h.prompt();
+    expect(h.records).toHaveLength(1);
+    expect(h.records[0]).toMatchObject({ command: 'ls', exitCode: 0 });
+    expect(h.records[0]!.output).toContain('a.txt');
+
+    // A reply drawn at the prompt, and the Enter that gives the screen back.
+    h.session.input('?');
+    h.session.input('hi\r');
+    await Promise.resolve();
+    h.event({ type: 'agent.text', text: 'the secret plan' });
+    h.event({ type: 'session.state', from: 'working', to: 'idle' });
+    h.prompt();
+    expect(h.records.map((r) => r.output).join('')).not.toContain('secret plan');
+  });
+
+  it('says in the greeting that the agent sees the shell', () => {
+    const h = harness('full', false, true);
+    h.prompt();
+    expect(h.screen()).toContain('the agent sees the commands you run here');
+    expect(h.screen()).toContain('others may not be');
+  });
+});
 
 describe('in the shell', () => {
   it('passes every key through and shows every byte the shell writes', () => {
@@ -229,6 +304,7 @@ describe('to the agent and back', () => {
       },
       style: plainStyle,
       exit: () => undefined,
+      greet: false,
     });
     session.shellOutput(PROMPT);
     session.input('?');

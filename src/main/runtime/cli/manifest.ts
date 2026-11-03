@@ -108,6 +108,12 @@ export interface CliAgentManifest {
     /** Skips discovery of local hooks, skills, plugins, MCP, instructions (§3.12). */
     deterministicArgs?: string[];
     workspaceArgs?: (path: string) => string[];
+    /**
+     * The folders the person granted beside the workspace (§17 Q24 step 6), in
+     * the CLI's own words. Absent: the CLI cannot be told, and works where it
+     * was started — a grant reaches it no further than its own rules allow.
+     */
+    grantArgs?: (folders: string[]) => string[];
   };
 
   /**

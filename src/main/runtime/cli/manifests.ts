@@ -322,6 +322,8 @@ export const CLAUDE_CODE_MANIFEST: CliAgentManifest = {
     baseArgs: ['-p', '--output-format', 'stream-json', '--verbose'],
     modelArgs: (modelId) => ['--model', modelId],
     resumeArgs: (token) => ['--resume', token],
+    // Variadic, like `--allowedTools`, which the `--` before the prompt is for.
+    grantArgs: (folders) => ['--add-dir', ...folders],
     allowArgs: (rules) => ['--allowedTools', rules.join(',')],
     denyArgs: (rules) => ['--disallowedTools', rules.join(',')],
     // Deny-by-default, never the abort-on-unallowed baseline: a denial lets the

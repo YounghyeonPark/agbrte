@@ -138,6 +138,28 @@ export type EventBody =
   | { type: 'session.renamed'; title: string }
   | { type: 'session.state'; from: SessionState; to: SessionState; reason?: string }
   | { type: 'user.turn'; content: ContentBlock[] }
+  | {
+      /**
+       * One command the person ran in a tab's shell, and how it ended (§17 Q23
+       * step 3). Masked before it was written (`src/main/terminal/shellContext.ts`)
+       * — a secret masked after the write has already been logged.
+       *
+       * Recorded so the terminal is part of the session rather than a view on
+       * the side of it, and so the agent's next turn can be shown it (step 4):
+       * `rehydrate` puts the ones since the previous turn in front of each
+       * `user.turn`, exactly as they were put in front of it live, so a resumed
+       * seat reads the conversation it had. `output` is plain text, its end kept.
+       */
+      type: 'shell.block';
+      command: string;
+      commandFrom: 'exact' | 'echo';
+      output: string;
+      /** `null` where the shell cannot say (`cmd.exe`). */
+      exitCode: number | null;
+      truncated: boolean;
+      /** How many things were masked. Counted, never named. */
+      masked: number;
+    }
   | { type: 'agent.text'; text: string }
   | {
       /**
@@ -596,6 +618,7 @@ const KNOWN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'session.created',
   'session.state',
   'user.turn',
+  'shell.block',
   'agent.text',
   'agent.tool_use',
   'agent.tool_result',

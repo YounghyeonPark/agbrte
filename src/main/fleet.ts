@@ -428,6 +428,7 @@ export class AttachRefused extends Error {
  *   'link'       (instanceId, 'connected' | 'reconnecting', reason)
  *   'shell'      (shellId, data)  — a person's terminal, never an agent's (§7)
  *   'shell-exit' (shellId, exitCode, signal?)
+ *   'grant-request' (instanceId, shellId, path)
  */
 export class Fleet extends EventEmitter {
   private readonly entries = new Map<InstanceId, Entry>();
@@ -719,6 +720,10 @@ export class Fleet extends EventEmitter {
       this.shellHosts.delete(shellId);
       this.emit('shell-exit', shellId, exitCode, signal);
     };
+    // With the host it came from, which is the host a grant would be made on.
+    const onGrantRequest = (shellId: string, path: string): void => {
+      this.emit('grant-request', instanceId, shellId, path);
+    };
 
     connection.on('event', onEvent);
     connection.on('session', onSession);
@@ -727,6 +732,7 @@ export class Fleet extends EventEmitter {
     connection.on('queue', onQueue);
     connection.on('shell', onShell);
     connection.on('shell-exit', onShellExit);
+    connection.on('grant-request', onGrantRequest);
     connection.on('closing', onClosing);
     connection.on('closed', onClosed);
 
@@ -739,6 +745,7 @@ export class Fleet extends EventEmitter {
       connection.off('queue', onQueue);
       connection.off('shell', onShell);
       connection.off('shell-exit', onShellExit);
+      connection.off('grant-request', onGrantRequest);
       connection.off('closing', onClosing);
       connection.off('closed', onClosed);
     };
@@ -1964,6 +1971,34 @@ export class Fleet extends EventEmitter {
       );
     }
     return entry.connection.setSecret(name, value);
+  }
+
+  /**
+   * The folders granted on that machine (§17 Q24 step 6), or `null` from a
+   * host too old to keep any — which is "cannot say", not "none".
+   */
+  async grants(instanceId: InstanceId): Promise<string[] | null> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('grants.list')) return null;
+    return entry.connection.grants();
+  }
+
+  /** Grant one there, refused by name on a host that predates it. */
+  async addGrant(instanceId: InstanceId, path: string): Promise<string[]> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('grants.add')) {
+      throw new AttachRefused(`the host for ${labelOf(entry)} is too old to grant a folder. Update it and try again.`);
+    }
+    return entry.connection.addGrant(path);
+  }
+
+  /** Take one back there. */
+  async removeGrant(instanceId: InstanceId, path: string): Promise<string[]> {
+    const entry = this.host(instanceId);
+    if (!entry.connection.supports('grants.remove')) {
+      throw new AttachRefused(`the host for ${labelOf(entry)} is too old to keep folder grants.`);
+    }
+    return entry.connection.removeGrant(path);
   }
 
   /** Forget one there, refused by name on a host that predates it. */

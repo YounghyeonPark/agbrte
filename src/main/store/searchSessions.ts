@@ -171,6 +171,10 @@ export function searchableText(event: AgbrteEvent): string {
   switch (event.type) {
     case 'user.turn':
       return event.content.map((b) => (b.type === 'text' ? b.text : '')).join(' ');
+    case 'shell.block':
+      // What somebody ran is searchable, and what it printed: the error you
+      // remember is in the output, not the command.
+      return `${event.command} ${event.output}`;
     case 'agent.text':
       return event.text;
     case 'agent.tool_use':

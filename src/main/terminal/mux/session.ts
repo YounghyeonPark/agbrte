@@ -35,7 +35,7 @@
  */
 
 import { BlockStream } from '@shared/terminal/marks.js';
-import type { IntegrationLevel } from '@shared/terminal/marks.js';
+import type { Block, IntegrationLevel } from '@shared/terminal/marks.js';
 import type { AgbrteEvent, PermissionDecision, PermissionRequest } from '@shared/types/index.js';
 import { KeyReader, type Key } from './keys.js';
 import { draw, edit, emptyLine, type LineState } from './lineEditor.js';
@@ -59,6 +59,19 @@ export interface AgentLink {
    * a picture. Absent: this terminal shows no pictures, and says where they are.
    */
   picture?(blob: { sha256: string; mime?: string }): Promise<string | null>;
+  /**
+   * Whether the session has an agent to send to. Absent: assume so — the
+   * standalone client is only ever started on an agent it named.
+   */
+  seated?(): boolean;
+  /**
+   * A command the shell finished, for the session's log and the agent's next
+   * turn (§17 Q23 steps 3 and 4). Read from the shell's output only — what this
+   * draws for the agent never passes through `marks`, so it is never recorded
+   * as something the person ran. Absent: nothing is recorded. `held` is what
+   * the pane knows is secret beyond what the host does (`shell.ts`).
+   */
+  record?(block: Block, held?: readonly string[]): void;
 }
 
 export interface TerminalSessionOptions {
@@ -81,6 +94,48 @@ export interface TerminalSessionOptions {
   style: Style;
   /** Called once, when the shell exits. */
   exit: (code: number) => void;
+  /**
+   * Whether the keys that reach the rest live in the app's palette (Ctrl+Shift+P),
+   * which only the app's window has. Decides one clause of the greeting.
+   */
+  palette?: boolean;
+  /** Say how to reach the agent above the shell's first prompt (`greeting`). Default on. */
+  greet?: boolean;
+}
+
+/**
+ * The lines drawn above a new shell's first prompt, saying how to reach the
+ * agent. The window opens straight on a shell that looks like any other, and
+ * nothing on it said the agent was there at all: the owner, on the release that
+ * made the app a terminal, had to ask how to talk to it. One line, two when the
+ * tab has no agent yet, because a `?` there only answers with a refusal.
+ */
+export function greeting(
+  s: Style,
+  o: { palette: boolean; seated: boolean; shares?: boolean },
+): string[] {
+  const key = (k: string): string => s.accent(k);
+  const lines = [
+    `${key('?')} ${s.dim('asks the agent once ·')} ${key('Ctrl+Space')} ${s.dim('talks until')} ${key('Esc')}` +
+      (o.palette ? ` ${s.dim('·')} ${key('Ctrl+Shift+P')} ${s.dim('for everything else')}` : ''),
+  ];
+  /*
+   * Said where it happens, and without overstating the masking (§17 Q23): the
+   * keys this machine holds are masked exactly, the common shapes of others are
+   * guessed, and a secret it has never seen in a shape it does not know is not.
+   */
+  if (o.shares === true) {
+    lines.push(
+      s.dim('the agent sees the commands you run here and their output — keys this machine holds are masked, others may not be'),
+    );
+  }
+  if (!o.seated) {
+    lines.push(
+      s.dim('no agent in this tab yet — ') +
+        (o.palette ? `${key('Ctrl+Shift+P')} ${s.dim('→ "Choose the agent for this tab"')}` : s.dim('choose one in the app')),
+    );
+  }
+  return lines;
 }
 
 /**
@@ -152,8 +207,14 @@ export class TerminalSession {
    * next sentence printed above the screenshot it was about.
    */
   private behind: AgbrteEvent[] | null = null;
+  /** The greeting is drawn at the first prompt, and only there. */
+  private greeted: boolean;
 
-  constructor(private readonly o: TerminalSessionOptions) {}
+  constructor(private readonly o: TerminalSessionOptions) {
+    // A shell not taught its marks never reports a prompt, so it would never be
+    // drawn; and `?` would not work there anyway.
+    this.greeted = o.greet === false || o.integration === 'none';
+  }
 
   get currentMode(): 'shell' | 'agent' {
     return this.mode;
@@ -358,7 +419,7 @@ export class TerminalSession {
   shellOutput(data: string): void {
     if (this.ended) return;
     const before = this.marks.promptCount;
-    this.marks.push(data);
+    for (const block of this.marks.push(data)) this.o.agent.record?.(block);
     if (this.mode === 'agent') {
       this.held += data;
       return;
@@ -370,6 +431,23 @@ export class TerminalSession {
   /** The shell has just drawn a prompt and is waiting for a line. */
   private atPrompt(): void {
     this.typed = 'empty';
+    if (!this.greeted) {
+      this.greeted = true;
+      /*
+       * Through `waiting`, the way the agent's own lines reach an empty prompt:
+       * drawn over the prompt and answered with an Enter, so the shell draws a
+       * fresh one under it. Written before the shell's first output it would be
+       * painted over on Windows, whose pseudoconsole draws the first prompt by
+       * absolute position at the row it believes is the top (`resync`).
+       */
+      this.waiting.unshift(
+        ...greeting(this.o.style, {
+          palette: this.o.palette === true,
+          seated: this.o.agent.seated?.() ?? true,
+          shares: this.o.agent.record !== undefined,
+        }),
+      );
+    }
     if (this.returnToAgent) {
       this.returnToAgent = false;
       this.enterAgent(false);
@@ -648,7 +726,14 @@ export class TerminalSession {
 
   private prompt(): string {
     const s = this.o.style;
-    return this.turn === 'running' ? `${s.dim('…')} ` : `${s.accent('›')} `;
+    if (this.turn === 'running') return `${s.dim('…')} `;
+    /*
+     * Entered with `?`, the line keeps the `?` that was typed, so a message
+     * reads as a line typed at the terminal with a prefix — `? why did that
+     * fail` — rather than a second prompt standing in for the shell's. A `›`
+     * here read to the owner as a chat box opening.
+     */
+    return this.oneShot ? `${s.accent('?')} ` : `${s.accent('›')} `;
   }
 
   private drawLine(): void {

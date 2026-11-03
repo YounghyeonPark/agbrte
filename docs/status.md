@@ -33,6 +33,45 @@ browser or a remote machine's desktop to a remote-desktop client.
 
 ## What is not proven, named rather than glossed
 
+**Folder grants hold for tools, not for an approved shell command.** The agent
+reaches a granted folder by absolute path, and the machine directory and a
+store's credentials stay closed to every runtime's file tools whatever is
+granted (DESIGN.md §17 Q24 step 6). `bash` is outside that, as it always was: a
+shell command the person approves — or a standing grant for it — can write
+`grants.json` like any other file. A grant that holds the machine directory, a
+granted home folder, is not passed to Claude Code at all, so such a grant reaches
+the harness and not the CLI. Two sessions in different workspaces writing one
+granted file do not see each other's lease. Verified on Windows, in the app and
+in unit tests; not on a remote host, where the grant list is the server's and the
+path typed in the palette is a path there.
+
+**The agent sees the shell, and the masking is not whole.** A tab's commands and
+their output are logged and put in front of the next turn (DESIGN.md §17 Q23
+steps 3 and 4). Every value this machine holds — its secrets, its endpoints' API
+keys, the env of MCP servers attached since the host started — is masked exactly
+before the write, and `sk-`, `Bearer `, `AKIA` and `-----BEGIN` are masked by
+shape. A key the machine never held, printed in another shape, is logged and
+shown to the model as printed; the tab says so. Masking runs on the output as
+text — escapes stripped, carriage returns applied — so a program that draws a
+held key with cursor moves between its characters, or overwrites part of it, would
+not be matched; Windows' pseudoconsole repaints by position and a key longer than
+the pane is wide has not been tried there. A command printing more than 256 KB is
+cut before it is masked, so a held key straddling that cut keeps its end. Verified
+on Windows with cmd.exe, in the app and in unit tests; not on bash, zsh or
+PowerShell in the app, not on Linux or macOS, and not on a remote host, where the
+record is made by the host on the server.
+
+An independent review of this step found the pane's streaming key and the host's
+loopback token reaching the log through `set` and `cat host.json`, a secrets file
+read mid-rewrite masking nothing, and program output able to close the element
+it is shown to the model in and speak as the person. All four are fixed. What it
+found and is not: **output can forge a command.** The shell's marks are escape
+sequences, and a file that contains them, `cat` to the terminal, makes a
+"command the person ran" with whatever line and output it likes, logged under
+the person and shown to the agent as theirs — told only that it is program output.
+VS Code puts a nonce in the command-line mark for this; the integration scripts
+do not yet.
+
 **The terminal with the agent in it has run on Windows only.** cmd.exe, Git for
 Windows' bash and PowerShell, in the app (`tests/e2e/terminal.spec.ts` with the
 default shell, the others by hand) and in unit tests of the routing. It has not
@@ -42,8 +81,13 @@ terminal — the CLI's half — has been exercised only through its routing test
 not in Windows Terminal, iTerm or tmux.
 
 **The app opens on that terminal, in tabs**, on Windows (`tests/e2e/tabs.spec.ts`).
-Settings, the inbox, workflows and attaching a host are still the classic view,
-reached from the palette; nothing of them has been rebuilt for the terminal yet.
+Settings, workflows, attaching a machine, opening a folder, the agent's
+set-up forms and search open over the tabs as the classic view's own
+components, and the inbox is a list in the palette; a session's record
+(transcript, files, agents, a run's graph) is still the classic view. The phone
+and the browser client get the classic view whole. Attaching a machine and
+opening a remote folder from a sheet have run only against this machine's ssh-
+less fixtures, not a real server.
 
 **Pictures in the terminal have been drawn from a script, in `cmd.exe`, on
 Windows** (`tests/e2e/images.spec.ts`): iTerm2's, a sixel and kitty's in chunks,

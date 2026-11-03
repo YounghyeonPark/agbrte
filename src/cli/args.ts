@@ -72,6 +72,7 @@ export const KNOWN_COMMANDS = new Set([
   // Dispatched before `parse` (their arguments are files), and listed so a
   // mistyped verb is told they exist.
   'show',
+  'grant',
   'play',
 ]);
 

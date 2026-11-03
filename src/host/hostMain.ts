@@ -49,8 +49,15 @@ import {
 } from './discovery.js';
 import { refuseIfHeldElsewhere } from './legacyHost.js';
 import { readKnownWorkspaces, writeKnownWorkspaces } from './workspaces.js';
-import { addEndpoint, setChain } from './endpoints.js';
-import { deleteSecret, readSecretNames, resolveSecrets, setSecret } from './secrets.js';
+import { addEndpoint, loadEndpoints, setChain } from './endpoints.js';
+import { addGrant, readGrants, removeGrant } from './grants.js';
+import {
+  deleteSecret,
+  readSecretNames,
+  resolveSecrets,
+  secretValuesForMasking,
+  setSecret,
+} from './secrets.js';
 import { addManagedToolsToPath } from './managedTools.js';
 
 /**
@@ -273,6 +280,21 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
     registry.register(entry.runtime, { label: entry.label, model: entry.model });
   }
 
+  /*
+   * Bearers this process makes for itself, held for masking a terminal (§17
+   * Q23): the loopback control token is the host's whole authentication, and
+   * `cat ~/.agbrte/host.json` in a pane logged it. Filled where the token is
+   * made, below; the manager reads it per command, by which time it is.
+   */
+  const ownBearers: string[] = [];
+  /*
+   * The folders the person granted on this machine (§17 Q24 step 6), held in
+   * memory and replaced whole on each change, because the manager reads them
+   * on every gated call and a file read there would be one per tool call.
+   * Read once here; changed only through `grants.add` and `grants.remove`
+   * below, which write the file first and keep what it then says.
+   */
+  let granted: string[] = await readGrants();
   const manager = new SessionManager({
     // Threaded from `openWorkspace`, which is the only thing that can tell: a
     // moved workspace is byte-identical to one that never moved, so detection
@@ -295,6 +317,22 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
      */
     defaultReasoningFor: (endpointId) =>
       endpoints.find((e) => e.id === endpointId)?.defaultReasoning,
+    /*
+     * What a terminal's output is masked against before it is logged (§17 Q23):
+     * the machine's secrets and its endpoints' API keys, both read from the
+     * machine directory on each command, so a key added since is masked now.
+     * An endpoints file that will not load masks nothing from it rather than
+     * stopping the command being recorded — the shapes still apply.
+     */
+    grantedFolders: () => granted,
+    heldSecrets: async () => {
+      const [values, registry] = await Promise.all([
+        secretValuesForMasking().catch(() => []),
+        loadEndpoints().catch(() => null),
+      ]);
+      const keys = registry === null ? [] : registry.list().map((e) => registry.keyFor(e.id));
+      return [...values, ...ownBearers, ...keys.filter((k): k is string => k !== undefined && k !== '')];
+    },
   });
 
   /*
@@ -395,6 +433,9 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
        */
       programs: new TerminalPrograms({ runtimeIds: available, notes: runtimeNotes }),
       onData: (shellId, data, owner) => owner.post({ t: 'push.shell', shellId, data }),
+      // To the pane's owner alone, like its output: it asks the person at
+      // that window, and nobody else is being asked (v41).
+      onGrantRequest: (shellId, path, owner) => owner.post({ t: 'push.grantRequest', shellId, path }),
       onExit: (exit, owner) =>
         owner.post({
           t: 'push.shellExit',
@@ -654,6 +695,11 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
      * no reader for a value on this side at all, which is what makes "never
      * echoed" a property of the shape rather than of everyone remembering.
      */
+    grants: {
+      list: async () => granted,
+      add: async (path) => (granted = await addGrant(path)),
+      remove: async (path) => (granted = await removeGrant(path)),
+    },
     secrets: {
       list: () => readSecretNames(),
       set: (name, value) => setSecret(name, value),
@@ -763,6 +809,7 @@ export async function startSessionHost(opts: StartHostOptions): Promise<RunningH
    */
   if (opts.control === 'loopback') {
     token = newControlToken();
+    ownBearers.push(token);
     const bound = await listenLoopback<SessionMessage, SessionCommand>(token, (channel) =>
       server.accept(channel),
     );

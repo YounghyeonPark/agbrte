@@ -17,7 +17,7 @@ import { useState, type JSX } from 'react';
 import type { InboxEntry, InboxTrigger } from '../shared/types/index.js';
 
 /** Plain words, because a badge colour is not a sentence. */
-const SAYS: Readonly<Record<InboxTrigger, string>> = {
+export const SAYS: Readonly<Record<InboxTrigger, string>> = {
   result_produced: 'finished',
   failed: 'failed',
   awaiting_permission: 'asked permission',

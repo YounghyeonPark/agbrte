@@ -8,7 +8,8 @@
  * emulator goes renderer → main → host, is recognised at the shell's real
  * prompt, becomes a turn in the session's log attributed to this person, and the
  * agent's reply is drawn into the same terminal; a command typed afterwards runs
- * in the same shell and is not in the log.
+ * in the same shell and is in the log as a command, under the same person — it
+ * was kept out until §17 Q23 steps 3 and 4 put the terminal in the session.
  */
 
 import { expect, test, type Page } from '@playwright/test';
@@ -21,7 +22,7 @@ async function screen(page: Page): Promise<string> {
   return (await page.locator('[data-testid=pty-screen]').innerText()).replace(/\s+/g, ' ');
 }
 
-test('the shell with the agent in it: ? asks, the reply is drawn in the terminal, commands stay out of the log', async () => {
+test('the shell with the agent in it: ? asks, the reply is drawn in the terminal, commands are logged as commands', async () => {
   const repo = await makeRepo();
   const agbrte = await launch(repo);
   const w = agbrte.window;
@@ -63,7 +64,14 @@ test('the shell with the agent in it: ? asks, the reply is drawn in the terminal
     const turn = log.split('\n').find((line) => line.includes('"user.turn"') && line.includes(`asked-${id}`));
     expect(turn, 'the message to the agent is a turn in the log').toBeDefined();
     expect(turn).toContain('"actor"');
-    expect(log).not.toContain(`shell-${id}`);
+    // The command is a `shell.block`, never a turn: it was run, not said.
+    await expect
+      .poll(async () => {
+        const now = await readFile(join(sessionsDir, ids[0]!, 'events.jsonl'), 'utf8');
+        return now.split('\n').find((line) => line.includes('"shell.block"') && line.includes(`echo shell-${id}`)) ?? '';
+      }, { timeout: 30_000 })
+      .toContain('"actor"');
+    expect(log.split('\n').some((line) => line.includes('"user.turn"') && line.includes(`shell-${id}`))).toBe(false);
   } finally {
     await agbrte.close();
     await rm(repo, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });

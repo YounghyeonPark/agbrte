@@ -352,6 +352,32 @@ export interface HostIdentity {
  * did, so a client shipping this can talk to hosts that were deployed before it
  * existed.
  *
+ * ## v41 adds `grants.*`, and a push asking the window to grant a folder
+ *
+ * The agent may reach the folders a person granted on this machine, not only
+ * the session's workspace (§17 Q24 step 6). `grants.list` answers the paths;
+ * `grants.add` and `grants.remove` change them, gated as writes, because a
+ * read-only client is a phone watching a build box and widening what an agent
+ * there can touch is driving it.
+ *
+ * `push.grantRequest` is `agbrte grant` typed in a pane, which asks rather
+ * than grants: the host takes the request out of the pane's output — keyed, as
+ * a stream request is, so text a program prints cannot make one — and sends it
+ * to **the client that owns the pane** and no other, which asks the person.
+ * Not as a sequence in the output for the window to read, which was the first
+ * plan: anything that reaches the screen, an agent's reply or a `cat` of a
+ * hostile file, could have put a grant dialog in front of somebody. The agent
+ * can run `agbrte grant` itself; what it cannot do is press the button.
+ *
+ * ## v40 adds the `shell.block` event, and no command
+ *
+ * The commands a person runs in a tab's shell are logged now, masked, and put in
+ * front of their next turn to the agent (§17 Q23 steps 3 and 4) — so the event
+ * stream carries a type it did not. Moved for that alone: an older client skips
+ * an event type it does not know (`isKnownEventType`), and an older host simply
+ * never sends one, so nothing is refused either way. The number says which
+ * hosts record a terminal, which is a thing a person may need to know.
+ *
  * ## v39 adds `shell.media`, so a player can ask for the part being watched
  *
  * A video in the terminal was carried in the pane's output, whole (§17 Q24
@@ -977,7 +1003,7 @@ export interface PreparedChild {
  * replace one is to ask it to stop. A `kill` would work and would cost whatever
  * that host was in the middle of.
  */
-export const SESSION_PROTOCOL_VERSION = 39;
+export const SESSION_PROTOCOL_VERSION = 41;
 
 /**
  * The first protocol whose `session.addAgent` understands `replacing` (§4.2).
@@ -1069,6 +1095,9 @@ export const COMMAND_SINCE: Readonly<Record<string, number>> = {
   'display.grab': 37,
   'display.approve': 38,
   'shell.media': 39,
+  'grants.list': 41,
+  'grants.add': 41,
+  'grants.remove': 41,
 };
 
 // ------------------------------------------------------------------ app → host
@@ -1700,6 +1729,12 @@ export type SessionCommand =
    * `data` base64 and at most 1 MB, or `null`.
    */
   | { t: 'shell.media'; id: RequestId; shellId: string; token: string; offset: number; length: number }
+  /** The folders granted on this machine (v41). */
+  | { t: 'grants.list'; id: RequestId }
+  /** Grant one, absolute; answers the list after (v41). A write. */
+  | { t: 'grants.add'; id: RequestId; path: string }
+  /** Take one back; answers the list after (v41). A write. */
+  | { t: 'grants.remove'; id: RequestId; path: string }
   /**
    * One directory of the workspace, on the machine that owns it (§6.6).
    *
@@ -1791,6 +1826,11 @@ export type SessionMessage =
   | { t: 'push.shell'; shellId: string; data: string }
   /** The program ended. Sent to the owner, for the same reason. */
   | { t: 'push.shellExit'; shellId: string; exitCode: number; signal?: number }
+  /**
+   * `agbrte grant` in this client's pane, asking to grant `path` (v41). Only
+   * to the pane's owner; the host has granted nothing yet.
+   */
+  | { t: 'push.grantRequest'; shellId: string; path: string }
   /** The host is going away on purpose, so a client can say so rather than guess. */
   | { t: 'push.closing'; reason: string };
 
