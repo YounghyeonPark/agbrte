@@ -376,10 +376,24 @@ export function ptySpawner(): PtySpawner {
  *
  * Not in `terminalEnv`: the standalone client uses that too, and there the
  * terminal is whatever the person ran it in.
+ *
+ * `CHROME_CRASHPAD_PIPE_NAME` goes too. Electron hands its crash reporter's
+ * pipe to every child, the host passed it on to the shell, and `agbrte show`
+ * in a pane — our CLI, run by Electron as Node — tried to register with a pipe
+ * whose owner was gone and printed a crashpad `CreateFile ... (0x2)` error
+ * above every picture. Found in the screenshots taken for the landing page; a
+ * program in a pane is the person's, not a child of the app to report on.
  */
 function appTerminal(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out = { ...env };
-  for (const key of ['TERM_PROGRAM_VERSION', 'LC_TERMINAL_VERSION', 'KITTY_WINDOW_ID', 'KITTY_PID', 'ITERM_SESSION_ID']) {
+  for (const key of [
+    'TERM_PROGRAM_VERSION',
+    'LC_TERMINAL_VERSION',
+    'KITTY_WINDOW_ID',
+    'KITTY_PID',
+    'ITERM_SESSION_ID',
+    'CHROME_CRASHPAD_PIPE_NAME',
+  ]) {
     delete out[key];
   }
   out['TERM_PROGRAM'] = 'Agbrte';

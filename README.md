@@ -2,7 +2,7 @@
 
 ![Agent Bridge Terminal — a desktop app and a CLI for running coding agents](docs/banner.svg)
 
-**A desktop app and a CLI for running coding agents.**
+**A terminal with the coding agent inside it** — a desktop app and a CLI.
 
 [![Download](https://img.shields.io/github/v/release/YounghyeonPark/agbrte?label=download&color=ffff55&labelColor=00124f)](https://github.com/YounghyeonPark/agbrte/releases/latest)
 [![CI](https://github.com/YounghyeonPark/agbrte/actions/workflows/ci.yml/badge.svg)](https://github.com/YounghyeonPark/agbrte/actions/workflows/ci.yml)
@@ -56,15 +56,21 @@ two builds on one computer, and what the test commands cover.
 
 ## What it looks like
 
-| ![The dashboard](docs/shots/01-dashboard.png) | ![An open session](docs/shots/02-session.png) | ![The same app on a phone](docs/shots/03-phone.png) |
+![A terminal tab: a test fails, a line starting with ? asks why, and the agent reads the file and answers](docs/shots/10-terminal.png)
+
+The app opens on a terminal: **your own shell, in tabs**. A command fails; `?`
+asks the agent about it on the next line, and the agent has already seen the
+output.
+
+| ![A picture in the terminal](docs/shots/12-picture.png) | ![The command palette](docs/shots/11-palette.png) | ![Asking before a folder is granted](docs/shots/13-grant.png) |
 | :-- | :-- | :-- |
-| Every session on every attached machine, ranked by **who needs a human**. | One session: a tool call, the permission it went through, and the answer. | The same app in a phone browser on your own network, driving a run on a build box. |
+| `agbrte show` puts a picture, a video or a sound **on the line**. `imgcat`, sixel and kitty's protocol work too. | No sidebar: everything that is not a program is in the palette (Ctrl+Shift+P). | The agent can ask for another folder with `agbrte grant`. **Only the window can say yes.** |
 
-| ![What the project declares](docs/shots/04-declared.png) | ![A workflow, drawn](docs/shots/05-workflow.png) |
-| :-- | :-- |
-| What this project declares, offered when a session is made: skills and MCP servers that are **files in the repository**, and a key asked for by name — kept on the machine, never in the file. | A workflow is a decomposition written down before it runs. The graph is the document; two parts meeting at one is the shape a session tree cannot express. |
+| ![An open session's record](docs/shots/02-session.png) | ![A workflow, drawn](docs/shots/05-workflow.png) | ![The same sessions on a phone](docs/shots/03-phone.png) |
+| :-- | :-- | :-- |
+| Every session keeps its record: a tool call, the permission it went through, and the answer. | A workflow is a decomposition written down before it runs. The graph is the document. | A phone browser on your own network gets the sessions as a dashboard, driving a run on a build box. |
 
-*(Real turns against a local `qwen2.5:7b`, captured by `AGBRTE_WRITE_FIXTURES=1 npx playwright test shots --grep @shots`.)*
+*(Real turns against a local `qwen2.5:7b`, captured by `AGBRTE_WRITE_FIXTURES=1 npx playwright test terminalShots shots --grep @shots`.)*
 
 ## The one idea
 

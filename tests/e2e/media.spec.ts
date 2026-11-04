@@ -132,6 +132,9 @@ test('agbrte play and agbrte show, typed in the tab, put a working player on the
     await w.keyboard.type('agbrte show dot.png && echo after-picture');
     await w.keyboard.press('Enter');
     await expect.poll(async () => await screen(w), { timeout: 30_000 }).toContain('after-picture after-picture');
+    // Electron's crash-reporter pipe, inherited by the pane, made our CLI print
+    // a crashpad error above every picture (`appTerminal`, shell.ts).
+    expect(await screen(w)).not.toContain('crashpad');
     await expect
       .poll(
         async () =>

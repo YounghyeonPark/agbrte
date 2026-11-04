@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Agbrte — a desktop app and CLI for running coding agents. Each session runs on the machine the work is on, so closing the app does not stop it.">
+<meta name="description" content="Agbrte — a terminal with the coding agent inside it. Your own shell in tabs; ask the agent about what you just ran. Each session runs on the machine the work is on, so closing the app does not stop it.">
 <meta property="og:title" content="Agbrte — Agent Bridge Terminal">
-<meta property="og:description" content="A desktop app and CLI for running coding agents. Sessions run on the machine the work is on — your laptop or a server — and open again from a browser or a phone.">
-<meta property="og:image" content="https://agbrte.dev/shots/01-dashboard.png">
+<meta property="og:description" content="A terminal with the coding agent inside it. Your own shell, in tabs, playing pictures, video and sound. Sessions run on the machine the work is on — your laptop or a server — and open again from a browser or a phone.">
+<meta property="og:image" content="https://agbrte.dev/shots/10-terminal.png">
 <title>Agbrte — Agent Bridge Terminal</title>
 <style>
   /* The app's own palette and nothing else: this page argues for the same
@@ -425,8 +425,13 @@
       opinion and not what category of program they were looking at. The argument
       still gets made, further down, where "How it works" is for.
     -->
-    <p class="tagline">A desktop app and a CLI for running coding agents.</p>
-    <p class="stand">Each session runs in a host process on the machine the work is on &mdash; your laptop, or a server over ssh. Closing the app does not stop a turn, and the same session opens again from a browser or a phone.</p>
+    <!--
+      It said "a desktop app and a CLI for running coding agents" until 0.0.47,
+      when the app stopped opening on a dashboard and started opening on a
+      terminal. What it is changed, so the first sentence did.
+    -->
+    <p class="tagline">A terminal with the coding agent inside it.</p>
+    <p class="stand">Your own shell, in tabs. Press <code class="mono">?</code> and ask about what you just ran &mdash; the agent has seen it. Pictures, video and sound play on the line. Each session runs in a host process on the machine the work is on &mdash; your laptop, or a server over ssh &mdash; so closing the app does not stop a turn.</p>
 
     <div class="first">
 <!-- RELEASE:BEGIN -->
@@ -439,14 +444,14 @@
         -->
         <div class="release" id="release">
           <div class="release-head">
-            <span class="release-version">0.0.38</span>
+            <span class="release-version">0.0.48</span>
             <span class="release-when">the latest release</span>
             <span class="release-tag">What changed</span>
           </div>
           <ul>
-            <li>Show the screen of a remote machine, because the tunnel answer assumed a server that was not there</li>
-            <li>Call the remote screen <code class="mono">Display</code>, because <code class="mono">Screen</code> was already ten centimetres away</li>
-            <li>Record that the picker race came back, and what the failure rules out</li>
+            <li>Talk to the agent in the tab: <code class="mono">?</code> for one message, Ctrl+Space to stay</li>
+            <li>The agent sees the commands you ran and their output, with this machine&rsquo;s keys masked</li>
+            <li>Grant the agent other folders, from the palette or <code class="mono">agbrte grant</code>; the window asks first</li>
           </ul>
           <a class="release-more" href="https://github.com/YounghyeonPark/agbrte/releases/latest">All of it, with the reasoning &rarr;</a>
         </div>
@@ -477,37 +482,48 @@
 <section class="band band-shots" id="shots">
   <div class="inner">
     <span class="eyebrow">What it looks like</span>
-    <h2>Every session, on every machine you have attached</h2>
-    <p class="lead">Screenshots of a real run, taken by the test suite. Click any of them.</p>
+    <h2>Your shell, with the agent on the next line</h2>
+    <p class="lead">Screenshots of the real app on Windows with a local <code class="mono">qwen2.5:7b</code>, taken by the test suite. Click any of them.</p>
 
 <div class="shots">
+          <!--
+            The terminal first, because that is what the app opens on since
+            0.0.47. The session record and the dashboard that led this gallery
+            are what a phone and a browser still get, and they follow.
+          -->
           <figure class="wide">
-            <button class="frame" type="button" data-shot="./shots/01-dashboard.png" data-caption="The dashboard, with the sessions that need a person first.">
-              <img src="./shots/01-dashboard.png" alt="The dashboard: session cards under a Needs you heading, with a sidebar listing the attached machine" loading="lazy" width="1440" height="560">
+            <button class="frame" type="button" data-shot="./shots/10-terminal.png" data-caption="A test fails; the agent is asked on the next line, reads the file, and points at it.">
+              <img src="./shots/10-terminal.png" alt="A terminal tab: node test.js fails, then a line starting with ? asks why, and the agent reads src/probe.js and answers below it" loading="lazy" width="1779" height="846">
             </button>
-            <figcaption>Sorted by who needs a human. Cost and tokens on every card.</figcaption>
+            <figcaption>A command fails. <code class="mono">?</code> asks about it on the next line &mdash; the agent has already seen the output.</figcaption>
           </figure>
 
-          <!--
-            The two closest in shape are paired here, and the portrait phone is
-            not: the first arrangement gave it half a landscape column, so every
-            row below started wherever an 860-pixel-tall picture happened to end.
-            These two are 1440x760 and 1440x900 — near enough that the row reads
-            level, which is the most a grid of real screenshots can offer without
-            cropping them into a shape they were not taken in.
-          -->
           <figure>
-            <button class="frame" type="button" data-shot="./shots/02-session.png" data-caption="One session: the transcript, the roster, and what the turn is spending.">
+            <button class="frame" type="button" data-shot="./shots/12-picture.png" data-caption="agbrte show, in the terminal: a picture on the line it was printed on.">
+              <img src="./shots/12-picture.png" alt="A bar chart drawn inside the terminal under the command agbrte show gpu.png" loading="lazy" width="1779" height="846">
+            </button>
+            <figcaption>Pictures, video and sound on the line. <code class="mono">imgcat</code>, sixel and kitty&rsquo;s protocol work too.</figcaption>
+          </figure>
+
+          <figure>
+            <button class="frame" type="button" data-shot="./shots/11-palette.png" data-caption="Ctrl+Shift+P: everything that is not a program.">
+              <img src="./shots/11-palette.png" alt="The command palette over the terminal: new tab, choose the agent, folders, inbox, workflows, settings" loading="lazy" width="1779" height="846">
+            </button>
+            <figcaption>No sidebar. Everything that is not a program is in the palette.</figcaption>
+          </figure>
+
+          <figure>
+            <button class="frame" type="button" data-shot="./shots/13-grant.png" data-caption="agbrte grant asks; only the window can say yes.">
+              <img src="./shots/13-grant.png" alt="A dialog over the terminal asking whether to let the agent read and write a folder, with Not now focused" loading="lazy" width="1779" height="846">
+            </button>
+            <figcaption>The agent can ask for another folder. Only you can press Allow.</figcaption>
+          </figure>
+
+          <figure>
+            <button class="frame" type="button" data-shot="./shots/02-session.png" data-caption="A session's record: the transcript, the roster, and what the turn is spending.">
               <img src="./shots/02-session.png" alt="A session: transcript on the right, agent roster above it, composer at the foot" loading="lazy" width="1440" height="760">
             </button>
-            <figcaption>The transcript is the event log itself &mdash; including who approved what.</figcaption>
-          </figure>
-
-          <figure>
-            <button class="frame" type="button" data-shot="./shots/04-declared.png" data-caption="What a project declares: skills and MCP servers as tracked files.">
-              <img src="./shots/04-declared.png" alt="The new-session form listing the skills and MCP servers this workspace declares" loading="lazy" width="1440" height="900">
-            </button>
-            <figcaption>Skills and MCP servers are files in the repo. Keys are named, never stored.</figcaption>
+            <figcaption>Every session keeps its record &mdash; including who approved what.</figcaption>
           </figure>
 
           <figure class="wide">
@@ -517,14 +533,11 @@
             <figcaption>A workflow is a file. The editor draws it and refuses it while it is wrong.</figcaption>
           </figure>
 
-          <!-- A row of its own, centred. The only portrait picture in the set, and
-               giving it half a landscape column is what made it either enormous or
-               stranded beside an empty half-column. -->
           <figure class="wide tall">
-            <button class="frame" type="button" data-shot="./shots/03-phone.png" data-caption="The same app at phone width, one pane at a time.">
-              <img src="./shots/03-phone.png" alt="The same dashboard at phone width, one pane at a time" loading="lazy" width="390" height="844">
+            <button class="frame" type="button" data-shot="./shots/03-phone.png" data-caption="The same sessions at phone width, one pane at a time.">
+              <img src="./shots/03-phone.png" alt="The dashboard at phone width, one pane at a time" loading="lazy" width="390" height="844">
             </button>
-            <figcaption>The same app on a phone, driving a run on a build box.</figcaption>
+            <figcaption>On a phone, the same sessions as a dashboard, driving a run on a build box.</figcaption>
           </figure>
         </div>
   </div>
@@ -538,7 +551,7 @@
 
     <div class="model">
       <div class="stack">
-        <div class="node">Desktop app<span class="what">macOS, Windows, Linux</span></div>
+        <div class="node">Desktop app<span class="what">a terminal, in tabs &mdash; macOS, Windows, Linux</span></div>
         <div class="node">Browser<span class="what">a phone on your network</span></div>
         <div class="node">Terminal<span class="what"><span class="mono">agbrte</span>, on a box with no display</span></div>
       </div>
@@ -555,6 +568,18 @@
   <div class="inner">
     <span class="eyebrow">What that buys</span>
     <div class="grid3">
+      <div class="card">
+        <h3>The agent saw what you ran</h3>
+        <p>&ldquo;Fix the error above&rdquo; works, because the error is in what it was given. Keys this machine holds are masked first.</p>
+      </div>
+      <div class="card">
+        <h3>A terminal that plays media</h3>
+        <p><code class="mono">agbrte show</code> puts a picture, a video or a sound on the line. A large file streams from the host it is on.</p>
+      </div>
+      <div class="card">
+        <h3>Folders you grant, and no others</h3>
+        <p>The agent may ask for one from the shell. The window asks you, and only the window can say yes.</p>
+      </div>
       <div class="card">
         <h3>Quitting does not stop a turn</h3>
         <p>Two machines on one session see one transcript. A prompt raised on either is answerable from the other.</p>
