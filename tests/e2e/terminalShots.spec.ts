@@ -19,9 +19,9 @@
  */
 
 import { expect, test, type Page } from '@playwright/test';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { tempFixture } from './fixtureDirs.js';
+import { recordFixture, tempFixture } from './fixtureDirs.js';
 import { launchWith, makeRepo, modelAvailable, warmModel } from './harness.js';
 
 const OUT = resolve('.shots');
@@ -59,9 +59,28 @@ async function settle(page: Page): Promise<void> {
   }
 }
 
+/**
+ * Where the repository goes: the folder is on every prompt and in the grant
+ * dialog, so it is in every picture.
+ *
+ * The first set was taken under `tmpdir()`, and on Windows that is
+ * `C:\Users\<name>\AppData\Local\Temp\…` — the account name of whoever ran the
+ * spec, published on the landing page and the README four times. A short folder
+ * at the drive's root says nothing about the machine and leaves the prompt room
+ * for the command. Elsewhere `tmpdir()` names no one, so it stays.
+ */
+async function shotsRoot(): Promise<string> {
+  if (process.platform !== 'win32') return await tempFixture('agbrte-tshots-');
+  const root = join(`${process.env['SystemDrive'] ?? 'C:'}\\`, 'work');
+  await rm(join(root, 'probe'), { recursive: true, force: true });
+  await mkdir(root, { recursive: true });
+  await recordFixture(join(root, 'probe'));
+  return root;
+}
+
 /** A small repository with one bug, and a test that finds it. */
 async function probeRepo(): Promise<string> {
-  const repo = await makeRepo(join(await tempFixture('agbrte-tshots-'), 'probe'));
+  const repo = await makeRepo(join(await shotsRoot(), 'probe'));
   await mkdir(join(repo, 'src'), { recursive: true });
   await mkdir(join(repo, 'docs'), { recursive: true });
   await writeFile(
@@ -170,10 +189,17 @@ test.describe('@shots', () => {
        * mux/session.ts), so the failure is one wheel-turn up rather than on
        * screen, and a picture of an answer without its question says nothing.
        * Typing the next command brings the view back down.
+       *
+       * Looked for with cmd's `>` in front: the answer itself may say "the node
+       * test.js command failed", and a bare `node test.js` then matched the
+       * reply, stopped the scroll before it started, and photographed an answer
+       * whose command was off the top. A POSIX prompt ends in `$`, `%` or `#`
+       * depending on the shell, so there the bare command is the best there is.
        */
+      const typed = process.platform === 'win32' ? '>node test.js' : 'node test.js';
       const box = await w.locator(ACTIVE).boundingBox();
       if (box !== null) await w.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-      for (let i = 0; i < 30 && !(await screen(w)).includes('node test.js'); i += 1) {
+      for (let i = 0; i < 30 && !(await screen(w)).includes(typed); i += 1) {
         await w.mouse.wheel(0, -40);
         await w.waitForTimeout(100);
       }
