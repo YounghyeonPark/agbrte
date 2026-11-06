@@ -39,7 +39,9 @@ import type { Block, IntegrationLevel } from '@shared/terminal/marks.js';
 import type { AgbrteEvent, PermissionDecision, PermissionRequest } from '@shared/types/index.js';
 import { KeyReader, type Key } from './keys.js';
 import { draw, edit, emptyLine, type LineState } from './lineEditor.js';
-import { renderMarkdown, type Style } from './markdown.js';
+import type { Style } from './markdown.js';
+import { earlierLines } from './earlier.js';
+import { previewArgs, renderEvent } from './render.js';
 
 /** The shell, as this needs it. A `Pty` from `shell.ts` satisfies it. */
 export interface ShellLink {
@@ -72,6 +74,12 @@ export interface AgentLink {
    * the pane knows is secret beyond what the host does (`shell.ts`).
    */
   record?(block: Block, held?: readonly string[]): void;
+  /**
+   * The session's log as it stood when this terminal opened, for drawing the
+   * end of it above the first prompt (`earlier.ts`). Absent: a terminal opened
+   * on a session with a past starts on an empty screen, as it always did.
+   */
+  history?(): Promise<readonly AgbrteEvent[]>;
 }
 
 export interface TerminalSessionOptions {
@@ -90,6 +98,12 @@ export interface TerminalSessionOptions {
   shell: ShellLink;
   /** What the shell was taught to say; `none` means `?` cannot be recognised and only the mode key works. */
   integration: IntegrationLevel;
+  /**
+   * The nonce the shell's marks carry (`integration.ts`). Given, a mark printed
+   * by a program rather than written by the shell is text: it is not a prompt
+   * to draw over, and not a command the person ran (`marks.ts`).
+   */
+  markNonce?: string;
   agent: AgentLink;
   style: Style;
   /** Called once, when the shell exits. */
@@ -145,6 +159,14 @@ export function greeting(
  */
 export const PICTURE_WAIT_MS = 5000;
 
+/**
+ * How long the first prompt's greeting waits for the session's past to be read.
+ * A local read is a file on this disk and takes milliseconds; past this the
+ * greeting is drawn without it, because a prompt that holds back its first
+ * lines for a slow disk is a terminal that looks hung when it opens.
+ */
+export const EARLIER_WAIT_MS = 2000;
+
 /** The session states in which the turn is still the agent's. */
 const TURN_RUNNING: ReadonlySet<string> = new Set(['planning', 'working', 'verifying', 'awaiting_permission']);
 
@@ -177,7 +199,7 @@ export class TerminalSession {
   private drawn = { rows: 1, cursorRow: 0 };
   private turn: 'idle' | 'running' = 'idle';
   private typed: Typed = 'busy';
-  private readonly marks = new BlockStream();
+  private readonly marks: BlockStream;
   private readonly keys = new KeyReader();
   private escTimer: ReturnType<typeof setTimeout> | null = null;
   /** Lines for the screen, waiting for a moment the shell is not using it. */
@@ -209,11 +231,52 @@ export class TerminalSession {
   private behind: AgbrteEvent[] | null = null;
   /** The greeting is drawn at the first prompt, and only there. */
   private greeted: boolean;
+  /**
+   * The session's past, drawn with the greeting (`earlier.ts`): `null` while it
+   * is being read, and the greeting waits for it.
+   */
+  private earlier: string[] | null = [];
+  /** The first prompt came while `earlier` was still being read. */
+  private greetingHeld = false;
+  /**
+   * The first event this terminal was sent live. The log read for `earlier`
+   * and the live subscription start at about the same moment, so an event can
+   * be in both; the replay stops short of this one, which is drawn live.
+   */
+  private liveFrom: number | null = null;
+  /** The last event the replay drew; one sent live after it is not drawn twice. */
+  private replayedTo = -1;
 
   constructor(private readonly o: TerminalSessionOptions) {
+    this.marks = new BlockStream(o.markNonce !== undefined ? { nonce: o.markNonce } : {});
     // A shell not taught its marks never reports a prompt, so it would never be
     // drawn; and `?` would not work there anyway.
     this.greeted = o.greet === false || o.integration === 'none';
+    const history = o.agent.history;
+    if (!this.greeted && history !== undefined) {
+      this.earlier = null;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const late = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), EARLIER_WAIT_MS);
+      });
+      void Promise.race([
+        // Asked now, inside an executor so a synchronous throw is a refusal
+        // like any other rather than an exception out of a constructor.
+        new Promise<readonly AgbrteEvent[]>((resolve) => resolve(history())).catch(() => null),
+        late,
+      ]).then((events) => {
+        if (timer !== null) clearTimeout(timer);
+        const floor = this.liveFrom;
+        const past = events === null ? [] : floor === null ? events : events.filter((e) => e.seq < floor);
+        for (const e of past) this.replayedTo = Math.max(this.replayedTo, e.seq);
+        this.earlier = earlierLines(past, o.style, o.columns(), { palette: o.palette === true });
+        if (!this.greetingHeld || this.ended) return;
+        this.greetingHeld = false;
+        // Still at that prompt with nothing typed: draw them now. Otherwise the
+        // next prompt does, which is where anything else waiting is drawn too.
+        if (this.mode === 'shell' && this.atEmptyPrompt()) this.atPrompt();
+      });
+    }
   }
 
   get currentMode(): 'shell' | 'agent' {
@@ -431,6 +494,15 @@ export class TerminalSession {
   /** The shell has just drawn a prompt and is waiting for a line. */
   private atPrompt(): void {
     this.typed = 'empty';
+    if (!this.greeted && this.earlier === null && !this.returnToAgent) {
+      /*
+       * The session's past is still being read. The greeting goes under it, so
+       * it waits — at most `EARLIER_WAIT_MS` — rather than drawing first and
+       * having the past land below the line that says how to reach the agent.
+       */
+      this.greetingHeld = true;
+      return;
+    }
     if (!this.greeted) {
       this.greeted = true;
       /*
@@ -441,6 +513,8 @@ export class TerminalSession {
        * absolute position at the row it believes is the top (`resync`).
        */
       this.waiting.unshift(
+        // The past first, then how to reach the agent, then the prompt.
+        ...(this.earlier ?? []),
         ...greeting(this.o.style, {
           palette: this.o.palette === true,
           seated: this.o.agent.seated?.() ?? true,
@@ -483,6 +557,8 @@ export class TerminalSession {
 
   /** One event from the session, already filtered to this session and deduplicated. */
   event(e: AgbrteEvent): void {
+    if (e.seq <= this.replayedTo) return;
+    this.liveFrom ??= e.seq;
     if (this.behind !== null) {
       this.behind.push(e);
       return;
@@ -775,37 +851,3 @@ export function pictureOf(e: AgbrteEvent): { sha256: string; mime?: string } | n
   return null;
 }
 
-/** Shorten a tool's arguments for one line. */
-function previewArgs(value: unknown, max = 100): string {
-  const text = typeof value === 'string' ? value : JSON.stringify(value) ?? '';
-  const flat = text.replace(/\s+/gu, ' ').trim();
-  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
-}
-
-/**
- * An event as terminal lines, or none for what a person reading along does not
- * need. State changes are left out on purpose: a terminal that printed
- * "planning → working" on every turn would be a log, not a conversation; the
- * prompt's own `›` and `…` say whether the agent is busy.
- */
-export function renderEvent(e: AgbrteEvent, s: Style, columns: number): string[] {
-  switch (e.type) {
-    case 'agent.text':
-      return renderMarkdown(e.text, s, columns);
-    case 'user.turn':
-      // Our own turn is already on screen as typed. Another client's is not.
-      if (e.actor === undefined) return [];
-      return [s.dim(`‹ ${e.content.map((b) => (b.type === 'text' ? b.text : `[${b.type}]`)).join(' ')} · ${e.actor.label ?? 'elsewhere'}`)];
-    case 'agent.tool_use':
-      return [`${s.accent('⚒')} ${e.tool} ${s.dim(previewArgs(e.args))}`];
-    case 'agent.tool_result':
-      return [`${e.ok ? '✓' : '✗'} ${s.dim(previewArgs(e.summary))}`];
-    case 'permission.decided':
-      return e.via === 'policy' ? [] : [s.dim(`  ${e.decision.result} ${e.tool}`)];
-    case 'agent.stopped':
-      // The ordinary end of a turn is the prompt coming back; anything else is news.
-      return e.stop.kind === 'end_turn' ? [] : [s.dim(`— ${e.stop.kind}`)];
-    default:
-      return [];
-  }
-}

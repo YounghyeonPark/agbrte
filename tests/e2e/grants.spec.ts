@@ -80,6 +80,36 @@ test('agbrte grant asks the window, Allow grants, and the palette takes it back'
     await w.keyboard.type(outside);
     await w.keyboard.press('Enter');
     await expect.poll(async () => await grants(w), { timeout: 30_000 }).toEqual([outside]);
+    await w.keyboard.press('Control+Shift+P');
+    await w.click('[data-testid=palette-item][data-command="grants"]');
+    await w.locator('[data-testid=palette-item]', { hasText: `Stop letting the agent reach ${outside}` }).click();
+    await expect.poll(async () => await grants(w), { timeout: 30_000 }).toEqual([]);
+
+    /*
+     * And from this machine's folder dialog, which the tab being on this
+     * machine is what allows. The dialog is the operating system's and no test
+     * can press its buttons, so its answer is put in its place in the main
+     * process: cancelled first, which must grant nothing, then a folder.
+     */
+    const answer = async (path: string | null): Promise<void> =>
+      await agbrte.app.evaluate(({ dialog }, chosen) => {
+        dialog.showOpenDialog = (async () =>
+          chosen === null
+            ? { canceled: true, filePaths: [] }
+            : { canceled: false, filePaths: [chosen] }) as typeof dialog.showOpenDialog;
+      }, path);
+    await answer(null);
+    await w.keyboard.press('Control+Shift+P');
+    await w.click('[data-testid=palette-item][data-command="grants"]');
+    await w.click('[data-testid=palette-item][data-command="grant:pick"]');
+    await expect(w.locator('[data-testid=palette]')).toHaveCount(0);
+    await w.waitForTimeout(500);
+    expect(await grants(w)).toEqual([]);
+    await answer(outside);
+    await w.keyboard.press('Control+Shift+P');
+    await w.click('[data-testid=palette-item][data-command="grants"]');
+    await w.click('[data-testid=palette-item][data-command="grant:pick"]');
+    await expect.poll(async () => await grants(w), { timeout: 30_000 }).toEqual([outside]);
   } finally {
     await agbrte.close();
     await rm(repo, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });

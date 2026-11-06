@@ -686,6 +686,12 @@ export class Shells<Owner extends object = object> {
        */
       const paneHeld = [
         ...(paneKey !== null ? [paneKey] : []),
+        /*
+         * And the marks' nonce (`marks.ts`), which cmd.exe keeps in `PROMPT`,
+         * where `set` prints it. In the log it would be in the agent's context,
+         * and text the agent writes is text somebody may paste into a file.
+         */
+        ...(taught?.nonce != null ? [taught.nonce] : []),
         ...Object.entries(env)
           .filter(([name]) => CREDENTIAL_NAME.test(name))
           .map(([, value]) => value)
@@ -703,6 +709,7 @@ export class Shells<Owner extends object = object> {
         resync: process.platform === 'win32',
         shell: pty,
         integration: taught?.level ?? 'none',
+        ...(taught?.nonce != null ? { markNonce: taught.nonce } : {}),
         agent: link,
         style: ansiStyle,
         // The pty's own exit ends the pane, below; nothing more to do here.

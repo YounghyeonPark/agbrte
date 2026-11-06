@@ -28,6 +28,28 @@
  * Both families are accepted with either terminator — `BEL`, or `ESC \` — since
  * `cmd.exe` can only produce the second.
  *
+ * ## Marks anybody could print
+ *
+ * The marks are bytes in the output, and so is everything a program prints: a
+ * `cat` of a hostile file, a test that echoes its fixture, a page the agent
+ * fetched and printed. The host believes the marks about *what the person
+ * ran*: a block goes into the log under the person and into the agent's next
+ * turn as theirs. A file holding `D`, `A`, `B`, a line, `C`, some text and
+ * `D` was, when printed, a whole command the person never typed, with
+ * whatever output the file liked — and an `E` alone could rename the command
+ * that printed it.
+ *
+ * So every mark the host's shells write carries a nonce, as VS Code's `E`
+ * does: minted by the host for that one shell, handed to its startup script in
+ * the environment, and taken out again before anything else runs
+ * (`integration.ts`). It is the last field — `A;<n>`, `B;<n>`, `C;<n>`,
+ * `D;<status>;<n>`, `E;<line>;<n>` — so a reader that does not know it, like
+ * the renderer drawing decorations, reads the marks as before. A `BlockStream`
+ * that knows it treats a mark without it as text in whatever region it came,
+ * which is what a printed file is. `cmd.exe` holds its nonce in `PROMPT`,
+ * where a program it starts can read it; what this defends against is text,
+ * and text cannot know a value minted after it was written.
+ *
  * ## Where this runs
  *
  * Here in `shared`, because both ends need it. The renderer reads marks to put a
@@ -37,13 +59,21 @@
  * keeps cannot disagree about where a command was.
  */
 
-/** One thing a shell said about itself. */
-export type Mark =
+/**
+ * One thing a shell said about itself. `nonce` is the mark's last field where
+ * it has one past what the letter needs (see "Marks anybody could print").
+ */
+export type Mark = (
   | { kind: 'prompt' }
   | { kind: 'input' }
   | { kind: 'output' }
   | { kind: 'done'; exitCode: number | null }
-  | { kind: 'command'; line: string };
+  | { kind: 'command'; line: string }
+) & { nonce?: string };
+
+function vouched<M extends Mark>(mark: M, nonce: string | undefined): M {
+  return nonce === undefined || nonce === '' ? mark : { ...mark, nonce };
+}
 
 /** How much a terminal has told us about its commands. */
 export type IntegrationLevel =
@@ -71,23 +101,30 @@ export function unescapeCommandLine(text: string): string {
 export function parseMark(family: '133' | '633', payload: string): Mark | null {
   const letter = payload.charAt(0);
   const rest = payload.length > 1 && payload.charAt(1) === ';' ? payload.slice(2) : '';
+  const fields = rest === '' ? [] : rest.split(';');
   switch (letter) {
     case 'A':
-      return { kind: 'prompt' };
+      return vouched({ kind: 'prompt' }, fields[0]);
     case 'B':
-      return { kind: 'input' };
+      return vouched({ kind: 'input' }, fields[0]);
     case 'C':
-      return { kind: 'output' };
+      return vouched({ kind: 'output' }, fields[0]);
     case 'D': {
-      // The status is the first field; anything after it is somebody's extension.
-      const first = rest.split(';', 1)[0] ?? '';
+      // The status is the first field, empty where the shell cannot say; the
+      // second is the nonce where there is one.
+      const first = fields[0] ?? '';
       const code = /^-?\d+$/u.test(first) ? Number(first) : null;
-      return { kind: 'done', exitCode: code };
+      return vouched({ kind: 'done', exitCode: code }, fields[1]);
     }
-    case 'E':
+    case 'E': {
       // Only VS Code's family carries a command line, and an `E` claiming to be
       // one under 133 is something else that happens to use the letter.
-      return family === '633' ? { kind: 'command', line: unescapeCommandLine(rest) } : null;
+      if (family !== '633') return null;
+      // The line's own `;` travel escaped, so the first one left ends it.
+      const split = rest.indexOf(';');
+      if (split === -1) return { kind: 'command', line: unescapeCommandLine(rest) };
+      return vouched({ kind: 'command', line: unescapeCommandLine(rest.slice(0, split)) }, rest.slice(split + 1));
+    }
     default:
       return null;
   }
@@ -167,9 +204,16 @@ export class BlockStream {
   private seen = new Set<Mark['kind']>();
   private exitKnown = false;
   private prompts = 0;
+  private readonly nonce: string | undefined;
 
-  constructor(opts: { maxOutput?: number } = {}) {
+  /**
+   * `nonce`: the one the shell was given. With it, a mark that does not carry
+   * it is text; without it — a shell this host did not teach, or the renderer,
+   * which only draws — every mark is believed, as before.
+   */
+  constructor(opts: { maxOutput?: number; nonce?: string } = {}) {
     this.maxOutput = opts.maxOutput ?? DEFAULT_MAX_OUTPUT;
+    this.nonce = opts.nonce;
   }
 
   /**
@@ -239,8 +283,10 @@ export class BlockStream {
       const after = end + (end === bel ? 1 : 2);
       const semi = body.indexOf(';');
       const family = semi === -1 ? body : body.slice(0, semi);
-      const mark =
+      const parsed =
         family === '133' || family === '633' ? parseMark(family, body.slice(semi + 1)) : null;
+      // Printed by something other than the shell: text, like any other.
+      const mark = parsed !== null && this.nonce !== undefined && parsed.nonce !== this.nonce ? null : parsed;
       if (mark === null) {
         // Not ours — a window title, a hyperlink. It belongs to whatever region
         // it arrived in, exactly as the terminal will draw it.

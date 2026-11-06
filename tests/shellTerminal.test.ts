@@ -17,14 +17,21 @@ import { join } from 'node:path';
 import { afterAll } from 'vitest';
 import { Shells, type AgentBinding, type Pty, type PtySpawner } from '../src/main/terminal/shell.js';
 import { TerminalPrograms } from '../src/main/terminal/programs.js';
+import { MARK_NONCE_ENV } from '../src/main/terminal/integration.js';
 import type { AgbrteEvent, PermissionRequest } from '@shared/types/index.js';
 
 const ESC = '\u001b';
 const osc = (body: string): string => `${ESC}]${body}\u0007`;
-const PROMPT = osc('133;A') + '$ ' + osc('133;B');
-
 class FakePty implements Pty {
   readonly pid = 1;
+  /**
+   * A prompt as the taught shell draws it: each mark with the nonce the host
+   * gave this shell (`marks.ts`), which the routing does not believe without.
+   */
+  readonly prompt: string;
+  constructor(nonce: string) {
+    this.prompt = osc(`133;A;${nonce}`) + '$ ' + osc(`133;B;${nonce}`);
+  }
   written: string[] = [];
   private data: ((d: string) => void) | null = null;
   private exit: ((e: { exitCode: number }) => void) | null = null;
@@ -57,9 +64,9 @@ function harness() {
   dirs.push(integrationDir);
   const ptys: FakePty[] = [];
   const spawns: Array<{ file: string; args: string[] | string }> = [];
-  const spawn: PtySpawner = (file, args) => {
+  const spawn: PtySpawner = (file, args, opts) => {
     spawns.push({ file, args });
-    const pty = new FakePty();
+    const pty = new FakePty(String(opts.env[MARK_NONCE_ENV] ?? ''));
     ptys.push(pty);
     return pty;
   };
@@ -105,10 +112,10 @@ function harness() {
    * cursor that this fake terminal never answers (`resync`).
    */
   const started = async (pty: FakePty): Promise<void> => {
-    pty.emit(PROMPT);
+    pty.emit(pty.prompt);
     await vi.waitFor(() => expect(pty.written).toEqual(['\r']));
     pty.written.splice(0);
-    pty.emit(PROMPT);
+    pty.emit(pty.prompt);
   };
   const read = (): string => {
     for (const fn of scheduled.splice(0)) fn();
@@ -142,7 +149,7 @@ describe('a terminal with the agent in it', () => {
     expect(pty.written).toEqual(['ls']);
     h.shells.write(owner, shellId, '\u0015');
     h.shells.write(owner, shellId, '\r');
-    pty.emit(PROMPT);
+    pty.emit(pty.prompt);
     h.shells.write(owner, shellId, '?');
     h.shells.write(owner, shellId, 'hello\r');
     await Promise.resolve();

@@ -2132,6 +2132,14 @@ export class SessionHostServer {
         },
         respond: (requestId, decision) => manager.respondPermission(requestId, decision, client.actor),
         /*
+         * The log, for the end of it above a reopened tab's first prompt
+         * (`earlier.ts`). Read here, on the host, for every pane — this
+         * machine's and one over ssh alike, since both are opened by this
+         * method — and gated no further than the transcript is: the client
+         * that opened the pane can already read every event in it.
+         */
+        history: () => manager.events(sessionId),
+        /*
          * The agent's pictures, in the terminal they are about (§17 Q24 step
          * 3). Read from this host's own store — the blob is beside the shell —
          * and drawn in iTerm2's form, which the app's emulator reads whole; the

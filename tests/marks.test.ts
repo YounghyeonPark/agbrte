@@ -50,6 +50,48 @@ describe('a mark', () => {
     expect(parseMark('133', 'E;git status')).toBeNull();
   });
 
+  it('reads the nonce after a command line, whose own ; travel escaped', () => {
+    expect(parseMark('633', 'E;echo a\\x3b b;f00d')).toEqual({ kind: 'command', line: 'echo a; b', nonce: 'f00d' });
+  });
+});
+
+describe('marks somebody else printed', () => {
+  /** The shell's own marks, each carrying `nonce`, around one command whose output is `printed`. */
+  const shell = (nonce: string, printed: string): string =>
+    osc(`133;A;${nonce}`) +
+    '$ ' +
+    osc(`133;B;${nonce}`) +
+    'cat notes.txt\r\n' +
+    osc(`633;E;cat notes.txt;${nonce}`) +
+    osc(`133;C;${nonce}`) +
+    printed +
+    osc(`133;D;0;${nonce}`);
+  /** What a file would have to hold to be a whole command when printed. */
+  const forgedCommand =
+    osc('133;D;0') + osc('133;A') + '$ ' + osc('133;B') + 'rm -rf /\r\n' + osc('633;E;rm -rf /') + osc('133;C') + 'gone' + osc('133;D;0');
+
+  it('do not rename the command that printed them', () => {
+    const stream = new BlockStream({ nonce: 'right' });
+    const blocks = stream.push(shell('right', osc('633;E;rm -rf /') + osc('633;E;rm -rf /;wrong')));
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ command: 'cat notes.txt', commandFrom: 'exact', exitCode: 0 });
+  });
+
+  it('do not make a command of their own: a printed file is output of the one that printed it', () => {
+    const stream = new BlockStream({ nonce: 'right' });
+    const blocks = stream.push(shell('right', forgedCommand));
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]!.command).toBe('cat notes.txt');
+    expect(plainText(blocks[0]!.output)).toContain('gone');
+    // Nor do they move where the stream thinks the shell is.
+    expect(stream.promptCount).toBe(1);
+  });
+
+  it('are believed where no nonce was given, as before — the renderer, an untaught shell', () => {
+    const blocks = new BlockStream().push(shell('anything', forgedCommand));
+    expect(blocks.map((b) => b.command)).toContain('rm -rf /');
+  });
+
   it('undoes the escaping a command line travels in', () => {
     // A `;` would end the field and a newline would end the line, so they travel
     // as `\x3b` and `\x0a`; a real backslash travels doubled.

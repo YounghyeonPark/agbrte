@@ -24,6 +24,7 @@ import { answer, parseRange } from '../src/main/mediaRanges.js';
 import { Shells, type AgentBinding, type Pty, type PtySpawner } from '../src/main/terminal/shell.js';
 import type { Block } from '@shared/terminal/marks.js';
 import { TerminalPrograms } from '../src/main/terminal/programs.js';
+import { MARK_NONCE_ENV } from '../src/main/terminal/integration.js';
 import { show, STREAM_ABOVE } from '../src/cli/show.js';
 
 const dirs: string[] = [];
@@ -281,9 +282,18 @@ describe('the pane that streams', () => {
     h.shells.open({}, { program: { kind: 'terminal' }, agent });
     const key = h.envs[0]![PANE_KEY_ENV]!;
     const osc = (body: string): string => '\u001b]' + body + '\u0007';
-    h.ptys[0]!.data!(osc('133;A') + '$ ' + osc('133;B'));
-    h.ptys[0]!.data!(osc('633;E;env') + osc('133;C') + 'AGBRTE_PANE_KEY=' + key + '\r\n' + osc('133;D;0'));
-    h.ptys[0]!.data!(osc('133;A') + '$ ' + osc('133;B'));
+    // Every mark with the nonce the shell was given, as its script writes them.
+    const nonce = h.envs[0]![MARK_NONCE_ENV]!;
+    h.ptys[0]!.data!(osc(`133;A;${nonce}`) + '$ ' + osc(`133;B;${nonce}`));
+    h.ptys[0]!.data!(
+      osc(`633;E;env;${nonce}`) +
+        osc(`133;C;${nonce}`) +
+        'AGBRTE_PANE_KEY=' +
+        key +
+        '\r\n' +
+        osc(`133;D;0;${nonce}`),
+    );
+    h.ptys[0]!.data!(osc(`133;A;${nonce}`) + '$ ' + osc(`133;B;${nonce}`));
     expect(recorded).toHaveLength(1);
     expect(recorded[0]!.held).toContain(key);
     expect(recorded[0]!.held).toContain('ghp_inherited0123456789');

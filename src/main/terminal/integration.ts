@@ -49,7 +49,7 @@
  * `AGBRTE_SHELL_INTEGRATION=0` turns all of it off, for a shell this breaks.
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { machineRoot } from '../../host/machine.js';
@@ -82,7 +82,22 @@ export interface Integrated {
   shell: ShellKind | null;
   /** What it was taught to say. Older shells can say less, and `marks.ts` notices. */
   level: IntegrationLevel;
+  /**
+   * What this shell's marks carry, for the `BlockStream` reading them to check
+   * (`marks.ts`, "Marks anybody could print"). `null` for a shell started as
+   * it was.
+   */
+  nonce: string | null;
 }
+
+/**
+ * The variable the nonce travels in, from the host to the shell's startup
+ * script, which reads it and unsets it before the user's own startup runs —
+ * so a program started from the shell finds nothing to copy. Minted per shell,
+ * never written to the script: the scripts are files named by their content
+ * and shared by every shell of that kind on the machine.
+ */
+export const MARK_NONCE_ENV = 'AGBRTE_MARK_NONCE';
 
 /*
  * The scripts. Written with `§{` where the shell needs `${`, because a template
@@ -95,6 +110,9 @@ export const BASH_SCRIPT = script(String.raw`# Agbrte shell integration for bash
 # The user's own startup first: started with --init-file, bash reads this instead of ~/.bashrc.
 if [ -z "§{__AGBRTE_INTEGRATED-}" ]; then
   __AGBRTE_INTEGRATED=1
+  # Out of the environment before anything else runs, so no program this shell starts can read it.
+  __agbrte_nonce=§{AGBRTE_MARK_NONCE-}
+  unset AGBRTE_MARK_NONCE
   if [ -r "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi
 
   __agbrte_started=
@@ -107,16 +125,18 @@ if [ -z "§{__AGBRTE_INTEGRATED-}" ]; then
   }
   __agbrte_precmd() {
     local code=$?
-    if [ -n "$__agbrte_started" ]; then printf '\033]133;D;%s\007' "$code"; fi
+    if [ -n "$__agbrte_started" ]; then printf '\033]133;D;%s;%s\007' "$code" "$__agbrte_nonce"; fi
     __agbrte_started=1
     __agbrte_hist=$(__agbrte_histnum)
-    printf '\033]133;A\007'
+    printf '\033]133;A;%s\007' "$__agbrte_nonce"
     return $code
   }
   __agbrte_ps1() {
     case "$PS1" in
-      *'133;B'*) ;;
-      *) PS1="$PS1"'\[\033]133;B\007\]' ;;
+      # Ours, by its nonce: a 133;B from the user's own terminal integration
+      # carries none, and the host would not read the prompt as one.
+      *"133;B;$__agbrte_nonce"*) ;;
+      *) PS1="$PS1"'\[\033]133;B;'"$__agbrte_nonce"'\007\]' ;;
     esac
   }
   __agbrte_preexec() {
@@ -133,9 +153,9 @@ if [ -z "§{__AGBRTE_INTEGRATED-}" ]; then
       line=§{line//\\/\\\\}
       line=§{line//;/\\x3b}
       line=§{line//$'\n'/\\x0a}
-      printf '\033]633;E;%s\007' "$line"
+      printf '\033]633;E;%s;%s\007' "$line" "$__agbrte_nonce"
     fi
-    printf '\033]133;C\007'
+    printf '\033]133;C;%s\007' "$__agbrte_nonce"
   }
   PS0="§{PS0-}"'$(__agbrte_preexec)'
   PROMPT_COMMAND="__agbrte_precmd§{PROMPT_COMMAND:+;$PROMPT_COMMAND};__agbrte_ps1"
@@ -145,6 +165,9 @@ fi
 /** zsh reads these from `ZDOTDIR`; each hands over to the user's own first. */
 export const ZSH_FILES: Readonly<Record<string, string>> = {
   '.zshenv': script(String.raw`# Agbrte shell integration for zsh. Written by the Agbrte host on start.
+# Out of the environment before anything else runs, so no program this shell starts can read it.
+__agbrte_nonce=§{AGBRTE_MARK_NONCE-}
+unset AGBRTE_MARK_NONCE
 __agbrte_zdotdir=$ZDOTDIR
 ZDOTDIR=§{AGBRTE_USER_ZDOTDIR:-$HOME}
 [[ -r $ZDOTDIR/.zshenv ]] && . $ZDOTDIR/.zshenv
@@ -163,9 +186,9 @@ ZDOTDIR=$__agbrte_zdotdir
 __agbrte_started=
 __agbrte_precmd() {
   local code=$?
-  [[ -n $__agbrte_started ]] && printf '\033]133;D;%s\007' $code
+  [[ -n $__agbrte_started ]] && printf '\033]133;D;%s;%s\007' $code "$__agbrte_nonce"
   __agbrte_started=1
-  printf '\033]133;A\007'
+  printf '\033]133;A;%s\007' "$__agbrte_nonce"
   return $code
 }
 __agbrte_preexec() {
@@ -173,10 +196,11 @@ __agbrte_preexec() {
   line=§{line//\\/\\\\}
   line=§{line//;/\\x3b}
   line=§{line//$'\n'/\\x0a}
-  printf '\033]633;E;%s\007\033]133;C\007' "$line"
+  printf '\033]633;E;%s;%s\007\033]133;C;%s\007' "$line" "$__agbrte_nonce" "$__agbrte_nonce"
 }
 __agbrte_ps1() {
-  [[ $PS1 == *'133;B'* ]] || PS1="$PS1"$'%{\e]133;B\a%}'
+  # Ours, by its nonce: another integration's 133;B carries none.
+  [[ $PS1 == *"133;B;$__agbrte_nonce"* ]] || PS1="$PS1"$'%{\e]133;B;'"$__agbrte_nonce"$'\a%}'
 }
 # First, so it reads the status before anything else can change it; the prompt
 # check last, after every theme has had its turn at PS1.
@@ -191,6 +215,9 @@ preexec_functions=($preexec_functions __agbrte_preexec)
  */
 export const POWERSHELL_SCRIPT = String.raw`# Agbrte shell integration for PowerShell. Sent by the Agbrte host on start; the profile has already run.
 if ($null -eq $global:__agbrteOriginalPrompt) {
+  # Out of the environment before a command runs, so no program this shell starts can read it.
+  $global:__agbrteNonce = $env:AGBRTE_MARK_NONCE
+  Remove-Item Env:AGBRTE_MARK_NONCE -ErrorAction SilentlyContinue
   $global:__agbrteOriginalPrompt = $function:prompt
   $global:__agbrteStarted = $false
   function global:prompt {
@@ -198,11 +225,12 @@ if ($null -eq $global:__agbrteOriginalPrompt) {
     $code = if ($ok) { 0 } elseif ($global:LASTEXITCODE) { $global:LASTEXITCODE } else { 1 }
     $e = [char]27; $b = [char]7
     $out = ''
-    if ($global:__agbrteStarted) { $out += "$e]133;D;$code$b" }
+    $n = $global:__agbrteNonce
+    if ($global:__agbrteStarted) { $out += "$e]133;D;$code;$n$b" }
     $global:__agbrteStarted = $true
-    $out += "$e]133;A$b"
+    $out += "$e]133;A;$n$b"
     $out += [string](& $global:__agbrteOriginalPrompt)
-    $out += "$e]133;B$b"
+    $out += "$e]133;B;$n$b"
     $out
   }
   # PSReadLine's own function, wrapped rather than re-implemented. This called
@@ -215,7 +243,8 @@ if ($null -eq $global:__agbrteOriginalPrompt) {
       $line = [string](& $global:__agbrteReadLine)
       $e = [char]27; $b = [char]7
       $safe = $line.Replace('\', '\\').Replace(';', '\x3b').Replace([string][char]10, '\x0a').Replace([string][char]13, '\x0d')
-      [Console]::Write("$e]633;E;$safe$b$e]133;C$b")
+      $n = $global:__agbrteNonce
+      [Console]::Write("$e]633;E;$safe;$n$b$e]133;C;$n$b")
       $line
     }
   }
@@ -225,10 +254,13 @@ if ($null -eq $global:__agbrteOriginalPrompt) {
 /**
  * cmd.exe's prompt, marked. `$e` is ESC in a `PROMPT`, and `$e\` is the string
  * terminator — the only one cmd can write, which is why `marks.ts` accepts it.
+ * The nonce goes in the prompt itself, since cmd has nowhere else to keep it;
+ * `D` has no status to give, so its status field is empty.
  */
-export function cmdPrompt(existing: string | undefined): string {
+export function cmdPrompt(existing: string | undefined, nonce?: string): string {
   const base = existing !== undefined && existing.trim() !== '' ? existing : '$P$G';
-  return `$e]133;D$e\\$e]133;A$e\\${base}$e]133;B$e\\`;
+  if (nonce === undefined) return `$e]133;D$e\\$e]133;A$e\\${base}$e]133;B$e\\`;
+  return `$e]133;D;;${nonce}$e\\$e]133;A;${nonce}$e\\${base}$e]133;B;${nonce}$e\\`;
 }
 
 /** Where the scripts go: the machine directory, never a shared temp directory. */
@@ -271,6 +303,7 @@ export function integrate(
     env: { ...(program.env ?? {}) },
     shell: null,
     level: 'none',
+    nonce: null,
   };
   // Arguments mean somebody chose how this shell starts — through `cmd.exe` for
   // a shim, or by naming flags — and adding ours could contradict them.
@@ -281,12 +314,13 @@ export function integrate(
 
   const dir = opts.dir ?? integrationDir();
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const env = { ...(program.env ?? {}) };
+  const nonce = randomBytes(16).toString('hex');
+  const env = { ...(program.env ?? {}), [MARK_NONCE_ENV]: nonce };
 
   switch (kind) {
     case 'bash': {
       const path = writeOnce(dir, 'bash', BASH_SCRIPT);
-      return { file: program.file, args: ['--init-file', path, '-i'], env, shell: kind, level: 'full' };
+      return { file: program.file, args: ['--init-file', path, '-i'], env, shell: kind, level: 'full', nonce };
     }
     case 'zsh': {
       // A directory, because zsh finds its files by name in `ZDOTDIR`.
@@ -311,6 +345,7 @@ export function integrate(
         },
         shell: kind,
         level: 'full',
+        nonce,
       };
     }
     case 'powershell': {
@@ -327,15 +362,21 @@ export function integrate(
         env,
         shell: kind,
         level: 'full',
+        nonce,
       };
     }
-    case 'cmd':
+    case 'cmd': {
+      // In the prompt, not the variable: cmd.exe cannot unset one before its
+      // first command, and its prompt is where its marks are written anyway.
+      const { [MARK_NONCE_ENV]: _unused, ...plain } = env;
       return {
         file: program.file,
         args: [],
-        env: { ...env, PROMPT: cmdPrompt(opts.env['PROMPT']) },
+        env: { ...plain, PROMPT: cmdPrompt(opts.env['PROMPT'], nonce) },
         shell: kind,
         level: 'prompt',
+        nonce,
       };
+    }
   }
 }

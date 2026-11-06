@@ -14,9 +14,9 @@
  * agent's set-up forms and the fleet search were the *classic* view — the
  * sidebar and session pane the palette switched the window to. Each is now a
  * sheet over the tabs (`TerminalSheets.tsx`) or a list in the palette, so none
- * of them takes the person out of the terminal. What remains of the classic
- * view on the desktop is a session's record — its transcript, files, agents and
- * a run's graph — reached from the palette until a tab can show it.
+ * of them takes the person out of the terminal. A session's record — its
+ * transcript, files, agents and a run's graph — was the last of them, and is
+ * a sheet too (`RecordSheet.tsx`): nothing on the desktop switches views now.
  *
  * `App` stays mounted behind the terminal so its subscriptions and its state
  * survive — the store it keeps is the one the tabs read hosts and sessions
@@ -40,6 +40,7 @@ import { Settings } from './Settings.js';
 import { Search } from './Search.js';
 import { SAYS } from './Inbox.js';
 import { Sheet, WorkflowsSheet } from './TerminalSheets.js';
+import { RecordSheet } from './RecordSheet.js';
 import type { GrantRequestDto, HostInfo, UpdateState } from '@shared/ipc/contract.js';
 
 interface Tab {
@@ -121,7 +122,9 @@ type SheetOpen =
   | { kind: 'attach' }
   | { kind: 'folder' }
   /** The classic picker's forms, for one tab: a model to install, an API key. */
-  | { kind: 'agent'; tab: Tab };
+  | { kind: 'agent'; tab: Tab }
+  /** A session's record: its log, agents, files, and a run's graph. */
+  | { kind: 'record'; sessionId: string; instanceId: string };
 
 export function Root(): JSX.Element {
   const [ui, setUi] = useState<'terminal' | 'classic'>(startingUi);
@@ -356,21 +359,6 @@ export function Root(): JSX.Element {
     for (const t of kept) void ensureLoaded(t.instanceId, t.sessionId).catch(() => undefined);
   }, [ui, localHost, sessions, onDisk, tabs, hosts, activeTab, newTab, ensureLoaded]);
 
-  /**
-   * Show a session in the classic view: its record — the transcript, the files,
-   * the agents, a run's graph — which is the one part of that view no tab or
-   * sheet has taken over yet.
-   */
-  const classicFor = useCallback(
-    async (session: { sessionId: string; instanceId: string } | null): Promise<void> => {
-      if (session !== null)
-        await useAgbrte.getState().openSession(session.sessionId, session.instanceId);
-      setSheet(null);
-      setUi('classic');
-    },
-    [],
-  );
-
   /*
    * A session the folder sheet opened, put in a tab.
    *
@@ -583,14 +571,34 @@ export function Root(): JSX.Element {
 
   /**
    * The folders granted on a tab's machine, each one a line that takes it back,
-   * and a line to grant another by typing its path (§17 Q24 step 6). Typed, not
-   * picked from a dialog: the machine may be across ssh, and this window's file
-   * picker shows this machine's disk.
+   * and a line to grant another by typing its path (§17 Q24 step 6). Typed
+   * wherever the machine is, because it may be across ssh and this window's
+   * file picker shows this machine's disk; picked from that dialog as well when
+   * the tab *is* on this machine, which is where a path is the hardest thing to
+   * type and the dialog the one people reach for.
    */
   const grantChoices = useCallback(
     async (instanceId: string): Promise<Command[]> => {
       const held = await window.agbrte.grants.list(instanceId);
-      const list: Command[] = [
+      const here = hosts.find((h) => h.instanceId === instanceId)?.targetKind === 'local';
+      const list: Command[] = [];
+      if (here && held !== null)
+        list.push({
+          id: 'grant:pick',
+          label: 'Let the agent read and write a folder you choose…',
+          hint: 'this machine’s folder dialog',
+          /*
+           * Choosing in the dialog is the yes: the window asked and the person
+           * picked, which is what Allow stands for when `agbrte grant` asks.
+           * Cancelling grants nothing and says nothing.
+           */
+          run: () =>
+            void window.agbrte.hosts
+              .pickFolder()
+              .then((path) => (path === null ? undefined : window.agbrte.grants.add(instanceId, path)))
+              .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err))),
+        });
+      list.push(
         {
           id: 'grant:add',
           label: 'Let the agent read and write another folder…',
@@ -604,7 +612,7 @@ export function Root(): JSX.Element {
               ),
           },
         },
-      ];
+      );
       if (held === null) {
         list.push({ id: 'grant:old', label: 'This host is too old to keep folder grants', run: () => undefined });
         return list;
@@ -621,7 +629,7 @@ export function Root(): JSX.Element {
       }
       return list;
     },
-    [hostLabel],
+    [hosts, hostLabel],
   );
 
   /*
@@ -699,8 +707,7 @@ export function Root(): JSX.Element {
     }
     /*
      * What used to be "the classic view" for all of it. Each is now a sheet
-     * over the tabs or a list in this palette, and the one line left that
-     * switches views is a session's record, which nothing here draws yet.
+     * over the tabs or a list in this palette; none switches views.
      */
     const unread = inbox.filter((e) => e.unread).length;
     list.push(
@@ -745,8 +752,9 @@ export function Root(): JSX.Element {
       list.push({
         id: 'record',
         label: 'This tab’s session record — transcript, files, agents…',
-        hint: 'the classic view',
-        run: () => void classicFor(current),
+        hint: 'what happened, in full',
+        run: () =>
+          openSheet({ kind: 'record', sessionId: current.sessionId, instanceId: current.instanceId }),
       });
     return list;
   }, [
@@ -759,7 +767,6 @@ export function Root(): JSX.Element {
     inbox,
     newTab,
     closeTab,
-    classicFor,
     openSheet,
     openTab,
     hostLabel,
@@ -895,7 +902,8 @@ export function Root(): JSX.Element {
               onOpened={() => setSheet(null)}
               onFolder={() => openSheet({ kind: 'folder' })}
               onGoTo={goTo}
-              onRecord={(sessionId, instanceId) => void classicFor({ sessionId, instanceId })}
+              onRecord={(sessionId, instanceId) => openSheet({ kind: 'record', sessionId, instanceId })}
+              hostLabel={hostLabel}
               onSeat={async (tab, runtimeId, modelId, endpointId) => {
                 setSeating(true);
                 // Left open on a refusal, with the reason above it: the form
@@ -1268,6 +1276,7 @@ function OpenSheet({
   onGoTo,
   onRecord,
   onSeat,
+  hostLabel,
 }: {
   sheet: SheetOpen;
   hosts: HostInfo[];
@@ -1281,9 +1290,10 @@ function OpenSheet({
   onOpened: () => void;
   onFolder: () => void;
   onGoTo: (instanceId: string, sessionId: string, title: string) => void;
-  /** A workflow run's record, which has a graph no tab draws. */
+  /** A session's record, over the tab: a workflow run's, or a child a row names. */
   onRecord: (sessionId: string, instanceId: string) => void;
   onSeat: (tab: Tab, runtimeId: string, modelId: string | null, endpointId?: string) => Promise<void>;
+  hostLabel: (instanceId: string) => string;
 }): JSX.Element {
   switch (sheet.kind) {
     case 'settings':
@@ -1330,6 +1340,19 @@ function OpenSheet({
           </div>
         </Sheet>
       );
+    case 'record': {
+      const title = sessions.find((s) => s.sessionId === sheet.sessionId)?.title ?? 'Session';
+      return (
+        <Sheet name="record" title={`The record of ${title}`} onClose={onClose}>
+          <RecordSheet
+            sessionId={sheet.sessionId}
+            instanceId={sheet.instanceId}
+            hostLabel={hostLabel(sheet.instanceId)}
+            onOpen={onRecord}
+          />
+        </Sheet>
+      );
+    }
     case 'agent': {
       const { tab } = sheet;
       const host = hosts.find((h) => h.instanceId === tab.instanceId);

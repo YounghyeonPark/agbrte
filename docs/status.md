@@ -64,13 +64,16 @@ record is made by the host on the server.
 An independent review of this step found the pane's streaming key and the host's
 loopback token reaching the log through `set` and `cat host.json`, a secrets file
 read mid-rewrite masking nothing, and program output able to close the element
-it is shown to the model in and speak as the person. All four are fixed. What it
-found and is not: **output can forge a command.** The shell's marks are escape
-sequences, and a file that contains them, `cat` to the terminal, makes a
-"command the person ran" with whatever line and output it likes, logged under
-the person and shown to the agent as theirs — told only that it is program output.
-VS Code puts a nonce in the command-line mark for this; the integration scripts
-do not yet.
+it is shown to the model in and speak as the person. All four are fixed. The
+fifth — **output could forge a command**: the shell's marks are escape sequences,
+and a file holding them, `cat` to the terminal, made a "command the person ran"
+with whatever line and output it liked — is fixed since 2026-11-06. Every mark
+the host's shells write carries a nonce minted for that shell, and the host
+reads a mark without it as text (`src/shared/terminal/marks.ts`). Exercised
+against real bash, PowerShell and cmd.exe on Windows; not zsh, not Linux or
+macOS. cmd.exe keeps its nonce in `PROMPT`, where a program it starts can read
+it: what this stops is text, which cannot know a value minted after it was
+written, not a program somebody chose to run.
 
 **The terminal with the agent in it has run on Windows only.** cmd.exe, Git for
 Windows' bash and PowerShell, in the app (`tests/e2e/terminal.spec.ts` with the
@@ -83,9 +86,10 @@ not in Windows Terminal, iTerm or tmux.
 **The app opens on that terminal, in tabs**, on Windows (`tests/e2e/tabs.spec.ts`).
 Settings, workflows, attaching a machine, opening a folder, the agent's
 set-up forms and search open over the tabs as the classic view's own
-components, and the inbox is a list in the palette; a session's record
-(transcript, files, agents, a run's graph) is still the classic view. The phone
-and the browser client get the classic view whole. Attaching a machine and
+components, the inbox is a list in the palette, and a session's record
+(transcript, files, agents, a run's graph) is a sheet too, which answers a split
+proposal the terminal has no line for. Nothing on the desktop switches to the
+classic view any more; the phone and the browser client get it whole. Attaching a machine and
 opening a remote folder from a sheet have run only against this machine's ssh-
 less fixtures, not a real server.
 

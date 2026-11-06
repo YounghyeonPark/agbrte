@@ -64,6 +64,15 @@ export async function runTerminal(o: RunTerminalOptions): Promise<number> {
   const finished = new Promise<number>((done) => {
     finish = done;
   });
+  /*
+   * The catch-up read below, handed to the session too, so the end of the
+   * conversation is drawn above the first prompt as in the app's tab
+   * (`earlier.ts`). One read serves both: it is the same log at the same moment.
+   */
+  let caughtUp: (events: readonly AgbrteEvent[]) => void = () => undefined;
+  const past = new Promise<readonly AgbrteEvent[]>((done) => {
+    caughtUp = done;
+  });
 
   const session = new TerminalSession({
     out: (bytes) => process.stdout.write(bytes),
@@ -72,10 +81,12 @@ export async function runTerminal(o: RunTerminalOptions): Promise<number> {
     resync: process.platform === 'win32',
     shell: pty,
     integration: taught.level,
+    ...(taught.nonce !== null ? { markNonce: taught.nonce } : {}),
     agent: {
       send: (text) => o.connection.send(o.sessionId, o.agentId, text),
       interrupt: () => o.connection.interrupt(o.sessionId),
       respond: (requestId, decision) => o.connection.respondPermission(requestId, decision),
+      history: () => past,
       // Pictures where the terminal this runs in says it draws them; elsewhere
       // none are fetched, and an image is the tool line that produced it.
       ...(graphics !== 'none'
@@ -96,7 +107,12 @@ export async function runTerminal(o: RunTerminalOptions): Promise<number> {
   // Events: only this session's, each once. The catch-up read sets where the
   // live push takes over, so attaching mid-turn does not replay the transcript.
   let lastSeq = -1;
-  for (const e of await o.connection.events(o.sessionId)) lastSeq = Math.max(lastSeq, e.seq);
+  const caught = await o.connection.events(o.sessionId).catch((err: unknown) => {
+    caughtUp([]);
+    throw err;
+  });
+  for (const e of caught) lastSeq = Math.max(lastSeq, e.seq);
+  caughtUp(caught);
   const onEvent = (id: unknown, event: unknown): void => {
     if (id !== o.sessionId) return;
     const e = event as AgbrteEvent;

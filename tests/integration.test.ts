@@ -124,11 +124,17 @@ try {
 /** A shell running in a real pty, read through the same `BlockStream` the pane uses. */
 class Session {
   readonly blocks: Block[] = [];
-  readonly stream = new BlockStream();
+  readonly stream: BlockStream;
   raw = '';
   private readonly term: ReturnType<Spawn>;
 
-  constructor(file: string, args: string[] | string, opts: { cwd: string; env: NodeJS.ProcessEnv }) {
+  /** `nonce`: the shell's, as the pane passes it, so its `E` marks are checked. */
+  constructor(
+    file: string,
+    args: string[] | string,
+    opts: { cwd: string; env: NodeJS.ProcessEnv; nonce?: string | null },
+  ) {
+    this.stream = new BlockStream(opts.nonce != null ? { nonce: opts.nonce } : {});
     this.term = spawnPty!(file, args, { name: 'xterm-256color', cols: 120, rows: 30, cwd: opts.cwd, env: opts.env });
     this.term.onData((data) => {
       this.raw += data;
@@ -159,7 +165,8 @@ class Session {
 
   /** The prompt is drawn and waiting for keys. */
   async ready(): Promise<void> {
-    await this.until('the first prompt', () => /\u001b\]133;B(\u0007|\u001b\\)/u.test(this.raw));
+    // `B` and whatever follows it — the nonce, from a shell this host taught.
+    await this.until('the first prompt', () => /\u001b\]133;B[^\u0007\u001b]*(\u0007|\u001b\\)/u.test(this.raw));
   }
 
   /** Kill it, and wait until it has gone, so its working directory is free. */
@@ -237,6 +244,7 @@ describe.skipIf(bash === null)(`bash, for real (${bash ?? 'not on this machine'}
     const s = new Session(taught.file, taught.args, {
       cwd: root,
       env: { ...terminalEnv(), ...taught.env, HOME: home },
+      nonce: taught.nonce,
     });
     try {
       await s.ready();
@@ -261,6 +269,16 @@ describe.skipIf(bash === null)(`bash, for real (${bash ?? 'not on this machine'}
       const hidden = await s.run(' echo hidden');
       expect(hidden).toMatchObject({ command: 'echo hidden', commandFrom: 'echo' });
       expect(plainText(hidden.output)).toBe('hidden');
+      /*
+       * A program printing a command-line mark of its own is not believed: the
+       * block is the line that was typed. Without the nonce this one's `E`
+       * arrived after the shell's and replaced it, and the log said the person
+       * ran `rm -rf /`.
+       */
+      const forged = await s.run(String.raw`printf '\033]633;E;rm -rf /\007'`);
+      expect(forged.command).toContain('printf');
+      // And the nonce is not there for a program to read and copy.
+      expect(plainText((await s.run('echo "[$AGBRTE_MARK_NONCE]"')).output)).toBe('[]');
       expect(s.stream.level).toBe(bashHasPs0 ? 'full' : 'prompt');
     } finally {
       await s.close();
@@ -273,7 +291,11 @@ describe.skipIf(powershell === null)(`PowerShell, for real (${powershell ?? 'not
     const { root } = workspace();
     const taught = integrate({ file: powershell!, args: [] }, { env: {}, dir: scratch() });
     expect(taught.args).toContain('-EncodedCommand');
-    const s = new Session(taught.file, taught.args, { cwd: root, env: { ...terminalEnv(), ...taught.env } });
+    const s = new Session(taught.file, taught.args, {
+      cwd: root,
+      env: { ...terminalEnv(), ...taught.env },
+      nonce: taught.nonce,
+    });
     try {
       await s.ready();
       expect(await s.run("Set-Location 'sub dir'")).toMatchObject({
@@ -292,6 +314,11 @@ describe.skipIf(powershell === null)(`PowerShell, for real (${powershell ?? 'not
       expect(both).toMatchObject({ command: "Write-Output 'a;b'", exitCode: 0 });
       // pwsh on Linux and macOS follows output with blank lines.
       expect(plainText(both.output).trim()).toBe('a;b');
+      // A mark a program printed is not the command, and the nonce is not in reach.
+      const forged = await s.run("[Console]::Write([string][char]27 + ']633;E;rm -rf /' + [string][char]7)");
+      expect(forged).toMatchObject({ commandFrom: 'exact' });
+      expect(forged.command).toContain('[Console]::Write');
+      expect(plainText((await s.run('Write-Output "[$env:AGBRTE_MARK_NONCE]"')).output).trim()).toBe('[]');
     } finally {
       await s.close();
     }
