@@ -9,23 +9,26 @@
  *
  * ## What this checkout can and cannot prove
  *
- * It cannot prove a capture. There is no X server here, no cookie, no GNOME
- * session, and the decoder and the `xwd` driver have their own unit tests against
- * built dumps (`tests/xwd.test.ts`, `tests/display.test.ts`). What only an end to
- * end run can show is that the path exists at all — renderer to preload to IPC to
- * fleet to the session socket to the host — and that the four states a person
- * actually meets render as four different things rather than as one empty box.
+ * It cannot prove a capture. There is no cookie and no GNOME session here, and
+ * the decoder and the `xwd` driver have their own unit tests against built dumps
+ * (`tests/xwd.test.ts`, `tests/display.test.ts`). What only an end to end run can
+ * show is that the path exists at all — renderer to preload to IPC to fleet to
+ * the session socket to the host — and that the four states a person actually
+ * meets render as four different things rather than as one empty box.
  *
  * The first of those needs no doctoring, and it is the most valuable assertion
- * here: **a Windows host genuinely has no X display**, so opening the pane against
- * the real local host runs the whole stack and comes back with the truth. If any
- * layer of the wiring were missing, that test fails.
+ * here: the real local host is asked, and what comes back is checked against
+ * what this machine really has. **A Windows host genuinely has no X display**;
+ * a Linux CI runner under `xvfb-run` genuinely has one. Either way the answer on
+ * screen was computed by the host, and if any layer of the wiring were missing,
+ * that test fails.
  *
  * The other three are doctored at the IPC, because what is under test is what the
  * pane does with an answer — and a real display would make this a test of somebody
  * having remembered to log in.
  */
 
+import { readdir } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
 import { launch, makeRepo, type LaunchedApp } from './harness.js';
 import { addAgent, createSession, openComposerMenu, pretendRemote } from './actions.js';
@@ -39,6 +42,34 @@ import { addAgent, createSession, openComposerMenu, pretendRemote } from './acti
  */
 const FRAME =
   'iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAYAAAC09K7GAAAAEklEQVR4nGO42aT9HxkzEBQAAAK4Hj2Gmre3AAAAAElFTkSuQmCC';
+
+/**
+ * The X displays this machine has, found the way the host finds them
+ * (`listDisplays` in `src/host/display.ts`): a socket named `X<n>` under
+ * `/tmp/.X11-unix`, or `DISPLAY` naming one the sockets do not.
+ *
+ * Read here rather than assumed, because the test below once assumed it. It said
+ * "this machine really has no `/tmp/.X11-unix`", which was true of the one
+ * Windows machine the suite had ever run on. The first Linux run was under
+ * `xvfb-run`, which is an X server, and the host correctly listed `:99`. The test
+ * failed on an answer that was right.
+ */
+async function xDisplaysHere(): Promise<string[]> {
+  const names: string[] = [];
+  try {
+    for (const name of await readdir('/tmp/.X11-unix')) {
+      if (/^X\d+$/u.test(name)) names.push(`:${name.slice(1)}`);
+    }
+  } catch {
+    // No directory, which is Windows and a headless server alike.
+  }
+  const fromEnv = process.env['DISPLAY']?.trim();
+  if (fromEnv !== undefined && /^:\d+(\.\d+)?$/u.test(fromEnv)) {
+    const number = fromEnv.split('.')[0]!;
+    if (!names.includes(number)) names.push(number);
+  }
+  return names;
+}
 
 const row = (page: Page) => page.locator('[data-testid=screen-row]');
 const toggle = (page: Page) => page.locator('[data-testid=toggle-screen]');
@@ -91,18 +122,20 @@ test.describe('the screen of that machine', () => {
     }
   });
 
-  test('reaches the host and reports a machine with no X display', async () => {
+  test('reaches the host and reports the displays this machine really has', async () => {
     /*
      * The one assertion here that goes all the way down, and the reason it can:
-     * this machine really has no `/tmp/.X11-unix`. So the answer on screen was
-     * computed by the host, over the session socket, through every layer added
-     * for this feature — and a missing handler, an unregistered channel or a
-     * command the host does not know fails right here.
+     * nothing is doctored, and what this machine has is known independently
+     * (`xDisplaysHere`). So the answer on screen was computed by the host, over
+     * the session socket, through every layer added for this feature — and a
+     * missing handler, an unregistered channel or a command the host does not
+     * know fails right here.
      *
-     * The message is asserted too, not just its absence of a picture. "No
-     * display" on its own is a dead end; naming the thing that does work turns it
-     * into a next step (§3.3).
+     * On a machine with none, the message is asserted too, not just its absence
+     * of a picture. "No display" on its own is a dead end; naming the thing that
+     * does work turns it into a next step (§3.3).
      */
+    const here = await xDisplaysHere();
     const repo = await makeRepo();
     const agbrte = await launch(repo);
 
@@ -142,12 +175,26 @@ test.describe('the screen of that machine', () => {
 
       await expect(row(page)).toBeVisible();
       const none = page.locator('[data-testid=screen-none]');
-      await expect(none).toBeVisible({ timeout: 20_000 });
-      await expect(none).toContainText('no X display');
-      // The answer that does work on such a machine, named rather than implied.
-      await expect(none).toContainText('5900');
-      // And nothing pretends to be a picture.
-      await expect(page.locator('[data-testid=screen-frame]')).toHaveCount(0);
+      if (here.length === 0) {
+        await expect(none).toBeVisible({ timeout: 20_000 });
+        await expect(none).toContainText('no X display');
+        // The answer that does work on such a machine, named rather than implied.
+        await expect(none).toContainText('5900');
+        // And nothing pretends to be a picture.
+        await expect(page.locator('[data-testid=screen-frame]')).toHaveCount(0);
+      } else {
+        /*
+         * A machine with a display gets it offered, by its own name. That is the
+         * same proof from the other side: the host could only have named `:99`
+         * by looking. Nothing about the picture is asserted. Whether one arrives
+         * depends on `xwd` and a cookie this suite does not set up, and the
+         * doctored tests below cover each of those answers.
+         */
+        await expect(
+          page.locator(`[data-testid=screen-pick] option[value="${here[0]}"]`),
+        ).toHaveCount(1, { timeout: 20_000 });
+        await expect(none).toHaveCount(0);
+      }
       /*
        * The assertion that makes the one above mean something.
        *
@@ -155,8 +202,12 @@ test.describe('the screen of that machine', () => {
        * display", so this test would have passed on an IPC that threw — which is
        * precisely the wiring it exists to prove. Three states, three renderings:
        * asking, could-not-ask, and a machine that really has none.
+       *
+       * `screen-error` is a grab's failure, so it is only meaningful where no grab
+       * can have been tried. Where a display exists the pane starts watching it,
+       * and whether that works is the `xwd`-and-cookie question set aside above.
        */
-      await expect(page.locator('[data-testid=screen-error]')).toHaveCount(0);
+      if (here.length === 0) await expect(page.locator('[data-testid=screen-error]')).toHaveCount(0);
       await expect(page.locator('[data-testid=screen-failed]')).toHaveCount(0);
     } finally {
       await agbrte.close();

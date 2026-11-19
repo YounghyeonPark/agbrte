@@ -168,10 +168,13 @@ jobs:
         run: npm run build
 
       # The specs that drive the landing page and the web client use Playwright's
-      # own browser, not Electron. `--with-deps` because the runner image is not
-      # promised to carry every library that build links against.
-      - name: Playwright's browser
-        run: npx playwright install --with-deps chromium
+      # own browsers, not Electron: chromium for most, and WebKit for the phone
+      # layout, which is emulated on the engine an iPhone actually runs. The first
+      # run installed chromium alone and the three phone tests failed at launch.
+      # `--with-deps` because the runner image is not promised to carry every
+      # library those builds link against.
+      - name: Playwright's browsers
+        run: npx playwright install --with-deps chromium webkit
 
       # Ubuntu 24.04 lets AppArmor refuse unprivileged user namespaces, which is
       # what Chromium's sandbox is built on, and the `chrome-sandbox` helper that

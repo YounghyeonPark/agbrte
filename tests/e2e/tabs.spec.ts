@@ -149,7 +149,16 @@ test('the agent is shown what was run in the tab since it last answered', async 
     // The command line and its output, inside what the agent was handed.
     await expect.poll(async () => await screen(w), { timeout: 60_000 }).toContain(`</terminal> what-${id}`);
     const said = (await screen(w)).split('echo: <terminal>')[1] ?? '';
-    expect(said).toContain(`$ echo shown-${id} shown-${id}`);
+    /*
+     * The status is there when the shell said it. A Windows tab opens cmd.exe,
+     * which has no mark for an exit code, so its record has none; bash and zsh
+     * report one and `terminalContext` writes it after the command. This
+     * asserted the cmd.exe form alone, which was the only form it had ever met,
+     * until the first Linux run read `(exit 0)` and failed on a context that was
+     * right.
+     */
+    const status = process.platform === 'win32' ? '' : ' (exit 0)';
+    expect(said).toContain(`$ echo shown-${id}${status} shown-${id}`);
   } finally {
     await agbrte.close();
     await rm(repo, { recursive: true, force: true, maxRetries: 100, retryDelay: 100 });
