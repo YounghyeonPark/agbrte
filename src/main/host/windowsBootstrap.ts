@@ -188,10 +188,25 @@ export function windowsNodeUrl(arch: string, version = REMOTE_NODE_VERSION): str
  * The same promise the POSIX path makes: nothing system-wide, no installer, no
  * administrator. A machine you were lent should not need changing to be used.
  *
- * `Expand-Archive` has no `--strip-components`, so the versioned directory the
- * zip contains is moved up by hand — the caller should not have to know which
- * build is unpacked, and an upgrade should replace the directory rather than add
- * a second one to choose between.
+ * The zip is unpacked with .NET's `ZipFile`, called directly, and **not with
+ * `Expand-Archive`**, which is what this used until a CI runner image changed
+ * under it. `Expand-Archive` is a module, and modules are versioned separately
+ * from the PowerShell that loads them. The windows-2025 image of 2026-11-16 gave
+ * Windows PowerShell 5.1 an Archive module whose `Expand-Archive` calls the
+ * three-argument `ExtractToDirectory`, an overload .NET Core has and .NET
+ * Framework does not. It failed with "Cannot find an overload for
+ * ExtractToDirectory and the argument count: 3" on a runner where the image of
+ * 2026-11-03 had passed the same commit's tests an hour before. A remote someone
+ * lends you can carry that module just as well, and the bootstrap's whole promise
+ * is not to need anything changed on such a machine. The two-argument overload
+ * has been in .NET Framework since 4.5, which every 5.1 runs on, and is in every
+ * .NET since. It refuses an existing destination, which `$stage` never is, since
+ * it is removed first.
+ *
+ * Neither unpacker has `--strip-components`, so the versioned directory the zip
+ * contains is moved up by hand — the caller should not have to know which build
+ * is unpacked, and an upgrade should replace the directory rather than add a
+ * second one to choose between.
  */
 export async function installWindowsNode(
   runner: SshRunner,
@@ -209,7 +224,8 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 # default on older images, and nodejs.org refuses those.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 Invoke-WebRequest -Uri "${url}" -OutFile $zip -UseBasicParsing
-Expand-Archive -Path $zip -DestinationPath $stage -Force
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $stage)
 $inner = Get-ChildItem $stage -Directory | Select-Object -First 1
 if (Test-Path "$root\\node") { Remove-Item -Recurse -Force "$root\\node" }
 Move-Item $inner.FullName "$root\\node"
