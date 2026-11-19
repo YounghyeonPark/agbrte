@@ -78,20 +78,23 @@ against real bash, PowerShell and cmd.exe on Windows, and — this page said
 otherwise until 2026-11-19, which was wrong — on every push in CI, where
 `tests/integration.test.ts` starts real bash and `pwsh` in a pty on Ubuntu, and
 bash, zsh and `pwsh` on macOS, and checks each command's line, status and
-nonce. That is the shell scripts on those systems, not the app's terminal there,
-and not a host on a server. cmd.exe keeps its nonce in `PROMPT`, where a program it starts can read
+nonce. That is the shell scripts on those systems, and not a host on a server;
+the app's terminal on Linux is the paragraph below. cmd.exe keeps its nonce in `PROMPT`, where a program it starts can read
 it: what this stops is text, which cannot know a value minted after it was
 written, not a program somebody chose to run.
 
-**The terminal with the agent in it has run on Windows only.** cmd.exe, Git for
-Windows' bash and PowerShell, in the app (`tests/e2e/terminal.spec.ts` with the
-default shell, the others by hand) and in unit tests of the routing. It has not
-run on Linux or macOS, nor on a remote host, where the agent and the shell are
-both on the server and only the screen travels. And `agbrte attach` on a real
+**The terminal with the agent in it has run on Windows and on Linux.** cmd.exe,
+Git for Windows' bash and PowerShell on Windows, in the app (`tests/e2e/terminal.spec.ts`
+with the default shell, the others by hand) and in unit tests of the routing.
+Since 2026-11-19, CI's `e2e` job runs the deterministic end-to-end suite on Ubuntu
+under `xvfb-run` on every push. That is the app's own window, with the runner's
+bash as the tab's shell, drawing the terminal, the tabs, pictures and players.
+It has not run on macOS, nor on a remote host, where the agent and the shell
+are both on the server and only the screen travels. And `agbrte attach` on a real
 terminal — the CLI's half — has been exercised only through its routing tests,
 not in Windows Terminal, iTerm or tmux.
 
-**The app opens on that terminal, in tabs**, on Windows (`tests/e2e/tabs.spec.ts`).
+**The app opens on that terminal, in tabs**, on Windows and Linux (`tests/e2e/tabs.spec.ts`).
 Settings, workflows, attaching a machine, opening a folder, the agent's
 set-up forms and search open over the tabs as the classic view's own
 components, the inbox is a list in the palette, and a session's record
@@ -101,9 +104,9 @@ classic view any more; the phone and the browser client get it whole. Attaching 
 opening a remote folder from a sheet have run only against this machine's ssh-
 less fixtures, not a real server.
 
-**Pictures in the terminal have been drawn from a script, in `cmd.exe`, on
-Windows** (`tests/e2e/images.spec.ts`): iTerm2's, a sixel and kitty's in chunks,
-through Windows' pseudoconsole. No real `imgcat`, `chafa`, `img2sixel` or
+**Pictures in the terminal have been drawn from a script, in `cmd.exe` on
+Windows and bash on Linux** (`tests/e2e/images.spec.ts`): iTerm2's, a sixel and
+kitty's in chunks, through Windows' pseudoconsole and through a plain pty. No real `imgcat`, `chafa`, `img2sixel` or
 `icat` has been run against it, and none of the programs that decide by asking
 the terminal (device attributes, kitty's query) — on Windows the pseudoconsole
 may answer those questions itself before they reach the app. The agent's own
@@ -119,14 +122,15 @@ pictures test is not, and that test checks the line the script printed, not the
 prompt after it. Git Bash, and every shell on Linux and macOS, have no
 pseudoconsole to disagree, but have not been looked at for this.
 
-**Video and sound have played in `cmd.exe` on Windows** (`tests/e2e/media.spec.ts`):
+**Video and sound have played in `cmd.exe` on Windows, and in bash on Linux in
+CI** (`tests/e2e/media.spec.ts`):
 `agbrte play` and `agbrte show` typed at the tab's prompt, through the launcher
 the host puts on the shell's PATH and the CLI under the app's own Electron — a
 WAV, a WebM the page recorded itself, and a PNG, each loaded by the browser,
 with the prompt after each one where it belongs. Not run: an MP4 or MP3 (the
 H.264, AAC and MP3 decoders are in Electron's Chromium, and nothing here has
-played one), the launcher from PowerShell or Git Bash, `agbrte play` on Linux or
-macOS or over ssh, and a player scrolled half off the screen, which is placed by
+played one), the launcher from PowerShell or Git Bash, `agbrte play` on macOS or
+over ssh, and a player scrolled half off the screen, which is placed by
 hand and has only been seen whole. Replies read aloud in a tab are proven as far
 as the switch and the speaker icon on the tab; nothing in the suite makes the
 machine talk, so the speech itself was not heard.

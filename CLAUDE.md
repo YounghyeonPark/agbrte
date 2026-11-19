@@ -10,11 +10,11 @@ neither: it is what a session needs to *work* here without rediscovering it.
 
 ```
 npm run typecheck     # two projects: node and web
-npm test              # vitest, ~1,670 tests
+npm test              # vitest, ~2,400 tests
 npm run lint:classes  # renderer classes that style nothing
 npm run lint:reach    # modules no entry point reaches
 npm run lint:race     # state read before an await and written after it
-npm run e2e           # Playwright against real Electron — NOT in CI
+npm run e2e           # Playwright against real Electron — CI runs it on Linux only
 npm run e2e:fast      # the same, minus the tests that need a local model
 ```
 
@@ -23,12 +23,18 @@ Four things about that list are load-bearing:
 - **`npm test` runs files in parallel, and that is deliberate.** Adding
   `--no-file-parallelism` to "reduce noise" hides the class of bug where two
   hosts share a socket. One shipped that way and only CI caught it.
-- **The e2e suite is not in CI.** Nothing else exercises the renderer, the
-  preload, the IPC surface or a real pty, so run it before finishing anything
-  that touches them. It takes about five minutes.
+- **CI runs the e2e suite on Linux, and nowhere else.** Nothing else exercises
+  the renderer, the preload, the IPC surface or a real pty. The `e2e` job runs
+  the deterministic project under `xvfb-run` on ubuntu, and Windows and macOS
+  get it only from a person, so run `e2e:fast` here before finishing anything
+  that touches them. It takes about fourteen minutes. Two of the first Linux
+  run's failures were specs that had only ever met Windows: one assumed there
+  was no X display, the other expected cmd.exe's record, which has no exit
+  status. A spec that asserts what *this machine* is should read it, not assume
+  it.
 - **Two projects, and the order matters.** Everything tagged `@live` talks to a
   real local model server, and it is the only part whose duration depends on a
-  GPU and a cold weight load. They run *after* the deterministic 84, so a slow
+  GPU and a cold weight load. They run *after* the deterministic 125, so a slow
   one costs time rather than coverage — a run once spent the global timeout on
   one live test and **seventeen tests did not run**, reported as a slow test and
   not as missing coverage. `e2e:fast` is the deterministic project alone, which
