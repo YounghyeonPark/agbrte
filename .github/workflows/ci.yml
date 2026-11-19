@@ -9,8 +9,10 @@
 # documentation" is not a state to leave a third of the product in.
 #
 # What this does **not** cover is stated so nobody reads more into a green tick
-# than is there: the Electron smoke checks need a real window, and the remote
-# tests need a machine to ssh into. Both stay manual.
+# than is there: the remote tests need a machine to ssh into, the `@live`
+# end-to-end tests need a model server, and the Electron suite runs on Linux
+# alone — Windows and macOS still get it only from a person running it. All of
+# that stays manual.
 name: CI
 
 on:
@@ -121,3 +123,77 @@ jobs:
       - name: What this platform can see
         if: always()
         run: node scripts/platform-report.mjs
+
+  # The Electron suite, which until this job ran on one Windows machine and
+  # nowhere else.
+  #
+  # It is the only thing that exercises the renderer, the preload, the IPC
+  # surface and a real pty together, and it was run by hand before finishing
+  # anything that touched them — which means it ran on the platform the work was
+  # done on, and Linux, the platform most remote hosts are, saw the app's own
+  # window never. The terminal of a Linux host was only ever drawn by an app
+  # running on Windows.
+  #
+  # **Linux only**, because that is where a display is cheap: `xvfb-run` gives
+  # Electron a screen without a desktop. macOS would need a runner with a logged-in
+  # session and Windows a desktop, and neither is worth the minutes until this one
+  # has paid for itself.
+  #
+  # **The deterministic project only.** `@live` talks to a model server, and a
+  # runner has no GPU and no weights; those tests would be skipped or would time
+  # out, and either way a green tick would claim something that did not run.
+  #
+  # A separate job rather than a step in `suite`, so that a red Electron run and
+  # a red unit run are two facts instead of one: neither stops the other, and
+  # neither is hidden behind the other's failure.
+  e2e:
+    name: e2e (ubuntu-latest)
+    runs-on: ubuntu-latest
+    # The deterministic project takes about fourteen minutes on the Windows
+    # machine it was written on. This is room for a slower runner, and a stop for
+    # a hung Electron that would otherwise sit until GitHub's six hours.
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # The specs that drive the landing page and the web client use Playwright's
+      # own browser, not Electron. `--with-deps` because the runner image is not
+      # promised to carry every library that build links against.
+      - name: Playwright's browser
+        run: npx playwright install --with-deps chromium
+
+      # Ubuntu 24.04 lets AppArmor refuse unprivileged user namespaces, which is
+      # what Chromium's sandbox is built on, and the `chrome-sandbox` helper that
+      # npm unpacks is not setuid root. Electron then aborts before its first
+      # window and every test reports a launch timeout. Lifting the restriction on
+      # a throwaway runner keeps the sandbox on; passing `--no-sandbox` to the app
+      # would test a configuration nobody ships.
+      - name: Let Chromium's sandbox start
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      # `npx playwright` rather than `npm run e2e:fast`, which would build a second
+      # time. The suite's global setup refuses a build older than the source, so a
+      # missed rebuild is not a way for this to test the wrong thing.
+      - name: End-to-end (deterministic)
+        run: xvfb-run --auto-servernum npx playwright test --project deterministic
+
+      # What a failing spec saw: `error-context.md` holds the page's accessibility
+      # snapshot at the moment of failure, which is most of what a screenshot
+      # would have said, and the only record a runner leaves behind.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-results
+          path: test-results/
+          retention-days: 7
