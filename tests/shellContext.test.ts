@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import {
   CONTEXT_BLOCKS,
   CONTEXT_TOTAL,
+  dropCutStart,
   LOGGED_OUTPUT,
   maskSecrets,
   recordBlock,
@@ -26,10 +27,11 @@ import { SessionManager } from '@main/sessionManager.js';
 import { RuntimeRegistry } from '@main/runtime/registry.js';
 import { EchoRuntime, type EchoConfig } from '@main/runtime/runtimes/echo.js';
 import { openWorkspace } from '@main/store/identity.js';
-import type { Block } from '@shared/terminal/marks.js';
+import { BlockStream, plainText, type Block } from '@shared/terminal/marks.js';
 import type { AgentId, InstanceId, NormalizedTurn, SessionId, UserTurn } from '@shared/types/index.js';
 
 const KEY = 'hold-me-secret-0123456789';
+const osc = (body: string): string => `\u001b]${body}\u0007`;
 
 function block(command: string, output: string, exitCode: number | null = 0): Block {
   return { command, commandFrom: 'exact', output, exitCode, truncated: false };
@@ -104,6 +106,70 @@ describe('a command as the log keeps it', () => {
     expect(r.output.length).toBeLessThanOrEqual(LOGGED_OUTPUT);
     expect(r.output).toContain('the error at the end');
     expect(r.output).not.toContain(KEY.slice(-12));
+  });
+
+  /*
+   * The stream keeps the last 256 KB as output arrives, before this sees it, so
+   * a key printed across that cut reached here as its end alone — which the
+   * exact match does not know and no shape starts with. It went to the log and
+   * the model as printed.
+   */
+  describe('after the stream cut the start off', () => {
+    const cut = (output: string): Block => ({ ...block('cat big.log', output), truncated: true });
+    const tails = (value: string): string[] =>
+      Array.from({ length: value.length - 4 }, (_, i) => value.slice(i + 1)).filter((t) => t.length >= 4);
+
+    it('drops the end of a held key the cut went through, through a real stream', () => {
+      const stream = new BlockStream({ maxOutput: 64 });
+      const rest = ' and then the error at the end';
+      // Sized so the stream's cut lands ten characters into the key.
+      const pad = '.'.repeat(64 - (KEY.length - 10) - rest.length - 2);
+      stream.push(osc('133;A') + '$ ' + osc('133;B') + 'cat big.log\r\n' + osc('133;C'));
+      const [b] = stream.push(`${'x'.repeat(500)} ${KEY}${rest}${pad}\r\n` + osc('133;D;0'));
+      expect(b?.truncated).toBe(true);
+      expect(plainText(b!.output).startsWith(KEY.slice(10))).toBe(true);
+      const r = recordBlock(b!, [KEY])!;
+      for (const t of tails(KEY)) expect(r.output).not.toContain(t);
+      expect(r.output).toContain('the error at the end');
+      expect(r.truncated).toBe(true);
+    });
+
+    it('drops half a key it was never given, whatever its shape', () => {
+      const r = recordBlock(cut('oj-abcdefghijklmnop0123 more\nthe error'), [])!;
+      expect(r.output).not.toContain('abcdefghijklmnop');
+      expect(r.output).toContain('the error');
+    });
+
+    it('drops the end of a held value with a space in it, which half a word would not cover', () => {
+      const phrase = 'correct horse battery staple';
+      const r = recordBlock(cut('rse battery staple next\nthe error'), [phrase])!;
+      expect(r.output).not.toContain('battery');
+      expect(r.output).not.toContain('staple');
+      expect(r.output).toContain('the error');
+    });
+
+    it('drops a key block whose BEGIN was cut, through its END', () => {
+      const r = recordBlock(
+        cut('b3BlbnNzaC1rZXk\nAAAAB3NzaC1yc2E\n-----END OPENSSH PRIVATE KEY-----\nthe error'),
+        [],
+      )!;
+      expect(r.output).not.toContain('AAAAB3NzaC1yc2E');
+      expect(r.output).not.toContain('END OPENSSH');
+      expect(r.output).toBe('the error');
+    });
+
+    it('keeps a whole key block after the cut for the shape to mask', () => {
+      const r = recordBlock(cut('tail of a line\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpA\n-----END RSA PRIVATE KEY-----\nok'), [])!;
+      expect(r.output).not.toContain('MIIEpA');
+      expect(r.output).toContain('ok');
+    });
+
+    it('leaves an output nothing cut exactly as it was', () => {
+      expect(recordBlock(block('ls', 'rse battery staple'), ['correct horse battery staple'])!.output).toBe(
+        'rse battery staple',
+      );
+      expect(dropCutStart('one two', [])).toBe(' two');
+    });
   });
 });
 

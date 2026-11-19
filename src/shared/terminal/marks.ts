@@ -200,6 +200,13 @@ export class BlockStream {
   private input = '';
   private output = '';
   private truncated = false;
+  /**
+   * In `input`, the first line has ended. What follows it is the command's
+   * output in a shell that never says `C`, and goes into `output` under the
+   * same cap rather than onto `input`, which had none: `type` of a large file
+   * in cmd.exe grew one string in the host for as long as the file went on.
+   */
+  private lineEnded = false;
   private reported: string | null = null;
   private seen = new Set<Mark['kind']>();
   private exitKnown = false;
@@ -302,15 +309,33 @@ export class BlockStream {
 
   private take(text: string): void {
     if (text === '') return;
-    if (this.region === 'input') this.input += text;
-    else if (this.region === 'output') {
-      this.output += text;
-      if (this.output.length > this.maxOutput) {
-        this.output = this.output.slice(this.output.length - this.maxOutput);
-        this.truncated = true;
+    if (this.region === 'input') {
+      if (this.lineEnded) {
+        this.keep(text);
+        return;
       }
-    }
+      const newline = text.indexOf('\n');
+      if (newline === -1) {
+        // A line with no end is still a line someone typed, and the start is
+        // the command; past the cap the rest of it is not kept.
+        if (this.input.length < this.maxOutput) this.input = (this.input + text).slice(0, this.maxOutput);
+        return;
+      }
+      this.input += text.slice(0, newline + 1);
+      this.lineEnded = true;
+      this.keep(text.slice(newline + 1));
+    } else if (this.region === 'output') this.keep(text);
     // Prompt and idle text is the shell's own decoration, not part of a block.
+  }
+
+  /** Onto the output, keeping its end. */
+  private keep(text: string): void {
+    if (text === '') return;
+    this.output += text;
+    if (this.output.length > this.maxOutput) {
+      this.output = this.output.slice(this.output.length - this.maxOutput);
+      this.truncated = true;
+    }
   }
 
   private apply(mark: Mark): Block | null {
@@ -325,12 +350,22 @@ export class BlockStream {
         this.input = '';
         this.output = '';
         this.truncated = false;
+        this.lineEnded = false;
         this.reported = null;
         return null;
       case 'command':
         this.reported = mark.line;
         return null;
       case 'output':
+        // Lines after the first were a command typed over several (a
+        // continuation prompt), not output, in a shell that does say `C`: back
+        // onto the line, as they were before the input was capped.
+        if (this.region === 'input' && this.lineEnded) {
+          this.input += this.output;
+          this.output = '';
+          this.truncated = false;
+        }
+        this.lineEnded = false;
         this.region = 'output';
         return null;
       case 'done': {
@@ -340,6 +375,7 @@ export class BlockStream {
         this.input = '';
         this.output = '';
         this.truncated = false;
+        this.lineEnded = false;
         this.reported = null;
         return block;
       }
@@ -359,22 +395,18 @@ export class BlockStream {
       };
     }
     if (this.region === 'input') {
-      // No `C`: the first line typed is the command, the rest is its output.
-      const raw = this.input;
-      const plain = plainText(raw);
+      // No `C`: the first line typed is the command, the rest is its output,
+      // which `take` has already put in `output` with its end kept.
+      const plain = plainText(this.input);
       const newline = plain.indexOf('\n');
       const command = (newline === -1 ? plain : plain.slice(0, newline)).trim();
       if (command === '') return null;
-      const breakAt = raw.indexOf('\n');
-      const output = breakAt === -1 ? '' : raw.slice(breakAt + 1);
       return {
         command: this.reported ?? command,
         commandFrom: this.reported !== null ? 'exact' : 'echo',
-        output: trimTrailingBreaks(
-          output.length > this.maxOutput ? output.slice(output.length - this.maxOutput) : output,
-        ),
+        output: trimTrailingBreaks(this.output),
         exitCode,
-        truncated: output.length > this.maxOutput,
+        truncated: this.truncated,
       };
     }
     // A `D` with no command before it: the first prompt, or an empty line.

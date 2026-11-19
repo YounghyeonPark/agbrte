@@ -31,6 +31,37 @@
  * user, and a shared temp directory is somewhere another account could swap it.
  * Named by its content, which is the two paths it names, so an upgraded app
  * writes a new one rather than editing a file a running shell may be reading.
+ *
+ * ## Why PowerShell does not hand its arguments to the batch file
+ *
+ * A batch file's arguments are a command line that cmd.exe parses, and cmd
+ * reads `&`, `|`, `<`, `>`, `^` and `%` in it as cmd syntax. PowerShell builds
+ * that line itself when it runs a `.cmd`, and Windows PowerShell 5.1 quotes an
+ * argument only when it holds a space. Measured on this machine (5.1.26100):
+ * `agbrte show 'a b' 'c&d'` reached the CLI as `a b` and `c`, and then cmd ran
+ * `d` as a command of its own. A file named `x&calc.png`, tab-completed in
+ * PowerShell, would have started the calculator. `%PATH%` in an argument was
+ * expanded and a `^` was dropped, which is the same parse corrupting data
+ * rather than running it. The split happens while cmd reads the line that
+ * starts the batch file, before the batch file's first line runs, so nothing
+ * written inside the `.cmd` can undo it; `%*` is not the hole, only where it
+ * shows.
+ *
+ * So in PowerShell `agbrte` is a function (`POWERSHELL_SCRIPT` in
+ * integration.ts) that puts its arguments in {@link LAUNCHER_ARGV_ENV} as JSON
+ * and runs the batch file with none, and the CLI reads them back
+ * ({@link launcherArgv}). The batch file stays the way in because it is what
+ * gives Electron a console parent, as above, and it is the reason the arguments
+ * cannot simply be passed to `electron.exe` from PowerShell: PowerShell does not
+ * wait for a GUI-subsystem program. The function finds the batch file by
+ * {@link LAUNCHER_ENV}, which only a PowerShell this host taught is given, and
+ * which the script removes before the user's first command. A `.ps1` launcher
+ * would have been the other way, and Windows' default execution policy refuses
+ * to run one.
+ *
+ * cmd.exe keeps `%*`. There the line was typed at cmd and is parsed by cmd
+ * whatever the launcher does: `agbrte show a&b` runs `b` in any cmd.exe, and
+ * quoting it is cmd's own rule rather than a hole of ours.
  */
 
 import { createHash } from 'node:crypto';
@@ -44,6 +75,41 @@ export interface CliLauncher {
   entry: string;
   /** Whether that runtime is Electron, which runs a script only when told to. */
   electron: boolean;
+}
+
+/**
+ * The batch launcher's path, given to a PowerShell this host taught so its
+ * `agbrte` function can find it. The integration script reads it and unsets it.
+ */
+export const LAUNCHER_ENV = 'AGBRTE_LAUNCHER';
+
+/** The arguments PowerShell's `agbrte` function passes, as a JSON array of strings. */
+export const LAUNCHER_ARGV_ENV = 'AGBRTE_ARGV';
+
+/**
+ * The CLI's arguments: its own, or, when it was given none, the ones
+ * PowerShell's function left in the environment. `null` when that variable is
+ * there and is not an array of strings, which the caller reports rather than
+ * running with no arguments, because a mangled `agbrte show x` must not quietly
+ * become a bare `agbrte` that opens a session.
+ *
+ * The variable is removed from `env` either way, so nothing the CLI starts
+ * inherits it, and a later `agbrte` started some other way cannot pick up
+ * these arguments. Arguments on the command line win over it, so a variable
+ * left behind by a PowerShell that died mid-call cannot replace what somebody
+ * typed.
+ */
+export function launcherArgv(argv: readonly string[], env: NodeJS.ProcessEnv): string[] | null {
+  const json = env[LAUNCHER_ARGV_ENV];
+  delete env[LAUNCHER_ARGV_ENV];
+  if (json === undefined || argv.length > 0) return [...argv];
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (Array.isArray(parsed) && parsed.every((a): a is string => typeof a === 'string')) return parsed;
+  } catch {
+    // Reported below, by the caller.
+  }
+  return null;
 }
 
 /** POSIX `sh`: single quotes hold everything but a single quote. */
@@ -61,9 +127,10 @@ export function shLauncher(cli: CliLauncher): string {
 }
 
 /**
- * cmd.exe's launcher, which PowerShell finds too (`PATHEXT`). `%` doubled,
- * because in a batch file it begins a variable; a Windows path cannot hold `"`.
- * CRLF, which is what cmd expects of a batch file.
+ * cmd.exe's launcher, which PowerShell runs too, but through its function and
+ * with no arguments (see the module comment). `%` doubled, because in a batch
+ * file it begins a variable; a Windows path cannot hold `"`. CRLF, which is
+ * what cmd expects of a batch file.
  */
 export function cmdLauncher(cli: CliLauncher): string {
   const q = (s: string): string => `"${s.replace(/%/gu, '%%')}"`;

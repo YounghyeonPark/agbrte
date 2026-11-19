@@ -35,6 +35,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { connectOrSpawnHost } from '@main/host/connectOrSpawn.js';
+import { LAUNCHER_ARGV_ENV, launcherArgv } from '@main/terminal/cliOnPath.js';
 import { hostHolding } from '../host/legacyHost.js';
 import { connect } from '@shared/host/socketChannel.js';
 import type { SessionCommand, SessionMessage } from '@shared/host/sessionProtocol.js';
@@ -260,7 +261,17 @@ async function open(path: string): Promise<HostConnection> {
 }
 
 async function main(): Promise<number> {
-  const argv = process.argv.slice(2);
+  /*
+   * From PowerShell in the app's terminal the arguments arrive in the
+   * environment rather than on the command line, because a command line
+   * through the batch launcher is parsed by cmd, and `c&d` ran `d`
+   * (`cliOnPath.ts`).
+   */
+  const argv = launcherArgv(process.argv.slice(2), process.env);
+  if (argv === null) {
+    process.stderr.write(`agbrte: the arguments PowerShell passed in ${LAUNCHER_ARGV_ENV} could not be read\n`);
+    return 2;
+  }
   if (argv.includes('--help') || argv.includes('-h')) {
     process.stdout.write(USAGE);
     return 0;

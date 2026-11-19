@@ -56,7 +56,11 @@ text — escapes stripped, carriage returns applied — so a program that draws 
 held key with cursor moves between its characters, or overwrites part of it, would
 not be matched; Windows' pseudoconsole repaints by position and a key longer than
 the pane is wide has not been tried there. A command printing more than 256 KB is
-cut before it is masked, so a held key straddling that cut keeps its end. Verified
+cut before it is masked, and until 2026-11-19 a key straddling that cut kept its
+end; what the cut leaves half of is now dropped — the tail of a held value, half a
+word of anything else, a key block's body through its `-----END` — and the cut is
+unit-tested through a real `BlockStream`. A key *inside* the kept part that the
+program drew in pieces is still the limit above. Verified
 on Windows with cmd.exe, in the app and in unit tests; not on bash, zsh or
 PowerShell in the app, not on Linux or macOS, and not on a remote host, where the
 record is made by the host on the server.
@@ -70,8 +74,12 @@ and a file holding them, `cat` to the terminal, made a "command the person ran"
 with whatever line and output it liked — is fixed since 2026-11-06. Every mark
 the host's shells write carries a nonce minted for that shell, and the host
 reads a mark without it as text (`src/shared/terminal/marks.ts`). Exercised
-against real bash, PowerShell and cmd.exe on Windows; not zsh, not Linux or
-macOS. cmd.exe keeps its nonce in `PROMPT`, where a program it starts can read
+against real bash, PowerShell and cmd.exe on Windows, and — this page said
+otherwise until 2026-11-19, which was wrong — on every push in CI, where
+`tests/integration.test.ts` starts real bash and `pwsh` in a pty on Ubuntu, and
+bash, zsh and `pwsh` on macOS, and checks each command's line, status and
+nonce. That is the shell scripts on those systems, not the app's terminal there,
+and not a host on a server. cmd.exe keeps its nonce in `PROMPT`, where a program it starts can read
 it: what this stops is text, which cannot know a value minted after it was
 written, not a program somebody chose to run.
 
@@ -138,9 +146,22 @@ end first, which ranges allow and nothing here has watched happen.
 1 MB read take.** A FIFO, a UNC path and a device path are refused before that
 (an independent review's findings, `mediaOffers.ts`); a slow local mount — NFS,
 sshfs, a cloud-storage placeholder — is not, and stalls every session on the
-machine while it answers. The cmd.exe launcher still passes its arguments
-through `%*`, the npm-shim exposure: a hostile filename with `&` in it, passed
-unquoted from PowerShell, runs as a command.
+machine while it answers.
+
+**`agbrte` from PowerShell no longer goes through cmd's parser** (2026-11-19).
+The batch launcher passed its arguments through `%*`, and Windows PowerShell 5.1
+quotes an argument only when it has a space, so `agbrte show 'a b' 'c&d'` ran
+`d` — measured, not reasoned. In a PowerShell the host taught, `agbrte` is now a
+function that hands the arguments over as JSON in the environment
+(`cliOnPath.ts`); a real PowerShell in a pty passes `c&echo.INJECTED`, `%PATH%`,
+`^` and a trailing `\` through intact, and the same test against the bare batch
+file shows cmd running the injected command. On Windows PowerShell 5.1 only:
+`pwsh` 7 on Windows has not run it, and a line that runs `agbrte` and then
+something that succeeds reports `agbrte`'s failure, because a function's status
+is read from a variable rather than from `$?`. A PowerShell started *inside* the
+tab is not one the host taught, has no function, and runs the batch file as
+before. Typed at cmd.exe, `agbrte show a&b` still runs `b`, as anything typed at
+cmd.exe does.
 
 **The host's output buffer can still cut a large picture a program sends
 itself.** A pane holds 256 KB of output between sends and drops the oldest past
@@ -158,10 +179,12 @@ assertion now prints what was on screen if it does.
 Windows' bash 5.3, Windows PowerShell 5.1 with PSReadLine, and `cmd.exe`, each in
 a real pty, with the exact line, the exit status and a `cd` that is still in force
 on the next line checked (`tests/integration.test.ts`), and the pane's bars seen
-in the app. zsh, `pwsh`, and bash on Linux or macOS have not run here — the zsh
-test skips by name on a machine without it — and neither has a terminal opened on
-a remote host, which is the same code bundled into the host and is where it most
-needs seeing: one shell pane on a real server, a failing command, a red bar.
+in the app. The same test runs on every push in CI — bash and `pwsh` on Ubuntu,
+bash, zsh and `pwsh` on macOS — which this page did not say until 2026-11-19;
+that is the scripts in a pty, not the app's terminal on those systems. What has
+not run is a terminal opened on a remote host, which is the same code bundled
+into the host and is where it most needs seeing: one shell pane on a real server,
+a failing command, a red bar.
 
 **The unified view has run with `cmd.exe`, Git for Windows' bash and Windows
 PowerShell on this machine**: blocks in order between agent turns, a running

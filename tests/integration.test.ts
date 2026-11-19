@@ -323,6 +323,67 @@ describe.skipIf(powershell === null)(`PowerShell, for real (${powershell ?? 'not
       await s.close();
     }
   }, 90_000);
+
+  /*
+   * Windows PowerShell quotes an argument for a batch file only when it holds a
+   * space, and cmd parses what it is given: `agbrte show 'a b' 'c&d'` reached the
+   * CLI as `a b` and `c`, and then cmd ran `d` (`cliOnPath.ts`). The launcher
+   * here stands in for the host's batch file and prints the arguments it was
+   * handed in base64, so an `INJECTED` on the screen can only be cmd running
+   * `echo.INJECTED`. That argument has no space in it on purpose: one with a
+   * space is quoted and would have passed before the fix too, which is how the
+   * first draft of this test passed against the unprotected path.
+   */
+  it.skipIf(process.platform !== 'win32')(
+    'hands agbrte its arguments as they were typed, through the batch launcher, and keeps its status',
+    async () => {
+      const { root } = workspace();
+      const bin = scratch();
+      const show = join(bin, 'show.cjs');
+      writeFileSync(
+        show,
+        [
+          "const a = process.env.AGBRTE_ARGV ?? 'none';",
+          "process.stdout.write('ARGV:' + Buffer.from(a).toString('base64') + ' EXTRA:' + process.argv.length + '\\n');",
+          "process.exit(a.includes('fail') ? 3 : 0);",
+        ].join('\n'),
+      );
+      const launcher = join(bin, 'agbrte.cmd');
+      writeFileSync(launcher, `@echo off\r\n"${process.execPath}" "${show}" %*\r\nexit /b %ERRORLEVEL%\r\n`);
+      const taught = integrate({ file: powershell!, args: [] }, { env: {}, dir: scratch() });
+      const s = new Session(taught.file, taught.args, {
+        cwd: root,
+        env: { ...terminalEnv(), ...taught.env, AGBRTE_LAUNCHER: launcher },
+        nonce: taught.nonce,
+      });
+      const handed = (block: Block): unknown => {
+        const out = plainText(block.output);
+        const b64 = /ARGV:(\S+)/u.exec(out)?.[1];
+        // The batch file is given nothing of its own to parse. Anchored, because
+        // `%PATH%` expanded into twenty words read as `EXTRA:23`.
+        expect(out).toMatch(/EXTRA:2$/mu);
+        return JSON.parse(Buffer.from(b64 ?? '', 'base64').toString('utf8'));
+      };
+      try {
+        await s.ready();
+        const typed = await s.run("agbrte show 'a b' 'c&echo.INJECTED' '%PATH%' 'x^y' 'end\\'");
+        expect(handed(typed)).toEqual(['show', 'a b', 'c&echo.INJECTED', '%PATH%', 'x^y', 'end\\']);
+        expect(plainText(typed.output)).not.toContain('INJECTED');
+        expect(typed).toMatchObject({ exitCode: 0 });
+        expect(handed(await s.run('agbrte'))).toEqual([]);
+        // A function's caller sees $? true whatever ran inside it; the bar must still be red.
+        expect(await s.run('agbrte fail')).toMatchObject({ exitCode: 3 });
+        expect(await s.run("Write-Output 'after'")).toMatchObject({ exitCode: 0 });
+        // Neither the launcher's path nor the arguments stay where a program could read them.
+        expect(plainText((await s.run('Write-Output "[$env:AGBRTE_LAUNCHER][$env:AGBRTE_ARGV]"')).output).trim()).toBe(
+          '[][]',
+        );
+      } finally {
+        await s.close();
+      }
+    },
+    90_000,
+  );
 });
 
 describe.skipIf(cmd === null)(`cmd.exe, for real (${cmd ?? 'not on this machine'})`, () => {

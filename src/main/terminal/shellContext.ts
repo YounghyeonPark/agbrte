@@ -123,6 +123,46 @@ function tail(text: string, max: number): { text: string; cut: boolean } {
 }
 
 /**
+ * What is left of an output whose start the stream dropped (`Block.truncated`),
+ * from the first character nobody could mistake for half of something.
+ *
+ * The stream keeps the last 256 KB as it arrives, before anything here sees
+ * it, so "masked whole and then cut" below cannot hold for that cut. A key
+ * printed across it lost its start and kept its end, and neither kind of
+ * masking knows an end: the exact match wants the whole value and every shape
+ * starts with its prefix. That end went to the log and to the model as
+ * printed. A PEM block cut there lost `-----BEGIN` and kept its body and
+ * `-----END`, which no shape matches either. Measured in the test of this; the
+ * status page had it as a known gap.
+ *
+ * Dropped rather than masked, because the start of a cut output is already
+ * missing and losing a few more characters of it costs nothing. Three things
+ * go: the longest tail of a held value the text starts with, which is the only
+ * way to catch a held value with a space in it; then everything to the first
+ * space or line break, which is half a token of any kind; then, if an
+ * `-----END` comes before any `-----BEGIN`, everything through it.
+ */
+export function dropCutStart(text: string, held: readonly string[]): string {
+  let from = 0;
+  const first = text.charCodeAt(0);
+  for (const value of held) {
+    // Ascending, so the first match is the longest tail of this value.
+    for (let i = 1; i < value.length && value.length - i > from; i += 1) {
+      if (value.charCodeAt(i) === first && text.startsWith(value.slice(i))) {
+        from = value.length - i;
+        break;
+      }
+    }
+  }
+  const space = text.slice(from).search(/\s/u);
+  from = space === -1 ? text.length : from + space;
+  const rest = text.slice(from);
+  const end = /-----END [^\n-]*-----/u.exec(rest);
+  if (end !== null && !rest.slice(0, end.index).includes('-----BEGIN ')) from += end.index + end[0].length;
+  return text.slice(from);
+}
+
+/**
  * A finished block as the log will keep it, or `null` for one not worth a line:
  * an empty command, which is what a bare Enter is — including the one the
  * routing gives the shell after drawing the agent's side, so every reply would
@@ -133,8 +173,11 @@ export function recordBlock(block: Block, held: Iterable<string>): ShellBlockRec
   const command = maskSecrets(block.command.trim(), values);
   if (command.text === '') return null;
   // Masked whole and then cut, never the other way: a secret straddling the cut
-  // would leave its second half behind, unrecognisable as either.
-  const output = maskSecrets(plainText(block.output).replace(/^\n+|\n+$/gu, ''), values);
+  // would leave its second half behind, unrecognisable as either. The stream's
+  // own cut came first, and what it left half of is dropped (`dropCutStart`).
+  const plain = plainText(block.output);
+  const whole = block.truncated ? dropCutStart(plain, values) : plain;
+  const output = maskSecrets(whole.replace(/^\n+|\n+$/gu, ''), values);
   const kept = tail(output.text, LOGGED_OUTPUT);
   return {
     command: command.text,

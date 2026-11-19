@@ -184,6 +184,40 @@ describe('a stream of them', () => {
     expect(blocks[0]?.truncated).toBe(true);
   });
 
+  /*
+   * cmd.exe never says `C`, so its command's output arrived while the stream
+   * was still reading the typed line, and that string had no cap: `type` of a
+   * large file grew it for as long as the file went on, in the host, which holds
+   * every session on the machine.
+   */
+  it('keeps the same cap on the output of a shell that never says C', () => {
+    const stream = new BlockStream({ maxOutput: 256 });
+    const prompt = osc('133;D', 'st') + osc('133;A', 'st') + 'C:\\proj>' + osc('133;B', 'st');
+    stream.push(prompt + 'type big.log\r\n');
+    for (let i = 0; i < 1000; i += 1) stream.push(`line ${i} of a file that goes on\r\n`);
+    // What the stream is holding, read the way only a test should.
+    const held = stream as unknown as { input: string; output: string };
+    expect(held.input.length + held.output.length).toBeLessThanOrEqual(256 + 'type big.log\r\n'.length);
+    const [block] = stream.push('the last line\r\n' + prompt);
+    expect(block).toMatchObject({ command: 'type big.log', truncated: true, exitCode: null });
+    expect(block?.output.endsWith('the last line')).toBe(true);
+    expect(block?.output.length).toBeLessThanOrEqual(256);
+  });
+
+  it('still reads a command typed over several lines as one, in a shell that says C', () => {
+    // The lines after the first are a continuation prompt's, and the cap above
+    // must not take them for output.
+    const stream = new BlockStream();
+    const text =
+      osc('133;A') + '$ ' + osc('133;B') + 'for x in a b\r\n> do echo $x; done\r\n' + osc('133;C') + 'a\r\nb\r\n' + osc('133;D;0');
+    expect(stream.push(text)[0]).toMatchObject({
+      command: 'for x in a b\n> do echo $x; done',
+      commandFrom: 'echo',
+      output: 'a\r\nb',
+      truncated: false,
+    });
+  });
+
   it('leaves somebody else’s escape sequences in the output', () => {
     // A program setting the window title is part of what it printed.
     const stream = new BlockStream();

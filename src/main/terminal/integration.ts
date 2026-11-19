@@ -218,11 +218,31 @@ if ($null -eq $global:__agbrteOriginalPrompt) {
   # Out of the environment before a command runs, so no program this shell starts can read it.
   $global:__agbrteNonce = $env:AGBRTE_MARK_NONCE
   Remove-Item Env:AGBRTE_MARK_NONCE -ErrorAction SilentlyContinue
+  # agbrte as a function, so the arguments reach the CLI as JSON in the
+  # environment and never as a command line cmd.exe parses: Windows PowerShell
+  # leaves c&d unquoted, and cmd ran d (cliOnPath.ts). Defined only when the
+  # host put its batch launcher here, so another agbrte is left alone.
+  $global:__agbrteLauncher = $env:AGBRTE_LAUNCHER
+  Remove-Item Env:AGBRTE_LAUNCHER -ErrorAction SilentlyContinue
+  $global:__agbrteExit = $null
+  if ($global:__agbrteLauncher) {
+    function global:agbrte {
+      $env:AGBRTE_ARGV = ConvertTo-Json -Compress -InputObject @($args | ForEach-Object { $_ } | ForEach-Object { [string]$_ })
+      try { & $global:__agbrteLauncher } finally { Remove-Item Env:AGBRTE_ARGV -ErrorAction SilentlyContinue }
+      $global:__agbrteExit = $LASTEXITCODE
+    }
+  }
   $global:__agbrteOriginalPrompt = $function:prompt
   $global:__agbrteStarted = $false
   function global:prompt {
     $ok = $?
-    $code = if ($ok) { 0 } elseif ($global:LASTEXITCODE) { $global:LASTEXITCODE } else { 1 }
+    # A function's caller sees $? true whatever the program inside it returned,
+    # so a failed agbrte drew a green bar. It leaves its status here instead. The
+    # cost: in a line that runs agbrte and then something that succeeds, the
+    # line reads as agbrte's failure rather than the last command's success.
+    $mine = $global:__agbrteExit
+    $global:__agbrteExit = $null
+    $code = if ($null -ne $mine -and $mine -ne 0) { $mine } elseif ($ok) { 0 } elseif ($global:LASTEXITCODE) { $global:LASTEXITCODE } else { 1 }
     $e = [char]27; $b = [char]7
     $out = ''
     $n = $global:__agbrteNonce

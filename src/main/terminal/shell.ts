@@ -85,9 +85,10 @@
 
 import { realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import { TERM_NAME, TerminalPrograms, findAgbrteCli, terminalEnv } from './programs.js';
 import { integrate, integrationDir } from './integration.js';
-import { type CliLauncher, withOnPath, writeLaunchers } from './cliOnPath.js';
+import { type CliLauncher, LAUNCHER_ENV, withOnPath, writeLaunchers } from './cliOnPath.js';
 import { MediaOffers, newPaneKey, notice, OfferFilter, PANE_KEY_ENV } from './mediaOffers.js';
 import type { AgbrteEvent, PermissionRequest, ShellProgram } from '@shared/types/index.js';
 import type { IntegrationLevel } from '@shared/terminal/marks.js';
@@ -612,10 +613,21 @@ export class Shells<Owner extends object = object> {
      * that uses it is the one the launcher runs.
      */
     const paneKey = launcher === null ? null : newPaneKey();
+    /*
+     * And, for PowerShell on Windows, where the batch launcher is, so the
+     * integration's `agbrte` function can run it without passing it arguments:
+     * PowerShell left `c&d` unquoted on the batch file's command line and cmd
+     * ran `d` (`cliOnPath.ts`). Only PowerShell gets it, and its script unsets
+     * it, because any other shell would pass it to every program it starts.
+     */
+    const batch =
+      launcher !== null && taught?.shell === 'powershell' && process.platform === 'win32'
+        ? { [LAUNCHER_ENV]: join(launcher, 'agbrte.cmd') }
+        : {};
     const env =
       launcher === null || paneKey === null
         ? shellEnv
-        : { ...withOnPath(shellEnv, launcher), [PANE_KEY_ENV]: paneKey };
+        : { ...withOnPath(shellEnv, launcher), [PANE_KEY_ENV]: paneKey, ...batch };
     const cols = clamp(opts?.cols ?? DEFAULT_COLS);
     const rows = clamp(opts?.rows ?? DEFAULT_ROWS);
 

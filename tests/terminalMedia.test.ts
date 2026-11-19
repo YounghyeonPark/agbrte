@@ -16,7 +16,15 @@ import { mediaType } from '@shared/terminal/mediaType.js';
 import { ImageStream, type Picture } from '@shared/terminal/imageStream.js';
 import { drawBlob, inlineMedia, playsMedia } from '../src/main/terminal/graphics.js';
 import { MAX_SHOWN_BYTES, rowsFor, show } from '../src/cli/show.js';
-import { cmdLauncher, shLauncher, withOnPath, writeLaunchers } from '../src/main/terminal/cliOnPath.js';
+import {
+  cmdLauncher,
+  LAUNCHER_ARGV_ENV,
+  LAUNCHER_ENV,
+  launcherArgv,
+  shLauncher,
+  withOnPath,
+  writeLaunchers,
+} from '../src/main/terminal/cliOnPath.js';
 import { Shells, type Pty, type PtySpawner } from '../src/main/terminal/shell.js';
 import { TerminalPrograms } from '../src/main/terminal/programs.js';
 
@@ -310,5 +318,55 @@ describe('agbrte on the PATH of the app’s own shell', () => {
 
     make({ AGBRTE_SHELL_INTEGRATION: '0' }).open({}, { program: { kind: 'shell' } });
     expect(envs[1]!['PATH']).toBe('/usr/bin');
+    // bash runs the POSIX launcher with its own arguments; the batch file's path is not its business.
+    expect(envs[0]![LAUNCHER_ENV]).toBeUndefined();
+  });
+
+  /*
+   * Windows PowerShell quotes an argument for a batch file only when it holds a
+   * space, so `agbrte show 'a b' 'c&d'` ran `d` (`cliOnPath.ts`). Its `agbrte`
+   * is a function that needs the batch file's path, and nobody else is given it.
+   */
+  it('tells a PowerShell on Windows where the batch launcher is, and no other shell', () => {
+    const envs: Array<Record<string, string | undefined>> = [];
+    const spawn: PtySpawner = (_file, _args, opts) => {
+      envs.push(opts.env as Record<string, string | undefined>);
+      return { pid: 1, onData() {}, onExit() {}, write() {}, resize() {}, kill() {} } as Pty;
+    };
+    const ps = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+    const env = { AGBRTE_SHELL: ps, PATH: 'C:\\Windows' };
+    new Shells<object>('/work', {
+      onData: () => undefined,
+      onExit: () => undefined,
+      spawn,
+      env,
+      programs: new TerminalPrograms({ env, lookup: (n) => (n === ps ? ps : null) }),
+      integrationDir: temp(),
+      cli,
+    }).open({}, { program: { kind: 'shell' } });
+    const given = envs[0]![LAUNCHER_ENV];
+    if (process.platform === 'win32') {
+      expect(given).toMatch(/agbrte\.cmd$/u);
+      expect(readFileSync(given!, 'utf8')).toBe(cmdLauncher(cli));
+    } else {
+      // pwsh on Linux and macOS starts the POSIX launcher directly, with no cmd in between.
+      expect(given).toBeUndefined();
+    }
+  });
+
+  it('reads back the arguments PowerShell’s function left, and only when it was given none', () => {
+    const env: NodeJS.ProcessEnv = { [LAUNCHER_ARGV_ENV]: JSON.stringify(['show', 'c&d', '%PATH%', 'a b']) };
+    expect(launcherArgv([], env)).toEqual(['show', 'c&d', '%PATH%', 'a b']);
+    // Gone, so nothing the CLI starts inherits it.
+    expect(env[LAUNCHER_ARGV_ENV]).toBeUndefined();
+    // What was typed wins over a variable a PowerShell that died mid-call left behind.
+    const stale: NodeJS.ProcessEnv = { [LAUNCHER_ARGV_ENV]: '["show","old.png"]' };
+    expect(launcherArgv(['ls'], stale)).toEqual(['ls']);
+    expect(stale[LAUNCHER_ARGV_ENV]).toBeUndefined();
+    expect(launcherArgv(['ls'], {})).toEqual(['ls']);
+    // Mangled is an error, never a bare `agbrte` that opens a session.
+    expect(launcherArgv([], { [LAUNCHER_ARGV_ENV]: '{"show":1}' })).toBeNull();
+    expect(launcherArgv([], { [LAUNCHER_ARGV_ENV]: '[1]' })).toBeNull();
+    expect(launcherArgv([], { [LAUNCHER_ARGV_ENV]: 'not json' })).toBeNull();
   });
 });

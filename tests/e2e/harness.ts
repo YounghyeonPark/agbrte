@@ -80,6 +80,16 @@ export async function launchWith(
   // Inherited from any Electron-based parent terminal; it would silently run
   // main as plain Node with no window at all. See scripts/launch.mjs.
   delete env['ELECTRON_RUN_AS_NODE'];
+  /*
+   * Playwright sets FORCE_COLOR for its workers, and with NO_COLOR also set in
+   * the shell that started the run, Node warns about the pair on stderr — in
+   * every `agbrte` the tab's shell runs under Electron. The warning landed
+   * between a command and its output, and both media specs failed on a screen
+   * that was otherwise right, on a machine whose only difference was NO_COLOR=1
+   * in the environment. Neither variable is the app's to inherit from a runner.
+   */
+  delete env['NO_COLOR'];
+  delete env['FORCE_COLOR'];
   // Several roots, delimiter-separated, so the app attaches several hosts at
   // once — which is how the multi-host view gets exercised (§8).
   env['AGBRTE_WORKSPACE_ROOT'] = workspaces.join(delimiter);
