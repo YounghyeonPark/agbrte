@@ -1,5 +1,5 @@
 {
-  "verifiedAt": "2026-10-19",
+  "verifiedAt": "2026-11-19",
   "registry": "registry.ollama.ai",
   "models": [
     {
@@ -29,8 +29,20 @@
     {
       "tag": "qwen3:8b",
       "label": "Qwen 3 8B",
-      "note": "Newer Qwen generation.",
+      "note": "Qwen 3, with a thinking mode. Qwen 3.5 is newer.",
       "bytes": 5225387677
+    },
+    {
+      "tag": "qwen3.5:4b",
+      "label": "Qwen 3.5 4B",
+      "note": "The newest Qwen at laptop size. Declares tools; reads images.",
+      "bytes": 3324173757
+    },
+    {
+      "tag": "qwen3.5:9b",
+      "label": "Qwen 3.5 9B",
+      "note": "The same generation, larger; wants a GPU.",
+      "bytes": 6550825373
     },
     {
       "tag": "gemma3:4b",
@@ -43,6 +55,18 @@
       "label": "Gemma 3 12B",
       "note": "Larger Gemma; wants a GPU.",
       "bytes": 8164039587
+    },
+    {
+      "tag": "gemma4:e4b",
+      "label": "Gemma 4 E4B",
+      "note": "Google's newest small model, with tools. Larger on disk than its name.",
+      "bytes": 6583656264
+    },
+    {
+      "tag": "gemma4:12b",
+      "label": "Gemma 4 12B",
+      "note": "Larger Gemma 4; wants a GPU.",
+      "bytes": 8021618699
     },
     {
       "tag": "gpt-oss:20b",

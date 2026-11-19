@@ -62,7 +62,16 @@ const OUT = resolve(root, 'src/shared/models/catalogue.json');
  * added — starting a clock by claiming a review that did not happen is the one
  * way to make it lie from the first day.
  */
-const REVIEWED = '2026-08-12';
+/*
+ * 2026-11-19: read against the library's listing. Gemma 4 and Qwen 3.5 had
+ * shipped since the last look, both declaring tools, and "Newer Qwen
+ * generation" on qwen3 had become untrue. Added the sizes that fit the machines
+ * this list is for; Qwen 3.6, 3.8, Qwen3-Coder and Devstral Small 2 are all 15 GB
+ * or more and were left out for that reason, not for being unknown. Nothing was
+ * dropped: every tag below still resolves, and leaving the list demotes a model
+ * on a machine that already has it (`readyRank`).
+ */
+const REVIEWED = '2026-11-19';
 const REVIEW_EVERY_DAYS = 90;
 
 /**
@@ -74,9 +83,13 @@ const CANDIDATES = [
   { tag: 'llama3.1:8b', label: 'Llama 3.1 8B', note: 'The usual default when there is a GPU to spare.' },
   { tag: 'qwen2.5:7b', label: 'Qwen 2.5 7B', note: 'Strong general model; reliable at tool calling.' },
   { tag: 'qwen2.5-coder:7b', label: 'Qwen 2.5 Coder 7B', note: 'Tuned for code. A good default for this program.' },
-  { tag: 'qwen3:8b', label: 'Qwen 3 8B', note: 'Newer Qwen generation.' },
+  { tag: 'qwen3:8b', label: 'Qwen 3 8B', note: 'Qwen 3, with a thinking mode. Qwen 3.5 is newer.' },
+  { tag: 'qwen3.5:4b', label: 'Qwen 3.5 4B', note: 'The newest Qwen at laptop size. Declares tools; reads images.' },
+  { tag: 'qwen3.5:9b', label: 'Qwen 3.5 9B', note: 'The same generation, larger; wants a GPU.' },
   { tag: 'gemma3:4b', label: 'Gemma 3 4B', note: "Google's small open model." },
   { tag: 'gemma3:12b', label: 'Gemma 3 12B', note: 'Larger Gemma; wants a GPU.' },
+  { tag: 'gemma4:e4b', label: 'Gemma 4 E4B', note: "Google's newest small model, with tools. Larger on disk than its name." },
+  { tag: 'gemma4:12b', label: 'Gemma 4 12B', note: 'Larger Gemma 4; wants a GPU.' },
   { tag: 'gpt-oss:20b', label: 'GPT-OSS 20B', note: "OpenAI's open-weight release. Large; check disk first." },
   { tag: 'deepseek-r1:7b', label: 'DeepSeek-R1 7B', note: 'Reasoning-tuned.' },
   { tag: 'phi4:14b', label: 'Phi-4 14B', note: 'Microsoft; strong for its size.' },
