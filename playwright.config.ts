@@ -12,6 +12,39 @@ import { defineConfig } from '@playwright/test';
  * and, in the live test, talks to a single local model server. Parallel workers
  * would contend for the model and make timing failures look like logic failures.
  */
+
+/*
+ * The `@shots` specs take pictures for publishing, and that is not a test
+ * result.
+ *
+ * `shots.spec.ts` says in its own header that its tag keeps it out of the
+ * default run, and that was simply untrue until this existed: nothing
+ * implemented it, so `npm run e2e` ran it and left tracked files modified. Found
+ * the way it would always be found — a `git status` after a green run showing a
+ * change nobody made. (A second spec, which recorded a published demo, was worse
+ * about this and has since been deleted along with the demo.) Both `@shots`
+ * specs write to `.shots/` now, which is ignored, so what running them costs is
+ * time and a model, not the tree.
+ *
+ * **Then it was untrue a second time, for longer.** The exclusion was a
+ * top-level `grepInvert`, and it stopped working the day the two projects below
+ * arrived: a project's `grepInvert` *replaces* the config's rather than adding to
+ * it, and `deterministic` sets its own. Nothing failed. `shots.spec` ran and
+ * passed on every run, `terminalShots` reported itself skipped for want of a
+ * model, and the comment here went on saying neither ran. It took the first CI
+ * log anybody read line by line to see it. So the tag is inverted in each
+ * project, where it cannot be overridden by the thing it sits beside.
+ *
+ * `grepInvert` rather than `testIgnore`, because `testIgnore` would make even an
+ * explicit path unrunnable and the point is to keep them runnable on purpose.
+ * And gated on an environment variable rather than on the presence of `--grep`,
+ * because a config that reads `process.argv` to guess at intent is a config that
+ * behaves differently depending on how somebody spelled a command.
+ *
+ *   AGBRTE_WRITE_FIXTURES=1 npx playwright test shots --grep @shots
+ */
+const SHOTS: RegExp[] = process.env['AGBRTE_WRITE_FIXTURES'] === '1' ? [] : [/@shots/u];
+
 export default defineConfig({
   testDir: './tests/e2e',
   // These launch `dist/`, so a stale build is a silent wrong answer rather than
@@ -76,32 +109,10 @@ export default defineConfig({
    * `workers: 1` is enough for the ordering and has no such cliff.
    */
   projects: [
-    { name: 'deterministic', grepInvert: /@live/u },
-    { name: 'live', grep: /@live/u },
+    // `SHOTS` in both, above: a project's `grepInvert` replaces the config's.
+    { name: 'deterministic', grepInvert: [/@live/u, ...SHOTS] },
+    { name: 'live', grep: /@live/u, grepInvert: SHOTS },
   ],
   // Retrying would mask exactly the flakiness worth knowing about here.
   retries: 0,
-
-  /*
-   * `shots.spec.ts` writes files into the repository, and that is not a test
-   * result.
-   *
-   * It says in its own header that its tag keeps it out of the default run, and
-   * that was simply untrue until this existed: nothing implemented it, so
-   * `npm run e2e` ran it and left tracked files modified. Found the way it would
-   * always be found — a `git status` after a green run showing a change nobody
-   * made. (A second spec, which recorded a published demo, was worse about this
-   * and has since been deleted along with the demo.)
-   *
-   * `grepInvert` rather than `testIgnore`, because `testIgnore` would make even
-   * an explicit path unrunnable and the point is to keep them runnable on
-   * purpose. And gated on an environment variable rather than on the presence of
-   * `--grep`, because a config that reads `process.argv` to guess at intent is a
-   * config that behaves differently depending on how somebody spelled a command.
-   *
-   *   AGBRTE_WRITE_FIXTURES=1 npx playwright test shots --grep @shots
-   */
-  ...(process.env['AGBRTE_WRITE_FIXTURES'] === '1'
-    ? {}
-    : { grepInvert: /@shots/u }),
 });

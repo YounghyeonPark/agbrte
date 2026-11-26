@@ -34,7 +34,7 @@ Four things about that list are load-bearing:
   it.
 - **Two projects, and the order matters.** Everything tagged `@live` talks to a
   real local model server, and it is the only part whose duration depends on a
-  GPU and a cold weight load. They run *after* the deterministic 125, so a slow
+  GPU and a cold weight load. They run *after* the deterministic 123, so a slow
   one costs time rather than coverage — a run once spent the global timeout on
   one live test and **seventeen tests did not run**, reported as a slow test and
   not as missing coverage. `e2e:fast` is the deterministic project alone, which
